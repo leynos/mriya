@@ -175,6 +175,115 @@ defines the minimal interface for a cloud backend driver. For the MVP, only a
 **ScalewayBackend** implementation exists (wired to Scaleway’s API), but the
 design anticipates others (Hetzner, DigitalOcean, AWS, etc.) in later versions.
 
+### Class diagram
+
+```mermaid
+classDiagram
+    class Backend {
+        <<trait>>
+        +create(request: InstanceRequest): Result
+        +wait_for_ready(handle: InstanceHandle): Result
+        +destroy(handle: InstanceHandle): Result
+    }
+
+    class InstanceRequest {
+        +image_label: String
+        +instance_type: String
+        +zone: String
+        +project_id: String
+        +organisation_id: Option<String>
+        +architecture: String
+        +new(image_label, instance_type, zone, project_id, organisation_id, architecture): InstanceRequest
+        +validate(): Result
+    }
+
+    class InstanceHandle {
+        +id: String
+        +zone: String
+    }
+
+    class InstanceNetworking {
+        +public_ip: IpAddr
+        +ssh_port: u16
+    }
+
+    class BackendError {
+        <<enum>>
+        +Validation(message: String)
+    }
+
+    class ScalewayConfig {
+        +access_key: Option<String>
+        +secret_key: String
+        +default_organization_id: Option<String>
+        +default_project_id: String
+        +default_zone: String
+        +default_instance_type: String
+        +default_image: String
+        +default_architecture: String
+        +load_from_sources(): Result
+        +as_request(): Result
+        +validate(): Result
+    }
+
+    class ConfigError {
+        <<enum>>
+        +MissingField(name: String)
+        +Parse(message: String)
+    }
+
+    class ScalewayBackend {
+        +api: ScalewayApi
+        +config: ScalewayConfig
+        +ssh_port: u16
+        +poll_interval: Duration
+        +wait_timeout: Duration
+        +new(config: ScalewayConfig): Result
+        +default_request(): Result
+        +resolve_image_id(request: InstanceRequest): Result
+        +ensure_instance_type(request: InstanceRequest): Result
+        +power_on_if_needed(zone: String, instance: ScalewayInstance): Result
+        +fetch_instance(handle: InstanceHandle): Result
+        +wait_for_public_ip(handle: InstanceHandle): Result
+        +wait_until_gone(handle: InstanceHandle): Result
+    }
+
+    class ScalewayBackendError {
+        <<enum>>
+        +Config(message: String)
+        +Validation(message: String)
+        +ImageNotFound(label: String, arch: String, zone: String)
+        +InstanceTypeUnavailable(instance_type: String, zone: String)
+        +Timeout(action: String, instance_id: String)
+        +MissingPublicIp(instance_id: String)
+        +ResidualResource(instance_id: String)
+        +Provider(message: String)
+    }
+
+    class ScalewayApi {
+        <<external>>
+    }
+
+    class ScalewayInstance {
+        <<external>>
+    }
+
+    Backend <|.. ScalewayBackend
+    BackendError <.. InstanceRequest : returns
+    ConfigError <.. ScalewayConfig : returns
+    ScalewayConfig --> InstanceRequest : builds
+    ScalewayConfig --> ConfigError : uses
+    ScalewayBackend --> ScalewayConfig : holds
+    ScalewayBackend --> ScalewayApi : uses
+    ScalewayBackend ..> ScalewayBackendError : returns
+    ScalewayBackend ..> InstanceRequest : consumes
+    ScalewayBackend ..> InstanceHandle : returns
+    ScalewayBackend ..> InstanceNetworking : returns
+    ScalewayBackend ..> ScalewayInstance : uses
+    ScalewayBackendError <-- BackendError : From
+    ScalewayBackendError <-- ConfigError : From
+```
+
 **`Backend` Trait – Minimal Interface:** At v0, the trait can be very simple,
 focusing on the VM lifecycle:
 
