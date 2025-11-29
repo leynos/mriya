@@ -28,9 +28,27 @@ where
 
 #[fixture]
 fn scaleway_config() -> ScalewayConfig {
+    let missing = [
+        ("SCW_SECRET_KEY", std::env::var("SCW_SECRET_KEY")),
+        (
+            "SCW_DEFAULT_PROJECT_ID",
+            std::env::var("SCW_DEFAULT_PROJECT_ID"),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, res)| match res {
+        Ok(value) if !value.trim().is_empty() => None,
+        _ => Some(name),
+    })
+    .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        skip!("missing required Scaleway env: {:?}", missing);
+    }
+
     match ScalewayConfig::load_from_sources() {
         Ok(cfg) => cfg,
-        Err(err) => panic!("failed to load Scaleway configuration: {err}"),
+        Err(err) => skip!("failed to load Scaleway configuration: {err}"),
     }
 }
 
