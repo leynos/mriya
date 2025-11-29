@@ -48,7 +48,7 @@ fn scaleway_config() -> ScalewayConfig {
 
     match ScalewayConfig::load_from_sources() {
         Ok(cfg) => cfg,
-        Err(err) => skip!("failed to load Scaleway configuration: {err}"),
+        Err(err) => skip!(format!("failed to load Scaleway configuration: {err}")),
     }
 }
 
