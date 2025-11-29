@@ -20,17 +20,17 @@ pub struct ScalewayConfig {
     /// Project identifier used for billing and resource scoping.
     pub default_project_id: String,
     /// Preferred availability zone. Defaults to `fr-par-1`.
-    #[ortho_config(default = "fr-par-1")]
+    #[ortho_config(default = "fr-par-1".to_owned())]
     pub default_zone: String,
     /// Commercial type for new instances. Defaults to `DEV1-S` to minimise
     /// cost during integration tests.
-    #[ortho_config(default = "DEV1-S")]
+    #[ortho_config(default = "DEV1-S".to_owned())]
     pub default_instance_type: String,
     /// Human friendly image label (for example `Ubuntu 24.04 Noble Numbat`).
-    #[ortho_config(default = "Ubuntu 24.04 Noble Numbat")]
+    #[ortho_config(default = "Ubuntu 24.04 Noble Numbat".to_owned())]
     pub default_image: String,
     /// CPU architecture used to select the correct image variant.
-    #[ortho_config(default = "x86_64")]
+    #[ortho_config(default = "x86_64".to_owned())]
     pub default_architecture: String,
 }
 
@@ -38,13 +38,19 @@ impl ScalewayConfig {
     /// Loads configuration using the `ortho-config` derive. Values merge
     /// defaults, configuration files, environment variables, and CLI flags in
     /// that order of precedence.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Parse`] when the loader fails to merge sources.
     pub fn load_from_sources() -> Result<Self, ConfigError> {
-        Ok(Self::load()?)
+        Self::load().map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
     /// Builds an [`InstanceRequest`] using the configured defaults.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when validation fails.
     pub fn as_request(&self) -> Result<InstanceRequest, ConfigError> {
         self.validate()?;
         Ok(InstanceRequest::new(
@@ -58,7 +64,10 @@ impl ScalewayConfig {
     }
 
     /// Performs semantic validation on required fields.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.secret_key.trim().is_empty() {
             return Err(ConfigError::MissingField("SCW_SECRET_KEY".to_owned()));
@@ -80,9 +89,7 @@ impl ScalewayConfig {
             return Err(ConfigError::MissingField("default_zone".to_owned()));
         }
         if self.default_architecture.trim().is_empty() {
-            return Err(ConfigError::MissingField(
-                "default_architecture".to_owned(),
-            ));
+            return Err(ConfigError::MissingField("default_architecture".to_owned()));
         }
         Ok(())
     }

@@ -1,6 +1,8 @@
 //! Backend abstraction for provisioning disposable compute instances.
 
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 
 use thiserror::Error;
 
@@ -24,7 +26,10 @@ pub struct InstanceRequest {
 
 impl InstanceRequest {
     /// Creates a new request, trimming inputs to avoid accidental whitespace.
-    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "value object constructor must capture all required fields"
+    )]
     pub fn new(
         image_label: impl Into<String>,
         instance_type: impl Into<String>,
@@ -45,7 +50,10 @@ impl InstanceRequest {
 
     /// Validates the request, returning a descriptive error when a required
     /// field is missing.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Validation`] when any string field is empty.
     pub fn validate(&self) -> Result<(), BackendError> {
         if self.image_label.is_empty() {
             return Err(BackendError::Validation("image_label".to_owned()));
@@ -92,21 +100,26 @@ pub enum BackendError {
     Validation(String),
 }
 
+/// Future returned by backend operations.
+pub type BackendFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
+
 /// Minimal interface implemented by cloud backends.
-#[allow(async_fn_in_trait)]
 pub trait Backend {
     /// Provider specific error type returned by the backend.
-    type Error: std::error::Error;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Creates a new instance and returns a handle used for subsequent calls.
-    async fn create(&self, request: &InstanceRequest) -> Result<InstanceHandle, Self::Error>;
+    fn create<'a>(
+        &'a self,
+        request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, InstanceHandle, Self::Error>;
 
     /// Blocks until the instance is ready for SSH and returns networking info.
-    async fn wait_for_ready(
-        &self,
-        handle: &InstanceHandle,
-    ) -> Result<InstanceNetworking, Self::Error>;
+    fn wait_for_ready<'a>(
+        &'a self,
+        handle: &'a InstanceHandle,
+    ) -> BackendFuture<'a, InstanceNetworking, Self::Error>;
 
     /// Destroys the instance and ensures no provider resources remain.
-    async fn destroy(&self, handle: InstanceHandle) -> Result<(), Self::Error>;
+    fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error>;
 }

@@ -147,6 +147,26 @@ learn about baseline performance (e.g. how long setup and teardown take) and
 identify any pain points (like large file transfer overhead or slow
 provisioning) that will guide subsequent optimizations.
 
+### Implementation status (November 2025)
+
+- **Backend crate choice:** The MVP backend uses `scaleway-rs` (async, rustls
+  TLS) rather than the experimental `scaleway_sdk` because it already exposes
+  builders for instance creation, listing, and lifecycle actions needed for the
+  create → wait → destroy loop.
+- **Configuration:** Credentials and defaults are layered via `ortho-config`
+  with the `SCW_*` prefix. The loader honours defaults (zone `fr-par-1`, type
+  `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges
+  files, environment, and CLI flags. Missing `SCW_SECRET_KEY` or project IDs
+  fail fast during validation.
+- **Lifecycle contract:** Creation resolves the freshest image ID matching the
+  requested label and architecture in the target zone, then requests a public
+  routed IP so SSH is reachable. Readiness polling runs every 5 seconds with a
+  5-minute cap and requires both a public IPv4 and the `running` state.
+- **Teardown verification:** Destruction calls the Instances API delete
+  endpoint then polls until the server disappears, failing the integration test
+  if any residual resource remains. Integration coverage provisions the
+  smallest shape (`DEV1-S`) to keep cost and blast radius low.
+
 ## Backend Abstraction Design
 
 To support multiple cloud providers in the future, Mriya’s core should be
