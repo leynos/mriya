@@ -1,3 +1,3 @@
-fn main() {
-    println!("Hello from Mriya!");
-}
+//! Binary entrypoint for the Mriya CLI.
+
+fn main() {}

@@ -1,0 +1,300 @@
+//! Scaleway backend implementation of the instance lifecycle.
+
+use std::net::IpAddr;
+use std::str::FromStr;
+use std::time::{Duration, Instant};
+
+use crate::backend::{Backend, BackendError, InstanceHandle, InstanceNetworking, InstanceRequest};
+use crate::config::{ConfigError, ScalewayConfig};
+use scaleway_rs::{ScalewayApi, ScalewayCreateInstanceBuilder, ScalewayError};
+use thiserror::Error;
+use tokio::time::sleep;
+use uuid::Uuid;
+
+const DEFAULT_SSH_PORT: u16 = 22;
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Errors raised by the Scaleway backend.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ScalewayBackendError {
+    /// Raised when the high-level configuration is incomplete.
+    #[error("configuration error: {0}")]
+    Config(String),
+    /// Raised when a request is missing a required field.
+    #[error("invalid instance request: {0}")]
+    Validation(String),
+    /// Raised when the requested image label cannot be resolved.
+    #[error("image '{label}' (arch {arch}) not found in zone {zone}")]
+    ImageNotFound {
+        /// Image label passed by the caller.
+        label: String,
+        /// Architecture requested by the caller.
+        arch: String,
+        /// Zone used for the lookup.
+        zone: String,
+    },
+    /// Raised when the server type is not available in the selected zone.
+    #[error("instance type '{instance_type}' not available in zone {zone}")]
+    InstanceTypeUnavailable {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Target zone.
+        zone: String,
+    },
+    /// Raised when an asynchronous operation exceeds the timeout.
+    #[error("timeout waiting for {action} on instance {instance_id}")]
+    Timeout {
+        /// Action being waited on.
+        action: String,
+        /// Provider instance identifier.
+        instance_id: String,
+    },
+    /// Raised when the instance never exposes a public IP.
+    #[error("instance {instance_id} missing public IPv4 address")]
+    MissingPublicIp {
+        /// Provider instance identifier.
+        instance_id: String,
+    },
+    /// Raised when teardown leaves a server visible in the API.
+    #[error("instance {instance_id} still present after teardown")]
+    ResidualResource {
+        /// Provider instance identifier.
+        instance_id: String,
+    },
+    /// Wrapper for provider level failures.
+    #[error("provider error: {message}")]
+    Provider {
+        /// Message returned by the provider SDK.
+        message: String,
+    },
+}
+
+impl From<ScalewayError> for ScalewayBackendError {
+    fn from(value: ScalewayError) -> Self {
+        Self::Provider {
+            message: value.to_string(),
+        }
+    }
+}
+
+impl From<BackendError> for ScalewayBackendError {
+    fn from(value: BackendError) -> Self {
+        match value {
+            BackendError::Validation(field) => Self::Validation(field),
+        }
+    }
+}
+
+impl From<ConfigError> for ScalewayBackendError {
+    fn from(value: ConfigError) -> Self {
+        Self::Config(value.to_string())
+    }
+}
+
+/// Backend that provisions instances through the Scaleway Instances API.
+#[derive(Clone, Debug)]
+pub struct ScalewayBackend {
+    api: ScalewayApi,
+    config: ScalewayConfig,
+    ssh_port: u16,
+    poll_interval: Duration,
+    wait_timeout: Duration,
+}
+
+impl ScalewayBackend {
+    /// Constructs a new backend from configuration.
+    #[must_use]
+    pub fn new(config: ScalewayConfig) -> Result<Self, ScalewayBackendError> {
+        config.validate()?;
+        Ok(Self {
+            api: ScalewayApi::new(&config.secret_key),
+            config,
+            ssh_port: DEFAULT_SSH_PORT,
+            poll_interval: POLL_INTERVAL,
+            wait_timeout: WAIT_TIMEOUT,
+        })
+    }
+
+    /// Builds an instance request using the backend's defaults.
+    #[must_use]
+    pub fn default_request(&self) -> Result<InstanceRequest, ScalewayBackendError> {
+        self.config.as_request().map_err(ScalewayBackendError::from)
+    }
+
+    async fn resolve_image_id(
+        &self,
+        request: &InstanceRequest,
+    ) -> Result<String, ScalewayBackendError> {
+        let images = self
+            .api
+            .list_instance_images(&request.zone)
+            .public(true)
+            .name(&request.image_label)
+            .run_async()
+            .await?;
+
+        let mut candidates: Vec<_> = images
+            .into_iter()
+            .filter(|image| image.arch == request.architecture)
+            .filter(|image| image.state == "available")
+            .collect();
+
+        if candidates.is_empty() {
+            return Err(ScalewayBackendError::ImageNotFound {
+                label: request.image_label.clone(),
+                arch: request.architecture.clone(),
+                zone: request.zone.clone(),
+            });
+        }
+
+        candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
+        candidates
+            .into_iter()
+            .next()
+            .map(|image| image.id)
+            .ok_or_else(|| ScalewayBackendError::ImageNotFound {
+                label: request.image_label.clone(),
+                arch: request.architecture.clone(),
+                zone: request.zone.clone(),
+            })
+    }
+
+    async fn ensure_instance_type(
+        &self,
+        request: &InstanceRequest,
+    ) -> Result<(), ScalewayBackendError> {
+        let types = self.api.get_server_types_async(&request.zone).await?;
+        if types
+            .iter()
+            .any(|ty| ty.id == request.instance_type || ty.alt_names.contains(&request.instance_type))
+        {
+            return Ok(());
+        }
+
+        Err(ScalewayBackendError::InstanceTypeUnavailable {
+            instance_type: request.instance_type.clone(),
+            zone: request.zone.clone(),
+        })
+    }
+
+    async fn power_on_if_needed(
+        &self,
+        zone: &str,
+        instance: &scaleway_rs::ScalewayInstance,
+    ) -> Result<(), ScalewayBackendError> {
+        if instance.state == "running" {
+            return Ok(());
+        }
+
+        if instance.allowed_actions.iter().any(|action| action == "poweron") {
+            self.api
+                .perform_instance_action_async(zone, &instance.id, "poweron")
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn fetch_instance(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<Option<scaleway_rs::ScalewayInstance>, ScalewayBackendError> {
+        let mut servers = self
+            .api
+            .list_instances(&handle.zone)
+            .servers(&handle.id)
+            .per_page(1)
+            .run_async()
+            .await?;
+        Ok(servers.pop())
+    }
+
+    async fn wait_for_public_ip(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<InstanceNetworking, ScalewayBackendError> {
+        let deadline = Instant::now() + self.wait_timeout;
+        loop {
+            if Instant::now() > deadline {
+                return Err(ScalewayBackendError::Timeout {
+                    action: "wait_for_ready".to_owned(),
+                    instance_id: handle.id.clone(),
+                });
+            }
+
+            if let Some(server) = self.fetch_instance(handle).await? {
+                if let Some(public_ip) = server.public_ip {
+                    if let Ok(address) = IpAddr::from_str(&public_ip.address) {
+                        if server.state == "running" {
+                            return Ok(InstanceNetworking {
+                                public_ip: address,
+                                ssh_port: self.ssh_port,
+                            });
+                        }
+                    }
+                }
+            }
+
+            sleep(self.poll_interval).await;
+        }
+    }
+
+    async fn wait_until_gone(&self, handle: &InstanceHandle) -> Result<(), ScalewayBackendError> {
+        let deadline = Instant::now() + self.wait_timeout;
+        while Instant::now() <= deadline {
+            if self.fetch_instance(handle).await?.is_none() {
+                return Ok(());
+            }
+            sleep(self.poll_interval).await;
+        }
+
+        Err(ScalewayBackendError::ResidualResource {
+            instance_id: handle.id.clone(),
+        })
+    }
+}
+
+impl Backend for ScalewayBackend {
+    type Error = ScalewayBackendError;
+
+    async fn create(&self, request: &InstanceRequest) -> Result<InstanceHandle, Self::Error> {
+        request.validate()?;
+        self.ensure_instance_type(request).await?;
+        let image_id = self.resolve_image_id(request).await?;
+
+        let name = format!("mriya-{}", Uuid::new_v4().simple());
+        let server = ScalewayCreateInstanceBuilder::new(
+            self.api.clone(),
+            &request.zone,
+            &name,
+            &request.instance_type,
+        )
+        .image(&image_id)
+        .project(&request.project_id)
+        .routed_ip_enabled(true)
+        .tags(vec![String::from("mriya"), String::from("ephemeral")])
+        .run_async()
+        .await?;
+
+        self.power_on_if_needed(&request.zone, &server).await?;
+
+        Ok(InstanceHandle {
+            id: server.id,
+            zone: request.zone.clone(),
+        })
+    }
+
+    async fn wait_for_ready(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<InstanceNetworking, Self::Error> {
+        self.wait_for_public_ip(handle).await
+    }
+
+    async fn destroy(&self, handle: InstanceHandle) -> Result<(), Self::Error> {
+        self.api
+            .delete_instance_async(&handle.zone, &handle.id)
+            .await?;
+        self.wait_until_gone(&handle).await
+    }
+}
