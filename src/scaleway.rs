@@ -19,6 +19,14 @@ const DEFAULT_SSH_PORT: u16 = 22;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InstanceSnapshot {
+    id: String,
+    state: String,
+    allowed_actions: Vec<String>,
+    public_ip: Option<String>,
+}
+
 /// Errors raised by the Scaleway backend.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ScalewayBackendError {
@@ -65,6 +73,14 @@ pub enum ScalewayBackendError {
     ResidualResource {
         /// Provider instance identifier.
         instance_id: String,
+    },
+    /// Raised when an instance cannot be powered on.
+    #[error("instance {instance_id} in state {state} cannot be powered on")]
+    PowerOnNotAllowed {
+        /// Provider instance identifier.
+        instance_id: String,
+        /// Current state reported by the provider.
+        state: String,
     },
     /// Wrapper for provider level failures.
     #[error("provider error: {message}")]
@@ -197,28 +213,33 @@ impl ScalewayBackend {
     async fn power_on_if_needed(
         &self,
         zone: &str,
-        instance: &scaleway_rs::ScalewayInstance,
+        snapshot: &InstanceSnapshot,
     ) -> Result<(), ScalewayBackendError> {
-        if instance.state == "running" {
+        if snapshot.state == "running" {
             return Ok(());
         }
 
-        if instance
+        if snapshot
             .allowed_actions
             .iter()
             .any(|action| action == "poweron")
         {
             self.api
-                .perform_instance_action_async(zone, &instance.id, "poweron")
+                .perform_instance_action_async(zone, &snapshot.id, "poweron")
                 .await?;
+            return Ok(());
         }
-        Ok(())
+
+        Err(ScalewayBackendError::PowerOnNotAllowed {
+            instance_id: snapshot.id.clone(),
+            state: snapshot.state.clone(),
+        })
     }
 
     async fn fetch_instance(
         &self,
         handle: &InstanceHandle,
-    ) -> Result<Option<scaleway_rs::ScalewayInstance>, ScalewayBackendError> {
+    ) -> Result<Option<InstanceSnapshot>, ScalewayBackendError> {
         let mut servers = self
             .api
             .list_instances(&handle.zone)
@@ -226,7 +247,13 @@ impl ScalewayBackend {
             .per_page(1)
             .run_async()
             .await?;
-        Ok(servers.pop())
+
+        Ok(servers.pop().map(|server| InstanceSnapshot {
+            id: server.id,
+            state: server.state,
+            allowed_actions: server.allowed_actions,
+            public_ip: server.public_ip.map(|ip| ip.address),
+        }))
     }
 
     async fn wait_for_public_ip(
@@ -252,20 +279,24 @@ impl ScalewayBackend {
                 continue;
             }
 
-            let Some(public_ip) = server.public_ip else {
-                sleep(self.poll_interval).await;
-                continue;
-            };
+            if let Some(address) = server
+                .public_ip
+                .as_ref()
+                .and_then(|ip| IpAddr::from_str(ip).ok())
+            {
+                return Ok(InstanceNetworking {
+                    public_ip: address,
+                    ssh_port: self.ssh_port,
+                });
+            }
 
-            let Ok(address) = IpAddr::from_str(&public_ip.address) else {
-                sleep(self.poll_interval).await;
-                continue;
-            };
+            if Instant::now() > deadline {
+                return Err(ScalewayBackendError::MissingPublicIp {
+                    instance_id: handle.id.clone(),
+                });
+            }
 
-            return Ok(InstanceNetworking {
-                public_ip: address,
-                ssh_port: self.ssh_port,
-            });
+            sleep(self.poll_interval).await;
         }
     }
 
@@ -314,8 +345,7 @@ impl Backend for ScalewayBackend {
                     if api_err
                         .message
                         .to_ascii_lowercase()
-                        .contains("commercial_type")
-                        || api_err.etype == "invalid_arguments" =>
+                        .contains("commercial_type") =>
                 {
                     return Err(ScalewayBackendError::InstanceTypeUnavailable {
                         instance_type: request.instance_type.clone(),
@@ -325,7 +355,14 @@ impl Backend for ScalewayBackend {
                 Err(other) => return Err(other.into()),
             };
 
-            self.power_on_if_needed(&request.zone, &server).await?;
+            let snapshot = InstanceSnapshot {
+                id: server.id.clone(),
+                state: server.state.clone(),
+                allowed_actions: server.allowed_actions.clone(),
+                public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
+            };
+
+            self.power_on_if_needed(&request.zone, &snapshot).await?;
 
             Ok(InstanceHandle {
                 id: server.id,

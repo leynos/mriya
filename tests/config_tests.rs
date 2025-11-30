@@ -2,6 +2,19 @@
 
 use mriya::{InstanceRequest, ScalewayConfig};
 
+fn make_valid_config() -> ScalewayConfig {
+    ScalewayConfig {
+        access_key: Some(String::from("SCWACCESSKEYEXAMPLE")),
+        secret_key: String::from("SCWSECRETKEYEXAMPLE"),
+        default_organization_id: None,
+        default_project_id: String::from("11111111-2222-3333-4444-555555555555"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from("DEV1-S"),
+        default_image: String::from("ubuntu-22-04"),
+        default_architecture: String::from("x86_64"),
+    }
+}
+
 #[test]
 fn instance_request_validation_rejects_empty_fields() {
     let request = InstanceRequest::new("", "", "", "", None, "");
@@ -11,16 +24,72 @@ fn instance_request_validation_rejects_empty_fields() {
 }
 
 #[test]
+fn instance_request_validation_rejects_other_empty_fields() {
+    let baseline = InstanceRequest::new(
+        "ubuntu-22-04",
+        "DEV1-S",
+        "fr-par-1",
+        "11111111-2222-3333-4444-555555555555",
+        None,
+        "x86_64",
+    );
+
+    let cases = [
+        (
+            "instance_type",
+            InstanceRequest {
+                instance_type: String::new(),
+                ..baseline.clone()
+            },
+        ),
+        (
+            "zone",
+            InstanceRequest {
+                zone: String::new(),
+                ..baseline.clone()
+            },
+        ),
+        (
+            "project_id",
+            InstanceRequest {
+                project_id: String::new(),
+                ..baseline.clone()
+            },
+        ),
+        (
+            "architecture",
+            InstanceRequest {
+                architecture: String::new(),
+                ..baseline.clone()
+            },
+        ),
+    ];
+
+    for (field, request) in cases {
+        let error = request
+            .validate()
+            .expect_err(&format!("validation should fail for empty {field}"));
+        assert_eq!(
+            error.to_string(),
+            format!("missing or empty field: {field}")
+        );
+    }
+}
+
+#[test]
+fn instance_request_trims_whitespace() {
+    let request = InstanceRequest::new("  ", "  ", "  ", "  ", None, "  ");
+    let error = request
+        .validate()
+        .expect_err("whitespace-only fields should be empty");
+    assert_eq!(error.to_string(), "missing or empty field: image_label");
+}
+
+#[test]
 fn config_validation_rejects_missing_secret() {
     let cfg = ScalewayConfig {
-        access_key: None,
         secret_key: String::new(),
-        default_organization_id: None,
-        default_project_id: String::from("project"),
-        default_zone: String::from("fr-par-1"),
-        default_instance_type: String::from("DEV1-S"),
-        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
-        default_architecture: String::from("x86_64"),
+        ..make_valid_config()
     };
 
     let error = cfg.validate().expect_err("secret is required");
@@ -28,4 +97,63 @@ fn config_validation_rejects_missing_secret() {
         error.to_string(),
         "missing configuration field: SCW_SECRET_KEY"
     );
+}
+
+#[test]
+fn config_validation_rejects_other_fields() {
+    fn assert_missing(
+        mut cfg: ScalewayConfig,
+        mutate: impl FnOnce(&mut ScalewayConfig),
+        expected: &str,
+    ) {
+        mutate(&mut cfg);
+        let error = cfg.validate().expect_err("validation should fail");
+        assert_eq!(error.to_string(), expected);
+    }
+
+    assert_missing(
+        make_valid_config(),
+        |cfg| cfg.default_project_id.clear(),
+        "missing configuration field: SCW_DEFAULT_PROJECT_ID",
+    );
+
+    assert_missing(
+        make_valid_config(),
+        |cfg| cfg.default_image.clear(),
+        "missing configuration field: default_image",
+    );
+
+    assert_missing(
+        make_valid_config(),
+        |cfg| cfg.default_instance_type.clear(),
+        "missing configuration field: default_instance_type",
+    );
+
+    assert_missing(
+        make_valid_config(),
+        |cfg| cfg.default_zone.clear(),
+        "missing configuration field: default_zone",
+    );
+
+    assert_missing(
+        make_valid_config(),
+        |cfg| cfg.default_architecture.clear(),
+        "missing configuration field: default_architecture",
+    );
+}
+
+#[test]
+fn config_as_request_produces_valid_request() {
+    let cfg = make_valid_config();
+    let request = cfg
+        .as_request()
+        .unwrap_or_else(|err| panic!("valid config yields request: {err}"));
+    request
+        .validate()
+        .unwrap_or_else(|err| panic!("request from config validates: {err}"));
+    assert_eq!(request.image_label, cfg.default_image);
+    assert_eq!(request.instance_type, cfg.default_instance_type);
+    assert_eq!(request.zone, cfg.default_zone);
+    assert_eq!(request.project_id, cfg.default_project_id);
+    assert_eq!(request.architecture, cfg.default_architecture);
 }

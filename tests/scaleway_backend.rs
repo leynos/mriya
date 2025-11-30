@@ -1,7 +1,7 @@
 //! Behavioural tests for the Scaleway backend lifecycle.
 
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::LazyLock;
 
 use mriya::{
     Backend, InstanceHandle, InstanceNetworking, InstanceRequest, ScalewayBackend,
@@ -12,32 +12,26 @@ use rstest_bdd::skip;
 use rstest_bdd_macros::{given, scenario, then, when};
 use tokio::runtime::Runtime;
 
-fn new_runtime() -> Result<Runtime, ScalewayBackendError> {
-    Runtime::new().map_err(|err| ScalewayBackendError::Provider {
-        message: format!("failed to start runtime: {err}"),
-    })
-}
+static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
+    Runtime::new()
+        .unwrap_or_else(|err| panic!("tokio runtime should start for behavioural tests: {err}"))
+});
 
 fn block_on<Fut, T>(future: Fut) -> Result<T, ScalewayBackendError>
 where
-    Fut: Future<Output = Result<T, ScalewayBackendError>>,
+    Fut: std::future::Future<Output = Result<T, ScalewayBackendError>>,
 {
-    let runtime = new_runtime()?;
-    runtime.block_on(future)
+    RUNTIME.block_on(future)
 }
 
 #[fixture]
 fn scaleway_config() -> ScalewayConfig {
-    ScalewayConfig::load_from_sources().unwrap_or_else(|_| ScalewayConfig {
-        access_key: None,
-        secret_key: String::from("placeholder"),
-        default_organization_id: None,
-        default_project_id: String::from("placeholder"),
-        default_zone: String::from("fr-par-1"),
-        default_instance_type: String::from("DEV1-S"),
-        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
-        default_architecture: String::from("x86_64"),
-    })
+    match ScalewayConfig::load_from_sources() {
+        Ok(config) => config,
+        Err(err) => skip!(format!(
+            "Skipping Scaleway behavioural tests: failed to load configuration: {err}"
+        )),
+    }
 }
 
 #[fixture]

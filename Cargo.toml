@@ -16,6 +16,7 @@ uuid = { version = "1.10", features = ["v4"] }
 rstest = "0.22"
 rstest-bdd = "0.1.0"
 rstest-bdd-macros = "0.1.0"
+assert_cmd = "2.0"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

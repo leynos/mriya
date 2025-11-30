@@ -181,83 +181,83 @@ design anticipates others (Hetzner, DigitalOcean, AWS, etc.) in later versions.
 classDiagram
     class Backend {
         <<trait>>
-        +create(request: InstanceRequest): Result
-        +wait_for_ready(handle: InstanceHandle): Result
-        +destroy(handle: InstanceHandle): Result
+        +create(request InstanceRequest) Result~InstanceHandle, Error~
+        +wait_for_ready(handle InstanceHandle) Result~InstanceNetworking, Error~
+        +destroy(handle InstanceHandle) Result~(), Error~
     }
 
     class InstanceRequest {
-        +image_label: String
-        +instance_type: String
-        +zone: String
-        +project_id: String
-        +organisation_id: Option<String>
-        +architecture: String
-        +new(image_label, instance_type, zone, project_id, organisation_id, architecture): InstanceRequest
-        +validate(): Result
+        +String image_label
+        +String instance_type
+        +String zone
+        +String project_id
+        +Option~String~ organisation_id
+        +String architecture
+        +new(image_label String, instance_type String, zone String, project_id String, organisation_id Option~String~, architecture String) InstanceRequest
+        +validate() Result~(), BackendError~
     }
 
     class InstanceHandle {
-        +id: String
-        +zone: String
+        +String id
+        +String zone
     }
 
     class InstanceNetworking {
-        +public_ip: IpAddr
-        +ssh_port: u16
+        +IpAddr public_ip
+        +u16 ssh_port
     }
 
     class BackendError {
         <<enum>>
-        +Validation(message: String)
+        +Validation(String)
     }
 
     class ScalewayConfig {
-        +access_key: Option<String>
-        +secret_key: String
-        +default_organization_id: Option<String>
-        +default_project_id: String
-        +default_zone: String
-        +default_instance_type: String
-        +default_image: String
-        +default_architecture: String
-        +load_from_sources(): Result
-        +as_request(): Result
-        +validate(): Result
+        +Option~String~ access_key
+        +String secret_key
+        +Option~String~ default_organization_id
+        +String default_project_id
+        +String default_zone
+        +String default_instance_type
+        +String default_image
+        +String default_architecture
+        +load_from_sources() Result~ScalewayConfig, ConfigError~
+        +as_request() Result~InstanceRequest, ConfigError~
+        +validate() Result~(), ConfigError~
     }
 
     class ConfigError {
         <<enum>>
-        +MissingField(name: String)
-        +Parse(message: String)
+        +MissingField(String)
+        +Parse(String)
     }
 
     class ScalewayBackend {
-        +api: ScalewayApi
-        +config: ScalewayConfig
-        +ssh_port: u16
-        +poll_interval: Duration
-        +wait_timeout: Duration
-        +new(config: ScalewayConfig): Result
-        +default_request(): Result
-        +resolve_image_id(request: InstanceRequest): Result
-        +ensure_instance_type(request: InstanceRequest): Result
-        +power_on_if_needed(zone: String, instance: ScalewayInstance): Result
-        +fetch_instance(handle: InstanceHandle): Result
-        +wait_for_public_ip(handle: InstanceHandle): Result
-        +wait_until_gone(handle: InstanceHandle): Result
+        +ScalewayApi api
+        +ScalewayConfig config
+        +u16 ssh_port
+        +Duration poll_interval
+        +Duration wait_timeout
+        +new(config ScalewayConfig) Result~ScalewayBackend, ScalewayBackendError~
+        +default_request() Result~InstanceRequest, ScalewayBackendError~
+        +resolve_image_id(request InstanceRequest) Result~String, ScalewayBackendError~
+        +ensure_instance_type(request InstanceRequest) Result~(), ScalewayBackendError~
+        +power_on_if_needed(zone String, instance ScalewayInstance) Result~(), ScalewayBackendError~
+        +fetch_instance(handle InstanceHandle) Result~Option~ScalewayInstance~, ScalewayBackendError~
+        +wait_for_public_ip(handle InstanceHandle) Result~InstanceNetworking, ScalewayBackendError~
+        +wait_until_gone(handle InstanceHandle) Result~(), ScalewayBackendError~
     }
 
     class ScalewayBackendError {
         <<enum>>
-        +Config(message: String)
-        +Validation(message: String)
-        +ImageNotFound(label: String, arch: String, zone: String)
-        +InstanceTypeUnavailable(instance_type: String, zone: String)
-        +Timeout(action: String, instance_id: String)
-        +MissingPublicIp(instance_id: String)
-        +ResidualResource(instance_id: String)
-        +Provider(message: String)
+        +Config(String)
+        +Validation(String)
+        +ImageNotFound label String arch String zone String
+        +InstanceTypeUnavailable instance_type String zone String
+        +Timeout action String instance_id String
+        +MissingPublicIp instance_id String
+        +ResidualResource instance_id String
+        +Provider message String
     }
 
     class ScalewayApi {
