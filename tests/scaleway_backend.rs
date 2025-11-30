@@ -28,28 +28,16 @@ where
 
 #[fixture]
 fn scaleway_config() -> ScalewayConfig {
-    let missing = [
-        ("SCW_SECRET_KEY", std::env::var("SCW_SECRET_KEY")),
-        (
-            "SCW_DEFAULT_PROJECT_ID",
-            std::env::var("SCW_DEFAULT_PROJECT_ID"),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(name, res)| match res {
-        Ok(value) if !value.trim().is_empty() => None,
-        _ => Some(name),
+    ScalewayConfig::load_from_sources().unwrap_or_else(|_| ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("placeholder"),
+        default_organization_id: None,
+        default_project_id: String::from("placeholder"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from("DEV1-S"),
+        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
+        default_architecture: String::from("x86_64"),
     })
-    .collect::<Vec<_>>();
-
-    if !missing.is_empty() {
-        skip!("missing required Scaleway env: {:?}", missing);
-    }
-
-    match ScalewayConfig::load_from_sources() {
-        Ok(cfg) => cfg,
-        Err(err) => skip!(format!("failed to load Scaleway configuration: {err}")),
-    }
 }
 
 #[fixture]
@@ -92,11 +80,25 @@ fn provision_and_cleanup(
 }
 
 #[given("valid Scaleway credentials")]
-#[expect(
-    clippy::missing_const_for_fn,
-    reason = "fixtures may gain runtime setup later"
-)]
 fn valid_scaleway_credentials(scaleway_backend: &ScalewayBackend, base_request: &InstanceRequest) {
+    let missing = [
+        ("SCW_SECRET_KEY", std::env::var("SCW_SECRET_KEY")),
+        (
+            "SCW_DEFAULT_PROJECT_ID",
+            std::env::var("SCW_DEFAULT_PROJECT_ID"),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, res)| match res {
+        Ok(value) if !value.trim().is_empty() => None,
+        _ => Some(name),
+    })
+    .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        skip!(format!("missing required Scaleway env: {:?}", missing));
+    }
+
     let _ = (scaleway_backend, base_request);
 }
 
