@@ -177,6 +177,7 @@ design anticipates others (Hetzner, DigitalOcean, AWS, etc.) in later versions.
 
 ### Class diagram
 
+<!-- markdownlint-disable MD013 -->
 ```mermaid
 classDiagram
     class Backend {
@@ -283,6 +284,7 @@ classDiagram
     ScalewayBackendError <-- BackendError : From
     ScalewayBackendError <-- ConfigError : From
 ```
+<!-- markdownlint-enable MD013 -->
 
 **`Backend` Trait – Minimal Interface:** At v0, the trait can be very simple,
 focusing on the VM lifecycle:

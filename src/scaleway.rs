@@ -199,9 +199,7 @@ impl ScalewayBackend {
         }
 
         candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
-        let image_id = candidates
-            .remove(0)
-            .id;
+        let image_id = candidates.remove(0).id;
         Ok(image_id)
     }
 

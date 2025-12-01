@@ -140,8 +140,7 @@ fn request_invalid_type(
             }
             Err(ScalewayBackendError::InstanceTypeUnavailable { .. }) => Ok(()),
             Err(ScalewayBackendError::Provider { message })
-                if message.contains("commercial_type")
-                    || message.contains("invalid_arguments") =>
+                if message.contains("commercial_type") || message.contains("invalid_arguments") =>
             {
                 Ok(())
             }
