@@ -25,27 +25,10 @@ pub struct InstanceRequest {
 }
 
 impl InstanceRequest {
-    /// Creates a new request, trimming inputs to avoid accidental whitespace.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "value object constructor must capture all required fields"
-    )]
-    pub fn new(
-        image_label: impl Into<String>,
-        instance_type: impl Into<String>,
-        zone: impl Into<String>,
-        project_id: impl Into<String>,
-        organisation_id: Option<String>,
-        architecture: impl Into<String>,
-    ) -> Self {
-        Self {
-            image_label: image_label.into().trim().to_owned(),
-            instance_type: instance_type.into().trim().to_owned(),
-            zone: zone.into().trim().to_owned(),
-            project_id: project_id.into().trim().to_owned(),
-            organisation_id: organisation_id.map(|value| value.trim().to_owned()),
-            architecture: architecture.into().trim().to_owned(),
-        }
+    /// Starts a builder for an [`InstanceRequest`].
+    #[must_use]
+    pub fn builder() -> InstanceRequestBuilder {
+        InstanceRequestBuilder::new()
     }
 
     /// Validates the request, returning a descriptive error when a required
@@ -71,6 +54,86 @@ impl InstanceRequest {
             return Err(BackendError::Validation("architecture".to_owned()));
         }
         Ok(())
+    }
+}
+
+/// Builder for [`InstanceRequest`] that defers trimming and validation to
+/// construction.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InstanceRequestBuilder {
+    image_label: String,
+    instance_type: String,
+    zone: String,
+    project_id: String,
+    organisation_id: Option<String>,
+    architecture: String,
+}
+
+impl InstanceRequestBuilder {
+    /// Creates an empty builder; fields must be populated before build.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the image label.
+    #[must_use]
+    pub fn image_label(mut self, value: impl Into<String>) -> Self {
+        self.image_label = value.into();
+        self
+    }
+
+    /// Sets the instance type.
+    #[must_use]
+    pub fn instance_type(mut self, value: impl Into<String>) -> Self {
+        self.instance_type = value.into();
+        self
+    }
+
+    /// Sets the availability zone.
+    #[must_use]
+    pub fn zone(mut self, value: impl Into<String>) -> Self {
+        self.zone = value.into();
+        self
+    }
+
+    /// Sets the project identifier.
+    #[must_use]
+    pub fn project_id(mut self, value: impl Into<String>) -> Self {
+        self.project_id = value.into();
+        self
+    }
+
+    /// Sets the optional organisation identifier.
+    #[must_use]
+    pub fn organisation_id(mut self, value: Option<String>) -> Self {
+        self.organisation_id = value;
+        self
+    }
+
+    /// Sets the architecture.
+    #[must_use]
+    pub fn architecture(mut self, value: impl Into<String>) -> Self {
+        self.architecture = value.into();
+        self
+    }
+
+    /// Builds and validates the [`InstanceRequest`], trimming string inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Validation`] when any required field is empty.
+    pub fn build(self) -> Result<InstanceRequest, BackendError> {
+        let request = InstanceRequest {
+            image_label: self.image_label.trim().to_owned(),
+            instance_type: self.instance_type.trim().to_owned(),
+            zone: self.zone.trim().to_owned(),
+            project_id: self.project_id.trim().to_owned(),
+            organisation_id: self.organisation_id.map(|value| value.trim().to_owned()),
+            architecture: self.architecture.trim().to_owned(),
+        };
+        request.validate()?;
+        Ok(request)
     }
 }
 

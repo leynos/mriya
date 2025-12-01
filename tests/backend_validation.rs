@@ -4,21 +4,22 @@ use mriya::{InstanceRequest, backend::BackendError};
 
 #[test]
 fn validate_rejects_empty_fields() {
-    let request = InstanceRequest::new("", "", "", "", None, "");
-    let error = request.validate().expect_err("validation should fail");
+    let error = InstanceRequest::builder()
+        .build()
+        .expect_err("validation should fail");
     assert_eq!(error, BackendError::Validation(String::from("image_label")));
 }
 
 #[test]
 fn validate_rejects_other_missing_fields() {
-    let base = InstanceRequest::new(
-        "ubuntu-22-04",
-        "DEV1-S",
-        "fr-par-1",
-        "project-id",
-        None,
-        "x86_64",
-    );
+    let base = InstanceRequest::builder()
+        .image_label("ubuntu-22-04")
+        .instance_type("DEV1-S")
+        .zone("fr-par-1")
+        .project_id("project-id")
+        .architecture("x86_64")
+        .build()
+        .expect("baseline request should be valid");
 
     let cases = [
         (
@@ -59,9 +60,13 @@ fn validate_rejects_other_missing_fields() {
 
 #[test]
 fn new_trims_whitespace() {
-    let request = InstanceRequest::new("  ", "  ", "  ", "  ", None, "  ");
-    let error = request
-        .validate()
+    let error = InstanceRequest::builder()
+        .image_label("  ")
+        .instance_type("  ")
+        .zone("  ")
+        .project_id("  ")
+        .architecture("  ")
+        .build()
         .expect_err("whitespace-only values should fail");
     assert_eq!(error, BackendError::Validation(String::from("image_label")));
 }

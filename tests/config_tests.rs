@@ -17,22 +17,22 @@ fn make_valid_config() -> ScalewayConfig {
 
 #[test]
 fn instance_request_validation_rejects_empty_fields() {
-    let request = InstanceRequest::new("", "", "", "", None, "");
-
-    let error = request.validate().expect_err("validation should fail");
+    let error = InstanceRequest::builder()
+        .build()
+        .expect_err("validation should fail");
     assert_eq!(error.to_string(), "missing or empty field: image_label");
 }
 
 #[test]
 fn instance_request_validation_rejects_other_empty_fields() {
-    let baseline = InstanceRequest::new(
-        "ubuntu-22-04",
-        "DEV1-S",
-        "fr-par-1",
-        "11111111-2222-3333-4444-555555555555",
-        None,
-        "x86_64",
-    );
+    let baseline = InstanceRequest::builder()
+        .image_label("ubuntu-22-04")
+        .instance_type("DEV1-S")
+        .zone("fr-par-1")
+        .project_id("11111111-2222-3333-4444-555555555555")
+        .architecture("x86_64")
+        .build()
+        .expect("baseline request should be valid");
 
     let cases = [
         (
@@ -78,9 +78,13 @@ fn instance_request_validation_rejects_other_empty_fields() {
 
 #[test]
 fn instance_request_trims_whitespace() {
-    let request = InstanceRequest::new("  ", "  ", "  ", "  ", None, "  ");
-    let error = request
-        .validate()
+    let error = InstanceRequest::builder()
+        .image_label("  ")
+        .instance_type("  ")
+        .zone("  ")
+        .project_id("  ")
+        .architecture("  ")
+        .build()
         .expect_err("whitespace-only fields should be empty");
     assert_eq!(error.to_string(), "missing or empty field: image_label");
 }

@@ -53,14 +53,15 @@ impl ScalewayConfig {
     /// Returns [`ConfigError`] when validation fails.
     pub fn as_request(&self) -> Result<InstanceRequest, ConfigError> {
         self.validate()?;
-        Ok(InstanceRequest::new(
-            &self.default_image,
-            &self.default_instance_type,
-            &self.default_zone,
-            &self.default_project_id,
-            self.default_organization_id.clone(),
-            &self.default_architecture,
-        ))
+        InstanceRequest::builder()
+            .image_label(&self.default_image)
+            .instance_type(&self.default_instance_type)
+            .zone(&self.default_zone)
+            .project_id(&self.default_project_id)
+            .organisation_id(self.default_organization_id.clone())
+            .architecture(&self.default_architecture)
+            .build()
+            .map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
     /// Performs semantic validation on required fields.
