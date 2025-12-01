@@ -199,15 +199,10 @@ impl ScalewayBackend {
         }
 
         candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
-        candidates
-            .into_iter()
-            .next()
-            .map(|image| image.id)
-            .ok_or_else(|| ScalewayBackendError::ImageNotFound {
-                label: request.image_label.clone(),
-                arch: request.architecture.clone(),
-                zone: request.zone.clone(),
-            })
+        let image_id = candidates
+            .remove(0)
+            .id;
+        Ok(image_id)
     }
 
     async fn power_on_if_needed(

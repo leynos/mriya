@@ -68,7 +68,12 @@ fn provision_and_cleanup(
         match (ready_result, teardown_result) {
             (Ok(networking), Ok(())) => Ok(networking),
             (Err(wait_err), Ok(())) => Err(wait_err),
-            (Ok(_) | Err(_), Err(destroy_err)) => Err(destroy_err),
+            (Ok(_), Err(destroy_err)) => Err(destroy_err),
+            (Err(wait_err), Err(destroy_err)) => Err(ScalewayBackendError::Provider {
+                message: format!(
+                    "wait_for_ready failed with '{wait_err}' before destroy failed with '{destroy_err}'"
+                ),
+            }),
         }
     })
 }
@@ -133,10 +138,13 @@ fn request_invalid_type(
             Err(err) if err.to_string().contains("permissions_denied") => {
                 skip!("permissions denied during instance creation: {err}")
             }
-            Err(
-                ScalewayBackendError::InstanceTypeUnavailable { .. }
-                | ScalewayBackendError::Provider { .. },
-            ) => Ok(()),
+            Err(ScalewayBackendError::InstanceTypeUnavailable { .. }) => Ok(()),
+            Err(ScalewayBackendError::Provider { message })
+                if message.contains("commercial_type")
+                    || message.contains("invalid_arguments") =>
+            {
+                Ok(())
+            }
             Err(err) => Err(err),
         }
     })
