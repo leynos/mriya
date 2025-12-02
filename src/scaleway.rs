@@ -335,7 +335,12 @@ impl Backend for ScalewayBackend {
             {
                 Ok(server) => server,
                 Err(ScalewayError::Api(api_err))
-                    if api_err.resource.as_deref() == Some("commercial_type") =>
+                    if api_err.resource.as_deref() == Some("commercial_type")
+                        || api_err
+                            .resource_id
+                            .as_deref()
+                            .is_some_and(|id| id == request.instance_type)
+                        || api_err.etype == "invalid_arguments" =>
                 {
                     return Err(ScalewayBackendError::InstanceTypeUnavailable {
                         instance_type: request.instance_type.clone(),
@@ -375,5 +380,199 @@ impl Backend for ScalewayBackend {
                 .await?;
             self.wait_until_gone(&handle).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    fn snapshot(
+        id: &str,
+        state: &str,
+        allowed: &[&str],
+        public_ip: Option<&str>,
+    ) -> InstanceSnapshot {
+        InstanceSnapshot {
+            id: id.to_owned(),
+            state: state.to_owned(),
+            allowed_actions: allowed
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            public_ip: public_ip.map(str::to_owned),
+        }
+    }
+
+    fn dummy_config() -> ScalewayConfig {
+        ScalewayConfig {
+            access_key: None,
+            secret_key: String::from("dummy"),
+            default_organization_id: None,
+            default_project_id: String::from("proj"),
+            default_zone: String::from("zone"),
+            default_instance_type: String::from("type"),
+            default_image: String::from("img"),
+            default_architecture: String::from("x86_64"),
+        }
+    }
+
+    #[tokio::test]
+    async fn power_on_if_needed_returns_ok_for_running() {
+        let backend = ScalewayBackend {
+            api: ScalewayApi::new("dummy"),
+            config: dummy_config(),
+            ssh_port: DEFAULT_SSH_PORT,
+            poll_interval: Duration::from_millis(1),
+            wait_timeout: Duration::from_millis(5),
+        };
+        let snap = snapshot("id", "running", &["poweron"], Some("1.1.1.1"));
+        let result = backend.power_on_if_needed("zone", &snap).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn power_on_if_needed_errors_when_not_allowed() {
+        let backend = ScalewayBackend {
+            api: ScalewayApi::new("dummy"),
+            config: dummy_config(),
+            ssh_port: DEFAULT_SSH_PORT,
+            poll_interval: Duration::from_millis(1),
+            wait_timeout: Duration::from_millis(5),
+        };
+        let snap = snapshot("id", "stopped", &[], None);
+        let result = backend.power_on_if_needed("zone", &snap).await;
+        assert!(matches!(
+            result,
+            Err(ScalewayBackendError::PowerOnNotAllowed { .. })
+        ));
+    }
+
+    /// Minimal backend double to test wait loops without real API calls.
+    struct FakeBackend {
+        snapshots: VecDeque<Option<InstanceSnapshot>>,
+        poll_interval: Duration,
+        wait_timeout: Duration,
+        ssh_port: u16,
+    }
+
+    impl FakeBackend {
+        #[expect(
+            clippy::excessive_nesting,
+            reason = "test double mirrors production polling structure"
+        )]
+        async fn wait_for_public_ip(
+            &mut self,
+            handle: &InstanceHandle,
+        ) -> Result<InstanceNetworking, ScalewayBackendError> {
+            let deadline = Instant::now() + self.wait_timeout;
+            loop {
+                if Instant::now() > deadline {
+                    return Err(ScalewayBackendError::Timeout {
+                        action: "wait_for_ready".to_owned(),
+                        instance_id: handle.id.clone(),
+                    });
+                }
+
+                let server_opt = self.snapshots.pop_front().unwrap_or(None);
+                let Some(server) = server_opt else {
+                    sleep(self.poll_interval).await;
+                    continue;
+                };
+
+                if server.state != "running" {
+                    sleep(self.poll_interval).await;
+                    continue;
+                }
+
+                if let Some(address) = server
+                    .public_ip
+                    .as_ref()
+                    .and_then(|ip| IpAddr::from_str(ip).ok())
+                {
+                    return Ok(InstanceNetworking {
+                        public_ip: address,
+                        ssh_port: self.ssh_port,
+                    });
+                }
+
+                if Instant::now() > deadline {
+                    return Err(ScalewayBackendError::MissingPublicIp {
+                        instance_id: handle.id.clone(),
+                    });
+                }
+
+                sleep(self.poll_interval).await;
+            }
+        }
+
+        #[expect(
+            clippy::excessive_nesting,
+            reason = "test double mirrors production polling structure"
+        )]
+        async fn wait_until_gone(
+            &mut self,
+            handle: &InstanceHandle,
+        ) -> Result<(), ScalewayBackendError> {
+            let deadline = Instant::now() + self.wait_timeout;
+            while Instant::now() <= deadline {
+                let next = self.snapshots.pop_front().unwrap_or(None);
+                if next.is_none() {
+                    return Ok(());
+                }
+                sleep(self.poll_interval).await;
+            }
+            Err(ScalewayBackendError::ResidualResource {
+                instance_id: handle.id.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_for_public_ip_returns_missing_ip() {
+        let mut fake = FakeBackend {
+            snapshots: VecDeque::from(vec![
+                Some(snapshot("id", "running", &[], None)),
+                Some(snapshot("id", "running", &[], None)),
+            ]),
+            poll_interval: Duration::from_millis(1),
+            wait_timeout: Duration::from_millis(5),
+            ssh_port: DEFAULT_SSH_PORT,
+        };
+        let handle = InstanceHandle {
+            id: "id".to_owned(),
+            zone: "zone".to_owned(),
+        };
+        let result = fake.wait_for_public_ip(&handle).await;
+        assert!(
+            matches!(
+                result,
+                Err(
+                    ScalewayBackendError::MissingPublicIp { .. }
+                        | ScalewayBackendError::Timeout { .. }
+                )
+            ),
+            "unexpected wait_for_public_ip outcome: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_until_gone_times_out_on_residual() {
+        let mut fake = FakeBackend {
+            snapshots: VecDeque::from(vec![Some(snapshot("id", "running", &[], None))]),
+            poll_interval: Duration::from_millis(1),
+            wait_timeout: Duration::from_millis(2),
+            ssh_port: DEFAULT_SSH_PORT,
+        };
+        let handle = InstanceHandle {
+            id: "id".to_owned(),
+            zone: "zone".to_owned(),
+        };
+        let result = fake.wait_until_gone(&handle).await;
+        assert!(matches!(
+            result,
+            Err(ScalewayBackendError::ResidualResource { .. })
+        ));
     }
 }

@@ -153,15 +153,7 @@ fn request_invalid_type(
         backend,
         request_template,
         |req| req.instance_type = instance_type,
-        |err| {
-            matches!(err, ScalewayBackendError::InstanceTypeUnavailable { .. })
-                || matches!(
-                    err,
-                    ScalewayBackendError::Provider { message }
-                        if message.contains("commercial_type")
-                            || message.contains("invalid_arguments")
-                )
-        },
+        |err| matches!(err, ScalewayBackendError::InstanceTypeUnavailable { .. }),
     )
 }
 
