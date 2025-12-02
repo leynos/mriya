@@ -25,40 +25,23 @@ where
 }
 
 #[fixture]
-fn scaleway_config() -> ScalewayConfig {
-    let secret = std::env::var("SCW_SECRET_KEY").unwrap_or_default();
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").unwrap_or_default();
+fn scaleway_config() -> Option<ScalewayConfig> {
+    let secret = std::env::var("SCW_SECRET_KEY").ok()?;
+    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").ok()?;
     if secret.trim().is_empty() || project.trim().is_empty() {
-        skip!(
-            "Skipping Scaleway behavioural tests: SCW_SECRET_KEY or SCW_DEFAULT_PROJECT_ID not set"
-        );
+        return None;
     }
-    match ScalewayConfig::load_from_sources() {
-        Ok(config) => config,
-        Err(err) => skip!(format!(
-            "Skipping Scaleway behavioural tests: failed to load configuration: {err}"
-        )),
-    }
+    ScalewayConfig::load_from_sources().ok()
 }
 
 #[fixture]
-fn scaleway_backend(scaleway_config: ScalewayConfig) -> ScalewayBackend {
-    match ScalewayBackend::new(scaleway_config) {
-        Ok(backend) => backend,
-        Err(err) => skip!(format!(
-            "Skipping Scaleway behavioural tests: backend init failed: {err}"
-        )),
-    }
+fn scaleway_backend(scaleway_config: Option<ScalewayConfig>) -> Option<ScalewayBackend> {
+    scaleway_config.and_then(|cfg| ScalewayBackend::new(cfg).ok())
 }
 
 #[fixture]
-fn base_request(scaleway_config: ScalewayConfig) -> InstanceRequest {
-    match scaleway_config.as_request() {
-        Ok(request) => request,
-        Err(err) => skip!(format!(
-            "Skipping Scaleway behavioural tests: invalid base request: {err}"
-        )),
-    }
+fn base_request(scaleway_config: Option<ScalewayConfig>) -> Option<InstanceRequest> {
+    scaleway_config.and_then(|cfg| cfg.as_request().ok())
 }
 
 fn provision_and_cleanup(
@@ -121,37 +104,30 @@ fn test_invalid_request(
 }
 
 #[given("valid Scaleway credentials")]
-fn valid_scaleway_credentials(scaleway_backend: &ScalewayBackend, base_request: &InstanceRequest) {
-    let missing = [
-        ("SCW_SECRET_KEY", std::env::var("SCW_SECRET_KEY")),
-        (
-            "SCW_DEFAULT_PROJECT_ID",
-            std::env::var("SCW_DEFAULT_PROJECT_ID"),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(name, res)| match res {
-        Ok(value) if !value.trim().is_empty() => None,
-        _ => Some(name),
-    })
-    .collect::<Vec<_>>();
-
-    if !missing.is_empty() {
-        skip!(format!("missing required Scaleway env: {:?}", missing));
+fn valid_scaleway_credentials(
+    scaleway_config: Option<ScalewayConfig>,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
+) {
+    match (scaleway_config, scaleway_backend, base_request) {
+        (Some(_), Some(_), Some(_)) => {}
+        _ => skip!("Scaleway credentials not available"),
     }
-
-    let _ = (scaleway_backend, base_request);
 }
 
 #[when("I provision and tear down a DEV1-S instance from \"{image}\"")]
 fn provision_and_teardown(
-    scaleway_backend: &ScalewayBackend,
-    base_request: InstanceRequest,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
     image: String,
 ) -> Result<InstanceNetworking, ScalewayBackendError> {
-    let mut request = base_request;
+    let backend_owned =
+        scaleway_backend.unwrap_or_else(|| skip!("Scaleway backend fixture unavailable"));
+    let backend = &backend_owned;
+    let mut request =
+        base_request.unwrap_or_else(|| skip!("Scaleway base request fixture unavailable"));
     request.image_label = image;
-    provision_and_cleanup(scaleway_backend, &request)
+    provision_and_cleanup(backend, &request)
 }
 
 #[then("the backend reports a reachable public IPv4 address")]
@@ -163,13 +139,19 @@ fn backend_reports_public_ip(networking: &InstanceNetworking) {
 
 #[when("I request instance type \"{instance_type}\"")]
 fn request_invalid_type(
-    scaleway_backend: &ScalewayBackend,
-    base_request: InstanceRequest,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
     instance_type: String,
 ) -> Result<(), ScalewayBackendError> {
+    let backend_owned =
+        scaleway_backend.unwrap_or_else(|| skip!("Scaleway backend fixture unavailable"));
+    let backend = &backend_owned;
+    let request_template =
+        base_request.unwrap_or_else(|| skip!("Scaleway base request fixture unavailable"));
+
     test_invalid_request(
-        scaleway_backend,
-        base_request,
+        backend,
+        request_template,
         |req| req.instance_type = instance_type,
         |err| {
             matches!(err, ScalewayBackendError::InstanceTypeUnavailable { .. })
@@ -192,13 +174,19 @@ fn rejects_unknown_type() {}
 
 #[when("I request image label \"{label}\"")]
 fn request_invalid_image(
-    scaleway_backend: &ScalewayBackend,
-    base_request: InstanceRequest,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
     label: String,
 ) -> Result<(), ScalewayBackendError> {
+    let backend_owned =
+        scaleway_backend.unwrap_or_else(|| skip!("Scaleway backend fixture unavailable"));
+    let backend = &backend_owned;
+    let request_template =
+        base_request.unwrap_or_else(|| skip!("Scaleway base request fixture unavailable"));
+
     test_invalid_request(
-        scaleway_backend,
-        base_request,
+        backend,
+        request_template,
         |req| req.image_label = label,
         |err| matches!(err, ScalewayBackendError::ImageNotFound { .. }),
     )
@@ -216,24 +204,33 @@ fn rejects_unknown_image() {}
     name = "Provision and destroy minimal instance"
 )]
 fn scenario_provision_and_destroy(
-    scaleway_backend: ScalewayBackend,
-    base_request: InstanceRequest,
+    scaleway_config: Option<ScalewayConfig>,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
 ) {
-    let _ = (scaleway_backend, base_request);
+    let _ = (scaleway_config, scaleway_backend, base_request);
 }
 
 #[scenario(
     path = "tests/features/scaleway_backend.feature",
     name = "Reject unknown instance type"
 )]
-fn scenario_reject_unknown_type(scaleway_backend: ScalewayBackend, base_request: InstanceRequest) {
-    let _ = (scaleway_backend, base_request);
+fn scenario_reject_unknown_type(
+    scaleway_config: Option<ScalewayConfig>,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
+) {
+    let _ = (scaleway_config, scaleway_backend, base_request);
 }
 
 #[scenario(
     path = "tests/features/scaleway_backend.feature",
     name = "Reject unknown image label"
 )]
-fn scenario_reject_unknown_image(scaleway_backend: ScalewayBackend, base_request: InstanceRequest) {
-    let _ = (scaleway_backend, base_request);
+fn scenario_reject_unknown_image(
+    scaleway_config: Option<ScalewayConfig>,
+    scaleway_backend: Option<ScalewayBackend>,
+    base_request: Option<InstanceRequest>,
+) {
+    let _ = (scaleway_config, scaleway_backend, base_request);
 }
