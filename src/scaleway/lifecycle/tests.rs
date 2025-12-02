@@ -1,19 +1,17 @@
 use super::*;
 use crate::ScalewayConfig;
 use crate::scaleway::DEFAULT_SSH_PORT;
+use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 use scaleway_rs::ScalewayApi;
 use std::collections::{HashMap, VecDeque};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn snapshot(id: &str, state: &str, allowed: &[&str], public_ip: Option<&str>) -> InstanceSnapshot {
     InstanceSnapshot {
-        id: id.to_owned(),
-        state: state.to_owned(),
-        allowed_actions: allowed
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
+        id: InstanceId::from(id),
+        state: InstanceState::from(state),
+        allowed_actions: allowed.iter().map(|s| Action::from(*s)).collect(),
         public_ip: public_ip.map(str::to_owned),
     }
 }
@@ -82,14 +80,16 @@ fn backend_fixture() -> ScalewayBackend {
 #[tokio::test]
 async fn power_on_if_needed_returns_ok_for_running() {
     let snap = snapshot("id", "running", &["poweron"], Some("1.1.1.1"));
-    let result = backend_fixture().power_on_if_needed("zone", &snap).await;
+    let zone = Zone::from("zone");
+    let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn power_on_if_needed_errors_when_not_allowed() {
     let snap = snapshot("id", "stopped", &[], None);
-    let result = backend_fixture().power_on_if_needed("zone", &snap).await;
+    let zone = Zone::from("zone");
+    let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
     assert!(matches!(
         result,
         Err(ScalewayBackendError::PowerOnNotAllowed { .. })
@@ -124,7 +124,7 @@ impl FakeBackend {
                 continue;
             };
 
-            if server.state != "running" {
+            if server.state.as_str() != "running" {
                 sleep(self.poll_interval).await;
                 continue;
             }

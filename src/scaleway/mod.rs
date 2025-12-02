@@ -2,6 +2,7 @@
 
 mod error;
 mod lifecycle;
+mod types;
 
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use crate::backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking,
 use crate::config::ScalewayConfig;
 use lifecycle::InstanceSnapshot;
 use scaleway_rs::{ScalewayApi, ScalewayCreateInstanceBuilder, ScalewayError};
+use types::{Action, Zone};
 use uuid::Uuid;
 
 const DEFAULT_SSH_PORT: u16 = 22;
@@ -110,13 +112,19 @@ impl Backend for ScalewayBackend {
             };
 
             let snapshot = InstanceSnapshot {
-                id: server.id.clone(),
-                state: server.state.clone(),
-                allowed_actions: server.allowed_actions.clone(),
+                id: server.id.clone().into(),
+                state: server.state.clone().into(),
+                allowed_actions: server
+                    .allowed_actions
+                    .clone()
+                    .into_iter()
+                    .map(Action::from)
+                    .collect(),
                 public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
             };
 
-            self.power_on_if_needed(&request.zone, &snapshot).await?;
+            let zone = Zone::from(request.zone.as_str());
+            self.power_on_if_needed(&zone, &snapshot).await?;
 
             Ok(InstanceHandle {
                 id: server.id,

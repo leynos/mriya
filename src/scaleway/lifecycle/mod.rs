@@ -9,12 +9,13 @@ use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 use tokio::time::sleep;
 
 use super::{ScalewayBackend, ScalewayBackendError};
+use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstanceSnapshot {
-    pub(crate) id: String,
-    pub(crate) state: String,
-    pub(crate) allowed_actions: Vec<String>,
+    pub(crate) id: InstanceId,
+    pub(crate) state: InstanceState,
+    pub(crate) allowed_actions: Vec<Action>,
     pub(crate) public_ip: Option<String>,
 }
 
@@ -104,27 +105,27 @@ impl ScalewayBackend {
 
     pub(super) async fn power_on_if_needed(
         &self,
-        zone: &str,
+        zone: &Zone,
         snapshot: &InstanceSnapshot,
     ) -> Result<(), ScalewayBackendError> {
-        if snapshot.state == "running" {
+        if snapshot.state.as_str() == "running" {
             return Ok(());
         }
 
         if snapshot
             .allowed_actions
             .iter()
-            .any(|action| action == "poweron")
+            .any(|action| action.as_str() == "poweron")
         {
             self.api
-                .perform_instance_action_async(zone, &snapshot.id, "poweron")
+                .perform_instance_action_async(zone.as_str(), snapshot.id.as_str(), "poweron")
                 .await?;
             return Ok(());
         }
 
         Err(ScalewayBackendError::PowerOnNotAllowed {
-            instance_id: snapshot.id.clone(),
-            state: snapshot.state.clone(),
+            instance_id: snapshot.id.as_str().to_owned(),
+            state: snapshot.state.as_str().to_owned(),
         })
     }
 
@@ -141,9 +142,13 @@ impl ScalewayBackend {
             .await?;
 
         Ok(servers.pop().map(|server| InstanceSnapshot {
-            id: server.id,
-            state: server.state,
-            allowed_actions: server.allowed_actions,
+            id: server.id.into(),
+            state: server.state.into(),
+            allowed_actions: server
+                .allowed_actions
+                .into_iter()
+                .map(Action::from)
+                .collect(),
             public_ip: server.public_ip.map(|ip| ip.address),
         }))
     }
@@ -166,7 +171,7 @@ impl ScalewayBackend {
                 continue;
             };
 
-            if server.state != "running" {
+            if server.state.as_str() != "running" {
                 sleep(self.poll_interval).await;
                 continue;
             }
