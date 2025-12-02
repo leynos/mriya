@@ -21,6 +21,10 @@ pub struct InstanceSnapshot {
 }
 
 impl ScalewayBackend {
+    #[expect(
+        clippy::excessive_nesting,
+        reason = "organisation scoping requires nested builder updates before execution"
+    )]
     pub(super) async fn resolve_image_id(
         &self,
         request: &InstanceRequest,

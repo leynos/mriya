@@ -270,6 +270,10 @@ fn select_image_id_errors_on_empty() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::excessive_nesting,
+    reason = "nested async closures keep fixtures inline for readability"
+)]
 async fn resolve_image_id_prefers_project_results() {
     let request = base_request();
     let project_called = Rc::new(Cell::new(false));
