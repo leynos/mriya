@@ -8,7 +8,7 @@ for concrete, testable deliverables.
 
 - Step: Instance lifecycle and sync
 
-  - [ ] Implement `ScalewayBackend` with create/wait/destroy covering token,
+  - [x] Implement `ScalewayBackend` with create/wait/destroy covering token,
     project, image, and instance type inputs, and verify teardown leaves no
     residual resources via an integration check.
   - [ ] Ship git-aware file sync that uses rsync with `.gitignore` filters and

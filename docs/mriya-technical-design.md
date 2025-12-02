@@ -147,6 +147,26 @@ learn about baseline performance (e.g. how long setup and teardown take) and
 identify any pain points (like large file transfer overhead or slow
 provisioning) that will guide subsequent optimizations.
 
+### Implementation status (November 2025)
+
+- **Backend crate choice:** The MVP backend uses `scaleway-rs` (async, rustls
+  TLS) rather than the experimental `scaleway_sdk` because it already exposes
+  builders for instance creation, listing, and lifecycle actions needed for the
+  create → wait → destroy loop.
+- **Configuration:** Credentials and defaults are layered via `ortho-config`
+  with the `SCW_*` prefix. The loader honours defaults (zone `fr-par-1`, type
+  `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges
+  files, environment, and CLI flags. Missing `SCW_SECRET_KEY` or project IDs
+  fail fast during validation.
+- **Lifecycle contract:** Creation resolves the freshest image ID matching the
+  requested label and architecture in the target zone, then requests a public
+  routed IP so SSH is reachable. Readiness polling runs every 5 seconds with a
+  5-minute cap and requires both a public IPv4 and the `running` state.
+- **Teardown verification:** Destruction calls the Instances API delete
+  endpoint then polls until the server disappears, failing the integration test
+  if any residual resource remains. Integration coverage provisions the
+  smallest shape (`DEV1-S`) to keep cost and blast radius low.
+
 ## Backend Abstraction Design
 
 To support multiple cloud providers in the future, Mriya’s core should be
@@ -154,6 +174,134 @@ cloud-agnostic. We introduce a `Backend` abstraction – a Rust trait that
 defines the minimal interface for a cloud backend driver. For the MVP, only a
 **ScalewayBackend** implementation exists (wired to Scaleway’s API), but the
 design anticipates others (Hetzner, DigitalOcean, AWS, etc.) in later versions.
+
+### Class diagram
+
+<!-- markdownlint-disable MD013 -->
+```mermaid
+classDiagram
+    class Backend {
+        <<trait>>
+        +create(request InstanceRequest) Result~InstanceHandle, Error~
+        +wait_for_ready(handle InstanceHandle) Result~InstanceNetworking, Error~
+        +destroy(handle InstanceHandle) Result~(), Error~
+    }
+
+    class InstanceRequest {
+        +String image_label
+        +String instance_type
+        +String zone
+        +String project_id
+        +Option~String~ organisation_id
+        +String architecture
+        +validate() Result~(), BackendError~
+        +builder() InstanceRequestBuilder
+    }
+
+    class InstanceRequestBuilder {
+        +String image_label
+        +String instance_type
+        +String zone
+        +String project_id
+        +Option~String~ organisation_id
+        +String architecture
+        +new() InstanceRequestBuilder
+        +image_label(value String) InstanceRequestBuilder
+        +instance_type(value String) InstanceRequestBuilder
+        +zone(value String) InstanceRequestBuilder
+        +project_id(value String) InstanceRequestBuilder
+        +organisation_id(value Option~String~) InstanceRequestBuilder
+        +architecture(value String) InstanceRequestBuilder
+        +build() Result~InstanceRequest, BackendError~
+    }
+
+    class InstanceHandle {
+        +String id
+        +String zone
+    }
+
+    class InstanceNetworking {
+        +IpAddr public_ip
+        +u16 ssh_port
+    }
+
+    class BackendError {
+        <<enum>>
+        +Validation(String)
+    }
+
+    class ScalewayConfig {
+        +Option~String~ access_key
+        +String secret_key
+        +Option~String~ default_organization_id
+        +String default_project_id
+        +String default_zone
+        +String default_instance_type
+        +String default_image
+        +String default_architecture
+        +load_from_sources() Result~ScalewayConfig, ConfigError~
+        +as_request() Result~InstanceRequest, ConfigError~
+        +validate() Result~(), ConfigError~
+    }
+
+    class ConfigError {
+        <<enum>>
+        +MissingField(String)
+        +Parse(String)
+    }
+
+    class ScalewayBackend {
+        +ScalewayApi api
+        +ScalewayConfig config
+        +u16 ssh_port
+        +Duration poll_interval
+        +Duration wait_timeout
+        +new(config ScalewayConfig) Result~ScalewayBackend, ScalewayBackendError~
+        +default_request() Result~InstanceRequest, ScalewayBackendError~
+        +resolve_image_id(request InstanceRequest) Result~String, ScalewayBackendError~
+        +power_on_if_needed(zone String, instance InstanceSnapshot) Result~(), ScalewayBackendError~
+        +fetch_instance(handle InstanceHandle) Result~Option~InstanceSnapshot~, ScalewayBackendError~
+        +wait_for_public_ip(handle InstanceHandle) Result~InstanceNetworking, ScalewayBackendError~
+        +wait_until_gone(handle InstanceHandle) Result~(), ScalewayBackendError~
+    }
+
+    class ScalewayBackendError {
+        <<enum>>
+        +Config(String)
+        +Validation(String)
+        +ImageNotFound label String arch String zone String
+        +InstanceTypeUnavailable instance_type String zone String
+        +Timeout action String instance_id String
+        +MissingPublicIp instance_id String
+        +ResidualResource instance_id String
+        +Provider message String
+    }
+
+    class ScalewayApi {
+        <<external>>
+    }
+
+    class ScalewayInstance {
+        <<external>>
+    }
+
+    Backend <|.. ScalewayBackend
+    BackendError <.. InstanceRequest : returns
+    InstanceRequestBuilder --> InstanceRequest : builds
+    ConfigError <.. ScalewayConfig : returns
+    ScalewayConfig --> InstanceRequest : builds
+    ScalewayConfig --> ConfigError : uses
+    ScalewayBackend --> ScalewayConfig : holds
+    ScalewayBackend --> ScalewayApi : uses
+    ScalewayBackend ..> ScalewayBackendError : returns
+    ScalewayBackend ..> InstanceRequest : consumes
+    ScalewayBackend ..> InstanceHandle : returns
+    ScalewayBackend ..> InstanceNetworking : returns
+    ScalewayBackend ..> ScalewayInstance : uses
+    ScalewayBackendError <-- BackendError : From
+    ScalewayBackendError <-- ConfigError : From
+```
+<!-- markdownlint-enable MD013 -->
 
 **`Backend` Trait – Minimal Interface:** At v0, the trait can be very simple,
 focusing on the VM lifecycle:
