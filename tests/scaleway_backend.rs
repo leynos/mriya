@@ -26,6 +26,13 @@ where
 
 #[fixture]
 fn scaleway_config() -> ScalewayConfig {
+    let secret = std::env::var("SCW_SECRET_KEY").unwrap_or_default();
+    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").unwrap_or_default();
+    if secret.trim().is_empty() || project.trim().is_empty() {
+        skip!(
+            "Skipping Scaleway behavioural tests: SCW_SECRET_KEY or SCW_DEFAULT_PROJECT_ID not set"
+        );
+    }
     match ScalewayConfig::load_from_sources() {
         Ok(config) => config,
         Err(err) => skip!(format!(
