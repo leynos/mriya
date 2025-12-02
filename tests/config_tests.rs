@@ -25,7 +25,10 @@ fn config_validation_rejects_missing_secret() {
     };
 
     let error = cfg.validate().expect_err("secret is required");
-    assert!(matches!(error, crate::config::ConfigError::MissingField(field) if field == "SCW_SECRET_KEY"));
+    assert!(matches!(
+        error,
+        crate::config::ConfigError::MissingField(field) if field == "SCW_SECRET_KEY"
+    ));
 }
 
 #[test]

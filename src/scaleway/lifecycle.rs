@@ -21,13 +21,8 @@ impl ScalewayBackend {
         &self,
         request: &InstanceRequest,
     ) -> Result<String, ScalewayBackendError> {
-        let mut images = if request.project_id.is_empty() {
-            ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
-                .public(true)
-                .name(&request.image_label)
-                .arch(&request.architecture)
-                .run_async()
-                .await?
+        let project_images = if request.project_id.is_empty() {
+            Vec::new()
         } else {
             let mut scoped =
                 ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
@@ -38,20 +33,43 @@ impl ScalewayBackend {
             if let Some(org) = &request.organisation_id {
                 scoped = scoped.organization(org);
             }
-            let project_images = scoped.run_async().await?;
-            if project_images.is_empty() {
-                ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
-                    .public(true)
-                    .name(&request.image_label)
-                    .arch(&request.architecture)
-                    .run_async()
-                    .await?
-            } else {
-                project_images
-            }
+            scoped.run_async().await?
         };
 
-        let mut candidates: Vec<_> = Self::filter_images(images, request);
+        let public_images = if project_images.is_empty() {
+            ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
+                .public(true)
+                .name(&request.image_label)
+                .arch(&request.architecture)
+                .run_async()
+                .await?
+        } else {
+            Vec::new()
+        };
+
+        Self::select_image_from_sources(project_images, public_images, request)
+    }
+
+    pub(super) fn select_image_id(
+        mut candidates: Vec<ScalewayImage>,
+        request: &InstanceRequest,
+    ) -> Result<String, ScalewayBackendError> {
+        candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
+        Ok(candidates.remove(0).id)
+    }
+
+    pub(super) fn select_image_from_sources(
+        project_images: Vec<ScalewayImage>,
+        public_images: Vec<ScalewayImage>,
+        request: &InstanceRequest,
+    ) -> Result<String, ScalewayBackendError> {
+        let primary = if project_images.is_empty() {
+            public_images
+        } else {
+            project_images
+        };
+
+        let candidates = Self::filter_images(primary, request);
 
         if candidates.is_empty() {
             return Err(ScalewayBackendError::ImageNotFound {
@@ -62,14 +80,6 @@ impl ScalewayBackend {
         }
 
         Self::select_image_id(candidates, request)
-    }
-
-    pub(super) fn select_image_id(
-        mut candidates: Vec<ScalewayImage>,
-        request: &InstanceRequest,
-    ) -> Result<String, ScalewayBackendError> {
-        candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
-        Ok(candidates.remove(0).id)
     }
 
     pub(super) fn filter_images(
@@ -194,11 +204,12 @@ impl ScalewayBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ScalewayConfig;
+    use crate::scaleway::DEFAULT_SSH_PORT;
+    use rstest::fixture;
+    use scaleway_rs::ScalewayApi;
     use std::collections::VecDeque;
     use std::time::Duration;
-    use crate::scaleway::DEFAULT_SSH_PORT;
-    use crate::ScalewayConfig;
-    use scaleway_rs::ScalewayApi;
 
     fn snapshot(
         id: &str,
@@ -217,6 +228,31 @@ mod tests {
         }
     }
 
+    fn image(id: &str, arch: &str, state: &str, creation_date: &str) -> ScalewayImage {
+        ScalewayImage {
+            id: id.to_owned(),
+            name: String::new(),
+            arch: arch.to_owned(),
+            creation_date: creation_date.to_owned(),
+            modification_date: String::new(),
+            from_server: None,
+            organization: String::new(),
+            public: true,
+            state: state.to_owned(),
+            project: String::new(),
+            tags: vec![],
+            zone: String::new(),
+            root_volume: scaleway_rs::ScalewayImageRootVolume {
+                id: String::new(),
+                name: String::new(),
+                size: 0,
+                volume_type: String::new(),
+            },
+            default_bootscript: None,
+            extra_volumes: scaleway_rs::ScalewayImageExtraVolumes { volumes: None },
+        }
+    }
+
     fn dummy_config() -> ScalewayConfig {
         ScalewayConfig {
             access_key: None,
@@ -230,31 +266,28 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn power_on_if_needed_returns_ok_for_running() {
-        let backend = ScalewayBackend {
+    #[fixture]
+    fn backend_fixture() -> ScalewayBackend {
+        ScalewayBackend {
             api: ScalewayApi::new("dummy"),
             config: dummy_config(),
             ssh_port: DEFAULT_SSH_PORT,
             poll_interval: Duration::from_millis(1),
             wait_timeout: Duration::from_millis(5),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn power_on_if_needed_returns_ok_for_running() {
         let snap = snapshot("id", "running", &["poweron"], Some("1.1.1.1"));
-        let result = backend.power_on_if_needed("zone", &snap).await;
+        let result = backend_fixture.power_on_if_needed("zone", &snap).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn power_on_if_needed_errors_when_not_allowed() {
-        let backend = ScalewayBackend {
-            api: ScalewayApi::new("dummy"),
-            config: dummy_config(),
-            ssh_port: DEFAULT_SSH_PORT,
-            poll_interval: Duration::from_millis(1),
-            wait_timeout: Duration::from_millis(5),
-        };
         let snap = snapshot("id", "stopped", &[], None);
-        let result = backend.power_on_if_needed("zone", &snap).await;
+        let result = backend_fixture.power_on_if_needed("zone", &snap).await;
         assert!(matches!(
             result,
             Err(ScalewayBackendError::PowerOnNotAllowed { .. })
@@ -357,6 +390,62 @@ mod tests {
             ),
             "unexpected wait_for_public_ip outcome: {result:?}"
         );
+    }
+
+    #[test]
+    fn filter_images_discards_wrong_arch_or_state() {
+        let request = InstanceRequest {
+            image_label: "label".to_owned(),
+            instance_type: "type".to_owned(),
+            zone: "zone".to_owned(),
+            project_id: "proj".to_owned(),
+            organisation_id: None,
+            architecture: "x86_64".to_owned(),
+        };
+        let images = vec![
+            image("keep", "x86_64", "available", "2025-01-01T00:00:00Z"),
+            image("wrong-arch", "arm64", "available", "2025-01-01T00:00:00Z"),
+            image("wrong-state", "x86_64", "failed", "2025-01-01T00:00:00Z"),
+        ];
+
+        let filtered = ScalewayBackend::filter_images(images, &request);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "keep");
+    }
+
+    #[test]
+    fn select_image_id_picks_newest() {
+        let request = InstanceRequest {
+            image_label: "label".to_owned(),
+            instance_type: "type".to_owned(),
+            zone: "zone".to_owned(),
+            project_id: "proj".to_owned(),
+            organisation_id: None,
+            architecture: "x86_64".to_owned(),
+        };
+        let images = vec![
+            image("oldest", "x86_64", "available", "2024-12-01T00:00:00Z"),
+            image("newest", "x86_64", "available", "2025-02-01T00:00:00Z"),
+        ];
+
+        let id = ScalewayBackend::select_image_id(images, &request).expect("image selected");
+        assert_eq!(id, "newest");
+    }
+
+    #[test]
+    fn select_image_id_errors_on_empty() {
+        let request = InstanceRequest {
+            image_label: "label".to_owned(),
+            instance_type: "type".to_owned(),
+            zone: "zone".to_owned(),
+            project_id: "proj".to_owned(),
+            organisation_id: None,
+            architecture: "x86_64".to_owned(),
+        };
+        let images: Vec<ScalewayImage> = Vec::new();
+        let err = ScalewayBackend::select_image_id(images, &request)
+            .expect_err("empty candidates should fail");
+        assert!(matches!(err, ScalewayBackendError::ImageNotFound { .. }));
     }
 
     #[tokio::test]
