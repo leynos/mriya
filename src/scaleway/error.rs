@@ -1,3 +1,5 @@
+//! Error types for the Scaleway backend.
+
 use crate::backend::BackendError;
 use crate::config::ConfigError;
 use scaleway_rs::ScalewayError;

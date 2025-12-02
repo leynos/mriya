@@ -194,8 +194,25 @@ classDiagram
         +String project_id
         +Option~String~ organisation_id
         +String architecture
-        +new(image_label String, instance_type String, zone String, project_id String, organisation_id Option~String~, architecture String) InstanceRequest
         +validate() Result~(), BackendError~
+        +builder() InstanceRequestBuilder
+    }
+
+    class InstanceRequestBuilder {
+        +String image_label
+        +String instance_type
+        +String zone
+        +String project_id
+        +Option~String~ organisation_id
+        +String architecture
+        +new() InstanceRequestBuilder
+        +image_label(value String) InstanceRequestBuilder
+        +instance_type(value String) InstanceRequestBuilder
+        +zone(value String) InstanceRequestBuilder
+        +project_id(value String) InstanceRequestBuilder
+        +organisation_id(value Option~String~) InstanceRequestBuilder
+        +architecture(value String) InstanceRequestBuilder
+        +build() Result~InstanceRequest, BackendError~
     }
 
     class InstanceHandle {
@@ -271,6 +288,7 @@ classDiagram
 
     Backend <|.. ScalewayBackend
     BackendError <.. InstanceRequest : returns
+    InstanceRequestBuilder --> InstanceRequest : builds
     ConfigError <.. ScalewayConfig : returns
     ScalewayConfig --> InstanceRequest : builds
     ScalewayConfig --> ConfigError : uses

@@ -1,6 +1,6 @@
 //! Unit tests for configuration and request validation.
 
-use mriya::ScalewayConfig;
+use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
 
 #[fixture]
@@ -25,10 +25,7 @@ fn config_validation_rejects_missing_secret() {
     };
 
     let error = cfg.validate().expect_err("secret is required");
-    assert!(matches!(
-        error,
-        crate::config::ConfigError::MissingField(field) if field == "SCW_SECRET_KEY"
-    ));
+    assert!(matches!(error, ConfigError::MissingField(field) if field == "SCW_SECRET_KEY"));
 }
 
 #[test]
