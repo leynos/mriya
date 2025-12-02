@@ -123,6 +123,17 @@ pub struct ScalewayBackend {
 }
 
 impl ScalewayBackend {
+    fn is_instance_type_error(
+        api_err: &scaleway_rs::ScalewayApiError,
+        request: &InstanceRequest,
+    ) -> bool {
+        matches!(api_err.resource.as_deref(), Some("commercial_type"))
+            || api_err
+                .resource_id
+                .as_deref()
+                .is_some_and(|id| id == request.instance_type)
+            || api_err.etype == "invalid_arguments"
+    }
     /// Constructs a new backend from configuration.
     ///
     /// # Errors
@@ -335,12 +346,7 @@ impl Backend for ScalewayBackend {
             {
                 Ok(server) => server,
                 Err(ScalewayError::Api(api_err))
-                    if api_err.resource.as_deref() == Some("commercial_type")
-                        || api_err
-                            .resource_id
-                            .as_deref()
-                            .is_some_and(|id| id == request.instance_type)
-                        || api_err.etype == "invalid_arguments" =>
+                    if Self::is_instance_type_error(&api_err, request) =>
                 {
                     return Err(ScalewayBackendError::InstanceTypeUnavailable {
                         instance_type: request.instance_type.clone(),
@@ -548,10 +554,8 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(
-                    ScalewayBackendError::MissingPublicIp { .. }
-                        | ScalewayBackendError::Timeout { .. }
-                )
+                Err(ScalewayBackendError::MissingPublicIp { .. }
+                    | ScalewayBackendError::Timeout { .. })
             ),
             "unexpected wait_for_public_ip outcome: {result:?}"
         );

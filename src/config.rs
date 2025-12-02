@@ -79,18 +79,20 @@ impl ScalewayConfig {
             ));
         }
         if self.default_image.trim().is_empty() {
-            return Err(ConfigError::MissingField("default_image".to_owned()));
+            return Err(ConfigError::MissingField("SCW_DEFAULT_IMAGE".to_owned()));
         }
         if self.default_instance_type.trim().is_empty() {
             return Err(ConfigError::MissingField(
-                "default_instance_type".to_owned(),
+                "SCW_DEFAULT_INSTANCE_TYPE".to_owned(),
             ));
         }
         if self.default_zone.trim().is_empty() {
-            return Err(ConfigError::MissingField("default_zone".to_owned()));
+            return Err(ConfigError::MissingField("SCW_DEFAULT_ZONE".to_owned()));
         }
         if self.default_architecture.trim().is_empty() {
-            return Err(ConfigError::MissingField("default_architecture".to_owned()));
+            return Err(ConfigError::MissingField(
+                "SCW_DEFAULT_ARCHITECTURE".to_owned(),
+            ));
         }
         Ok(())
     }

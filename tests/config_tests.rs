@@ -124,25 +124,25 @@ fn config_validation_rejects_other_fields() {
     assert_missing(
         make_valid_config(),
         |cfg| cfg.default_image.clear(),
-        "missing configuration field: default_image",
+        "missing configuration field: SCW_DEFAULT_IMAGE",
     );
 
     assert_missing(
         make_valid_config(),
         |cfg| cfg.default_instance_type.clear(),
-        "missing configuration field: default_instance_type",
+        "missing configuration field: SCW_DEFAULT_INSTANCE_TYPE",
     );
 
     assert_missing(
         make_valid_config(),
         |cfg| cfg.default_zone.clear(),
-        "missing configuration field: default_zone",
+        "missing configuration field: SCW_DEFAULT_ZONE",
     );
 
     assert_missing(
         make_valid_config(),
         |cfg| cfg.default_architecture.clear(),
-        "missing configuration field: default_architecture",
+        "missing configuration field: SCW_DEFAULT_ARCHITECTURE",
     );
 }
 

@@ -2,5 +2,5 @@
 
 fn main() {
     // Placeholder while the CLI is wired up.
-    std::hint::black_box(std::time::SystemTime::now());
+    std::mem::drop(String::from("mriya-cli-placeholder"));
 }
