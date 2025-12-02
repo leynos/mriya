@@ -11,15 +11,15 @@ The command-line interface (CLI) uses `ortho-config` layering: defaults <
 config files < environment < CLI flags. Environment variables use the `SCW_`
 prefix:
 
-- `SCW_SECRET_KEY` (required) – Scaleway application programming interface
+- `SCW_SECRET_KEY` (required) — Scaleway application programming interface
   (API) secret key.
-- `SCW_ACCESS_KEY` (optional) – recorded for future audit features.
-- `SCW_DEFAULT_PROJECT_ID` (required) – project to bill instances to.
-- `SCW_DEFAULT_ORGANIZATION_ID` (optional) – only needed for org-scoped calls.
-- `SCW_DEFAULT_ZONE` – defaults to `fr-par-1`.
-- `SCW_DEFAULT_INSTANCE_TYPE` – defaults to `DEV1-S` (smallest, cheapest).
-- `SCW_DEFAULT_IMAGE` – defaults to `Ubuntu 24.04 Noble Numbat`.
-- `SCW_DEFAULT_ARCHITECTURE` – defaults to `x86_64`.
+- `SCW_ACCESS_KEY` (optional) — recorded for future audit features.
+- `SCW_DEFAULT_PROJECT_ID` (required) — project to bill instances to.
+- `SCW_DEFAULT_ORGANIZATION_ID` (optional) — only needed for org-scoped calls.
+- `SCW_DEFAULT_ZONE` — defaults to `fr-par-1`.
+- `SCW_DEFAULT_INSTANCE_TYPE` — defaults to `DEV1-S` (smallest, cheapest).
+- `SCW_DEFAULT_IMAGE` — defaults to `Ubuntu 24.04 Noble Numbat`.
+- `SCW_DEFAULT_ARCHITECTURE` — defaults to `x86_64`.
 
 For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags

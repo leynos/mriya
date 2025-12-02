@@ -26,7 +26,7 @@ pub struct ScalewayConfig {
     /// cost during integration tests.
     #[ortho_config(default = "DEV1-S".to_owned())]
     pub default_instance_type: String,
-    /// Human friendly image label (for example `Ubuntu 24.04 Noble Numbat`).
+    /// Human-friendly image label (for example `Ubuntu 24.04 Noble Numbat`).
     #[ortho_config(default = "Ubuntu 24.04 Noble Numbat".to_owned())]
     pub default_image: String,
     /// CPU architecture used to select the correct image variant.
