@@ -335,10 +335,7 @@ impl Backend for ScalewayBackend {
             {
                 Ok(server) => server,
                 Err(ScalewayError::Api(api_err))
-                    if api_err
-                        .message
-                        .to_ascii_lowercase()
-                        .contains("commercial_type") =>
+                    if api_err.resource.as_deref() == Some("commercial_type") =>
                 {
                     return Err(ScalewayBackendError::InstanceTypeUnavailable {
                         instance_type: request.instance_type.clone(),

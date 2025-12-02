@@ -38,7 +38,9 @@ fn scaleway_config() -> ScalewayConfig {
 fn scaleway_backend(scaleway_config: ScalewayConfig) -> ScalewayBackend {
     match ScalewayBackend::new(scaleway_config) {
         Ok(backend) => backend,
-        Err(err) => skip!(format!("Skipping Scaleway behavioural tests: backend init failed: {err}")),
+        Err(err) => skip!(format!(
+            "Skipping Scaleway behavioural tests: backend init failed: {err}"
+        )),
     }
 }
 
@@ -46,7 +48,9 @@ fn scaleway_backend(scaleway_config: ScalewayConfig) -> ScalewayBackend {
 fn base_request(scaleway_config: ScalewayConfig) -> InstanceRequest {
     match scaleway_config.as_request() {
         Ok(request) => request,
-        Err(err) => skip!(format!("Skipping Scaleway behavioural tests: invalid base request: {err}")),
+        Err(err) => skip!(format!(
+            "Skipping Scaleway behavioural tests: invalid base request: {err}"
+        )),
     }
 }
 
@@ -74,6 +78,37 @@ fn provision_and_cleanup(
                     "wait_for_ready failed with '{wait_err}' before destroy failed with '{destroy_err}'"
                 ),
             }),
+        }
+    })
+}
+
+/// Helper function to test backend creation with invalid requests.
+///
+/// Applies `modify_request` to a clone of `base_request`, attempts to create
+/// an instance, and verifies the error matches expectations via
+/// `is_expected_error`.
+fn test_invalid_request(
+    scaleway_backend: &ScalewayBackend,
+    base_request: InstanceRequest,
+    modify_request: impl FnOnce(&mut InstanceRequest),
+    is_expected_error: impl Fn(&ScalewayBackendError) -> bool,
+) -> Result<(), ScalewayBackendError> {
+    let mut request = base_request;
+    modify_request(&mut request);
+
+    block_on(async {
+        match scaleway_backend.create(&request).await {
+            Ok(handle) => {
+                scaleway_backend.destroy(handle).await?;
+                Err(ScalewayBackendError::Provider {
+                    message: String::from("unexpected success"),
+                })
+            }
+            Err(err) if err.to_string().contains("permissions_denied") => {
+                skip!("permissions denied during instance creation: {err}")
+            }
+            Err(err) if is_expected_error(&err) => Ok(()),
+            Err(err) => Err(err),
         }
     })
 }
@@ -125,28 +160,20 @@ fn request_invalid_type(
     base_request: InstanceRequest,
     instance_type: String,
 ) -> Result<(), ScalewayBackendError> {
-    let mut request = base_request;
-    request.instance_type = instance_type;
-    block_on(async {
-        match scaleway_backend.create(&request).await {
-            Ok(handle) => {
-                scaleway_backend.destroy(handle).await?;
-                Err(ScalewayBackendError::Provider {
-                    message: String::from("unexpected success"),
-                })
-            }
-            Err(err) if err.to_string().contains("permissions_denied") => {
-                skip!("permissions denied during instance creation: {err}")
-            }
-            Err(ScalewayBackendError::InstanceTypeUnavailable { .. }) => Ok(()),
-            Err(ScalewayBackendError::Provider { message })
-                if message.contains("commercial_type") || message.contains("invalid_arguments") =>
-            {
-                Ok(())
-            }
-            Err(err) => Err(err),
-        }
-    })
+    test_invalid_request(
+        scaleway_backend,
+        base_request,
+        |req| req.instance_type = instance_type,
+        |err| {
+            matches!(err, ScalewayBackendError::InstanceTypeUnavailable { .. })
+                || matches!(
+                    err,
+                    ScalewayBackendError::Provider { message }
+                        if message.contains("commercial_type")
+                            || message.contains("invalid_arguments")
+                )
+        },
+    )
 }
 
 #[then("the request is rejected because the instance type is unavailable")]
@@ -162,23 +189,12 @@ fn request_invalid_image(
     base_request: InstanceRequest,
     label: String,
 ) -> Result<(), ScalewayBackendError> {
-    let mut request = base_request;
-    request.image_label = label;
-    block_on(async {
-        match scaleway_backend.create(&request).await {
-            Ok(handle) => {
-                scaleway_backend.destroy(handle).await?;
-                Err(ScalewayBackendError::Provider {
-                    message: String::from("unexpected success"),
-                })
-            }
-            Err(err) if err.to_string().contains("permissions_denied") => {
-                skip!("permissions denied during instance creation: {err}")
-            }
-            Err(ScalewayBackendError::ImageNotFound { .. }) => Ok(()),
-            Err(err) => Err(err),
-        }
-    })
+    test_invalid_request(
+        scaleway_backend,
+        base_request,
+        |req| req.image_label = label,
+        |err| matches!(err, ScalewayBackendError::ImageNotFound { .. }),
+    )
 }
 
 #[then("the request is rejected because the image cannot be resolved")]
