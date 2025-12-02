@@ -1,5 +1,6 @@
 //! Instance lifecycle helpers for the Scaleway backend.
 
+use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Instant;
@@ -24,28 +25,53 @@ impl ScalewayBackend {
         &self,
         request: &InstanceRequest,
     ) -> Result<String, ScalewayBackendError> {
-        let project_images = if request.project_id.is_empty() {
-            Vec::new()
-        } else {
-            let mut scoped =
+        self.resolve_image_id_with(
+            request,
+            || async move {
+                if request.project_id.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    let mut scoped =
+                        ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
+                            .public(true)
+                            .project(&request.project_id)
+                            .name(&request.image_label)
+                            .arch(&request.architecture);
+                    if let Some(org) = &request.organisation_id {
+                        scoped = scoped.organization(org);
+                    }
+                    scoped.run_async().await.map_err(ScalewayBackendError::from)
+                }
+            },
+            || async move {
                 ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
                     .public(true)
-                    .project(&request.project_id)
                     .name(&request.image_label)
-                    .arch(&request.architecture);
-            if let Some(org) = &request.organisation_id {
-                scoped = scoped.organization(org);
-            }
-            scoped.run_async().await?
-        };
+                    .arch(&request.architecture)
+                    .run_async()
+                    .await
+                    .map_err(ScalewayBackendError::from)
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn resolve_image_id_with<FutA, FutB, FetchA, FetchB>(
+        &self,
+        request: &InstanceRequest,
+        project_fetch: FetchA,
+        public_fetch: FetchB,
+    ) -> Result<String, ScalewayBackendError>
+    where
+        FetchA: FnOnce() -> FutA,
+        FetchB: FnOnce() -> FutB,
+        FutA: Future<Output = Result<Vec<ScalewayImage>, ScalewayBackendError>>,
+        FutB: Future<Output = Result<Vec<ScalewayImage>, ScalewayBackendError>>,
+    {
+        let project_images = project_fetch().await?;
 
         let public_images = if project_images.is_empty() {
-            ScalewayListInstanceImagesBuilder::new(self.api.clone(), &request.zone)
-                .public(true)
-                .name(&request.image_label)
-                .arch(&request.architecture)
-                .run_async()
-                .await?
+            public_fetch().await?
         } else {
             Vec::new()
         };

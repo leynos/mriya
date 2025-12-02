@@ -3,8 +3,10 @@ use crate::ScalewayConfig;
 use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 use scaleway_rs::ScalewayApi;
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -265,6 +267,97 @@ fn select_image_id_errors_on_empty() {
     let err = ScalewayBackend::select_image_id(images, &request)
         .expect_err("empty candidates should fail");
     assert!(matches!(err, ScalewayBackendError::ImageNotFound { .. }));
+}
+
+#[tokio::test]
+async fn resolve_image_id_prefers_project_results() {
+    let request = base_request();
+    let project_called = Rc::new(Cell::new(false));
+    let public_called = Rc::new(Cell::new(false));
+
+    let backend = backend_fixture();
+
+    let result = backend
+        .resolve_image_id_with(
+            &request,
+            {
+                let flag = Rc::clone(&project_called);
+                move || {
+                    flag.set(true);
+                    async {
+                        Ok(vec![image(ImageSpec {
+                            id: "project-img",
+                            arch: "x86_64",
+                            state: "available",
+                            creation_date: "2025-02-01T00:00:00Z",
+                        })])
+                    }
+                }
+            },
+            {
+                let flag = Rc::clone(&public_called);
+                move || {
+                    flag.set(true);
+                    async {
+                        Ok(vec![image(ImageSpec {
+                            id: "public-img",
+                            arch: "x86_64",
+                            state: "available",
+                            creation_date: "2025-01-01T00:00:00Z",
+                        })])
+                    }
+                }
+            },
+        )
+        .await
+        .expect("project image should resolve");
+
+    assert_eq!(result, "project-img");
+    assert!(project_called.get());
+    assert!(!public_called.get(), "public lookup should not be needed");
+}
+
+#[tokio::test]
+async fn resolve_image_id_falls_back_to_public() {
+    let request = base_request();
+    let backend = backend_fixture();
+    let result = backend
+        .resolve_image_id_with(
+            &request,
+            || async { Ok(Vec::new()) },
+            || async {
+                Ok(vec![image(ImageSpec {
+                    id: "public-img",
+                    arch: "x86_64",
+                    state: "available",
+                    creation_date: "2025-01-01T00:00:00Z",
+                })])
+            },
+        )
+        .await
+        .expect("public fallback should resolve");
+
+    assert_eq!(result, "public-img");
+}
+
+#[tokio::test]
+async fn resolve_image_id_propagates_errors() {
+    let request = base_request();
+    let backend = backend_fixture();
+    let err = backend
+        .resolve_image_id_with(
+            &request,
+            || async {
+                Err(ScalewayBackendError::Provider {
+                    message: "boom".to_owned(),
+                })
+            },
+            || async { Ok(Vec::new()) },
+        )
+        .await
+        .expect_err("error should surface");
+
+    assert!(matches!(err, ScalewayBackendError::Provider { message } if message == "boom"));
 }
 
 #[tokio::test]
