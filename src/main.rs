@@ -1,6 +1,9 @@
-//! Binary entrypoint for the Mriya CLI.
+//! Binary entry point for the Mriya CLI.
 
 fn main() {
-    // Placeholder while the CLI is wired up; keep this non-const and minimal.
-    std::thread::yield_now();
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "Entry point must remain non-const while CLI is wired up"
+    )]
+    fn _placeholder() {}
 }

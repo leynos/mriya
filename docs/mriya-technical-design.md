@@ -259,9 +259,8 @@ classDiagram
         +new(config ScalewayConfig) Result~ScalewayBackend, ScalewayBackendError~
         +default_request() Result~InstanceRequest, ScalewayBackendError~
         +resolve_image_id(request InstanceRequest) Result~String, ScalewayBackendError~
-        +ensure_instance_type(request InstanceRequest) Result~(), ScalewayBackendError~
-        +power_on_if_needed(zone String, instance ScalewayInstance) Result~(), ScalewayBackendError~
-        +fetch_instance(handle InstanceHandle) Result~Option~ScalewayInstance~, ScalewayBackendError~
+        +power_on_if_needed(zone String, instance InstanceSnapshot) Result~(), ScalewayBackendError~
+        +fetch_instance(handle InstanceHandle) Result~Option~InstanceSnapshot~, ScalewayBackendError~
         +wait_for_public_ip(handle InstanceHandle) Result~InstanceNetworking, ScalewayBackendError~
         +wait_until_gone(handle InstanceHandle) Result~(), ScalewayBackendError~
     }

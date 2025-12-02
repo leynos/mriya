@@ -35,6 +35,13 @@ pub struct ScalewayConfig {
 }
 
 impl ScalewayConfig {
+    fn require_non_empty(value: &str, field: &str) -> Result<(), ConfigError> {
+        if value.trim().is_empty() {
+            return Err(ConfigError::MissingField(field.to_owned()));
+        }
+        Ok(())
+    }
+
     /// Loads configuration using the `ortho-config` derive. Values merge
     /// defaults, configuration files, environment variables, and CLI flags in
     /// that order of precedence.
@@ -70,30 +77,12 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.secret_key.trim().is_empty() {
-            return Err(ConfigError::MissingField("SCW_SECRET_KEY".to_owned()));
-        }
-        if self.default_project_id.trim().is_empty() {
-            return Err(ConfigError::MissingField(
-                "SCW_DEFAULT_PROJECT_ID".to_owned(),
-            ));
-        }
-        if self.default_image.trim().is_empty() {
-            return Err(ConfigError::MissingField("SCW_DEFAULT_IMAGE".to_owned()));
-        }
-        if self.default_instance_type.trim().is_empty() {
-            return Err(ConfigError::MissingField(
-                "SCW_DEFAULT_INSTANCE_TYPE".to_owned(),
-            ));
-        }
-        if self.default_zone.trim().is_empty() {
-            return Err(ConfigError::MissingField("SCW_DEFAULT_ZONE".to_owned()));
-        }
-        if self.default_architecture.trim().is_empty() {
-            return Err(ConfigError::MissingField(
-                "SCW_DEFAULT_ARCHITECTURE".to_owned(),
-            ));
-        }
+        Self::require_non_empty(&self.secret_key, "SCW_SECRET_KEY")?;
+        Self::require_non_empty(&self.default_project_id, "SCW_DEFAULT_PROJECT_ID")?;
+        Self::require_non_empty(&self.default_image, "SCW_DEFAULT_IMAGE")?;
+        Self::require_non_empty(&self.default_instance_type, "SCW_DEFAULT_INSTANCE_TYPE")?;
+        Self::require_non_empty(&self.default_zone, "SCW_DEFAULT_ZONE")?;
+        Self::require_non_empty(&self.default_architecture, "SCW_DEFAULT_ARCHITECTURE")?;
         Ok(())
     }
 }

@@ -39,6 +39,8 @@ impl ScalewayBackend {
                 .resource_id
                 .as_deref()
                 .is_some_and(|id| id == request.instance_type)
+            || (api_err.etype == "invalid_arguments"
+                && matches!(api_err.resource.as_deref(), Some("commercial_type")))
     }
 
     /// Constructs a new backend from configuration.
@@ -96,12 +98,7 @@ impl Backend for ScalewayBackend {
             {
                 Ok(server) => server,
                 Err(ScalewayError::Api(api_err))
-                    if Self::is_instance_type_error(&api_err, request)
-                        || (api_err.etype == "invalid_arguments"
-                            && api_err
-                                .message
-                                .to_ascii_lowercase()
-                                .contains("commercial_type")) =>
+                    if Self::is_instance_type_error(&api_err, request) =>
                 {
                     return Err(ScalewayBackendError::InstanceTypeUnavailable {
                         instance_type: request.instance_type.clone(),

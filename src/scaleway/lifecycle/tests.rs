@@ -4,6 +4,7 @@ use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 use scaleway_rs::ScalewayApi;
 use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
