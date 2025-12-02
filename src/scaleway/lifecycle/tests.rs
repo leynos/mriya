@@ -8,26 +8,39 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-fn snapshot(id: &str, state: &str, allowed: &[&str], public_ip: Option<&str>) -> InstanceSnapshot {
+fn snapshot(
+    id: impl Into<InstanceId>,
+    state: impl Into<InstanceState>,
+    allowed: impl IntoIterator<Item = impl Into<Action>>,
+    public_ip: Option<&str>,
+) -> InstanceSnapshot {
     InstanceSnapshot {
-        id: InstanceId::from(id),
-        state: InstanceState::from(state),
-        allowed_actions: allowed.iter().map(|s| Action::from(*s)).collect(),
+        id: id.into(),
+        state: state.into(),
+        allowed_actions: allowed.into_iter().map(Into::into).collect(),
         public_ip: public_ip.map(str::to_owned),
     }
 }
 
-fn image(id: &str, arch: &str, state: &str, creation_date: &str) -> ScalewayImage {
+#[derive(Copy, Clone)]
+struct ImageSpec {
+    id: &'static str,
+    arch: &'static str,
+    state: &'static str,
+    creation_date: &'static str,
+}
+
+fn image(spec: ImageSpec) -> ScalewayImage {
     ScalewayImage {
-        id: id.to_owned(),
+        id: spec.id.to_owned(),
         name: String::new(),
-        arch: arch.to_owned(),
-        creation_date: creation_date.to_owned(),
+        arch: spec.arch.to_owned(),
+        creation_date: spec.creation_date.to_owned(),
         modification_date: String::new(),
         from_server: None,
         organization: String::new(),
         public: true,
-        state: state.to_owned(),
+        state: spec.state.to_owned(),
         project: String::new(),
         tags: vec![],
         zone: String::new(),
@@ -80,7 +93,7 @@ fn backend_fixture() -> ScalewayBackend {
 
 #[tokio::test]
 async fn power_on_if_needed_returns_ok_for_running() {
-    let snap = snapshot("id", "running", &["poweron"], Some("1.1.1.1"));
+    let snap = snapshot("id", "running", [Action::from("poweron")], Some("1.1.1.1"));
     let zone = Zone::from("zone");
     let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
     assert!(result.is_ok());
@@ -88,7 +101,7 @@ async fn power_on_if_needed_returns_ok_for_running() {
 
 #[tokio::test]
 async fn power_on_if_needed_errors_when_not_allowed() {
-    let snap = snapshot("id", "stopped", &[], None);
+    let snap = snapshot("id", "stopped", Vec::<Action>::new(), None);
     let zone = Zone::from("zone");
     let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
     assert!(matches!(
@@ -173,8 +186,8 @@ impl FakeBackend {
 async fn wait_for_public_ip_returns_missing_ip() {
     let mut fake = FakeBackend {
         snapshots: VecDeque::from(vec![
-            Some(snapshot("id", "running", &[], None)),
-            Some(snapshot("id", "running", &[], None)),
+            Some(snapshot("id", "running", Vec::<Action>::new(), None)),
+            Some(snapshot("id", "running", Vec::<Action>::new(), None)),
         ]),
         poll_interval: Duration::from_millis(1),
         wait_timeout: Duration::from_millis(5),
@@ -198,9 +211,24 @@ async fn wait_for_public_ip_returns_missing_ip() {
 fn filter_images_discards_wrong_arch_or_state() {
     let request = base_request();
     let images = vec![
-        image("keep", "x86_64", "available", "2025-01-01T00:00:00Z"),
-        image("wrong-arch", "arm64", "available", "2025-01-01T00:00:00Z"),
-        image("wrong-state", "x86_64", "failed", "2025-01-01T00:00:00Z"),
+        image(ImageSpec {
+            id: "keep",
+            arch: "x86_64",
+            state: "available",
+            creation_date: "2025-01-01T00:00:00Z",
+        }),
+        image(ImageSpec {
+            id: "wrong-arch",
+            arch: "arm64",
+            state: "available",
+            creation_date: "2025-01-01T00:00:00Z",
+        }),
+        image(ImageSpec {
+            id: "wrong-state",
+            arch: "x86_64",
+            state: "failed",
+            creation_date: "2025-01-01T00:00:00Z",
+        }),
     ];
 
     let filtered = ScalewayBackend::filter_images(images, &request);
@@ -212,8 +240,18 @@ fn filter_images_discards_wrong_arch_or_state() {
 fn select_image_id_picks_newest() {
     let request = base_request();
     let images = vec![
-        image("oldest", "x86_64", "available", "2024-12-01T00:00:00Z"),
-        image("newest", "x86_64", "available", "2025-02-01T00:00:00Z"),
+        image(ImageSpec {
+            id: "oldest",
+            arch: "x86_64",
+            state: "available",
+            creation_date: "2024-12-01T00:00:00Z",
+        }),
+        image(ImageSpec {
+            id: "newest",
+            arch: "x86_64",
+            state: "available",
+            creation_date: "2025-02-01T00:00:00Z",
+        }),
     ];
 
     let id = ScalewayBackend::select_image_id(images, &request).expect("image selected");
@@ -232,7 +270,12 @@ fn select_image_id_errors_on_empty() {
 #[tokio::test]
 async fn wait_until_gone_times_out_on_residual() {
     let mut fake = FakeBackend {
-        snapshots: VecDeque::from(vec![Some(snapshot("id", "running", &[], None))]),
+        snapshots: VecDeque::from(vec![Some(snapshot(
+            "id",
+            "running",
+            Vec::<Action>::new(),
+            None,
+        ))]),
         poll_interval: Duration::from_millis(1),
         wait_timeout: Duration::from_millis(2),
         ssh_port: DEFAULT_SSH_PORT,
