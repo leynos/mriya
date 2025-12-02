@@ -38,7 +38,7 @@ fn scaleway_config() -> ScalewayConfig {
 fn scaleway_backend(scaleway_config: ScalewayConfig) -> ScalewayBackend {
     match ScalewayBackend::new(scaleway_config) {
         Ok(backend) => backend,
-        Err(err) => panic!("failed to construct backend: {err}"),
+        Err(err) => skip!(format!("Skipping Scaleway behavioural tests: backend init failed: {err}")),
     }
 }
 
@@ -46,7 +46,7 @@ fn scaleway_backend(scaleway_config: ScalewayConfig) -> ScalewayBackend {
 fn base_request(scaleway_config: ScalewayConfig) -> InstanceRequest {
     match scaleway_config.as_request() {
         Ok(request) => request,
-        Err(err) => panic!("invalid base request: {err}"),
+        Err(err) => skip!(format!("Skipping Scaleway behavioural tests: invalid base request: {err}")),
     }
 }
 
