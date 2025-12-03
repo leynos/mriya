@@ -11,7 +11,7 @@ for concrete, testable deliverables.
   - [x] Implement `ScalewayBackend` with create/wait/destroy covering token,
     project, image, and instance type inputs, and verify teardown leaves no
     residual resources via an integration check.
-  - [ ] Ship git-aware file sync that uses rsync with `.gitignore` filters and
+  - [x] Ship git-aware file sync that uses rsync with `.gitignore` filters and
     avoids deleting ignored cache paths, proven by an end-to-end run where a
     pre-created `target/` on the remote is preserved and the local exit code
     matches the remote command.

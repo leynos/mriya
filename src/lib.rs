@@ -7,7 +7,12 @@
 pub mod backend;
 pub mod config;
 pub mod scaleway;
+pub mod sync;
 
 pub use backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
 pub use config::ScalewayConfig;
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
+pub use sync::{
+    CommandOutput, DEFAULT_REMOTE_PATH, ProcessCommandRunner, RemoteCommandOutput, SyncConfig,
+    SyncDestination, SyncError, Syncer,
+};

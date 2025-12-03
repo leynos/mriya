@@ -1209,6 +1209,7 @@ name = "mriya"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "camino",
  "clap",
  "ortho_config",
  "rstest",
@@ -1216,6 +1217,7 @@ dependencies = [
  "rstest-bdd-macros",
  "scaleway-rs",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

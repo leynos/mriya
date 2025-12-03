@@ -25,6 +25,25 @@ For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags
 override everything.
 
+## File sync semantics
+
+Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
+so only tracked files are transferred. Ignored cache paths such as `target/`
+are **not** deleted remotely, which keeps pre-existing build outputs available
+for incremental runs. The `.git` directory is excluded from transfer.
+
+Remote commands execute through the system `ssh` client and Mriya mirrors the
+remote exit code. If `cargo test` fails remotely with exit status 101, the
+local process will also exit 101.
+
+Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
+
+- `MRIYA_SYNC_RSYNC_BIN` — path to the `rsync` executable (default: `rsync`).
+- `MRIYA_SYNC_SSH_BIN` — path to the `ssh` executable (default: `ssh`).
+- `MRIYA_SYNC_SSH_USER` — remote user for rsync and SSH (default: `root`).
+- `MRIYA_SYNC_REMOTE_PATH` — remote working directory
+  (default: `/home/ubuntu/project`).
+
 ## What the Scaleway backend does now
 
 - Resolves the freshest public image matching `SCW_DEFAULT_IMAGE` and

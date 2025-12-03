@@ -147,6 +147,18 @@ learn about baseline performance (e.g. how long setup and teardown take) and
 identify any pain points (like large file transfer overhead or slow
 provisioning) that will guide subsequent optimizations.
 
+### Directory sync decision (December 2025)
+
+- Adopt `rsync -az --delete --filter=":- .gitignore" --exclude .git/` so Git
+  ignore rules apply to both transfer and deletion. Ignored caches (for example
+  `target/`) are left intact on the remote to enable incremental builds.
+- Wrap rsync and SSH execution in a `Syncer` orchestration layer that returns
+  the remote command’s exit code unchanged, allowing the CLI to mirror the
+  remote status.
+- Keep sync configuration under the `MRIYA_SYNC_` prefix via `ortho-config` so
+  users can override the rsync/ssh binaries, SSH user, and remote path without
+  changing code.
+
 ### Implementation status (November 2025)
 
 - **Backend crate choice:** The MVP backend uses `scaleway-rs` (async, rustls
