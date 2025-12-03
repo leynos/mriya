@@ -3,7 +3,10 @@
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
-use std::fs::{copy, create_dir_all, read_dir, read_to_string, remove_dir_all, remove_file, write};
+use std::fs::{
+    DirEntry, FileType, copy, create_dir_all, read_dir, read_to_string, remove_dir_all,
+    remove_file, write,
+};
 use std::net::{IpAddr, Ipv4Addr};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -234,6 +237,58 @@ fn copy_tree(
     Ok(())
 }
 
+fn map_io_error(err: &impl ToString) -> SyncError {
+    SyncError::Spawn {
+        program: String::from("rsync"),
+        message: err.to_string(),
+    }
+}
+
+fn should_keep_entry(
+    relative: &Utf8Path,
+    file_type: FileType,
+    kept: &HashSet<Utf8PathBuf>,
+) -> bool {
+    let has_children = kept.iter().any(|kept_path| kept_path.starts_with(relative));
+    kept.contains(relative) || (file_type.is_dir() && has_children)
+}
+
+fn remove_entry(path: &Utf8Path, is_dir: bool) -> Result<(), SyncError> {
+    if is_dir {
+        remove_dir_all(path).map_err(|err| map_io_error(&err))
+    } else {
+        remove_file(path).map_err(|err| map_io_error(&err))
+    }
+}
+
+fn process_destination_entry(
+    entry: &DirEntry,
+    destination_root: &Utf8Path,
+    kept: &HashSet<Utf8PathBuf>,
+    rules: &IgnoreRules,
+) -> Result<(), SyncError> {
+    let path = Utf8PathBuf::from_path_buf(entry.path())
+        .map_err(|err| map_io_error(&err.display()))?;
+    let relative = path
+        .strip_prefix(destination_root)
+        .map_err(|err| map_io_error(&err))?;
+
+    if should_ignore(relative, rules) {
+        return Ok(());
+    }
+
+    let file_type = entry.file_type().map_err(|err| map_io_error(&err))?;
+
+    if should_keep_entry(relative, file_type, kept) {
+        if file_type.is_dir() {
+            prune_destination(&path, kept, rules)?;
+        }
+        return Ok(());
+    }
+
+    remove_entry(&path, file_type.is_dir())
+}
+
 fn prune_destination(
     destination_root: &Utf8Path,
     kept: &HashSet<Utf8PathBuf>,
@@ -243,54 +298,9 @@ fn prune_destination(
         return Ok(());
     }
 
-    for destination_entry in read_dir(destination_root).map_err(|err| SyncError::Spawn {
-        program: String::from("rsync"),
-        message: err.to_string(),
-    })? {
-        let entry = destination_entry.map_err(|err| SyncError::Spawn {
-            program: String::from("rsync"),
-            message: err.to_string(),
-        })?;
-        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|err| SyncError::Spawn {
-            program: String::from("rsync"),
-            message: err.display().to_string(),
-        })?;
-        let relative = path
-            .strip_prefix(destination_root)
-            .map_err(|err| SyncError::Spawn {
-                program: String::from("rsync"),
-                message: err.to_string(),
-            })?;
-
-        if should_ignore(relative, rules) {
-            continue;
-        }
-
-        let file_type = entry.file_type().map_err(|err| SyncError::Spawn {
-            program: String::from("rsync"),
-            message: err.to_string(),
-        })?;
-        let has_children = kept.iter().any(|kept_path| kept_path.starts_with(relative));
-        let keep_current = kept.contains(relative) || (file_type.is_dir() && has_children);
-
-        if keep_current {
-            if file_type.is_dir() {
-                prune_destination(&path, kept, rules)?;
-            }
-            continue;
-        }
-
-        if file_type.is_dir() {
-            remove_dir_all(&path).map_err(|err| SyncError::Spawn {
-                program: String::from("rsync"),
-                message: err.to_string(),
-            })?;
-        } else {
-            remove_file(&path).map_err(|err| SyncError::Spawn {
-                program: String::from("rsync"),
-                message: err.to_string(),
-            })?;
-        }
+    for destination_entry in read_dir(destination_root).map_err(|err| map_io_error(&err))? {
+        let entry = destination_entry.map_err(|err| map_io_error(&err))?;
+        process_destination_entry(&entry, destination_root, kept, rules)?;
     }
 
     Ok(())
