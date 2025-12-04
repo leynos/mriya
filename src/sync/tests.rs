@@ -192,28 +192,33 @@ fn sync_succeeds_on_zero_status(base_config: SyncConfig) {
     assert!(syncer.sync(Utf8Path::new("/"), &destination).is_ok());
 }
 
+fn run_remote_with_fake_output(
+    cfg: SyncConfig,
+    networking: &InstanceNetworking,
+    script: impl Fn(&ScriptedRunner),
+) -> Result<RemoteCommandOutput, SyncError> {
+    let runner = ScriptedRunner::new();
+    script(&runner);
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    syncer.run_remote(networking, "echo ok")
+}
+
 #[rstest]
 fn run_remote_returns_missing_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let cfg = base_config;
-    let runner = ScriptedRunner::new();
-    runner.push_missing_exit_code();
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    let err = syncer
-        .run_remote(&networking, "echo ok")
-        .expect_err("missing exit code should error");
-    assert!(matches!(err, SyncError::MissingExitCode { program } if program == "ssh"));
+    let output = run_remote_with_fake_output(base_config, &networking, |runner| {
+        runner.push_missing_exit_code();
+    })
+    .expect("missing exit code should be propagated as None");
+    assert!(output.exit_code.is_none());
 }
 
 #[rstest]
 fn run_remote_propagates_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let cfg = base_config;
-    let runner = ScriptedRunner::new();
-    runner.push_exit_code(7);
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    let output = syncer
-        .run_remote(&networking, "echo ok")
-        .unwrap_or_else(|err| panic!("run_remote should succeed: {err}"));
-    assert_eq!(output.exit_code, 7);
+    let output = run_remote_with_fake_output(base_config, &networking, |runner| {
+        runner.push_exit_code(7);
+    })
+    .unwrap_or_else(|err| panic!("run_remote should succeed: {err}"));
+    assert_eq!(output.exit_code, Some(7));
     assert_eq!(output.stdout, "");
 }
 

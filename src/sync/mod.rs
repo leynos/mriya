@@ -104,9 +104,9 @@ pub enum SyncDestination {
 /// Output captured from a remote command executed over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteCommandOutput {
-    /// Exit code reported by the remote command (always present because
-    /// [`Syncer::run_remote`] maps missing codes to [`SyncError::MissingExitCode`]).
-    pub exit_code: i32,
+    /// Exit code reported by the remote command (`None` when the process exits
+    /// without an exit status, for example after being killed by a signal).
+    pub exit_code: Option<i32>,
     /// Captured standard output stream.
     pub stdout: String,
     /// Captured standard error stream.
@@ -147,12 +147,6 @@ pub enum SyncError {
         status_text: String,
         /// Stderr captured from the process.
         stderr: String,
-    },
-    /// Raised when the SSH command finishes without yielding an exit status.
-    #[error("{program} did not return an exit code")]
-    MissingExitCode {
-        /// Command that completed without a status.
-        program: String,
     },
 }
 
@@ -237,8 +231,8 @@ impl<R: CommandRunner> Syncer<R> {
     ///
     /// # Errors
     ///
-    /// Returns [`SyncError::MissingExitCode`] when the process exits without a
-    /// code (for example, when terminated by a signal).
+    /// Propagates any failure to spawn or execute the SSH command from the
+    /// configured [`CommandRunner`].
     ///
     /// # Security
     ///
@@ -253,14 +247,9 @@ impl<R: CommandRunner> Syncer<R> {
         let remote_cmd_wrapped = self.build_remote_command(remote_command);
         let args = self.build_ssh_args(networking, &remote_cmd_wrapped);
         let output = self.runner.run(&self.config.ssh_bin, &args)?;
-        let Some(exit_code) = output.code else {
-            return Err(SyncError::MissingExitCode {
-                program: self.config.ssh_bin.clone(),
-            });
-        };
 
         Ok(RemoteCommandOutput {
-            exit_code,
+            exit_code: output.code,
             stdout: output.stdout,
             stderr: output.stderr,
         })

@@ -69,12 +69,9 @@ fn run_remote_reports_missing_exit_code() {
         ssh_port: 22,
     };
 
-    let err = syncer
+    let output = syncer
         .run_remote(&networking, "echo ok")
-        .expect_err("missing exit code should error");
+        .expect("missing exit code should now be propagated");
 
-    assert!(matches!(
-        err,
-        SyncError::MissingExitCode { program } if program == "ssh"
-    ));
+    assert!(output.exit_code.is_none());
 }

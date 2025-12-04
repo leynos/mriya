@@ -128,12 +128,17 @@ fn orchestrator_reports_exit_code(
     output: &mriya::sync::RemoteCommandOutput,
     code: i32,
 ) -> Result<(), SyncError> {
-    if output.exit_code == code {
+    if output.exit_code == Some(code) {
         Ok(())
     } else {
         Err(SyncError::Spawn {
             program: String::from("ssh"),
-            message: format!("expected exit code {code}, got {}", output.exit_code),
+            message: format!(
+                "expected exit code {code}, got {}",
+                output
+                    .exit_code
+                    .map_or_else(|| "None".to_owned(), |value| value.to_string())
+            ),
         })
     }
 }

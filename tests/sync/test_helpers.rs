@@ -161,7 +161,7 @@ pub fn scripted_context(
 #[fixture]
 pub fn output() -> RemoteCommandOutput {
     RemoteCommandOutput {
-        exit_code: 0,
+        exit_code: Some(0),
         stdout: String::new(),
         stderr: String::new(),
     }
