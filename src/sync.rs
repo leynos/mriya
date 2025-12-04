@@ -352,11 +352,12 @@ impl<R: CommandRunner> Syncer<R> {
         remote_command: &str,
     ) -> Vec<OsString> {
         let mut args = self.common_ssh_options(networking.ssh_port);
+        let wrapped_command = self.build_remote_command(remote_command);
         args.push(OsString::from(format!(
             "{}@{}",
             self.config.ssh_user, networking.public_ip
         )));
-        args.push(OsString::from(remote_command));
+        args.push(OsString::from(wrapped_command));
         args
     }
 
