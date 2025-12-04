@@ -43,6 +43,12 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 - `MRIYA_SYNC_SSH_USER` — remote user for rsync and SSH (default: `root`).
 - `MRIYA_SYNC_REMOTE_PATH` — remote working directory
   (default: `/home/ubuntu/project`).
+- `MRIYA_SYNC_SSH_BATCH_MODE` — set to `false` to allow interactive SSH
+  prompts (default: `true`).
+- `MRIYA_SYNC_SSH_STRICT_HOST_KEY_CHECKING` — set to `true` to enforce host key
+  verification (default: `false`).
+- `MRIYA_SYNC_SSH_KNOWN_HOSTS_FILE` — path to a known hosts file (default:
+  `/dev/null` when host key checking is disabled).
 
 ## What the Scaleway backend does now
 

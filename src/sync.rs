@@ -34,6 +34,16 @@ pub struct SyncConfig {
     /// Remote path to receive the repository contents.
     #[ortho_config(default = DEFAULT_REMOTE_PATH.to_owned())]
     pub remote_path: String,
+    /// Whether to force batch mode for SSH to avoid password prompts.
+    #[ortho_config(default = true)]
+    pub ssh_batch_mode: bool,
+    /// Whether to enforce host key checking; defaults to disabling to smooth
+    /// ephemeral hosts.
+    #[ortho_config(default = false)]
+    pub ssh_strict_host_key_checking: bool,
+    /// Known hosts file override; defaults to `/dev/null` for ephemeral hosts.
+    #[ortho_config(default = "/dev/null".to_owned())]
+    pub ssh_known_hosts_file: String,
 }
 
 impl SyncConfig {
@@ -279,7 +289,8 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let args = self.build_ssh_args(networking, remote_command);
+        let remote_cmd_wrapped = self.build_remote_command(remote_command);
+        let args = self.build_ssh_args(networking, &remote_cmd_wrapped);
         let output = self.runner.run(&self.config.ssh_bin, &args)?;
         let Some(exit_code) = output.code else {
             return Err(SyncError::MissingExitCode {
@@ -320,11 +331,7 @@ impl<R: CommandRunner> Syncer<R> {
                 port,
                 path,
             } => {
-                let remote_shell = format!(
-                    "{} -p {} -o BatchMode=yes -o StrictHostKeyChecking=no -o \
-                     UserKnownHostsFile=/dev/null",
-                    self.config.ssh_bin, port
-                );
+                let remote_shell = self.build_remote_shell(*port);
                 args.push(OsString::from("--rsh"));
                 args.push(OsString::from(remote_shell));
                 args.push(OsString::from(format!("{source}/")));
@@ -344,17 +351,347 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Vec<OsString> {
-        vec![
-            OsString::from("-p"),
-            OsString::from(networking.ssh_port.to_string()),
-            OsString::from("-o"),
-            OsString::from("BatchMode=yes"),
-            OsString::from("-o"),
-            OsString::from("StrictHostKeyChecking=no"),
-            OsString::from("-o"),
-            OsString::from("UserKnownHostsFile=/dev/null"),
-            OsString::from(format!("{}@{}", self.config.ssh_user, networking.public_ip)),
-            OsString::from(remote_command),
-        ]
+        let mut args = self.common_ssh_options(networking.ssh_port);
+        args.push(OsString::from(format!(
+            "{}@{}",
+            self.config.ssh_user, networking.public_ip
+        )));
+        args.push(OsString::from(remote_command));
+        args
+    }
+
+    fn common_ssh_options(&self, port: u16) -> Vec<OsString> {
+        let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
+
+        if self.config.ssh_batch_mode {
+            args.push(OsString::from("-o"));
+            args.push(OsString::from("BatchMode=yes"));
+        }
+
+        if !self.config.ssh_strict_host_key_checking {
+            args.push(OsString::from("-o"));
+            args.push(OsString::from("StrictHostKeyChecking=no"));
+        }
+
+        if !self.config.ssh_known_hosts_file.trim().is_empty() {
+            args.push(OsString::from("-o"));
+            args.push(OsString::from(format!(
+                "UserKnownHostsFile={}",
+                self.config.ssh_known_hosts_file
+            )));
+        }
+
+        args
+    }
+
+    fn build_remote_shell(&self, port: u16) -> String {
+        let opts = self
+            .common_ssh_options(port)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} {}", self.config.ssh_bin, opts)
+    }
+
+    fn build_remote_command(&self, remote_command: &str) -> String {
+        let escaped_path = escape_single_quotes(&self.config.remote_path);
+        format!("cd '{escaped_path}' && {remote_command}")
+    }
+}
+
+fn escape_single_quotes(input: &str) -> String {
+    input.replace('\'', "'\"'\"'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::InstanceNetworking;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
+    use tempfile::TempDir;
+
+    #[derive(Clone, Debug, Default)]
+    struct FakeRunner {
+        outputs: std::rc::Rc<RefCell<VecDeque<CommandOutput>>>,
+        last_args: std::rc::Rc<RefCell<Option<Vec<OsString>>>>,
+    }
+
+    impl FakeRunner {
+        fn with_output(output: CommandOutput) -> Self {
+            let runner = Self::default();
+            runner.outputs.borrow_mut().push_back(output);
+            runner
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
+            self.last_args.borrow_mut().replace(args.to_vec());
+            self.outputs
+                .borrow_mut()
+                .pop_front()
+                .ok_or_else(|| SyncError::Spawn {
+                    program: program.to_owned(),
+                    message: String::from("no scripted output"),
+                })
+        }
+    }
+
+    fn base_config() -> SyncConfig {
+        SyncConfig {
+            rsync_bin: String::from("rsync"),
+            ssh_bin: String::from("ssh"),
+            ssh_user: String::from("ubuntu"),
+            remote_path: String::from("/remote/path"),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
+        }
+    }
+
+    fn networking() -> InstanceNetworking {
+        InstanceNetworking {
+            public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ssh_port: 2222,
+        }
+    }
+
+    #[test]
+    fn sync_config_validate_accepts_defaults() {
+        let cfg = base_config();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_rsync_bin() {
+        for invalid in ["", "  "] {
+            let mut cfg = base_config();
+            cfg.rsync_bin = invalid.to_owned();
+            let Err(err) = cfg.validate() else {
+                panic!("rsync_bin '{invalid}' should fail");
+            };
+            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "rsync_bin"));
+        }
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_ssh_bin() {
+        for invalid in ["", "  "] {
+            let mut cfg = base_config();
+            cfg.ssh_bin = invalid.to_owned();
+            let Err(err) = cfg.validate() else {
+                panic!("ssh_bin '{invalid}' should fail");
+            };
+            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_bin"));
+        }
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_ssh_user() {
+        for invalid in ["", "  "] {
+            let mut cfg = base_config();
+            cfg.ssh_user = invalid.to_owned();
+            let Err(err) = cfg.validate() else {
+                panic!("ssh_user '{invalid}' should fail");
+            };
+            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_user"));
+        }
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_remote_path() {
+        for invalid in ["", "  "] {
+            let mut cfg = base_config();
+            cfg.remote_path = invalid.to_owned();
+            let Err(err) = cfg.validate() else {
+                panic!("remote_path '{invalid}' should fail");
+            };
+            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "remote_path"));
+        }
+    }
+
+    #[test]
+    fn remote_destination_builds_expected_values() {
+        let cfg = SyncConfig {
+            ssh_user: String::from("alice"),
+            remote_path: String::from("/dst"),
+            ..base_config()
+        };
+        let dest = cfg.remote_destination(&networking());
+        let SyncDestination::Remote {
+            user,
+            host,
+            port,
+            path,
+        } = dest
+        else {
+            panic!("expected remote destination");
+        };
+        assert_eq!(user, "alice");
+        assert_eq!(host, Ipv4Addr::LOCALHOST.to_string());
+        assert_eq!(port, 2222);
+        assert_eq!(path, Utf8PathBuf::from("/dst"));
+    }
+
+    #[test]
+    fn build_rsync_args_remote_includes_gitignore_filter() {
+        let cfg = base_config();
+        let runner = FakeRunner::default();
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let destination = SyncDestination::Remote {
+            user: String::from("ubuntu"),
+            host: String::from("1.2.3.4"),
+            port: 2222,
+            path: Utf8PathBuf::from("/remote"),
+        };
+        let source_dir = TempDir::new().expect("temp dir");
+        let source =
+            Utf8PathBuf::from_path_buf(source_dir.path().to_path_buf()).expect("utf8 path");
+        let args = syncer
+            .build_rsync_args(&source, &destination)
+            .expect("args should build");
+
+        let args_strs: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args_strs.contains(&String::from("--filter=:- .gitignore")));
+        assert!(args_strs.contains(&String::from("--exclude")));
+        assert!(args_strs.contains(&String::from(".git/")));
+        assert!(
+            args_strs.iter().any(|arg| arg.starts_with("--rsh")),
+            "expected --rsh wrapper"
+        );
+        assert!(
+            args_strs.iter().any(|arg| arg.contains("ssh -p 2222")),
+            "expected ssh port in remote shell: {args_strs:?}"
+        );
+    }
+
+    #[test]
+    fn build_rsync_args_local_omits_remote_shell() {
+        let cfg = base_config();
+        let runner = FakeRunner::default();
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let destination = SyncDestination::Local {
+            path: Utf8PathBuf::from("/tmp/dst"),
+        };
+        let source_dir = TempDir::new().expect("temp dir");
+        let source =
+            Utf8PathBuf::from_path_buf(source_dir.path().to_path_buf()).expect("utf8 path");
+        let args = syncer
+            .build_rsync_args(&source, &destination)
+            .expect("args should build");
+        let args_strs: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !args_strs.iter().any(|arg| arg == "--rsh"),
+            "local sync should not set --rsh"
+        );
+        assert_eq!(args_strs.last().map(String::as_str), Some("/tmp/dst"));
+    }
+
+    #[test]
+    fn sync_returns_error_on_non_zero_rsync_status() {
+        let cfg = base_config();
+        let runner = FakeRunner::with_output(CommandOutput {
+            code: Some(12),
+            stdout: String::new(),
+            stderr: String::from("fail"),
+        });
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let destination = SyncDestination::Local {
+            path: Utf8PathBuf::from("/tmp/dst"),
+        };
+        let err = syncer
+            .sync(Utf8Path::new("/"), &destination)
+            .expect_err("non-zero rsync should error");
+        let SyncError::CommandFailure {
+            status,
+            status_text,
+            ..
+        } = err
+        else {
+            panic!("expected CommandFailure");
+        };
+        assert_eq!(status, Some(12));
+        assert_eq!(status_text, "12");
+    }
+
+    #[test]
+    fn sync_succeeds_on_zero_status() {
+        let cfg = base_config();
+        let runner = FakeRunner::with_output(CommandOutput {
+            code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let destination = SyncDestination::Local {
+            path: Utf8PathBuf::from("/tmp/dst"),
+        };
+        assert!(syncer.sync(Utf8Path::new("/"), &destination).is_ok());
+    }
+
+    #[test]
+    fn run_remote_returns_missing_exit_code() {
+        let cfg = base_config();
+        let runner = FakeRunner::with_output(CommandOutput {
+            code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let err = syncer
+            .run_remote(&networking(), "echo ok")
+            .expect_err("missing exit code should error");
+        assert!(matches!(err, SyncError::MissingExitCode { program } if program == "ssh"));
+    }
+
+    #[test]
+    fn run_remote_propagates_exit_code() {
+        let cfg = base_config();
+        let runner = FakeRunner::with_output(CommandOutput {
+            code: Some(7),
+            stdout: String::from("hi"),
+            stderr: String::new(),
+        });
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let output = syncer
+            .run_remote(&networking(), "echo ok")
+            .unwrap_or_else(|err| panic!("run_remote should succeed: {err}"));
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.stdout, "hi");
+    }
+
+    #[test]
+    fn run_remote_cd_prefixes_remote_path() {
+        let cfg = base_config();
+        let runner = FakeRunner::with_output(CommandOutput {
+            code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        let syncer = Syncer::new(cfg, runner.clone()).expect("config should validate");
+        let _ = syncer
+            .run_remote(&networking(), "cargo test")
+            .expect("run_remote should succeed");
+
+        let args = runner
+            .last_args
+            .borrow()
+            .clone()
+            .expect("runner should have recorded args");
+        let last = args.last().expect("ssh command present");
+        assert!(
+            last.to_string_lossy()
+                .starts_with("cd '/remote/path' && cargo test"),
+            "remote command should change directory, got: {last:?}"
+        );
     }
 }

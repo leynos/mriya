@@ -83,6 +83,9 @@ fn build_scripted_context(runner: ScriptedRunner, label: &str) -> ScriptedContex
             ssh_bin: String::from("ssh"),
             ssh_user: String::from("ubuntu"),
             remote_path: String::from("/remote"),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
         },
         networking: InstanceNetworking {
             public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -313,6 +316,9 @@ fn sync_config_validation_rejects_empty_remote_path() {
         ssh_bin: String::from("ssh"),
         ssh_user: String::from("ubuntu"),
         remote_path: String::new(),
+        ssh_batch_mode: true,
+        ssh_strict_host_key_checking: false,
+        ssh_known_hosts_file: String::from("/dev/null"),
     };
 
     let err = cfg
@@ -322,6 +328,74 @@ fn sync_config_validation_rejects_empty_remote_path() {
         err,
         SyncError::InvalidConfig { field } if field == "remote_path"
     ));
+}
+
+#[test]
+fn sync_config_validation_rejects_rsync_bin_values() {
+    for invalid in ["", "  "] {
+        let cfg = SyncConfig {
+            rsync_bin: invalid.to_owned(),
+            ssh_bin: String::from("ssh"),
+            ssh_user: String::from("ubuntu"),
+            remote_path: String::from("/remote"),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
+        };
+        let err = cfg.validate().expect_err("rsync_bin invalid should fail");
+        assert!(matches!(err, SyncError::InvalidConfig { field } if field == "rsync_bin"));
+    }
+}
+
+#[test]
+fn sync_config_validation_rejects_ssh_bin_values() {
+    for invalid in ["", "  "] {
+        let cfg = SyncConfig {
+            rsync_bin: String::from("rsync"),
+            ssh_bin: invalid.to_owned(),
+            ssh_user: String::from("ubuntu"),
+            remote_path: String::from("/remote"),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
+        };
+        let err = cfg.validate().expect_err("ssh_bin invalid should fail");
+        assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_bin"));
+    }
+}
+
+#[test]
+fn sync_config_validation_rejects_ssh_user_values() {
+    for invalid in ["", "  "] {
+        let cfg = SyncConfig {
+            rsync_bin: String::from("rsync"),
+            ssh_bin: String::from("ssh"),
+            ssh_user: invalid.to_owned(),
+            remote_path: String::from("/remote"),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
+        };
+        let err = cfg.validate().expect_err("ssh_user invalid should fail");
+        assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_user"));
+    }
+}
+
+#[test]
+fn sync_config_validation_rejects_remote_path_values() {
+    for invalid in ["", "  "] {
+        let cfg = SyncConfig {
+            rsync_bin: String::from("rsync"),
+            ssh_bin: String::from("ssh"),
+            ssh_user: String::from("ubuntu"),
+            remote_path: invalid.to_owned(),
+            ssh_batch_mode: true,
+            ssh_strict_host_key_checking: false,
+            ssh_known_hosts_file: String::from("/dev/null"),
+        };
+        let err = cfg.validate().expect_err("remote_path invalid should fail");
+        assert!(matches!(err, SyncError::InvalidConfig { field } if field == "remote_path"));
+    }
 }
 
 #[given("a workspace with a gitignored cache on the remote")]
@@ -360,6 +434,9 @@ fn run_git_aware_sync(workspace: &Workspace) -> Result<Workspace, SyncError> {
         ssh_bin: String::from("ssh"),
         ssh_user: String::from("ubuntu"),
         remote_path: workspace.remote_root.to_string(),
+        ssh_batch_mode: true,
+        ssh_strict_host_key_checking: false,
+        ssh_known_hosts_file: String::from("/dev/null"),
     };
 
     let syncer = Syncer::new(config, LocalCopyRunner)?;
@@ -429,6 +506,14 @@ impl ScriptedRunner {
             code: Some(code),
             stdout: String::new(),
             stderr: String::from("simulated failure"),
+        });
+    }
+
+    fn push_missing_exit_code(&self) {
+        self.responses.borrow_mut().push_back(CommandOutput {
+            code: None,
+            stdout: String::new(),
+            stderr: String::new(),
         });
     }
 }
@@ -573,6 +658,37 @@ fn sync_error_mentions_status(error: &SyncError) {
         panic!("expected sync command failure");
     };
     assert_eq!(*status, Some(12));
+}
+
+#[test]
+fn run_remote_reports_missing_exit_code() {
+    let runner = ScriptedRunner::new();
+    runner.push_missing_exit_code();
+
+    let config = SyncConfig {
+        rsync_bin: String::from("rsync"),
+        ssh_bin: String::from("ssh"),
+        ssh_user: String::from("ubuntu"),
+        remote_path: String::from("/remote"),
+        ssh_batch_mode: true,
+        ssh_strict_host_key_checking: false,
+        ssh_known_hosts_file: String::from("/dev/null"),
+    };
+
+    let syncer = Syncer::new(config, runner).expect("config should be valid");
+    let networking = InstanceNetworking {
+        public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ssh_port: 22,
+    };
+
+    let err = syncer
+        .run_remote(&networking, "echo ok")
+        .expect_err("missing exit code should error");
+
+    assert!(matches!(
+        err,
+        SyncError::MissingExitCode { program } if program == "ssh"
+    ));
 }
 
 #[scenario(
