@@ -1209,6 +1209,8 @@ name = "mriya"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "camino",
+ "cap-std",
  "clap",
  "ortho_config",
  "rstest",
@@ -1216,6 +1218,8 @@ dependencies = [
  "rstest-bdd-macros",
  "scaleway-rs",
  "serde",
+ "shell-escape",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "uuid",
@@ -2016,6 +2020,12 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "shell-escape"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45bb67a18fa91266cc7807181f62f9178a6873bfad7dc788c42e6430db40184f"
 
 [[package]]
 name = "shlex"
