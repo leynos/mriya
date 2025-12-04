@@ -27,9 +27,6 @@ fn scenario_propagate_exit_codes(
 }
 
 #[scenario(path = "tests/features/sync.feature", name = "Surface sync failures")]
-fn scenario_surface_failures(
-    scripted_context: ScriptedContext,
-    error: mriya::sync::SyncError,
-) {
+fn scenario_surface_failures(scripted_context: ScriptedContext, error: mriya::sync::SyncError) {
     let _ = (scripted_context, error);
 }

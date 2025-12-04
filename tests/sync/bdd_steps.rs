@@ -145,9 +145,7 @@ fn scripted_runner_with_failure(scripted_context: ScriptedContext) -> ScriptedCo
 }
 
 #[when("I trigger sync against the workspace")]
-fn trigger_sync(
-    scripted_context: ScriptedContext,
-) -> Result<SyncError, SyncError> {
+fn trigger_sync(scripted_context: ScriptedContext) -> Result<SyncError, SyncError> {
     let scripted_context_val = scripted_context;
     let syncer = Syncer::new(
         scripted_context_val.config.clone(),

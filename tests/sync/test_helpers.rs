@@ -151,7 +151,9 @@ pub fn scripted_context_result() -> Result<ScriptedContext, SyncError> {
 }
 
 #[fixture]
-pub fn scripted_context(scripted_context_result: Result<ScriptedContext, SyncError>) -> ScriptedContext {
+pub fn scripted_context(
+    scripted_context_result: Result<ScriptedContext, SyncError>,
+) -> ScriptedContext {
     scripted_context_result
         .unwrap_or_else(|err| panic!("scripted context fixture should initialise: {err}"))
 }

@@ -73,7 +73,10 @@ fn sync_config_validation_rejects_remote_path(base_config: SyncConfig) {
 }
 
 #[rstest]
-fn remote_destination_builds_expected_values(base_config: SyncConfig, networking: InstanceNetworking) {
+fn remote_destination_builds_expected_values(
+    base_config: SyncConfig,
+    networking: InstanceNetworking,
+) {
     let cfg = SyncConfig {
         ssh_user: String::from("alice"),
         remote_path: String::from("/dst"),
