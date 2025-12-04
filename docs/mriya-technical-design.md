@@ -158,6 +158,9 @@ provisioning) that will guide subsequent optimizations.
 - Centralize SSH flags (port, batch mode, host-key checking, known hosts path)
   in `SyncConfig` so environments with stricter host verification can enable it
   without code changes.
+- Always execute remote commands from the configured `remote_path` by
+  wrapping the SSH invocation with `cd {remote_path} && …`, so callers do not
+  need to prepend a directory change manually after syncing.
 - Keep sync configuration under the `MRIYA_SYNC_` prefix via `ortho-config` so
   users can override the rsync/ssh binaries, SSH user, and remote path without
   changing code.

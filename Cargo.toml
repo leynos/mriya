@@ -19,6 +19,7 @@ rstest-bdd = "0.1.0"
 rstest-bdd-macros = "0.1.0"
 assert_cmd = "2.0"
 tempfile = "3.14"
+cap-std = { version = "3.4.5", features = ["fs_utf8"] }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

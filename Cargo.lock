@@ -1210,6 +1210,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "camino",
+ "cap-std",
  "clap",
  "ortho_config",
  "rstest",

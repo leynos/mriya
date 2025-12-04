@@ -1,3 +1,8 @@
+//! Shared scripted command runner used by sync tests.
+//!
+//! Records the last arguments and yields predefined command outputs to drive
+//! edge cases in unit and behavioural tests.
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -8,7 +13,6 @@ use mriya::sync::{CommandOutput, CommandRunner, SyncError};
 #[derive(Clone, Debug, Default)]
 pub struct ScriptedRunner {
     responses: Rc<RefCell<VecDeque<CommandOutput>>>,
-    last_args: Rc<RefCell<Option<Vec<OsString>>>>,
 }
 
 impl ScriptedRunner {
@@ -47,15 +51,10 @@ impl ScriptedRunner {
             stderr: String::new(),
         });
     }
-
-    pub fn last_args(&self) -> Option<Vec<OsString>> {
-        self.last_args.borrow().clone()
-    }
 }
 
 impl CommandRunner for ScriptedRunner {
-    fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
-        self.last_args.borrow_mut().replace(args.to_vec());
+    fn run(&self, program: &str, _args: &[OsString]) -> Result<CommandOutput, SyncError> {
         self.responses
             .borrow_mut()
             .pop_front()

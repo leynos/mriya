@@ -1,7 +1,13 @@
+//! Test-only rsync simulator used by sync BDD scenarios.
+//!
+//! Provides a minimal gitignore-aware file copier that preserves ignored cache
+//! directories and prunes destination entries not present in the source.
+
 use std::collections::HashSet;
-use std::fs::{copy, create_dir_all, read_dir, read_to_string, remove_dir_all, remove_file, DirEntry, FileType};
 
 use camino::{Utf8Path, Utf8PathBuf};
+use cap_std::fs_utf8::{DirEntry, FileType};
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::sync::SyncError;
 
 #[derive(Clone, Debug)]
@@ -10,11 +16,28 @@ struct IgnoreRules {
     files: HashSet<String>,
 }
 
+struct SimulationContext<'a> {
+    fs: &'a Dir,
+    rules: &'a IgnoreRules,
+    source_root: &'a Utf8Path,
+    destination_root: &'a Utf8Path,
+    kept: &'a mut HashSet<Utf8PathBuf>,
+}
+
 pub fn simulate_rsync(source: &Utf8Path, destination: &Utf8Path) -> Result<(), SyncError> {
+    let fs = Dir::open_ambient_dir("/", ambient_authority())
+        .map_err(|err| map_io_error(err.to_string()))?;
     let rules = load_ignores(source)?;
     let mut kept: HashSet<Utf8PathBuf> = HashSet::new();
-    copy_tree(source, destination, &rules, &mut kept)?;
-    prune_destination(destination, &kept, &rules)?;
+    let mut context = SimulationContext {
+        fs: &fs,
+        rules: &rules,
+        source_root: source,
+        destination_root: destination,
+        kept: &mut kept,
+    };
+    copy_tree(&mut context, source, destination)?;
+    prune_destination(&mut context, destination)?;
     Ok(())
 }
 
@@ -27,7 +50,14 @@ fn load_ignores(source: &Utf8Path) -> Result<IgnoreRules, SyncError> {
         });
     }
 
-    let content = read_to_string(&ignore_path).map_err(map_io_error)?;
+    // This parser intentionally supports only top-level directory entries
+    // (for example `target/`) and file-name patterns (for example `.DS_Store`)
+    // to keep the simulator minimal. Nested `.gitignore` files, globbing, and
+    // negation rules are not implemented.
+    let content = Dir::open_ambient_dir("/", ambient_authority())
+        .map_err(|err| map_io_error(err.to_string()))?
+        .read_to_string(relative_to_root(&ignore_path))
+        .map_err(|err| map_io_error(err.to_string()))?;
 
     let mut dirs = HashSet::new();
     let mut files = HashSet::new();
@@ -58,102 +88,151 @@ fn should_ignore(relative: &Utf8Path, rules: &IgnoreRules) -> bool {
         .is_some_and(|name| rules.files.contains(name))
 }
 
-fn copy_tree(
-    source_root: &Utf8Path,
-    destination_root: &Utf8Path,
-    rules: &IgnoreRules,
-    kept: &mut HashSet<Utf8PathBuf>,
-) -> Result<(), SyncError> {
-    for source_entry in read_dir(source_root).map_err(map_io_error)? {
-        let entry = source_entry.map_err(map_io_error)?;
-        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(map_io_error)?;
-        let relative = path
-            .strip_prefix(source_root)
-            .map_err(map_io_error)?;
+fn relative_to_root(path: &Utf8Path) -> &Utf8Path {
+    path.strip_prefix("/").unwrap_or(path)
+}
 
-        if should_ignore(relative, rules) {
+fn copy_tree(
+    context: &mut SimulationContext,
+    source_dir: &Utf8Path,
+    destination_dir: &Utf8Path,
+) -> Result<(), SyncError> {
+    for source_entry in context
+        .fs
+        .read_dir(relative_to_root(source_dir))
+        .map_err(|err| map_io_error(err.to_string()))?
+    {
+        let entry = source_entry.map_err(|err| map_io_error(err.to_string()))?;
+        let name = entry
+            .file_name()
+            .map_err(|err| map_io_error(err.to_string()))?;
+        let name_path = Utf8PathBuf::from(name);
+        let path = source_dir.join(&name_path);
+        let relative = path
+            .strip_prefix(context.source_root)
+            .map_err(|err| map_io_error(err.to_string()))?;
+
+        if should_ignore(relative, context.rules) {
             continue;
         }
 
-        let destination_path = destination_root.join(relative);
-        let metadata = entry.file_type().map_err(map_io_error)?;
+        let destination_path = destination_dir.join(&name_path);
+        let metadata = entry
+            .file_type()
+            .map_err(|err| map_io_error(err.to_string()))?;
 
         if metadata.is_dir() {
-            create_dir_all(&destination_path).map_err(map_io_error)?;
-            kept.insert(relative.to_path_buf());
-            copy_tree(&path, &destination_path, rules, kept)?;
+            context
+                .fs
+                .create_dir_all(relative_to_root(&destination_path))
+                .map_err(|err| map_io_error(err.to_string()))?;
+            context.kept.insert(relative.to_path_buf());
+            copy_tree(context, &path, &destination_path)?;
         } else {
             if let Some(parent) = destination_path.parent() {
-                create_dir_all(parent).map_err(map_io_error)?;
+                context
+                    .fs
+                    .create_dir_all(relative_to_root(parent))
+                    .map_err(|err| map_io_error(err.to_string()))?;
             }
-            copy(&path, &destination_path).map_err(map_io_error)?;
-            kept.insert(relative.to_path_buf());
+            context
+                .fs
+                .copy(
+                    relative_to_root(&path),
+                    context.fs,
+                    relative_to_root(&destination_path),
+                )
+                .map_err(|err| map_io_error(err.to_string()))?;
+            context.kept.insert(relative.to_path_buf());
         }
     }
 
     Ok(())
 }
 
-fn prune_destination(
-    destination_root: &Utf8Path,
-    kept: &HashSet<Utf8PathBuf>,
-    rules: &IgnoreRules,
-) -> Result<(), SyncError> {
-    if !destination_root.exists() {
-        return Ok(());
+fn map_io_error(message: impl Into<String>) -> SyncError {
+    SyncError::Spawn {
+        program: String::from("rsync"),
+        message: message.into(),
     }
-
-    for destination_entry in read_dir(destination_root).map_err(map_io_error)? {
-        let entry = destination_entry.map_err(map_io_error)?;
-        process_destination_entry(entry, destination_root, kept, rules)?;
-    }
-
-    Ok(())
 }
 
-fn process_destination_entry(
-    entry: DirEntry,
-    destination_root: &Utf8Path,
+fn should_keep_entry(
+    relative: &Utf8Path,
+    file_type: FileType,
     kept: &HashSet<Utf8PathBuf>,
-    rules: &IgnoreRules,
-) -> Result<(), SyncError> {
-    let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(map_io_error)?;
-    let relative = path
-        .strip_prefix(destination_root)
-        .map_err(map_io_error)?;
-
-    if should_ignore(relative, rules) {
-        return Ok(());
-    }
-
-    let file_type = entry.file_type().map_err(map_io_error)?;
-
-    if should_keep_entry(relative, file_type, kept) {
-        if file_type.is_dir() {
-            prune_destination(&path, kept, rules)?;
-        }
-        return Ok(());
-    }
-
-    remove_entry(&path, file_type.is_dir())
-}
-
-fn should_keep_entry(relative: &Utf8Path, file_type: FileType, kept: &HashSet<Utf8PathBuf>) -> bool {
+) -> bool {
     let has_children = kept.iter().any(|kept_path| kept_path.starts_with(relative));
     kept.contains(relative) || (file_type.is_dir() && has_children)
 }
 
-fn remove_entry(path: &Utf8Path, is_dir: bool) -> Result<(), SyncError> {
+fn remove_entry(
+    context: &SimulationContext,
+    path: &Utf8Path,
+    is_dir: bool,
+) -> Result<(), SyncError> {
     if is_dir {
-        remove_dir_all(path).map_err(map_io_error)
+        context
+            .fs
+            .remove_dir_all(relative_to_root(path))
+            .map_err(|err| map_io_error(err.to_string()))
     } else {
-        remove_file(path).map_err(map_io_error)
+        context
+            .fs
+            .remove_file(relative_to_root(path))
+            .map_err(|err| map_io_error(err.to_string()))
     }
 }
 
-fn map_io_error(err: impl ToString) -> SyncError {
-    SyncError::Spawn {
-        program: String::from("rsync"),
-        message: err.to_string(),
+fn process_destination_entry(
+    context: &mut SimulationContext,
+    entry: &DirEntry,
+    destination_dir: &Utf8Path,
+) -> Result<(), SyncError> {
+    let name = entry
+        .file_name()
+        .map_err(|err| map_io_error(err.to_string()))?;
+    let name_path = Utf8PathBuf::from(name);
+    let path = destination_dir.join(&name_path);
+    let relative = path
+        .strip_prefix(context.destination_root)
+        .map_err(|err| map_io_error(err.to_string()))?;
+
+    if should_ignore(relative, context.rules) {
+        return Ok(());
     }
+
+    let file_type = entry
+        .file_type()
+        .map_err(|err| map_io_error(err.to_string()))?;
+    let is_dir = file_type.is_dir();
+
+    if should_keep_entry(relative, file_type, context.kept) {
+        if is_dir {
+            prune_destination(context, &path)?;
+        }
+        return Ok(());
+    }
+
+    remove_entry(context, &path, is_dir)
+}
+
+fn prune_destination(
+    context: &mut SimulationContext,
+    destination_dir: &Utf8Path,
+) -> Result<(), SyncError> {
+    if !destination_dir.exists() {
+        return Ok(());
+    }
+
+    for destination_entry in context
+        .fs
+        .read_dir(relative_to_root(destination_dir))
+        .map_err(|err| map_io_error(err.to_string()))?
+    {
+        let entry = destination_entry.map_err(|err| map_io_error(err.to_string()))?;
+        process_destination_entry(context, &entry, destination_dir)?;
+    }
+
+    Ok(())
 }

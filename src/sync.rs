@@ -352,12 +352,11 @@ impl<R: CommandRunner> Syncer<R> {
         remote_command: &str,
     ) -> Vec<OsString> {
         let mut args = self.common_ssh_options(networking.ssh_port);
-        let wrapped_command = self.build_remote_command(remote_command);
         args.push(OsString::from(format!(
             "{}@{}",
             self.config.ssh_user, networking.public_ip
         )));
-        args.push(OsString::from(wrapped_command));
+        args.push(OsString::from(remote_command));
         args
     }
 
@@ -471,6 +470,25 @@ mod tests {
         }
     }
 
+    /// Helper to assert validation rejects empty or whitespace values for a
+    /// given field.
+    fn assert_validation_rejects_field<F>(field_name: &str, set_field: F)
+    where
+        F: Fn(&mut SyncConfig, String),
+    {
+        for invalid in ["", "  "] {
+            let mut cfg = base_config();
+            set_field(&mut cfg, invalid.to_owned());
+            let Err(err) = cfg.validate() else {
+                panic!("{field_name} '{invalid}' should fail");
+            };
+            let SyncError::InvalidConfig { ref field } = err else {
+                panic!("expected InvalidConfig for {field_name}, got {err:?}");
+            };
+            assert_eq!(field, field_name, "expected invalid field {field_name}");
+        }
+    }
+
     fn base_config() -> SyncConfig {
         SyncConfig {
             rsync_bin: String::from("rsync"),
@@ -494,6 +512,26 @@ mod tests {
     fn sync_config_validate_accepts_defaults() {
         let cfg = base_config();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_rsync_bin() {
+        assert_validation_rejects_field("rsync_bin", |cfg, val| cfg.rsync_bin = val);
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_ssh_bin() {
+        assert_validation_rejects_field("ssh_bin", |cfg, val| cfg.ssh_bin = val);
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_ssh_user() {
+        assert_validation_rejects_field("ssh_user", |cfg, val| cfg.ssh_user = val);
+    }
+
+    #[test]
+    fn sync_config_validation_rejects_remote_path() {
+        assert_validation_rejects_field("remote_path", |cfg, val| cfg.remote_path = val);
     }
 
     #[test]
@@ -654,6 +692,22 @@ mod tests {
         assert!(
             args.starts_with("cd '/remote/path' && cargo test"),
             "remote command should change directory, got: {args}"
+        );
+    }
+
+    #[test]
+    fn build_ssh_args_uses_wrapped_command_verbatim() {
+        let cfg = base_config();
+        let runner = ScriptedRunner::new();
+        runner.push_success();
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
+        let wrapped = syncer.build_remote_command("echo ok");
+        let args = syncer.build_ssh_args(&networking(), &wrapped);
+
+        assert_eq!(
+            args.last(),
+            Some(&OsString::from(wrapped.clone())),
+            "ssh args should forward the already wrapped remote command"
         );
     }
 }

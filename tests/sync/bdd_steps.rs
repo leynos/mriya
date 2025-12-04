@@ -1,11 +1,13 @@
+//! BDD step definitions for sync behaviour, covering workspace caching and
+//! remote command exit-code propagation.
+
+use camino::Utf8PathBuf;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::sync::{SyncConfig, SyncDestination, SyncError, Syncer};
-use mriya::InstanceNetworking;
-use rstest_bdd::skip;
 use rstest_bdd_macros::{given, then, when};
 
-use super::rsync_simulator::simulate_rsync;
 use super::test_doubles::{LocalCopyRunner, ScriptedRunner};
-use super::test_helpers::{build_scripted_context, workspace, ScriptedContext, Workspace};
+use super::test_helpers::{ScriptedContext, Workspace, build_scripted_context};
 
 #[given("a workspace with a gitignored cache on the remote")]
 fn workspace_with_cache() -> Workspace {
@@ -69,7 +71,11 @@ fn cache_survives(workspace: &Workspace) {
 #[then("tracked files are mirrored to the remote")]
 fn tracked_files_updated(workspace: &Workspace) {
     let synced_file = workspace.remote_root.join("src").join("lib.rs");
-    let contents = std::fs::read_to_string(&synced_file)
+    let fs = Dir::open_ambient_dir("/", ambient_authority())
+        .unwrap_or_else(|err| panic!("open ambient dir for read: {err}"));
+    let relative = synced_file.strip_prefix("/").unwrap_or(&synced_file);
+    let contents = fs
+        .read_to_string(relative)
         .unwrap_or_else(|err| panic!("read synced file {synced_file}: {err}"));
     assert!(
         contents.contains("meaning"),
@@ -91,7 +97,10 @@ fn scripted_runner() -> ScriptedContext {
 }
 
 #[when("the remote command exits with \"{code}\"")]
-fn remote_command_exits(scripted_context: &ScriptedContext, code: i32) -> mriya::sync::RemoteCommandOutput {
+fn remote_command_exits(
+    scripted_context: &ScriptedContext,
+    code: i32,
+) -> mriya::sync::RemoteCommandOutput {
     scripted_context.runner.push_exit_code(code);
     let syncer = Syncer::new(
         scripted_context.config.clone(),
@@ -134,7 +143,7 @@ fn trigger_sync(scripted_context: &ScriptedContext) -> SyncError {
         path: Utf8PathBuf::from("/remote"),
     };
     match syncer.sync(&scripted_context.source, &destination) {
-        Ok(()) => skip!("ssh command should not run when sync succeeds"),
+        Ok(()) => panic!("ssh command should not run when sync succeeds"),
         Err(err) => err,
     }
 }

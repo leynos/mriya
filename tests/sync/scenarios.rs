@@ -1,4 +1,10 @@
+//! BDD scenario definitions for sync module.
+//!
+//! Declares Gherkin-style scenarios that bind to step definitions in
+//! `bdd_steps` and fixtures from `test_helpers`.
+
 use super::test_helpers::{ScriptedContext, Workspace};
+use super::test_helpers::{error, output, scripted_context, workspace};
 use rstest_bdd_macros::scenario;
 
 #[scenario(
@@ -13,7 +19,10 @@ fn scenario_preserve_caches(workspace: Workspace) {
     path = "tests/features/sync.feature",
     name = "Propagate remote exit codes"
 )]
-fn scenario_propagate_exit_codes(scripted_context: ScriptedContext, output: mriya::sync::RemoteCommandOutput) {
+fn scenario_propagate_exit_codes(
+    scripted_context: ScriptedContext,
+    output: mriya::sync::RemoteCommandOutput,
+) {
     let _ = (scripted_context, output);
 }
 

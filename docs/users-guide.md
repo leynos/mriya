@@ -34,7 +34,9 @@ for incremental runs. The `.git` directory is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
 remote exit code. If `cargo test` fails remotely with exit status 101, the
-local process will also exit 101.
+local process will also exit 101. Commands run via `sync_and_run` automatically
+`cd` into `MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to
+prefix their commands with a directory change.
 
 Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 
