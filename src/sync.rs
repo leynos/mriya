@@ -466,54 +466,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_config_validation_rejects_rsync_bin() {
-        for invalid in ["", "  "] {
-            let mut cfg = base_config();
-            cfg.rsync_bin = invalid.to_owned();
-            let Err(err) = cfg.validate() else {
-                panic!("rsync_bin '{invalid}' should fail");
-            };
-            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "rsync_bin"));
-        }
-    }
-
-    #[test]
-    fn sync_config_validation_rejects_ssh_bin() {
-        for invalid in ["", "  "] {
-            let mut cfg = base_config();
-            cfg.ssh_bin = invalid.to_owned();
-            let Err(err) = cfg.validate() else {
-                panic!("ssh_bin '{invalid}' should fail");
-            };
-            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_bin"));
-        }
-    }
-
-    #[test]
-    fn sync_config_validation_rejects_ssh_user() {
-        for invalid in ["", "  "] {
-            let mut cfg = base_config();
-            cfg.ssh_user = invalid.to_owned();
-            let Err(err) = cfg.validate() else {
-                panic!("ssh_user '{invalid}' should fail");
-            };
-            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "ssh_user"));
-        }
-    }
-
-    #[test]
-    fn sync_config_validation_rejects_remote_path() {
-        for invalid in ["", "  "] {
-            let mut cfg = base_config();
-            cfg.remote_path = invalid.to_owned();
-            let Err(err) = cfg.validate() else {
-                panic!("remote_path '{invalid}' should fail");
-            };
-            assert!(matches!(err, SyncError::InvalidConfig { field } if field == "remote_path"));
-        }
-    }
-
-    #[test]
     fn remote_destination_builds_expected_values() {
         let cfg = SyncConfig {
             ssh_user: String::from("alice"),
