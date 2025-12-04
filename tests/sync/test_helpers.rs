@@ -21,6 +21,12 @@ pub struct Workspace {
     _remote_tmp: Arc<TempDir>,
 }
 
+impl Default for Workspace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Workspace {
     pub fn new() -> Self {
         let local_tmp = Arc::new(temp_dir("local workspace"));

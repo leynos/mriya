@@ -11,6 +11,7 @@ use std::process::Command;
 use camino::{Utf8Path, Utf8PathBuf};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
+use shell_escape::unix::escape;
 use thiserror::Error;
 
 use crate::backend::InstanceNetworking;
@@ -395,80 +396,18 @@ impl<R: CommandRunner> Syncer<R> {
     }
 
     fn build_remote_command(&self, remote_command: &str) -> String {
-        let escaped_path = escape_single_quotes(&self.config.remote_path);
-        format!("cd '{escaped_path}' && {remote_command}")
+        let escaped_path = escape(self.config.remote_path.clone().into());
+        format!("cd {escaped_path} && {remote_command}")
     }
-}
-
-fn escape_single_quotes(input: &str) -> String {
-    input.replace('\'', "'\"'\"'")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::InstanceNetworking;
+    use crate::test_support::ScriptedRunner;
     use std::net::{IpAddr, Ipv4Addr};
     use tempfile::TempDir;
-
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
-    use std::rc::Rc;
-
-    #[derive(Clone, Debug, Default)]
-    struct ScriptedRunner {
-        responses: Rc<RefCell<VecDeque<CommandOutput>>>,
-    }
-
-    impl ScriptedRunner {
-        fn new() -> Self {
-            Self::default()
-        }
-
-        fn push_success(&self) {
-            self.responses.borrow_mut().push_back(CommandOutput {
-                code: Some(0),
-                stdout: String::new(),
-                stderr: String::new(),
-            });
-        }
-
-        fn push_exit_code(&self, code: i32) {
-            self.responses.borrow_mut().push_back(CommandOutput {
-                code: Some(code),
-                stdout: String::new(),
-                stderr: String::new(),
-            });
-        }
-
-        fn push_failure(&self, code: i32) {
-            self.responses.borrow_mut().push_back(CommandOutput {
-                code: Some(code),
-                stdout: String::new(),
-                stderr: String::from("simulated failure"),
-            });
-        }
-
-        fn push_missing_exit_code(&self) {
-            self.responses.borrow_mut().push_back(CommandOutput {
-                code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-            });
-        }
-    }
-
-    impl CommandRunner for ScriptedRunner {
-        fn run(&self, program: &str, _args: &[OsString]) -> Result<CommandOutput, SyncError> {
-            self.responses
-                .borrow_mut()
-                .pop_front()
-                .ok_or_else(|| SyncError::Spawn {
-                    program: program.to_owned(),
-                    message: String::from("no scripted response available"),
-                })
-        }
-    }
 
     /// Helper to assert validation rejects empty or whitespace values for a
     /// given field.
@@ -690,7 +629,7 @@ mod tests {
 
         let args = syncer.build_remote_command("cargo test");
         assert!(
-            args.starts_with("cd '/remote/path' && cargo test"),
+            args.starts_with("cd /remote/path && cargo test"),
             "remote command should change directory, got: {args}"
         );
     }

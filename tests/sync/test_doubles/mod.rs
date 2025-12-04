@@ -18,27 +18,23 @@ pub struct LocalCopyRunner;
 
 impl LocalCopyRunner {
     fn parse_paths(args: &[OsString]) -> Result<(Utf8PathBuf, Utf8PathBuf), SyncError> {
+        let path_error = |msg: &str| SyncError::Spawn {
+            program: String::from("rsync"),
+            message: String::from(msg),
+        };
+
         if args.len() < 2 {
-            return Err(SyncError::Spawn {
-                program: String::from("rsync"),
-                message: String::from("missing source or destination argument"),
-            });
+            return Err(path_error("missing source or destination argument"));
         }
 
         let source_arg = args
             .get(args.len() - 2)
             .and_then(|value| value.to_str())
-            .ok_or_else(|| SyncError::Spawn {
-                program: String::from("rsync"),
-                message: String::from("invalid source path"),
-            })?;
+            .ok_or_else(|| path_error("invalid source path"))?;
         let destination_arg = args
             .last()
             .and_then(|value| value.to_str())
-            .ok_or_else(|| SyncError::Spawn {
-                program: String::from("rsync"),
-                message: String::from("invalid destination path"),
-            })?;
+            .ok_or_else(|| path_error("invalid destination path"))?;
 
         Ok((
             Utf8PathBuf::from(source_arg),

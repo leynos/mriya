@@ -28,9 +28,10 @@ override everything.
 ## File sync semantics
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
-so only tracked files are transferred. Ignored cache paths such as `target/`
-are **not** deleted remotely, which keeps pre-existing build outputs available
-for incremental runs. The `.git` directory is excluded from transfer.
+so only files not matched by `.gitignore` patterns are transferred. Ignored
+cache paths such as `target/` are **not** deleted remotely, which keeps
+pre-existing build outputs available for incremental runs. The `.git` directory
+is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
 remote exit code. If `cargo test` fails remotely with exit status 101, the

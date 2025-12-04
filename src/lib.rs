@@ -8,6 +8,7 @@ pub mod backend;
 pub mod config;
 pub mod scaleway;
 pub mod sync;
+pub mod test_support;
 
 pub use backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
 pub use config::ScalewayConfig;
