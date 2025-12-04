@@ -18,7 +18,7 @@ for concrete, testable deliverables.
 
 - Step: Remote execution flow
 
-  - [ ] Provide `mriya run` that invokes the system `ssh` client to execute a
+  - [x] Provide `mriya run` that invokes the system `ssh` client to execute a
     user command, streams stdout/stderr, and returns the remote exit status;
     acceptance: CLI run of `cargo test` returns identical codes locally and via
     Mriya.

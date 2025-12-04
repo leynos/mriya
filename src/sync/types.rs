@@ -1,7 +1,9 @@
 //! Core sync types and command runner abstraction.
 
 use std::ffi::OsString;
-use std::process::Command;
+use std::io::{BufReader, Read, Write};
+use std::process::{Command, Stdio};
+use std::thread;
 
 use crate::sync::SyncError;
 
@@ -52,6 +54,133 @@ impl CommandRunner for ProcessCommandRunner {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+fn forward_stream(
+    reader: impl Read + Send + 'static,
+    target: StreamTarget,
+) -> thread::JoinHandle<Result<String, SyncError>> {
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        let mut captured = Vec::new();
+        let mut buffered_reader = BufReader::new(reader);
+
+        loop {
+            let read = buffered_reader
+                .read(&mut buffer)
+                .map_err(|err| SyncError::Spawn {
+                    program: target.program_name(),
+                    message: err.to_string(),
+                })?;
+            if read == 0 {
+                break;
+            }
+
+            let chunk = buffer.get(..read).unwrap_or(&[]);
+            target.write(chunk).map_err(|err| SyncError::Spawn {
+                program: target.program_name(),
+                message: err.to_string(),
+            })?;
+            captured.extend_from_slice(chunk);
+        }
+
+        Ok(String::from_utf8_lossy(&captured).into_owned())
+    })
+}
+
+enum StreamTarget {
+    Stdout,
+    Stderr,
+}
+
+impl StreamTarget {
+    fn write(&self, chunk: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Stdout => {
+                let mut stdout = std::io::stdout();
+                stdout.write_all(chunk)?;
+                stdout.flush()
+            }
+            Self::Stderr => {
+                let mut stderr = std::io::stderr();
+                stderr.write_all(chunk)?;
+                stderr.flush()
+            }
+        }
+    }
+
+    fn program_name(&self) -> String {
+        match self {
+            Self::Stdout => String::from("stdout"),
+            Self::Stderr => String::from("stderr"),
+        }
+    }
+}
+
+/// Command runner that streams subprocess stdout/stderr while capturing them.
+#[derive(Clone, Debug, Default)]
+pub struct StreamingCommandRunner;
+
+impl CommandRunner for StreamingCommandRunner {
+    fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| SyncError::Spawn {
+                program: program.to_owned(),
+                message: err.to_string(),
+            })?;
+
+        let stdout_handle = child
+            .stdout
+            .take()
+            .map(|stdout| forward_stream(stdout, StreamTarget::Stdout));
+        let stderr_handle = child
+            .stderr
+            .take()
+            .map(|stderr| forward_stream(stderr, StreamTarget::Stderr));
+
+        let status = child.wait().map_err(|err| SyncError::Spawn {
+            program: program.to_owned(),
+            message: err.to_string(),
+        })?;
+
+        let stdout = stdout_handle
+            .map(thread::JoinHandle::join)
+            .transpose()
+            .map_err(|_| SyncError::Spawn {
+                program: program.to_owned(),
+                message: String::from("stdout forwarder panicked"),
+            })?
+            .transpose()
+            .map_err(|err| SyncError::Spawn {
+                program: program.to_owned(),
+                message: err.to_string(),
+            })?
+            .unwrap_or_default();
+
+        let stderr = stderr_handle
+            .map(thread::JoinHandle::join)
+            .transpose()
+            .map_err(|_| SyncError::Spawn {
+                program: program.to_owned(),
+                message: String::from("stderr forwarder panicked"),
+            })?
+            .transpose()
+            .map_err(|err| SyncError::Spawn {
+                program: program.to_owned(),
+                message: err.to_string(),
+            })?
+            .unwrap_or_default();
+
+        Ok(CommandOutput {
+            code: status.code(),
+            stdout,
+            stderr,
         })
     }
 }

@@ -39,6 +39,20 @@ local process will also exit 101. Commands run via `sync_and_run` automatically
 `cd` into `MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to
 prefix their commands with a directory change.
 
+## Run a command remotely
+
+Use `mriya run -- <command>` to provision a VM, sync the working tree, and run
+the provided command over SSH. Output streams live to the local terminal using
+the system `ssh` client and the configured `rsync` binary. The CLI exits with
+the remote command's status code; when the remote process terminates without a
+status (for example, due to a signal), Mriya exits with code 1 and reports the
+missing status.
+
+Commands always execute from `MRIYA_SYNC_REMOTE_PATH` (default:
+`/home/ubuntu/project`) so `mriya run -- cargo test` mirrors running
+`cargo test` locally after syncing the workspace. Customise the remote user,
+working directory, or SSH flags via the `MRIYA_SYNC_` variables described below.
+
 > Security: host key checking defaults to disabled
 > (`MRIYA_SYNC_SSH_STRICT_HOST_KEY_CHECKING=false`)
 > with `MRIYA_SYNC_KNOWN_HOSTS_FILE=/dev/null` to keep ephemeral VM setup

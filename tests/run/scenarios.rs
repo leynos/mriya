@@ -1,0 +1,29 @@
+//! BDD scenarios for the run workflow.
+
+use rstest_bdd_macros::scenario;
+
+use super::test_helpers::{run_context, RunContext, RunOutcome};
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Propagate remote exit codes through the CLI orchestrator"
+)]
+fn scenario_propagate_exit_codes(run_context: RunContext, outcome: RunOutcome) {
+    let _ = (run_context, outcome);
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Surface sync failures and still teardown"
+)]
+fn scenario_surface_sync_failures(run_context: RunContext, outcome: RunOutcome) {
+    let _ = (run_context, outcome);
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Surface teardown failure after success"
+)]
+fn scenario_surface_teardown_failures(run_context: RunContext, outcome: RunOutcome) {
+    let _ = (run_context, outcome);
+}

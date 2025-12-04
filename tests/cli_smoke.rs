@@ -3,7 +3,8 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 
 #[test]
-fn cli_exits_successfully_without_output() {
+fn cli_displays_help() {
     let mut cmd = cargo_bin_cmd!("mriya");
-    cmd.assert().success().stdout("").stderr("");
+    cmd.arg("--help");
+    cmd.assert().success();
 }

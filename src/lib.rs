@@ -6,14 +6,18 @@
 
 pub mod backend;
 pub mod config;
+pub mod run;
 pub mod scaleway;
 pub mod sync;
 pub mod test_support;
 
-pub use backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
+pub use backend::{
+    Backend, InstanceHandle, InstanceNetworking, InstanceRequest, InstanceRequestBuilder,
+};
 pub use config::ScalewayConfig;
+pub use run::{RunError, RunOrchestrator};
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
 pub use sync::{
-    CommandOutput, DEFAULT_REMOTE_PATH, ProcessCommandRunner, RemoteCommandOutput, SyncConfig,
-    SyncDestination, SyncError, Syncer,
+    CommandOutput, DEFAULT_REMOTE_PATH, ProcessCommandRunner, RemoteCommandOutput,
+    StreamingCommandRunner, SyncConfig, SyncConfigLoadError, SyncDestination, SyncError, Syncer,
 };

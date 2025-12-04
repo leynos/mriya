@@ -257,3 +257,21 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
         "ssh args should forward the already wrapped remote command"
     );
 }
+
+#[rstest]
+fn streaming_runner_captures_output() {
+    let runner = StreamingCommandRunner;
+    let output = runner
+        .run(
+            "sh",
+            &[
+                OsString::from("-c"),
+                OsString::from("printf out && printf err 1>&2"),
+            ],
+        )
+        .expect("command should execute successfully");
+
+    assert_eq!(output.code, Some(0));
+    assert_eq!(output.stdout, "out");
+    assert_eq!(output.stderr, "err");
+}
