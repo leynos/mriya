@@ -39,6 +39,13 @@ local process will also exit 101. Commands run via `sync_and_run` automatically
 `cd` into `MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to
 prefix their commands with a directory change.
 
+> Security: host key checking defaults to disabled
+> (`MRIYA_SYNC_SSH_STRICT_HOST_KEY_CHECKING=false`)
+> with `MRIYA_SYNC_KNOWN_HOSTS_FILE=/dev/null` to keep ephemeral VM setup
+> friction low. This sacrifices MITM protection and is suitable only for
+> trusted, short-lived environments. Enable strict checking and a real known
+> hosts file when connecting to persistent or untrusted hosts.
+
 Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 
 - `MRIYA_SYNC_RSYNC_BIN` — path to the `rsync` executable (default: `rsync`).

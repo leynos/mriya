@@ -23,47 +23,73 @@ pub struct Workspace {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Workspace {
-    pub fn new() -> Self {
-        let local_tmp = Arc::new(temp_dir("local workspace"));
-        let remote_tmp = Arc::new(temp_dir("remote workspace"));
-
-        let local_root = Utf8PathBuf::from_path_buf(local_tmp.path().to_path_buf())
-            .unwrap_or_else(|err| panic!("utf8 local path: {}", err.display()));
-        let remote_root = Utf8PathBuf::from_path_buf(remote_tmp.path().to_path_buf())
-            .unwrap_or_else(|err| panic!("utf8 remote path: {}", err.display()));
-
-        Self {
-            local_root,
-            remote_root,
-            _local_tmp: local_tmp,
-            _remote_tmp: remote_tmp,
+        match Self::new() {
+            Ok(ws) => ws,
+            Err(err) => panic!("workspace default should succeed: {err}"),
         }
     }
 }
 
-pub fn write_file(path: &Utf8Path, contents: &str) {
-    let fs = Dir::open_ambient_dir("/", ambient_authority())
-        .unwrap_or_else(|err| panic!("open ambient dir for writing: {err}"));
+impl Workspace {
+    pub fn new() -> Result<Self, SyncError> {
+        let local_tmp = Arc::new(temp_dir("local workspace")?);
+        let remote_tmp = Arc::new(temp_dir("remote workspace")?);
+
+        let local_root =
+            Utf8PathBuf::from_path_buf(local_tmp.path().to_path_buf()).map_err(|err| {
+                SyncError::Spawn {
+                    program: String::from("fixture"),
+                    message: err.display().to_string(),
+                }
+            })?;
+        let remote_root =
+            Utf8PathBuf::from_path_buf(remote_tmp.path().to_path_buf()).map_err(|err| {
+                SyncError::Spawn {
+                    program: String::from("fixture"),
+                    message: err.display().to_string(),
+                }
+            })?;
+
+        Ok(Self {
+            local_root,
+            remote_root,
+            _local_tmp: local_tmp,
+            _remote_tmp: remote_tmp,
+        })
+    }
+}
+
+pub fn write_file(path: &Utf8Path, contents: &str) -> Result<(), SyncError> {
+    let fs = Dir::open_ambient_dir("/", ambient_authority()).map_err(|err| SyncError::Spawn {
+        program: String::from("fixture"),
+        message: err.to_string(),
+    })?;
     let relative = path.strip_prefix("/").unwrap_or(path);
     if let Some(parent) = relative.parent() {
-        fs.create_dir_all(parent)
-            .unwrap_or_else(|err| panic!("create parent directories for {path}: {err}"));
+        fs.create_dir_all(parent).map_err(|err| SyncError::Spawn {
+            program: String::from("fixture"),
+            message: err.to_string(),
+        })?;
     }
     fs.write(relative, contents)
-        .unwrap_or_else(|err| panic!("write {path} content for test fixture: {err}"));
+        .map_err(|err| SyncError::Spawn {
+            program: String::from("fixture"),
+            message: err.to_string(),
+        })
 }
 
-pub fn temp_dir(label: &str) -> TempDir {
-    TempDir::new().unwrap_or_else(|err| panic!("{label}: {err}"))
+pub fn temp_dir(label: &str) -> Result<TempDir, SyncError> {
+    TempDir::new().map_err(|err| SyncError::Spawn {
+        program: String::from(label),
+        message: err.to_string(),
+    })
 }
 
-pub fn utf8_path(path: std::path::PathBuf, label: &str) -> Utf8PathBuf {
-    Utf8PathBuf::from_path_buf(path).unwrap_or_else(|err| panic!("{label}: {}", err.display()))
+pub fn utf8_path(path: std::path::PathBuf, label: &str) -> Result<Utf8PathBuf, SyncError> {
+    Utf8PathBuf::from_path_buf(path).map_err(|err| SyncError::Spawn {
+        program: String::from(label),
+        message: err.display().to_string(),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -78,14 +104,14 @@ pub struct ScriptedContext {
 pub fn build_scripted_context(
     runner: super::test_doubles::ScriptedRunner,
     label: &str,
-) -> ScriptedContext {
-    let source_tmp = Arc::new(temp_dir(label));
+) -> Result<ScriptedContext, SyncError> {
+    let source_tmp = Arc::new(temp_dir(label)?);
     let source_path = utf8_path(
         source_tmp.path().to_path_buf(),
         "scripted context source path",
-    );
+    )?;
 
-    ScriptedContext {
+    Ok(ScriptedContext {
         runner,
         config: SyncConfig {
             rsync_bin: String::from("rsync"),
@@ -102,20 +128,32 @@ pub fn build_scripted_context(
         },
         source: source_path,
         _source_tmp: source_tmp,
-    }
+    })
 }
 
 #[fixture]
-pub fn workspace() -> Workspace {
+pub fn workspace_result() -> Result<Workspace, SyncError> {
     Workspace::new()
 }
 
 #[fixture]
-pub fn scripted_context() -> ScriptedContext {
-    build_scripted_context(
+pub fn workspace(workspace_result: Result<Workspace, SyncError>) -> Workspace {
+    workspace_result.unwrap_or_else(|err| panic!("workspace fixture should initialise: {err}"))
+}
+
+#[fixture]
+pub fn scripted_context_result() -> Result<ScriptedContext, SyncError> {
+    let ctx = build_scripted_context(
         super::test_doubles::ScriptedRunner::new(),
         "scripted context fixture",
-    )
+    )?;
+    Ok(ctx)
+}
+
+#[fixture]
+pub fn scripted_context(scripted_context_result: Result<ScriptedContext, SyncError>) -> ScriptedContext {
+    scripted_context_result
+        .unwrap_or_else(|err| panic!("scripted context fixture should initialise: {err}"))
 }
 
 #[fixture]

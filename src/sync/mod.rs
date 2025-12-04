@@ -104,7 +104,8 @@ pub enum SyncDestination {
 /// Output captured from a remote command executed over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteCommandOutput {
-    /// Exit code reported by the remote command.
+    /// Exit code reported by the remote command (always present because
+    /// [`Syncer::run_remote`] maps missing codes to [`SyncError::MissingExitCode`]).
     pub exit_code: i32,
     /// Captured standard output stream.
     pub stdout: String,
@@ -215,6 +216,12 @@ impl<R: CommandRunner> Syncer<R> {
     /// # Errors
     ///
     /// Returns any error from [`Syncer::sync`] or [`Syncer::run_remote`].
+    ///
+    /// # Security
+    ///
+    /// `remote_command` is passed verbatim to the SSH client after the working
+    /// directory prefix; callers must ensure any untrusted input is sanitised
+    /// before invoking this method.
     pub fn sync_and_run(
         &self,
         source: &Utf8Path,
@@ -232,6 +239,12 @@ impl<R: CommandRunner> Syncer<R> {
     ///
     /// Returns [`SyncError::MissingExitCode`] when the process exits without a
     /// code (for example, when terminated by a signal).
+    ///
+    /// # Security
+    ///
+    /// `remote_command` is not escaped; only the working directory component is
+    /// shell-escaped. Ensure any caller-provided arguments are validated or
+    /// quoted upstream.
     pub fn run_remote(
         &self,
         networking: &InstanceNetworking,
