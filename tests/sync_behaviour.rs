@@ -267,8 +267,8 @@ fn process_destination_entry(
     kept: &HashSet<Utf8PathBuf>,
     rules: &IgnoreRules,
 ) -> Result<(), SyncError> {
-    let path = Utf8PathBuf::from_path_buf(entry.path())
-        .map_err(|err| map_io_error(&err.display()))?;
+    let path =
+        Utf8PathBuf::from_path_buf(entry.path()).map_err(|err| map_io_error(&err.display()))?;
     let relative = path
         .strip_prefix(destination_root)
         .map_err(|err| map_io_error(&err))?;
