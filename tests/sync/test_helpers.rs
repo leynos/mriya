@@ -12,6 +12,7 @@ use mriya::InstanceNetworking;
 use mriya::sync::{RemoteCommandOutput, SyncConfig, SyncError};
 use rstest::fixture;
 use tempfile::TempDir;
+use thiserror::Error;
 
 #[derive(Clone, Debug)]
 pub struct Workspace {
@@ -173,4 +174,33 @@ pub fn error() -> SyncError {
         program: String::from("rsync"),
         message: String::from("placeholder"),
     }
+}
+
+#[fixture]
+pub fn networking() -> InstanceNetworking {
+    InstanceNetworking {
+        public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ssh_port: 22,
+    }
+}
+
+#[fixture]
+pub fn base_sync_config() -> SyncConfig {
+    SyncConfig {
+        rsync_bin: String::from("rsync"),
+        ssh_bin: String::from("ssh"),
+        ssh_user: String::from("ubuntu"),
+        remote_path: String::from("/remote"),
+        ssh_batch_mode: true,
+        ssh_strict_host_key_checking: false,
+        ssh_known_hosts_file: String::from("/dev/null"),
+    }
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum StepError {
+    #[error(transparent)]
+    Sync(#[from] SyncError),
+    #[error("assertion failed: {0}")]
+    Assertion(String),
 }

@@ -239,14 +239,17 @@ fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig, networking: Insta
     );
 }
 
-#[test]
-fn build_ssh_args_uses_wrapped_command_verbatim() {
-    let cfg = base_config();
+#[rstest]
+fn build_ssh_args_uses_wrapped_command_verbatim(
+    base_config: SyncConfig,
+    networking: InstanceNetworking,
+) {
+    let cfg = base_config;
     let runner = ScriptedRunner::new();
     runner.push_success();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
     let wrapped = syncer.build_remote_command("echo ok");
-    let args = syncer.build_ssh_args(&networking(), &wrapped);
+    let args = syncer.build_ssh_args(&networking, &wrapped);
 
     assert_eq!(
         args.last(),
