@@ -22,6 +22,7 @@ struct SimulationContext<'a> {
     source_root: &'a Utf8Path,
     destination_root: &'a Utf8Path,
     kept: &'a mut HashSet<Utf8PathBuf>,
+    ancestors: &'a mut HashSet<Utf8PathBuf>,
 }
 
 pub fn simulate_rsync(source: &Utf8Path, destination: &Utf8Path) -> Result<(), SyncError> {
@@ -29,16 +30,32 @@ pub fn simulate_rsync(source: &Utf8Path, destination: &Utf8Path) -> Result<(), S
         .map_err(|err| map_io_error(err.to_string()))?;
     let rules = load_ignores(source)?;
     let mut kept: HashSet<Utf8PathBuf> = HashSet::new();
+    let mut ancestors: HashSet<Utf8PathBuf> = HashSet::new();
     let mut context = SimulationContext {
         fs: &fs,
         rules: &rules,
         source_root: source,
         destination_root: destination,
         kept: &mut kept,
+        ancestors: &mut ancestors,
     };
     copy_tree(&mut context, source, destination)?;
+    compute_ancestors(context.kept, context.ancestors);
     prune_destination(&mut context, destination)?;
     Ok(())
+}
+
+fn compute_ancestors(kept: &HashSet<Utf8PathBuf>, ancestors: &mut HashSet<Utf8PathBuf>) {
+    for path in kept {
+        let mut current = path.clone();
+        while let Some(parent) = current.parent() {
+            let parent_buf = parent.to_path_buf();
+            if !ancestors.insert(parent_buf.clone()) {
+                break;
+            }
+            current = parent_buf;
+        }
+    }
 }
 
 fn load_ignores(source: &Utf8Path) -> Result<IgnoreRules, SyncError> {
@@ -161,9 +178,9 @@ fn should_keep_entry(
     relative: &Utf8Path,
     file_type: FileType,
     kept: &HashSet<Utf8PathBuf>,
+    ancestors: &HashSet<Utf8PathBuf>,
 ) -> bool {
-    let has_children = kept.iter().any(|kept_path| kept_path.starts_with(relative));
-    kept.contains(relative) || (file_type.is_dir() && has_children)
+    kept.contains(relative) || (file_type.is_dir() && ancestors.contains(relative))
 }
 
 fn remove_entry(
@@ -207,7 +224,7 @@ fn process_destination_entry(
         .map_err(|err| map_io_error(err.to_string()))?;
     let is_dir = file_type.is_dir();
 
-    if should_keep_entry(relative, file_type, context.kept) {
+    if should_keep_entry(relative, file_type, context.kept, context.ancestors) {
         if is_dir {
             prune_destination(context, &path)?;
         }

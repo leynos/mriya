@@ -1,7 +1,10 @@
-//! Test doubles for the sync module.
+//! Test doubles for `CommandRunner`.
 //!
-//! Provides a scripted command runner and a local rsync simulator-backed
-//! runner used by behavioural tests.
+//! Provides `ScriptedRunner`, which yields scripted `CommandOutput` responses,
+//! and `LocalCopyRunner`, which simulates rsync behaviour on the local
+//! filesystem. `LocalCopyRunner` assumes `rsync_bin == "rsync"` and that the
+//! final two arguments are UTF-8 source and destination paths; this coupling is
+//! acceptable for test purposes.
 
 use std::ffi::OsString;
 
