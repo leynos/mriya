@@ -32,7 +32,7 @@ so only tracked files are transferred. Ignored cache paths such as `target/`
 are **not** deleted remotely, which keeps pre-existing build outputs available
 for incremental runs. The `.git` directory is excluded from transfer.
 
-Remote commands execute through the system `ssh` client and Mriya mirrors the
+Remote commands execute through the system `ssh` client, and Mriya mirrors the
 remote exit code. If `cargo test` fails remotely with exit status 101, the
 local process will also exit 101.
 

@@ -1,67 +1,9 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::ffi::OsString;
-use std::rc::Rc;
-
 use camino::{Utf8Path, Utf8PathBuf};
 use mriya::sync::{CommandOutput, CommandRunner, SyncDestination, SyncError};
 
 use super::rsync_simulator::simulate_rsync;
-
-#[derive(Clone, Debug, Default)]
-pub struct ScriptedRunner {
-    responses: Rc<RefCell<VecDeque<CommandOutput>>>,
-}
-
-impl ScriptedRunner {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push_success(&self) {
-        self.responses.borrow_mut().push_back(CommandOutput {
-            code: Some(0),
-            stdout: String::new(),
-            stderr: String::new(),
-        });
-    }
-
-    pub fn push_exit_code(&self, code: i32) {
-        self.responses.borrow_mut().push_back(CommandOutput {
-            code: Some(code),
-            stdout: String::new(),
-            stderr: String::new(),
-        });
-    }
-
-    pub fn push_failure(&self, code: i32) {
-        self.responses.borrow_mut().push_back(CommandOutput {
-            code: Some(code),
-            stdout: String::new(),
-            stderr: String::from("simulated failure"),
-        });
-    }
-
-    pub fn push_missing_exit_code(&self) {
-        self.responses.borrow_mut().push_back(CommandOutput {
-            code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-        });
-    }
-}
-
-impl CommandRunner for ScriptedRunner {
-    fn run(&self, program: &str, _args: &[OsString]) -> Result<CommandOutput, SyncError> {
-        self.responses
-            .borrow_mut()
-            .pop_front()
-            .ok_or_else(|| SyncError::Spawn {
-                program: program.to_owned(),
-                message: String::from("no scripted response available"),
-            })
-    }
-}
+mod shared_scripted_runner;
+pub use shared_scripted_runner::ScriptedRunner;
 
 #[derive(Clone, Debug, Default)]
 pub struct LocalCopyRunner;

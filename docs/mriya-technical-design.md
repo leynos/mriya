@@ -155,7 +155,7 @@ provisioning) that will guide subsequent optimizations.
 - Wrap rsync and SSH execution in a `Syncer` orchestration layer that returns
   the remote command’s exit code unchanged, allowing the CLI to mirror the
   remote status.
-- Centralise SSH flags (port, batch mode, host-key checking, known hosts path)
+- Centralize SSH flags (port, batch mode, host-key checking, known hosts path)
   in `SyncConfig` so environments with stricter host verification can enable it
   without code changes.
 - Keep sync configuration under the `MRIYA_SYNC_` prefix via `ortho-config` so

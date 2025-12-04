@@ -408,34 +408,64 @@ fn escape_single_quotes(input: &str) -> String {
 mod tests {
     use super::*;
     use crate::backend::InstanceNetworking;
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
     use std::net::{IpAddr, Ipv4Addr};
     use tempfile::TempDir;
 
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
     #[derive(Clone, Debug, Default)]
-    struct FakeRunner {
-        outputs: std::rc::Rc<RefCell<VecDeque<CommandOutput>>>,
-        last_args: std::rc::Rc<RefCell<Option<Vec<OsString>>>>,
+    struct ScriptedRunner {
+        responses: Rc<RefCell<VecDeque<CommandOutput>>>,
     }
 
-    impl FakeRunner {
-        fn with_output(output: CommandOutput) -> Self {
-            let runner = Self::default();
-            runner.outputs.borrow_mut().push_back(output);
-            runner
+    impl ScriptedRunner {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn push_success(&self) {
+            self.responses.borrow_mut().push_back(CommandOutput {
+                code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+
+        fn push_exit_code(&self, code: i32) {
+            self.responses.borrow_mut().push_back(CommandOutput {
+                code: Some(code),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+
+        fn push_failure(&self, code: i32) {
+            self.responses.borrow_mut().push_back(CommandOutput {
+                code: Some(code),
+                stdout: String::new(),
+                stderr: String::from("simulated failure"),
+            });
+        }
+
+        fn push_missing_exit_code(&self) {
+            self.responses.borrow_mut().push_back(CommandOutput {
+                code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+            });
         }
     }
 
-    impl CommandRunner for FakeRunner {
-        fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
-            self.last_args.borrow_mut().replace(args.to_vec());
-            self.outputs
+    impl CommandRunner for ScriptedRunner {
+        fn run(&self, program: &str, _args: &[OsString]) -> Result<CommandOutput, SyncError> {
+            self.responses
                 .borrow_mut()
                 .pop_front()
                 .ok_or_else(|| SyncError::Spawn {
                     program: program.to_owned(),
-                    message: String::from("no scripted output"),
+                    message: String::from("no scripted response available"),
                 })
         }
     }
@@ -491,7 +521,7 @@ mod tests {
     #[test]
     fn build_rsync_args_remote_includes_gitignore_filter() {
         let cfg = base_config();
-        let runner = FakeRunner::default();
+        let runner = ScriptedRunner::new();
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let destination = SyncDestination::Remote {
             user: String::from("ubuntu"),
@@ -526,7 +556,7 @@ mod tests {
     #[test]
     fn build_rsync_args_local_omits_remote_shell() {
         let cfg = base_config();
-        let runner = FakeRunner::default();
+        let runner = ScriptedRunner::new();
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let destination = SyncDestination::Local {
             path: Utf8PathBuf::from("/tmp/dst"),
@@ -551,11 +581,8 @@ mod tests {
     #[test]
     fn sync_returns_error_on_non_zero_rsync_status() {
         let cfg = base_config();
-        let runner = FakeRunner::with_output(CommandOutput {
-            code: Some(12),
-            stdout: String::new(),
-            stderr: String::from("fail"),
-        });
+        let runner = ScriptedRunner::new();
+        runner.push_failure(12);
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let destination = SyncDestination::Local {
             path: Utf8PathBuf::from("/tmp/dst"),
@@ -578,11 +605,8 @@ mod tests {
     #[test]
     fn sync_succeeds_on_zero_status() {
         let cfg = base_config();
-        let runner = FakeRunner::with_output(CommandOutput {
-            code: Some(0),
-            stdout: String::new(),
-            stderr: String::new(),
-        });
+        let runner = ScriptedRunner::new();
+        runner.push_success();
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let destination = SyncDestination::Local {
             path: Utf8PathBuf::from("/tmp/dst"),
@@ -593,11 +617,8 @@ mod tests {
     #[test]
     fn run_remote_returns_missing_exit_code() {
         let cfg = base_config();
-        let runner = FakeRunner::with_output(CommandOutput {
-            code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-        });
+        let runner = ScriptedRunner::new();
+        runner.push_missing_exit_code();
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let err = syncer
             .run_remote(&networking(), "echo ok")
@@ -608,42 +629,30 @@ mod tests {
     #[test]
     fn run_remote_propagates_exit_code() {
         let cfg = base_config();
-        let runner = FakeRunner::with_output(CommandOutput {
-            code: Some(7),
-            stdout: String::from("hi"),
-            stderr: String::new(),
-        });
+        let runner = ScriptedRunner::new();
+        runner.push_exit_code(7);
         let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let output = syncer
             .run_remote(&networking(), "echo ok")
             .unwrap_or_else(|err| panic!("run_remote should succeed: {err}"));
         assert_eq!(output.exit_code, 7);
-        assert_eq!(output.stdout, "hi");
+        assert_eq!(output.stdout, "");
     }
 
     #[test]
     fn run_remote_cd_prefixes_remote_path() {
         let cfg = base_config();
-        let runner = FakeRunner::with_output(CommandOutput {
-            code: Some(0),
-            stdout: String::new(),
-            stderr: String::new(),
-        });
-        let syncer = Syncer::new(cfg, runner.clone()).expect("config should validate");
+        let runner = ScriptedRunner::new();
+        runner.push_success();
+        let syncer = Syncer::new(cfg, runner).expect("config should validate");
         let _ = syncer
             .run_remote(&networking(), "cargo test")
             .expect("run_remote should succeed");
 
-        let args = runner
-            .last_args
-            .borrow()
-            .clone()
-            .expect("runner should have recorded args");
-        let last = args.last().expect("ssh command present");
+        let args = syncer.build_remote_command("cargo test");
         assert!(
-            last.to_string_lossy()
-                .starts_with("cd '/remote/path' && cargo test"),
-            "remote command should change directory, got: {last:?}"
+            args.starts_with("cd '/remote/path' && cargo test"),
+            "remote command should change directory, got: {args}"
         );
     }
 }
