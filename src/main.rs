@@ -95,10 +95,21 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
 }
 
 fn render_remote_command(args: &[String]) -> String {
-    args.iter()
-        .map(|arg| escape(arg.clone().into()))
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut result = String::new();
+    let mut first = true;
+
+    for arg in args {
+        if first {
+            first = false;
+        } else {
+            result.push(' ');
+        }
+
+        let escaped = escape(arg.as_str().into());
+        result.push_str(escaped.as_ref());
+    }
+
+    result
 }
 
 fn report_error(err: &CliError) {

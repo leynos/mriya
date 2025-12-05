@@ -66,27 +66,27 @@ fn forward_stream(
         let mut buffer = [0_u8; 8192];
         let mut captured = Vec::new();
         let mut buffered_reader = BufReader::new(reader);
+        let program = target.program_name();
 
-        loop {
-            let read = buffered_reader
-                .read(&mut buffer)
-                .map_err(|err| SyncError::Spawn {
-                    program: target.program_name(),
+        target
+            .with_locked_writer(|writer| {
+                let convert_error = |err: std::io::Error| SyncError::Spawn {
+                    program: program.to_owned(),
                     message: err.to_string(),
-                })?;
-            if read == 0 {
-                break;
-            }
+                };
 
-            let chunk = buffer.get(..read).unwrap_or(&[]);
-            target.write(chunk).map_err(|err| SyncError::Spawn {
-                program: target.program_name(),
-                message: err.to_string(),
-            })?;
-            captured.extend_from_slice(chunk);
-        }
+                let mut read = buffered_reader.read(&mut buffer).map_err(&convert_error)?;
+                while read != 0 {
+                    let chunk = buffer.get(..read).unwrap_or(&[]);
+                    writer.write_all(chunk).map_err(&convert_error)?;
+                    captured.extend_from_slice(chunk);
+                    read = buffered_reader.read(&mut buffer).map_err(&convert_error)?;
+                }
 
-        Ok(String::from_utf8_lossy(&captured).into_owned())
+                writer.flush().map_err(&convert_error)?;
+                Ok(())
+            })
+            .map(|()| String::from_utf8_lossy(&captured).into_owned())
     })
 }
 
@@ -96,25 +96,28 @@ enum StreamTarget {
 }
 
 impl StreamTarget {
-    fn write(&self, chunk: &[u8]) -> std::io::Result<()> {
+    const fn program_name(&self) -> &'static str {
         match self {
-            Self::Stdout => {
-                let mut stdout = std::io::stdout();
-                stdout.write_all(chunk)?;
-                stdout.flush()
-            }
-            Self::Stderr => {
-                let mut stderr = std::io::stderr();
-                stderr.write_all(chunk)?;
-                stderr.flush()
-            }
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
         }
     }
 
-    fn program_name(&self) -> String {
+    fn with_locked_writer<F, R>(&self, f: F) -> Result<R, SyncError>
+    where
+        F: FnOnce(&mut dyn Write) -> Result<R, SyncError>,
+    {
         match self {
-            Self::Stdout => String::from("stdout"),
-            Self::Stderr => String::from("stderr"),
+            Self::Stdout => {
+                let stdout = std::io::stdout();
+                let mut handle = stdout.lock();
+                f(&mut handle)
+            }
+            Self::Stderr => {
+                let stderr = std::io::stderr();
+                let mut handle = stderr.lock();
+                f(&mut handle)
+            }
         }
     }
 }
@@ -149,33 +152,21 @@ impl CommandRunner for StreamingCommandRunner {
             message: err.to_string(),
         })?;
 
-        let stdout = stdout_handle
-            .map(thread::JoinHandle::join)
-            .transpose()
-            .map_err(|_| SyncError::Spawn {
+        let stdout = match stdout_handle {
+            Some(handle) => handle.join().map_err(|_| SyncError::Spawn {
                 program: program.to_owned(),
                 message: String::from("stdout forwarder panicked"),
-            })?
-            .transpose()
-            .map_err(|err| SyncError::Spawn {
-                program: program.to_owned(),
-                message: err.to_string(),
-            })?
-            .unwrap_or_default();
+            })??,
+            None => String::new(),
+        };
 
-        let stderr = stderr_handle
-            .map(thread::JoinHandle::join)
-            .transpose()
-            .map_err(|_| SyncError::Spawn {
+        let stderr = match stderr_handle {
+            Some(handle) => handle.join().map_err(|_| SyncError::Spawn {
                 program: program.to_owned(),
                 message: String::from("stderr forwarder panicked"),
-            })?
-            .transpose()
-            .map_err(|err| SyncError::Spawn {
-                program: program.to_owned(),
-                message: err.to_string(),
-            })?
-            .unwrap_or_default();
+            })??,
+            None => String::new(),
+        };
 
         Ok(CommandOutput {
             code: status.code(),

@@ -139,5 +139,5 @@ fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
 
 #[then("teardown failure is reported")]
 fn teardown_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
-    assert_failure_contains(run_context, "destroy failure")
+    assert_failure_contains(run_context, "failed to destroy instance")
 }
