@@ -1,13 +1,13 @@
 //! BDD step definitions for the `mriya run` workflow.
 
 use mriya::sync::{RemoteCommandOutput, Syncer};
-use mriya::{RunError, RunOrchestrator};
+use mriya::RunOrchestrator;
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
 use mriya::test_support::ScriptedRunner;
-use super::test_doubles::{ScriptedBackend, ScriptedBackendError};
-use super::test_helpers::{RunContext, RunOutcome, RunTestError};
+use super::test_doubles::ScriptedBackend;
+use super::test_helpers::{RunContext, RunResult, RunTestError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
@@ -42,52 +42,74 @@ fn backend_fails_teardown(run_context: RunContext) -> RunContext {
 }
 
 #[when("I orchestrate a remote run for \"{command}\"")]
-fn orchestrate_run(run_context: RunContext, command: String) -> Result<RunOutcome, StepError> {
+fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepError> {
     let runtime = Runtime::new().map_err(|err| StepError::Assertion(err.to_string()))?;
-    let backend = run_context.backend.clone();
-    let syncer = Syncer::new(run_context.sync_config, run_context.runner)
+    let RunContext {
+        backend,
+        runner,
+        sync_config,
+        request,
+        source,
+        source_tmp,
+        ..
+    } = run_context;
+    let syncer = Syncer::new(sync_config.clone(), runner.clone())
         .map_err(RunTestError::from)
         .map_err(StepError::from)?;
-    let request = run_context.request;
-    let source = run_context.source;
     let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> = RunOrchestrator::new(
         backend.clone(),
         syncer,
     );
 
     let remote_command = command;
+    let request_clone = request.clone();
+    let source_clone = source.clone();
     let result = runtime.block_on(async move {
         orchestrator
-            .execute(&request, &source, remote_command.as_str())
+            .execute(&request_clone, &source_clone, remote_command.as_str())
             .await
     });
 
-    Ok(RunOutcome {
+    let result_enum = match result {
+        Ok(output) => RunResult::Success(output),
+        Err(err) => RunResult::Failure(err.to_string()),
+    };
+
+    Ok(RunContext {
         backend,
-        result: std::sync::Arc::new(result),
+        runner,
+        sync_config,
+        request,
+        source,
+        outcome: Some(result_enum),
+        source_tmp,
     })
 }
 
 #[then("the run result exit code is \"{code}\"")]
-fn run_exit_code(outcome: &RunOutcome, code: i32) -> Result<(), StepError> {
-    match outcome.result.as_ref() {
-        Ok(RemoteCommandOutput {
+fn run_exit_code(run_context: &RunContext, code: i32) -> Result<(), StepError> {
+    let Some(result) = &run_context.outcome else {
+        return Err(StepError::Assertion(String::from("missing outcome")));
+    };
+
+    match result {
+        RunResult::Success(RemoteCommandOutput {
             exit_code: Some(actual),
             ..
         }) if *actual == code => Ok(()),
-        Ok(other) => Err(StepError::Assertion(format!(
+        RunResult::Success(other) => Err(StepError::Assertion(format!(
             "expected exit code {code}, got {:?}",
             other.exit_code
         ))),
-        Err(err) => Err(StepError::Assertion(format!(
+        RunResult::Failure(err) => Err(StepError::Assertion(format!(
             "run failed unexpectedly: {err}"
         ))),
     }
 }
 
 #[then("the instance is destroyed")]
-fn instance_destroyed(outcome: &RunOutcome) -> Result<(), StepError> {
-    if outcome.backend.destroy_calls() > 0 {
+fn instance_destroyed(run_context: &RunContext) -> Result<(), StepError> {
+    if run_context.backend.destroy_calls() > 0 {
         Ok(())
     } else {
         Err(StepError::Assertion(String::from(
@@ -97,9 +119,13 @@ fn instance_destroyed(outcome: &RunOutcome) -> Result<(), StepError> {
 }
 
 #[then("the run error mentions sync failure")]
-fn sync_failure_reported(outcome: &RunOutcome) -> Result<(), StepError> {
-    match outcome.result.as_ref() {
-        Err(RunError::Sync { .. }) => Ok(()),
+fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+    let Some(result) = &run_context.outcome else {
+        return Err(StepError::Assertion(String::from("missing outcome")));
+    };
+
+    match result {
+        RunResult::Failure(message) if message.contains("sync") => Ok(()),
         other => Err(StepError::Assertion(format!(
             "unexpected outcome: {other:?}"
         ))),
@@ -107,9 +133,13 @@ fn sync_failure_reported(outcome: &RunOutcome) -> Result<(), StepError> {
 }
 
 #[then("teardown failure is reported")]
-fn teardown_failure_reported(outcome: &RunOutcome) -> Result<(), StepError> {
-    match outcome.result.as_ref() {
-        Err(RunError::Teardown(ScriptedBackendError::Destroy)) => Ok(()),
+fn teardown_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+    let Some(result) = &run_context.outcome else {
+        return Err(StepError::Assertion(String::from("missing outcome")));
+    };
+
+    match result {
+        RunResult::Failure(message) if message.contains("destroy failure") => Ok(()),
         other => Err(StepError::Assertion(format!(
             "unexpected outcome: {other:?}"
         ))),

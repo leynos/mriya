@@ -1,15 +1,14 @@
 //! Shared fixtures for run BDD scenarios.
 
 use camino::Utf8PathBuf;
-use std::sync::Arc;
-use mriya::sync::{SyncConfig, SyncError};
+use mriya::sync::{RemoteCommandOutput, SyncConfig, SyncError};
 use mriya::{InstanceRequest, InstanceRequestBuilder};
 use rstest::fixture;
 use tempfile::TempDir;
 use thiserror::Error;
 
 use mriya::test_support::ScriptedRunner;
-use super::test_doubles::{ScriptedBackend, ScriptedBackendError};
+use super::test_doubles::ScriptedBackend;
 
 #[derive(Clone, Debug)]
 pub struct RunContext {
@@ -18,20 +17,17 @@ pub struct RunContext {
     pub sync_config: SyncConfig,
     pub request: InstanceRequest,
     pub source: Utf8PathBuf,
+    pub outcome: Option<RunResult>,
+    pub(crate) source_tmp: std::sync::Arc<TempDir>,
 }
 
 #[derive(Clone, Debug)]
-pub struct RunOutcome {
-    pub backend: ScriptedBackend,
-    pub result: Arc<
-        Result<
-            mriya::sync::RemoteCommandOutput,
-            mriya::RunError<ScriptedBackendError, SyncError>,
-        >,
-    >,
+pub enum RunResult {
+    Success(RemoteCommandOutput),
+    Failure(String),
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum RunTestError {
     #[error(transparent)]
     Sync(#[from] SyncError),
@@ -62,6 +58,8 @@ pub fn build_run_context() -> Result<RunContext, RunTestError> {
         sync_config: sync_config(),
         request: request(),
         source,
+        outcome: None,
+        source_tmp: std::sync::Arc::new(tmp_dir),
     })
 }
 
