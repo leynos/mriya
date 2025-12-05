@@ -117,29 +117,28 @@ fn instance_destroyed(run_context: &RunContext) -> Result<(), StepError> {
 }
 
 #[then("the run error mentions sync failure")]
-fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+fn assert_failure_contains(
+    run_context: &RunContext,
+    expected_substring: &str,
+) -> Result<(), StepError> {
     let Some(result) = &run_context.outcome else {
         return Err(StepError::Assertion(String::from("missing outcome")));
     };
 
     match result {
-        RunResult::Failure(message) if message.contains("sync") => Ok(()),
+        RunResult::Failure(message) if message.contains(expected_substring) => Ok(()),
         other => Err(StepError::Assertion(format!(
             "unexpected outcome: {other:?}"
         ))),
     }
 }
 
+#[then("the run error mentions sync failure")]
+fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+    assert_failure_contains(run_context, "sync")
+}
+
 #[then("teardown failure is reported")]
 fn teardown_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
-    let Some(result) = &run_context.outcome else {
-        return Err(StepError::Assertion(String::from("missing outcome")));
-    };
-
-    match result {
-        RunResult::Failure(message) if message.contains("destroy failure") => Ok(()),
-        other => Err(StepError::Assertion(format!(
-            "unexpected outcome: {other:?}"
-        ))),
-    }
+    assert_failure_contains(run_context, "destroy failure")
 }
