@@ -116,7 +116,6 @@ fn instance_destroyed(run_context: &RunContext) -> Result<(), StepError> {
     }
 }
 
-#[then("the run error mentions sync failure")]
 fn assert_failure_contains(
     run_context: &RunContext,
     expected_substring: &str,
