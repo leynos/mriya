@@ -2,7 +2,7 @@
 
 use rstest_bdd_macros::scenario;
 
-use super::test_helpers::{run_context, RunContext};
+use super::test_helpers::{RunContext, run_context};
 
 #[scenario(
     path = "tests/features/run.feature",

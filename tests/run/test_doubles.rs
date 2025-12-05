@@ -6,7 +6,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 
-use mriya::{backend::BackendFuture, Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
+use mriya::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest, backend::BackendFuture};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]

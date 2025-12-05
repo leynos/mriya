@@ -7,8 +7,8 @@ use rstest::fixture;
 use tempfile::TempDir;
 use thiserror::Error;
 
-use mriya::test_support::ScriptedRunner;
 use super::test_doubles::ScriptedBackend;
+use mriya::test_support::ScriptedRunner;
 
 #[derive(Clone, Debug)]
 pub struct RunContext {

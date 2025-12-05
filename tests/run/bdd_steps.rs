@@ -1,13 +1,13 @@
 //! BDD step definitions for the `mriya run` workflow.
 
-use mriya::sync::{RemoteCommandOutput, Syncer};
 use mriya::RunOrchestrator;
+use mriya::sync::{RemoteCommandOutput, Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
-use mriya::test_support::ScriptedRunner;
 use super::test_doubles::ScriptedBackend;
 use super::test_helpers::{RunContext, RunResult, RunTestError};
+use mriya::test_support::ScriptedRunner;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
@@ -56,10 +56,8 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
     let syncer = Syncer::new(sync_config.clone(), runner.clone())
         .map_err(RunTestError::from)
         .map_err(StepError::from)?;
-    let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> = RunOrchestrator::new(
-        backend.clone(),
-        syncer,
-    );
+    let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
+        RunOrchestrator::new(backend.clone(), syncer);
 
     let remote_command = command;
     let request_clone = request.clone();
