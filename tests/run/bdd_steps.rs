@@ -59,12 +59,11 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
     let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
         RunOrchestrator::new(backend.clone(), syncer);
 
-    let remote_command = command;
     let request_clone = request.clone();
     let source_clone = source.clone();
     let result = runtime.block_on(async move {
         orchestrator
-            .execute(&request_clone, &source_clone, remote_command.as_str())
+            .execute(&request_clone, &source_clone, command.as_str())
             .await
     });
 

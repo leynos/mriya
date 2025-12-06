@@ -50,12 +50,12 @@ missing status.
 
 Commands always execute from `MRIYA_SYNC_REMOTE_PATH` (default:
 `/home/ubuntu/project`) so `mriya run -- cargo test` mirrors running
-`cargo test` locally after syncing the workspace. Customise the remote user,
+`cargo test` locally after syncing the workspace. Customize the remote user,
 working directory, or SSH flags via the `MRIYA_SYNC_` variables described below.
 
 > Security: host key checking defaults to disabled
 > (`MRIYA_SYNC_SSH_STRICT_HOST_KEY_CHECKING=false`)
-> with `MRIYA_SYNC_KNOWN_HOSTS_FILE=/dev/null` to keep ephemeral VM setup
+> with `MRIYA_SYNC_SSH_KNOWN_HOSTS_FILE=/dev/null` to keep ephemeral VM setup
 > friction low. This sacrifices MITM protection and is suitable only for
 > trusted, short-lived environments. Enable strict checking and a real known
 > hosts file when connecting to persistent or untrusted hosts.

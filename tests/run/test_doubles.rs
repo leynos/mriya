@@ -16,9 +16,9 @@ pub struct ScriptedBackend {
 
 #[derive(Debug, Default)]
 struct State {
+    fail_on_destroy: bool,
     fail_on_create: bool,
     fail_on_wait: bool,
-    fail_on_destroy: bool,
     destroy_calls: u32,
 }
 
@@ -30,16 +30,33 @@ impl ScriptedBackend {
     }
 
     pub fn fail_on_destroy(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.fail_on_destroy = true;
-        }
+        self.state
+            .lock()
+            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+            .fail_on_destroy = true;
+    }
+
+    #[allow(dead_code, reason = "used by future failure-path tests")]
+    pub fn fail_on_create(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+            .fail_on_create = true;
+    }
+
+    #[allow(dead_code, reason = "used by future failure-path tests")]
+    pub fn fail_on_wait(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+            .fail_on_wait = true;
     }
 
     pub fn destroy_calls(&self) -> u32 {
         self.state
             .lock()
-            .map(|state| state.destroy_calls)
-            .unwrap_or(0)
+            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+            .destroy_calls
     }
 }
 
@@ -64,16 +81,16 @@ impl Backend for ScriptedBackend {
             if self
                 .state
                 .lock()
-                .map(|state| state.fail_on_create)
-                .unwrap_or(false)
+                .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+                .fail_on_create
             {
-                return Err(ScriptedBackendError::Create);
+                Err(ScriptedBackendError::Create)
+            } else {
+                Ok(InstanceHandle {
+                    id: String::from("scripted-id"),
+                    zone: String::from("test-zone"),
+                })
             }
-
-            Ok(InstanceHandle {
-                id: String::from("scripted-id"),
-                zone: String::from("test-zone"),
-            })
         })
     }
 
@@ -85,16 +102,16 @@ impl Backend for ScriptedBackend {
             if self
                 .state
                 .lock()
-                .map(|state| state.fail_on_wait)
-                .unwrap_or(false)
+                .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
+                .fail_on_wait
             {
-                return Err(ScriptedBackendError::Wait);
+                Err(ScriptedBackendError::Wait)
+            } else {
+                Ok(InstanceNetworking {
+                    public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    ssh_port: 22,
+                })
             }
-
-            Ok(InstanceNetworking {
-                public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                ssh_port: 22,
-            })
         })
     }
 

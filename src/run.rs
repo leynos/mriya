@@ -10,7 +10,7 @@ use std::fmt::Display;
 use camino::Utf8Path;
 use thiserror::Error;
 
-use crate::backend::{Backend, InstanceRequest};
+use crate::backend::{Backend, InstanceHandle, InstanceRequest};
 use crate::sync::{RemoteCommandOutput, SyncError, Syncer};
 
 /// Errors surfaced while performing a remote run.
@@ -99,12 +99,12 @@ where
         let networking = match self.backend.wait_for_ready(&handle).await {
             Ok(net) => net,
             Err(err) => {
-                let teardown_error = self.backend.destroy(handle).await.err();
-                let message = append_teardown_note(err.to_string(), teardown_error.as_ref());
-                return Err(RunError::Wait {
-                    message,
-                    source: err,
-                });
+                return Err(self
+                    .teardown_and_fail(handle, err, |message, wait_err| RunError::Wait {
+                        message,
+                        source: wait_err,
+                    })
+                    .await);
             }
         };
 
@@ -115,21 +115,21 @@ where
             Ok(()) => match self.syncer.run_remote(&networking, remote_command) {
                 Ok(result) => result,
                 Err(err) => {
-                    let teardown_error = self.backend.destroy(handle).await.err();
-                    let message = append_teardown_note(err.to_string(), teardown_error.as_ref());
-                    return Err(RunError::Remote {
-                        message,
-                        source: err,
-                    });
+                    return Err(self
+                        .teardown_and_fail(handle, err, |message, remote_err| RunError::Remote {
+                            message,
+                            source: remote_err,
+                        })
+                        .await);
                 }
             },
             Err(err) => {
-                let teardown_error = self.backend.destroy(handle).await.err();
-                let message = append_teardown_note(err.to_string(), teardown_error.as_ref());
-                return Err(RunError::Sync {
-                    message,
-                    source: err,
-                });
+                return Err(self
+                    .teardown_and_fail(handle, err, |message, sync_err| RunError::Sync {
+                        message,
+                        source: sync_err,
+                    })
+                    .await);
             }
         };
 
@@ -139,6 +139,21 @@ where
             .map_err(RunError::Teardown)?;
 
         Ok(output)
+    }
+
+    async fn teardown_and_fail<E, F>(
+        &self,
+        handle: InstanceHandle,
+        err: E,
+        make_error: F,
+    ) -> RunError<B::Error, SyncError>
+    where
+        E: Display,
+        F: FnOnce(String, E) -> RunError<B::Error, SyncError>,
+    {
+        let teardown_error = self.backend.destroy(handle).await.err();
+        let message = append_teardown_note(err.to_string(), teardown_error.as_ref());
+        make_error(message, err)
     }
 }
 

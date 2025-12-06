@@ -5,6 +5,7 @@ use crate::backend::InstanceNetworking;
 use crate::test_support::ScriptedRunner;
 use rstest::{fixture, rstest};
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr};
 use tempfile::TempDir;
 
@@ -317,7 +318,6 @@ fn streaming_runner_captures_large_interleaved_output() {
     let mut expected_out = String::new();
     let mut expected_err = String::new();
     for i in 1..=50 {
-        use std::fmt::Write as _;
         writeln!(&mut expected_out, "out-{i:03}").expect("write expected_out");
         writeln!(&mut expected_err, "err-{i:03}").expect("write expected_err");
     }

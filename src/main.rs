@@ -50,6 +50,8 @@ enum CliError {
     MissingExitCode,
     #[error("remote run failed: {0}")]
     Run(#[from] RunError<ScalewayBackendError, SyncError>),
+    #[error("invalid command argument: {0}")]
+    InvalidCommand(String),
 }
 
 #[tokio::main]
@@ -86,6 +88,7 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         .map_err(|path| CliError::NonUtf8Path(path.display().to_string()))?;
 
     let orchestrator = RunOrchestrator::new(backend, syncer);
+    validate_command_args(&args.command)?;
     let remote_command = render_remote_command(&args.command);
     let output = orchestrator
         .execute(&request, &source, &remote_command)
@@ -110,6 +113,20 @@ fn render_remote_command(args: &[String]) -> String {
     }
 
     result
+}
+
+fn validate_command_args(args: &[String]) -> Result<(), CliError> {
+    for arg in args {
+        if arg
+            .chars()
+            .any(|ch| matches!(ch, '\n' | '\r' | '\u{0000}'..='\u{001F}' | '\u{007F}'))
+        {
+            return Err(CliError::InvalidCommand(String::from(
+                "command arguments must not contain control characters (newline, carriage return, NUL)",
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn report_error(err: &CliError) {
