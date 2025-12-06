@@ -165,6 +165,19 @@ provisioning) that will guide subsequent optimizations.
   users can override the rsync/ssh binaries, SSH user, and remote path without
   changing code.
 
+### Remote execution flow decision (December 2025)
+
+- Keep the system `ssh` client for MVP and stream stdout/stderr via a
+  streaming command runner so local output mirrors the remote console.
+- Preserve remote exit codes verbatim in `mriya run`; when SSH reports no
+  status (for example, a signal terminates the process), exit with code 1 and
+  surface the missing status to the user.
+- Load Scaleway and sync configuration via `ortho-config` defaults, config
+  files, and environment variables without consuming unrelated CLI flags from
+  `mriya run` itself.
+- Execute remote commands from the configured `remote_path` so callers do not
+  need to prefix `cd` manually.
+
 ### Implementation status (November 2025)
 
 - **Backend crate choice:** The MVP backend uses `scaleway-rs` (async, rustls

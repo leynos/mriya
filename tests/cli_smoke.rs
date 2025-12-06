@@ -1,9 +1,14 @@
 //! Behavioural smoke test for the CLI entrypoint.
 
 use assert_cmd::cargo::cargo_bin_cmd;
+use predicates::prelude::*;
+use predicates::str::contains;
 
 #[test]
-fn cli_exits_successfully_without_output() {
+fn cli_displays_help() {
     let mut cmd = cargo_bin_cmd!("mriya");
-    cmd.assert().success().stdout("").stderr("");
+    cmd.arg("--help");
+    cmd.assert()
+        .success()
+        .stdout(contains("run").and(contains("Provision")));
 }

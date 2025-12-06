@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::backend::InstanceNetworking;
 mod types;
-pub use types::{CommandOutput, CommandRunner, ProcessCommandRunner};
+pub use types::{CommandOutput, CommandRunner, ProcessCommandRunner, StreamingCommandRunner};
 
 /// Default remote working directory used for rsync.
 pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
@@ -45,6 +45,14 @@ pub struct SyncConfig {
     pub ssh_known_hosts_file: String,
 }
 
+/// Errors raised when loading the sync configuration from layered sources.
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum SyncConfigLoadError {
+    /// Indicates that parsing or merging configuration layers failed.
+    #[error("sync configuration parsing failed: {0}")]
+    Parse(String),
+}
+
 impl SyncConfig {
     /// Ensures configuration values are present after trimming whitespace.
     ///
@@ -57,6 +65,27 @@ impl SyncConfig {
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
         Ok(())
+    }
+
+    /// Loads configuration using defaults, configuration files, and
+    /// environment variables. CLI overrides are parsed from the provided
+    /// iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncConfigLoadError::Parse`] when merging sources fails.
+    pub fn load_without_cli_args() -> Result<Self, SyncConfigLoadError> {
+        Self::load_from_iter([OsString::from("mriya")])
+            .map_err(|err| SyncConfigLoadError::Parse(err.to_string()))
+    }
+
+    /// Loads configuration using the default argument iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncConfigLoadError::Parse`] when merging sources fails.
+    pub fn load_from_sources() -> Result<Self, SyncConfigLoadError> {
+        Self::load().map_err(|err| SyncConfigLoadError::Parse(err.to_string()))
     }
 
     /// Builds a remote destination using the supplied networking details.
@@ -225,6 +254,12 @@ impl<R: CommandRunner> Syncer<R> {
         let destination = self.config.remote_destination(networking);
         self.sync(source, &destination)?;
         self.run_remote(networking, remote_command)
+    }
+
+    /// Builds a sync destination using the configured SSH settings.
+    #[must_use]
+    pub fn destination_for(&self, networking: &InstanceNetworking) -> SyncDestination {
+        self.config.remote_destination(networking)
     }
 
     /// Executes `remote_command` over SSH and returns the remote exit code.

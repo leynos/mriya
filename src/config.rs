@@ -53,6 +53,17 @@ impl ScalewayConfig {
         Self::load().map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
+    /// Loads configuration without attempting to parse CLI arguments. Values
+    /// still merge defaults, configuration files, and environment variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Parse`] when the merge fails.
+    pub fn load_without_cli_args() -> Result<Self, ConfigError> {
+        Self::load_from_iter([std::ffi::OsString::from("mriya")])
+            .map_err(|err| ConfigError::Parse(err.to_string()))
+    }
+
     /// Builds an [`InstanceRequest`] using the configured defaults.
     ///
     /// # Errors
