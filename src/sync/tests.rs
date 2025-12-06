@@ -278,6 +278,24 @@ fn streaming_runner_captures_output() {
 }
 
 #[rstest]
+fn streaming_runner_captures_output_on_failure() {
+    let runner = StreamingCommandRunner;
+    let output = runner
+        .run(
+            "sh",
+            &[
+                OsString::from("-c"),
+                OsString::from("printf out && printf err 1>&2; exit 42"),
+            ],
+        )
+        .expect("command should execute successfully");
+
+    assert_eq!(output.code, Some(42));
+    assert_eq!(output.stdout, "out");
+    assert_eq!(output.stderr, "err");
+}
+
+#[rstest]
 fn streaming_runner_propagates_non_zero_exit_code() {
     let runner = StreamingCommandRunner;
     let output = runner

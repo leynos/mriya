@@ -60,66 +60,47 @@ impl CommandRunner for ProcessCommandRunner {
 
 fn forward_stream(
     reader: impl Read + Send + 'static,
-    target: StreamTarget,
+    is_stderr: bool,
+    program: &str,
 ) -> thread::JoinHandle<Result<String, SyncError>> {
+    let program_name = program.to_owned();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         let mut captured = Vec::new();
         let mut buffered_reader = BufReader::new(reader);
-        let program = target.program_name();
+        let mut writer: Box<dyn Write> = if is_stderr {
+            Box::new(std::io::stderr().lock())
+        } else {
+            Box::new(std::io::stdout().lock())
+        };
 
-        target
-            .with_locked_writer(|writer| {
-                let convert_error = |err: std::io::Error| SyncError::Spawn {
-                    program: program.to_owned(),
+        loop {
+            let read = buffered_reader
+                .read(&mut buffer)
+                .map_err(|err| SyncError::Spawn {
+                    program: program_name.clone(),
                     message: err.to_string(),
-                };
+                })?;
 
-                let mut read = buffered_reader.read(&mut buffer).map_err(&convert_error)?;
-                while read != 0 {
-                    let chunk = buffer.get(..read).unwrap_or(&[]);
-                    writer.write_all(chunk).map_err(&convert_error)?;
-                    captured.extend_from_slice(chunk);
-                    read = buffered_reader.read(&mut buffer).map_err(&convert_error)?;
-                }
+            if read == 0 {
+                break;
+            }
 
-                writer.flush().map_err(&convert_error)?;
-                Ok(())
-            })
-            .map(|()| String::from_utf8_lossy(&captured).into_owned())
+            let (chunk, _) = buffer.split_at(read);
+            writer.write_all(chunk).map_err(|err| SyncError::Spawn {
+                program: program_name.clone(),
+                message: err.to_string(),
+            })?;
+            captured.extend_from_slice(chunk);
+        }
+
+        writer.flush().map_err(|err| SyncError::Spawn {
+            program: program_name.clone(),
+            message: err.to_string(),
+        })?;
+
+        Ok(String::from_utf8_lossy(&captured).into_owned())
     })
-}
-
-enum StreamTarget {
-    Stdout,
-    Stderr,
-}
-
-impl StreamTarget {
-    const fn program_name(&self) -> &'static str {
-        match self {
-            Self::Stdout => "stdout",
-            Self::Stderr => "stderr",
-        }
-    }
-
-    fn with_locked_writer<F, R>(&self, f: F) -> Result<R, SyncError>
-    where
-        F: FnOnce(&mut dyn Write) -> Result<R, SyncError>,
-    {
-        match self {
-            Self::Stdout => {
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                f(&mut handle)
-            }
-            Self::Stderr => {
-                let stderr = std::io::stderr();
-                let mut handle = stderr.lock();
-                f(&mut handle)
-            }
-        }
-    }
 }
 
 /// Command runner that streams subprocess stdout/stderr while capturing them.
@@ -141,11 +122,11 @@ impl CommandRunner for StreamingCommandRunner {
         let stdout_handle = child
             .stdout
             .take()
-            .map(|stdout| forward_stream(stdout, StreamTarget::Stdout));
+            .map(|stdout| forward_stream(stdout, false, program));
         let stderr_handle = child
             .stderr
             .take()
-            .map(|stderr| forward_stream(stderr, StreamTarget::Stderr));
+            .map(|stderr| forward_stream(stderr, true, program));
 
         let status = child.wait().map_err(|err| SyncError::Spawn {
             program: program.to_owned(),

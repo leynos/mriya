@@ -15,10 +15,9 @@ use crate::sync::{RemoteCommandOutput, SyncError, Syncer};
 
 /// Errors surfaced while performing a remote run.
 #[derive(Debug, Error)]
-pub enum RunError<BackendError, SyncErr>
+pub enum RunError<BackendError>
 where
     BackendError: std::error::Error + 'static,
-    SyncErr: std::error::Error + 'static,
 {
     /// Raised when provisioning a new instance fails.
     #[error("failed to create instance: {0}")]
@@ -39,7 +38,7 @@ where
         message: String,
         /// Underlying synchronisation error.
         #[source]
-        source: SyncErr,
+        source: SyncError,
     },
     /// Raised when the remote command fails to start.
     #[error("remote command failed to start: {message}")]
@@ -48,7 +47,7 @@ where
         message: String,
         /// Underlying synchronisation error.
         #[source]
-        source: SyncErr,
+        source: SyncError,
     },
     /// Raised when teardown fails after the primary operation succeeded.
     #[error("failed to destroy instance: {0}")]
@@ -89,7 +88,7 @@ where
         request: &InstanceRequest,
         source: &Utf8Path,
         remote_command: &str,
-    ) -> Result<RemoteCommandOutput, RunError<B::Error, SyncError>> {
+    ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
         let handle = self
             .backend
             .create(request)
@@ -99,37 +98,32 @@ where
         let networking = match self.backend.wait_for_ready(&handle).await {
             Ok(net) => net,
             Err(err) => {
-                return Err(self
-                    .teardown_and_fail(handle, err, |message, wait_err| RunError::Wait {
-                        message,
-                        source: wait_err,
-                    })
-                    .await);
+                let message = self.destroy_with_note(handle, &err).await;
+                return Err(RunError::Wait {
+                    message,
+                    source: err,
+                });
             }
         };
 
-        let output = match self
-            .syncer
-            .sync(source, &self.syncer.destination_for(&networking))
-        {
-            Ok(()) => match self.syncer.run_remote(&networking, remote_command) {
-                Ok(result) => result,
-                Err(err) => {
-                    return Err(self
-                        .teardown_and_fail(handle, err, |message, remote_err| RunError::Remote {
-                            message,
-                            source: remote_err,
-                        })
-                        .await);
-                }
-            },
+        let dest = self.syncer.destination_for(&networking);
+
+        if let Err(err) = self.syncer.sync(source, &dest) {
+            let message = self.destroy_with_note(handle, &err).await;
+            return Err(RunError::Sync {
+                message,
+                source: err,
+            });
+        }
+
+        let output = match self.syncer.run_remote(&networking, remote_command) {
+            Ok(result) => result,
             Err(err) => {
-                return Err(self
-                    .teardown_and_fail(handle, err, |message, sync_err| RunError::Sync {
-                        message,
-                        source: sync_err,
-                    })
-                    .await);
+                let message = self.destroy_with_note(handle, &err).await;
+                return Err(RunError::Remote {
+                    message,
+                    source: err,
+                });
             }
         };
 
@@ -141,19 +135,9 @@ where
         Ok(output)
     }
 
-    async fn teardown_and_fail<E, F>(
-        &self,
-        handle: InstanceHandle,
-        err: E,
-        make_error: F,
-    ) -> RunError<B::Error, SyncError>
-    where
-        E: Display,
-        F: FnOnce(String, E) -> RunError<B::Error, SyncError>,
-    {
+    async fn destroy_with_note<E: Display>(&self, handle: InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle).await.err();
-        let message = append_teardown_note(err.to_string(), teardown_error.as_ref());
-        make_error(message, err)
+        append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }
 

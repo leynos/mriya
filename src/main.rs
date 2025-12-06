@@ -49,7 +49,7 @@ enum CliError {
     #[error("remote command terminated without an exit status")]
     MissingExitCode,
     #[error("remote run failed: {0}")]
-    Run(#[from] RunError<ScalewayBackendError, SyncError>),
+    Run(#[from] RunError<ScalewayBackendError>),
     #[error("invalid command argument: {0}")]
     InvalidCommand(String),
 }
@@ -122,7 +122,8 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
             .any(|ch| matches!(ch, '\n' | '\r' | '\u{0000}'..='\u{001F}' | '\u{007F}'))
         {
             return Err(CliError::InvalidCommand(String::from(
-                "command arguments must not contain control characters (newline, carriage return, NUL)",
+                "command arguments must not contain control characters (ASCII \
+                 0x00-0x1F or 0x7F, e.g. newline, carriage return, tab, NUL)",
             )));
         }
     }
@@ -132,4 +133,37 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
 fn report_error(err: &CliError) {
     let mut stderr = io::stderr();
     if writeln!(stderr, "{err}").is_err() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_command_args_rejects_control_characters() {
+        let err = validate_command_args(&[String::from("echo\tbad")])
+            .expect_err("tab should be rejected");
+
+        assert!(
+            matches!(err, CliError::InvalidCommand(ref message) if message.contains("control characters")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_command_args_accepts_safe_arguments() {
+        assert!(validate_command_args(&[String::from("echo"), String::from("ok")]).is_ok());
+    }
+
+    #[test]
+    fn render_remote_command_escapes_arguments() {
+        let args = vec![
+            String::from("echo"),
+            String::from("a b"),
+            String::from("c'd"),
+        ];
+        let rendered = render_remote_command(&args);
+
+        assert_eq!(rendered, "echo 'a b' 'c'\\''d'");
+    }
 }
