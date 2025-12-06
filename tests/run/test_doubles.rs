@@ -17,8 +17,6 @@ pub struct ScriptedBackend {
 #[derive(Debug, Default)]
 struct State {
     fail_on_destroy: bool,
-    fail_on_create: bool,
-    fail_on_wait: bool,
     destroy_calls: u32,
 }
 
@@ -36,22 +34,6 @@ impl ScriptedBackend {
             .fail_on_destroy = true;
     }
 
-    #[allow(dead_code, reason = "used by future failure-path tests")]
-    pub fn fail_on_create(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
-            .fail_on_create = true;
-    }
-
-    #[allow(dead_code, reason = "used by future failure-path tests")]
-    pub fn fail_on_wait(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
-            .fail_on_wait = true;
-    }
-
     pub fn destroy_calls(&self) -> u32 {
         self.state
             .lock()
@@ -62,10 +44,6 @@ impl ScriptedBackend {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ScriptedBackendError {
-    #[error("create failure")]
-    Create,
-    #[error("wait failure")]
-    Wait,
     #[error("destroy failure")]
     Destroy,
 }
@@ -78,19 +56,10 @@ impl Backend for ScriptedBackend {
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
-            if self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
-                .fail_on_create
-            {
-                Err(ScriptedBackendError::Create)
-            } else {
-                Ok(InstanceHandle {
-                    id: String::from("scripted-id"),
-                    zone: String::from("test-zone"),
-                })
-            }
+            Ok(InstanceHandle {
+                id: String::from("scripted-id"),
+                zone: String::from("test-zone"),
+            })
         })
     }
 
@@ -99,19 +68,10 @@ impl Backend for ScriptedBackend {
         _handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
         Box::pin(async move {
-            if self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("scripted backend lock poisoned: {err}"))
-                .fail_on_wait
-            {
-                Err(ScriptedBackendError::Wait)
-            } else {
-                Ok(InstanceNetworking {
-                    public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    ssh_port: 22,
-                })
-            }
+            Ok(InstanceNetworking {
+                public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ssh_port: 22,
+            })
         })
     }
 
