@@ -80,7 +80,7 @@ impl Backend for ScriptedBackend {
             let mut state = self
                 .state
                 .lock()
-                .map_err(|_| ScriptedBackendError::Destroy)?;
+                .unwrap_or_else(|err| panic!("scripted backend lock poisoned in destroy: {err}"));
             state.destroy_calls += 1;
             if state.fail_on_destroy {
                 return Err(ScriptedBackendError::Destroy);
