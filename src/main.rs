@@ -10,9 +10,9 @@ use std::env;
 use std::io::{self, Write};
 use std::process;
 #[cfg(test)]
-use std::sync::OnceLock;
-#[cfg(test)]
 use std::{future::Future, pin::Pin};
+#[cfg(test)]
+use tokio::sync::Mutex;
 
 use camino::Utf8PathBuf;
 use clap::Parser;
@@ -77,7 +77,7 @@ async fn main() {
 
 async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
     #[cfg(test)]
-    if let Some(hook) = RUN_COMMAND_HOOK.get() {
+    if let Some(hook) = RUN_COMMAND_HOOK.lock().await.as_ref() {
         return hook(command).await;
     }
 
@@ -171,7 +171,7 @@ type RunHook =
     dyn Fn(RunCommand) -> Pin<Box<dyn Future<Output = Result<i32, CliError>> + Send>> + Send + Sync;
 
 #[cfg(test)]
-static RUN_COMMAND_HOOK: OnceLock<Box<RunHook>> = OnceLock::new();
+static RUN_COMMAND_HOOK: Mutex<Option<Box<RunHook>>> = Mutex::const_new(None);
 
 #[cfg(any(test, feature = "test-backdoors"))]
 fn enable_fake_modes() -> bool {
@@ -229,13 +229,14 @@ mod tests {
         F: Fn(RunCommand) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<i32, CliError>> + Send + 'static,
     {
-        RUN_COMMAND_HOOK
-            .set(Box::new(move |cmd| Box::pin(hook(cmd))))
-            .ok();
-        exec_run(RunCommand {
+        *RUN_COMMAND_HOOK.lock().await = Some(Box::new(move |cmd| Box::pin(hook(cmd))));
+        let result = exec_run(RunCommand {
             command: vec![String::from("echo")],
         })
-        .await
+        .await;
+        // Clear the hook after use to prevent interference with other tests
+        *RUN_COMMAND_HOOK.lock().await = None;
+        result
     }
 
     #[test]
