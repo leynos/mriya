@@ -4,7 +4,6 @@ use std::{env, ffi::OsString};
 
 use tokio::sync::{Mutex, MutexGuard};
 
-#[cfg(test)]
 pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Guard that holds the env mutex and cleans up variables on drop.

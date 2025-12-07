@@ -3,6 +3,9 @@ name = "mriya"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+test-backdoors = []
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 ortho_config = { version = "0.6.0", features = ["yaml", "json5"] }

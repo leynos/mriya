@@ -5,7 +5,7 @@
 //! tears the instance down. The `run` subcommand preserves remote exit codes
 //! locally and reports errors on stderr with meaningful exit statuses.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-backdoors"))]
 use std::env;
 use std::io::{self, Write};
 use std::process;
@@ -85,7 +85,7 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 }
 
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-backdoors"))]
     {
         if enable_fake_modes() {
             if let Some(result) = fake_run_from_env(&args) {
@@ -173,14 +173,14 @@ type RunHook =
 #[cfg(test)]
 static RUN_COMMAND_HOOK: OnceLock<Box<RunHook>> = OnceLock::new();
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-backdoors"))]
 fn enable_fake_modes() -> bool {
     env::var("MRIYA_FAKE_RUN_ENABLE")
         .map(|val| val == "1")
         .unwrap_or(false)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-backdoors"))]
 fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
     let _ = args; // suppress unused warning when compiled without tests hitting this path
@@ -204,7 +204,7 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-backdoors"))]
 fn prefail_from_env() -> Option<CliError> {
     let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
     match mode.as_str() {
