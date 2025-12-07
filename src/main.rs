@@ -13,11 +13,13 @@ use clap::Parser;
 use shell_escape::unix::escape;
 use thiserror::Error;
 
-use mriya::config::ConfigError;
 use mriya::{
     RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig,
-    StreamingCommandRunner, SyncConfig, SyncConfigLoadError, SyncError, Syncer,
+    StreamingCommandRunner, SyncConfig, Syncer,
 };
+
+#[cfg(test)]
+mod test_helpers;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,18 +41,12 @@ struct RunCommand {
 
 #[derive(Debug, Error)]
 enum CliError {
-    #[error("failed to load Scaleway configuration: {0}")]
-    LoadScaleway(ConfigError),
-    #[error("failed to load sync configuration: {0}")]
-    LoadSync(SyncConfigLoadError),
-    #[error("failed to build sync orchestrator: {0}")]
-    SyncSetup(SyncError),
-    #[error("failed to build Scaleway backend: {0}")]
-    Backend(ScalewayBackendError),
-    #[error("failed to read current working directory: {0}")]
-    WorkingDir(std::io::Error),
-    #[error("current working directory is not valid UTF-8: {0}")]
-    NonUtf8Path(String),
+    #[error("configuration error: {0}")]
+    Config(String),
+    #[error("backend error: {0}")]
+    Backend(String),
+    #[error("sync error: {0}")]
+    Sync(String),
     #[error("remote command terminated without an exit status")]
     MissingExitCode,
     #[error("remote run failed: {0}")]
@@ -96,16 +92,21 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     }
 
     let scaleway_config =
-        ScalewayConfig::load_without_cli_args().map_err(CliError::LoadScaleway)?;
-    let backend = ScalewayBackend::new(scaleway_config).map_err(CliError::Backend)?;
-    let request = backend.default_request().map_err(CliError::Backend)?;
+        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let backend =
+        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
+    let request = backend
+        .default_request()
+        .map_err(|err| CliError::Backend(err.to_string()))?;
 
-    let sync_config = SyncConfig::load_without_cli_args().map_err(CliError::LoadSync)?;
-    let syncer = Syncer::new(sync_config, StreamingCommandRunner).map_err(CliError::SyncSetup)?;
+    let sync_config =
+        SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let syncer = Syncer::new(sync_config, StreamingCommandRunner)
+        .map_err(|err| CliError::Sync(err.to_string()))?;
 
-    let cwd = std::env::current_dir().map_err(CliError::WorkingDir)?;
+    let cwd = std::env::current_dir().map_err(|err| CliError::Config(err.to_string()))?;
     let source = Utf8PathBuf::from_path_buf(cwd)
-        .map_err(|path| CliError::NonUtf8Path(path.display().to_string()))?;
+        .map_err(|path| CliError::Config(path.display().to_string()))?;
 
     let orchestrator = RunOrchestrator::new(backend, syncer);
     validate_command_args(&args.command)?;
@@ -191,20 +192,9 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
 fn prefail_from_env() -> Option<CliError> {
     let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
     match mode.as_str() {
-        "load-scaleway" => Some(CliError::LoadScaleway(ConfigError::Parse(String::from(
-            "fake",
-        )))),
-        "load-sync" => Some(CliError::LoadSync(SyncConfigLoadError::Parse(
-            String::from("fake"),
-        ))),
-        "sync-setup" => Some(CliError::SyncSetup(SyncError::InvalidConfig {
-            field: String::from("fake"),
-        })),
-        "backend" => Some(CliError::Backend(ScalewayBackendError::Config(
-            String::from("fake"),
-        ))),
-        "working-dir" => Some(CliError::WorkingDir(io::Error::other("fake"))),
-        "non-utf8-path" => Some(CliError::NonUtf8Path(String::from("fake"))),
+        "config" => Some(CliError::Config(String::from("fake"))),
+        "sync" => Some(CliError::Sync(String::from("fake"))),
+        "backend" => Some(CliError::Backend(String::from("fake"))),
         "run" => Some(CliError::Run(RunError::Provision(
             ScalewayBackendError::Config(String::from("fake")),
         ))),
@@ -215,7 +205,7 @@ fn prefail_from_env() -> Option<CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::Mutex;
+    use crate::test_helpers::EnvGuard;
 
     async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
     where
@@ -229,32 +219,6 @@ mod tests {
             command: vec![String::from("echo")],
         });
         dispatch(cli).await
-    }
-
-    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
-
-    struct EnvGuard {
-        keys: Vec<&'static str>,
-        _guard: tokio::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        async fn set(key: &'static str, value: &str) -> Self {
-            let guard = ENV_LOCK.lock().await;
-            unsafe { env::set_var(key, value) };
-            Self {
-                keys: vec![key],
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for key in &self.keys {
-                unsafe { env::remove_var(key) };
-            }
-        }
     }
 
     #[test]
@@ -288,30 +252,19 @@ mod tests {
     #[tokio::test]
     async fn run_command_prefail_variants() {
         type ErrorPredicate = fn(&CliError) -> bool;
-        let cases: [(&str, ErrorPredicate); 7] = [
-            ("load-scaleway", |err: &CliError| {
-                matches!(err, CliError::LoadScaleway(_))
+        let cases: [(&str, ErrorPredicate); 4] = [
+            ("config", |err: &CliError| {
+                matches!(err, CliError::Config(_))
             }),
-            ("load-sync", |err: &CliError| {
-                matches!(err, CliError::LoadSync(_))
-            }),
-            ("sync-setup", |err: &CliError| {
-                matches!(err, CliError::SyncSetup(_))
-            }),
+            ("sync", |err: &CliError| matches!(err, CliError::Sync(_))),
             ("backend", |err: &CliError| {
                 matches!(err, CliError::Backend(_))
-            }),
-            ("working-dir", |err: &CliError| {
-                matches!(err, CliError::WorkingDir(_))
-            }),
-            ("non-utf8-path", |err: &CliError| {
-                matches!(err, CliError::NonUtf8Path(_))
             }),
             ("run", |err: &CliError| matches!(err, CliError::Run(_))),
         ];
 
         for (mode, predicate) in cases {
-            let _guard = EnvGuard::set("MRIYA_FAKE_RUN_PREFAIL", mode).await;
+            let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_PREFAIL", mode).await;
             let result = run_command(RunCommand {
                 command: vec![String::from("echo")],
             })
@@ -326,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_command_missing_exit_code_from_fake_mode() {
-        let _guard = EnvGuard::set("MRIYA_FAKE_RUN_MODE", "missing-exit").await;
+        let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_MODE", "missing-exit").await;
         let result = run_command(RunCommand {
             command: vec![String::from("echo")],
         })
