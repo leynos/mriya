@@ -58,28 +58,24 @@ enum CliError {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let exit_code = match dispatch(cli).await {
-        Ok(code) => code,
-        Err(err) => {
-            report_error(&err);
-            1
-        }
-    };
+    let exit_code = match cli {
+        Cli::Run(command) => exec_run(command).await,
+    }
+    .unwrap_or_else(|err| {
+        report_error(&err);
+        1
+    });
 
     process::exit(exit_code);
 }
 
-async fn dispatch(cli: Cli) -> Result<i32, CliError> {
-    match cli {
-        Cli::Run(command) => {
-            #[cfg(test)]
-            if let Some(hook) = RUN_COMMAND_HOOK.get() {
-                return hook(command).await;
-            }
-
-            run_command(command).await
-        }
+async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
+    #[cfg(test)]
+    if let Some(hook) = RUN_COMMAND_HOOK.get() {
+        return hook(command).await;
     }
+
+    run_command(command).await
 }
 
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
@@ -215,10 +211,10 @@ mod tests {
         RUN_COMMAND_HOOK
             .set(Box::new(move |cmd| Box::pin(hook(cmd))))
             .ok();
-        let cli = Cli::Run(RunCommand {
+        exec_run(RunCommand {
             command: vec![String::from("echo")],
-        });
-        dispatch(cli).await
+        })
+        .await
     }
 
     #[test]
