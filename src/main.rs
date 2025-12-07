@@ -1,5 +1,6 @@
 //! Binary entry point for the Mriya CLI.
 
+#[cfg(debug_assertions)]
 use std::env;
 use std::io::{self, Write};
 use std::process;
@@ -79,10 +80,12 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 }
 
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
+    #[cfg(debug_assertions)]
     if let Some(result) = fake_run_from_env(&args) {
         return result;
     }
 
+    #[cfg(debug_assertions)]
     if let Some(err) = prefail_from_env() {
         return Err(err);
     }
@@ -136,7 +139,7 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
     for arg in args {
         if arg
             .chars()
-            .any(|ch| matches!(ch, '\n' | '\r' | '\u{0000}'..='\u{001F}' | '\u{007F}'))
+            .any(|ch| matches!(ch, '\u{0000}'..='\u{001F}' | '\u{007F}'))
         {
             return Err(CliError::InvalidCommand(String::from(concat!(
                 "command arguments must not contain control characters (ASCII ",
@@ -162,6 +165,7 @@ type RunHook =
 #[cfg(test)]
 static RUN_COMMAND_HOOK: OnceLock<Box<RunHook>> = OnceLock::new();
 
+#[cfg(debug_assertions)]
 fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
     let _ = args; // suppress unused warning when compiled without tests hitting this path
@@ -185,6 +189,7 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     }
 }
 
+#[cfg(debug_assertions)]
 fn prefail_from_env() -> Option<CliError> {
     let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
     match mode.as_str() {
@@ -247,30 +252,23 @@ mod tests {
 
     #[tokio::test]
     async fn run_command_prefail_variants() {
-        type ErrorPredicate = fn(&CliError) -> bool;
-        let cases: [(&str, ErrorPredicate); 4] = [
-            ("config", |err: &CliError| {
-                matches!(err, CliError::Config(_))
-            }),
-            ("sync", |err: &CliError| matches!(err, CliError::Sync(_))),
-            ("backend", |err: &CliError| {
-                matches!(err, CliError::Backend(_))
-            }),
-            ("run", |err: &CliError| matches!(err, CliError::Run(_))),
-        ];
+        run_prefail_case("config", |err| matches!(err, CliError::Config(_))).await;
+        run_prefail_case("sync", |err| matches!(err, CliError::Sync(_))).await;
+        run_prefail_case("backend", |err| matches!(err, CliError::Backend(_))).await;
+        run_prefail_case("run", |err| matches!(err, CliError::Run(_))).await;
+    }
 
-        for (mode, predicate) in cases {
-            let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_PREFAIL", mode).await;
-            let result = run_command(RunCommand {
-                command: vec![String::from("echo")],
-            })
-            .await;
-            let err = result.expect_err("prefail should error");
-            assert!(
-                predicate(&err),
-                "mode {mode} produced unexpected error: {err}"
-            );
-        }
+    async fn run_prefail_case(mode: &str, predicate: impl Fn(&CliError) -> bool) {
+        let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_PREFAIL", mode).await;
+        let result = run_command(RunCommand {
+            command: vec![String::from("echo")],
+        })
+        .await;
+        let err = result.expect_err("prefail should error");
+        assert!(
+            predicate(&err),
+            "mode {mode} produced unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
