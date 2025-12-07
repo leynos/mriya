@@ -141,10 +141,10 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
             .chars()
             .any(|ch| matches!(ch, '\n' | '\r' | '\u{0000}'..='\u{001F}' | '\u{007F}'))
         {
-            return Err(CliError::InvalidCommand(String::from(
-                "command arguments must not contain control characters (ASCII \
-                 0x00-0x1F or 0x7F, e.g. newline, carriage return, tab, NUL)",
-            )));
+            return Err(CliError::InvalidCommand(String::from(concat!(
+                "command arguments must not contain control characters (ASCII ",
+                "0x00-0x1F or 0x7F, e.g. newline, carriage return, tab, NUL)"
+            ))));
         }
     }
     Ok(())
@@ -155,7 +155,7 @@ fn report_error(err: &CliError) {
 }
 
 fn write_error(mut target: impl Write, err: &CliError) {
-    if writeln!(target, "{err}").is_err() {}
+    writeln!(target, "{err}").ok();
 }
 
 #[cfg(test)]
@@ -215,6 +215,7 @@ fn prefail_from_env() -> Option<CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Mutex;
 
     async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
     where
@@ -230,14 +231,21 @@ mod tests {
         dispatch(cli).await
     }
 
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
     struct EnvGuard {
         keys: Vec<&'static str>,
+        _guard: tokio::sync::MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
+        async fn set(key: &'static str, value: &str) -> Self {
+            let guard = ENV_LOCK.lock().await;
             unsafe { env::set_var(key, value) };
-            Self { keys: vec![key] }
+            Self {
+                keys: vec![key],
+                _guard: guard,
+            }
         }
     }
 
@@ -302,13 +310,8 @@ mod tests {
             ("run", |err: &CliError| matches!(err, CliError::Run(_))),
         ];
 
-        unsafe {
-            env::remove_var("MRIYA_FAKE_RUN_MODE");
-            env::remove_var("MRIYA_FAKE_RUN_PREFAIL");
-        }
-
         for (mode, predicate) in cases {
-            let _guard = EnvGuard::set("MRIYA_FAKE_RUN_PREFAIL", mode);
+            let _guard = EnvGuard::set("MRIYA_FAKE_RUN_PREFAIL", mode).await;
             let result = run_command(RunCommand {
                 command: vec![String::from("echo")],
             })
@@ -323,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_command_missing_exit_code_from_fake_mode() {
-        let _guard = EnvGuard::set("MRIYA_FAKE_RUN_MODE", "missing-exit");
+        let _guard = EnvGuard::set("MRIYA_FAKE_RUN_MODE", "missing-exit").await;
         let result = run_command(RunCommand {
             command: vec![String::from("echo")],
         })
