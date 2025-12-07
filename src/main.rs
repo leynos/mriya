@@ -1,6 +1,10 @@
-//! Binary entry point for the Mriya CLI.
+//! CLI entry point for Mriya.
+//!
+//! This binary provisions a short-lived Scaleway instance, synchronises the
+//! local workspace via `rsync`, executes a user-supplied command over SSH, and
+//! tears the instance down. The `run` subcommand preserves remote exit codes
+//! locally and reports errors on stderr with meaningful exit statuses.
 
-#[cfg(debug_assertions)]
 use std::env;
 use std::io::{self, Write};
 use std::process;
@@ -80,14 +84,14 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 }
 
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
-    #[cfg(debug_assertions)]
-    if let Some(result) = fake_run_from_env(&args) {
-        return result;
-    }
+    if enable_fake_modes() {
+        if let Some(result) = fake_run_from_env(&args) {
+            return result;
+        }
 
-    #[cfg(debug_assertions)]
-    if let Some(err) = prefail_from_env() {
-        return Err(err);
+        if let Some(err) = prefail_from_env() {
+            return Err(err);
+        }
     }
 
     let scaleway_config =
@@ -165,7 +169,17 @@ type RunHook =
 #[cfg(test)]
 static RUN_COMMAND_HOOK: OnceLock<Box<RunHook>> = OnceLock::new();
 
-#[cfg(debug_assertions)]
+fn enable_fake_modes() -> bool {
+    if cfg!(test) {
+        true
+    } else {
+        cfg!(debug_assertions)
+            && env::var("MRIYA_FAKE_RUN_ENABLE")
+                .map(|val| val == "1")
+                .unwrap_or(false)
+    }
+}
+
 fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
     let _ = args; // suppress unused warning when compiled without tests hitting this path
@@ -189,7 +203,6 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     }
 }
 
-#[cfg(debug_assertions)]
 fn prefail_from_env() -> Option<CliError> {
     let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
     match mode.as_str() {
@@ -207,6 +220,7 @@ fn prefail_from_env() -> Option<CliError> {
 mod tests {
     use super::*;
     use crate::test_helpers::EnvGuard;
+    use rstest::rstest;
 
     async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
     where
@@ -250,16 +264,21 @@ mod tests {
         assert_eq!(rendered, "echo 'a b' 'c'\\''d'");
     }
 
-    #[tokio::test]
-    async fn run_command_prefail_variants() {
-        run_prefail_case("config", |err| matches!(err, CliError::Config(_))).await;
-        run_prefail_case("sync", |err| matches!(err, CliError::Sync(_))).await;
-        run_prefail_case("backend", |err| matches!(err, CliError::Backend(_))).await;
-        run_prefail_case("run", |err| matches!(err, CliError::Run(_))).await;
-    }
-
-    async fn run_prefail_case(mode: &str, predicate: impl Fn(&CliError) -> bool) {
-        let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_PREFAIL", mode).await;
+    #[rstest]
+    #[case::config("config", |err: &CliError| matches!(err, CliError::Config(_)))]
+    #[case::sync("sync", |err: &CliError| matches!(err, CliError::Sync(_)))]
+    #[case::backend("backend", |err: &CliError| matches!(err, CliError::Backend(_)))]
+    #[case::run("run", |err: &CliError| matches!(err, CliError::Run(_)))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_command_prefail_variants(
+        #[case] mode: &str,
+        #[case] predicate: fn(&CliError) -> bool,
+    ) {
+        let _guard = EnvGuard::set_vars(&[
+            ("MRIYA_FAKE_RUN_ENABLE", "1"),
+            ("MRIYA_FAKE_RUN_PREFAIL", mode),
+        ])
+        .await;
         let result = run_command(RunCommand {
             command: vec![String::from("echo")],
         })
@@ -271,9 +290,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn run_command_missing_exit_code_from_fake_mode() {
-        let _guard = EnvGuard::set_var("MRIYA_FAKE_RUN_MODE", "missing-exit").await;
+        let _guard = EnvGuard::set_vars(&[
+            ("MRIYA_FAKE_RUN_ENABLE", "1"),
+            ("MRIYA_FAKE_RUN_MODE", "missing-exit"),
+        ])
+        .await;
         let result = run_command(RunCommand {
             command: vec![String::from("echo")],
         })

@@ -1,9 +1,10 @@
-//! Shared test utilities for serialising environment mutation.
+//! Shared test utilities for serialising environment mutation in tests only.
 
 use std::{env, ffi::OsString};
 
 use tokio::sync::{Mutex, MutexGuard};
 
+#[cfg(test)]
 pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Guard that holds the env mutex and cleans up variables on drop.
@@ -13,14 +14,18 @@ pub struct EnvGuard {
 }
 
 impl EnvGuard {
-    /// Sets an environment variable while holding a global mutex.
-    pub async fn set_var(key: &str, value: &str) -> Self {
+    /// Sets multiple environment variables while holding a global mutex.
+    pub async fn set_vars(pairs: &[(&str, &str)]) -> Self {
         let guard = ENV_LOCK.lock().await;
-        let old = env::var_os(key);
-        // SAFETY: Environment mutation is serialised by `ENV_LOCK`, preventing races.
-        unsafe { env::set_var(key, value) };
+        let mut previous = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            let old = env::var_os(key);
+            // SAFETY: Environment mutation is serialised by `ENV_LOCK`, preventing races.
+            unsafe { env::set_var(key, value) };
+            previous.push((key.to_string(), old));
+        }
         Self {
-            previous: vec![(key.to_owned(), old)],
+            previous,
             _guard: guard,
         }
     }
