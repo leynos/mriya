@@ -44,7 +44,8 @@ pub struct SyncConfig {
     #[ortho_config(default = "/dev/null".to_owned())]
     pub ssh_known_hosts_file: String,
     /// Path to the SSH private key file for remote authentication. Supports
-    /// tilde expansion (`~/.ssh/id_ed25519`). This field is required.
+    /// tilde expansion (`~/.ssh/id_ed25519`). Must be provided via
+    /// configuration or environment; validation will reject empty or missing values.
     pub ssh_identity_file: Option<String>,
 }
 
@@ -200,7 +201,8 @@ pub enum SyncError {
 ///
 /// ```
 /// # use mriya::sync::expand_tilde;
-/// assert_eq!(expand_tilde("~/.ssh/id_ed25519"), format!("{}/.ssh/id_ed25519", std::env::var("HOME").unwrap()));
+/// let home = std::env::var("HOME").expect("HOME should be set");
+/// assert_eq!(expand_tilde("~/.ssh/id_ed25519"), format!("{home}/.ssh/id_ed25519"));
 /// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
 /// ```
 #[must_use]
