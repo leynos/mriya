@@ -43,6 +43,9 @@ pub struct SyncConfig {
     /// Known hosts file override; defaults to `/dev/null` for ephemeral hosts.
     #[ortho_config(default = "/dev/null".to_owned())]
     pub ssh_known_hosts_file: String,
+    /// Path to the SSH private key file for remote authentication. Supports
+    /// tilde expansion (`~/.ssh/id_ed25519`). This field is required.
+    pub ssh_identity_file: Option<String>,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
@@ -64,7 +67,17 @@ impl SyncConfig {
         Self::require_value(&self.ssh_bin, "ssh_bin")?;
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
+        Self::require_ssh_identity(self.ssh_identity_file.as_ref())?;
         Ok(())
+    }
+
+    fn require_ssh_identity(value: Option<&String>) -> Result<(), SyncError> {
+        match value {
+            Some(path) if !path.trim().is_empty() => Ok(()),
+            _ => Err(SyncError::InvalidConfig {
+                field: String::from("ssh_identity_file"),
+            }),
+        }
     }
 
     /// Loads configuration using defaults, configuration files, and
@@ -145,8 +158,10 @@ pub struct RemoteCommandOutput {
 /// Errors surfaced while performing synchronisation or remote execution.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum SyncError {
-    /// Raised when configuration is missing required values.
-    #[error("invalid sync configuration: missing {field}")]
+    /// Raised when configuration is missing required values. The error message
+    /// includes guidance on how to provide the value via environment variable
+    /// or configuration file.
+    #[error("missing {field}: set MRIYA_SYNC_{env_suffix} or add {field} to [sync] in mriya.toml", env_suffix = field.to_uppercase())]
     InvalidConfig {
         /// Configuration field that failed validation.
         field: String,
@@ -177,6 +192,25 @@ pub enum SyncError {
         /// Stderr captured from the process.
         stderr: String,
     },
+}
+
+/// Expands a leading `~/` prefix to the user's home directory.
+///
+/// # Examples
+///
+/// ```
+/// # use mriya::sync::expand_tilde;
+/// assert_eq!(expand_tilde("~/.ssh/id_ed25519"), format!("{}/.ssh/id_ed25519", std::env::var("HOME").unwrap()));
+/// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+/// ```
+#[must_use]
+pub fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return format!("{}/{rest}", home.to_string_lossy());
+    }
+    path.to_owned()
 }
 
 /// Orchestrates rsync plus remote execution.
@@ -347,6 +381,12 @@ impl<R: CommandRunner> Syncer<R> {
 
     fn common_ssh_options(&self, port: u16) -> Vec<OsString> {
         let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
+
+        if let Some(ref identity_file) = self.config.ssh_identity_file {
+            let expanded = expand_tilde(identity_file);
+            args.push(OsString::from("-i"));
+            args.push(OsString::from(expanded));
+        }
 
         if self.config.ssh_batch_mode {
             args.push(OsString::from("-o"));

@@ -35,9 +35,16 @@ pub struct ScalewayConfig {
 }
 
 impl ScalewayConfig {
-    fn require_non_empty(value: &str, field: &str) -> Result<(), ConfigError> {
+    fn require_field(
+        value: &str,
+        description: &str,
+        env_var: &str,
+        toml_key: &str,
+    ) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
-            return Err(ConfigError::MissingField(field.to_owned()));
+            return Err(ConfigError::MissingField(format!(
+                "missing {description}: set {env_var} or add {toml_key} to [scaleway] in mriya.toml"
+            )));
         }
         Ok(())
     }
@@ -82,18 +89,50 @@ impl ScalewayConfig {
             .map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
-    /// Performs semantic validation on required fields.
+    /// Performs semantic validation on required fields. Error messages include
+    /// guidance on how to provide missing values via environment variables or
+    /// configuration files.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        Self::require_non_empty(&self.secret_key, "SCW_SECRET_KEY")?;
-        Self::require_non_empty(&self.default_project_id, "SCW_DEFAULT_PROJECT_ID")?;
-        Self::require_non_empty(&self.default_image, "SCW_DEFAULT_IMAGE")?;
-        Self::require_non_empty(&self.default_instance_type, "SCW_DEFAULT_INSTANCE_TYPE")?;
-        Self::require_non_empty(&self.default_zone, "SCW_DEFAULT_ZONE")?;
-        Self::require_non_empty(&self.default_architecture, "SCW_DEFAULT_ARCHITECTURE")?;
+        Self::require_field(
+            &self.secret_key,
+            "Scaleway API secret key",
+            "SCW_SECRET_KEY",
+            "secret_key",
+        )?;
+        Self::require_field(
+            &self.default_project_id,
+            "Scaleway project ID",
+            "SCW_DEFAULT_PROJECT_ID",
+            "default_project_id",
+        )?;
+        Self::require_field(
+            &self.default_image,
+            "VM image",
+            "SCW_DEFAULT_IMAGE",
+            "default_image",
+        )?;
+        Self::require_field(
+            &self.default_instance_type,
+            "instance type",
+            "SCW_DEFAULT_INSTANCE_TYPE",
+            "default_instance_type",
+        )?;
+        Self::require_field(
+            &self.default_zone,
+            "availability zone",
+            "SCW_DEFAULT_ZONE",
+            "default_zone",
+        )?;
+        Self::require_field(
+            &self.default_architecture,
+            "CPU architecture",
+            "SCW_DEFAULT_ARCHITECTURE",
+            "default_architecture",
+        )?;
         Ok(())
     }
 }

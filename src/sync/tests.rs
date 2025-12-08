@@ -36,6 +36,7 @@ fn base_config() -> SyncConfig {
         ssh_batch_mode: true,
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
+        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
     }
 }
 
@@ -354,4 +355,135 @@ fn streaming_runner_failed_spawn_returns_spawn_error() {
         Err(SyncError::Spawn { .. }) => {}
         other => panic!("expected SyncError::Spawn, got {other:?}"),
     }
+}
+
+#[rstest]
+fn sync_config_validation_rejects_missing_ssh_identity(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_identity_file: None,
+        ..base_config
+    };
+    let err = cfg
+        .validate()
+        .expect_err("missing ssh_identity_file should fail");
+    let SyncError::InvalidConfig { ref field } = err else {
+        panic!("expected InvalidConfig, got {err:?}");
+    };
+    assert_eq!(field, "ssh_identity_file");
+}
+
+#[rstest]
+fn sync_config_validation_rejects_empty_ssh_identity(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_identity_file: Some(String::from("  ")),
+        ..base_config
+    };
+    let err = cfg
+        .validate()
+        .expect_err("empty ssh_identity_file should fail");
+    let SyncError::InvalidConfig { ref field } = err else {
+        panic!("expected InvalidConfig, got {err:?}");
+    };
+    assert_eq!(field, "ssh_identity_file");
+}
+
+#[rstest]
+fn sync_error_invalid_config_produces_actionable_message(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_identity_file: None,
+        ..base_config
+    };
+    let err = cfg
+        .validate()
+        .expect_err("missing ssh_identity_file should fail");
+    let message = err.to_string();
+    assert!(
+        message.contains("MRIYA_SYNC_SSH_IDENTITY_FILE"),
+        "error should mention env var: {message}"
+    );
+    assert!(
+        message.contains("mriya.toml"),
+        "error should mention config file: {message}"
+    );
+}
+
+#[rstest]
+fn common_ssh_options_includes_identity_flag(
+    base_config: SyncConfig,
+    networking: InstanceNetworking,
+) {
+    let cfg = SyncConfig {
+        ssh_identity_file: Some(String::from("/path/to/key")),
+        ..base_config
+    };
+    let runner = ScriptedRunner::new();
+    runner.push_success();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let args = syncer.build_ssh_args(&networking, "echo ok");
+    let args_strs: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        args_strs.contains(&String::from("-i")),
+        "should include -i flag: {args_strs:?}"
+    );
+    assert!(
+        args_strs.contains(&String::from("/path/to/key")),
+        "should include key path: {args_strs:?}"
+    );
+}
+
+#[rstest]
+fn rsync_remote_shell_includes_identity_flag(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_identity_file: Some(String::from("/path/to/key")),
+        ..base_config
+    };
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let destination = SyncDestination::Remote {
+        user: String::from("ubuntu"),
+        host: String::from("1.2.3.4"),
+        port: 2222,
+        path: Utf8PathBuf::from("/remote"),
+    };
+    let source_dir = TempDir::new().expect("temp dir");
+    let source = Utf8PathBuf::from_path_buf(source_dir.path().to_path_buf()).expect("utf8 path");
+    let args = syncer
+        .build_rsync_args(&source, &destination)
+        .expect("args should build");
+    let args_strs: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    let rsh_arg = args_strs
+        .iter()
+        .find(|arg| arg.contains("ssh") && arg.contains("-i"))
+        .expect("rsync --rsh should include -i flag");
+    assert!(
+        rsh_arg.contains("/path/to/key"),
+        "remote shell should include key path: {rsh_arg}"
+    );
+}
+
+#[test]
+fn expand_tilde_expands_home_prefix() {
+    let home = std::env::var("HOME").expect("HOME should be set");
+    let expanded = expand_tilde("~/.ssh/id_ed25519");
+    assert_eq!(expanded, format!("{home}/.ssh/id_ed25519"));
+}
+
+#[test]
+fn expand_tilde_leaves_absolute_paths_unchanged() {
+    let path = "/absolute/path/to/key";
+    assert_eq!(expand_tilde(path), path);
+}
+
+#[test]
+fn expand_tilde_leaves_relative_paths_unchanged() {
+    let path = "relative/path/to/key";
+    assert_eq!(expand_tilde(path), path);
 }

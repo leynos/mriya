@@ -46,6 +46,7 @@ fn run_git_aware_sync(workspace: Workspace) -> Result<Workspace, StepError> {
         ssh_batch_mode: true,
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
+        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
     };
 
     let syncer = Syncer::new(config, LocalCopyRunner)?;

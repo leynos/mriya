@@ -83,5 +83,6 @@ fn sync_config() -> SyncConfig {
         ssh_batch_mode: true,
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
+        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
     }
 }
