@@ -34,21 +34,36 @@ pub struct ScalewayConfig {
     pub default_architecture: String,
 }
 
+/// Metadata for a configuration field, used to generate actionable error messages.
+struct FieldMetadata {
+    description: &'static str,
+    env_var: &'static str,
+    toml_key: &'static str,
+    section: &'static str,
+}
+
+impl FieldMetadata {
+    const fn new(
+        description: &'static str,
+        env_var: &'static str,
+        toml_key: &'static str,
+        section: &'static str,
+    ) -> Self {
+        Self {
+            description,
+            env_var,
+            toml_key,
+            section,
+        }
+    }
+}
+
 impl ScalewayConfig {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "additional section parameter enables reuse across config structs"
-    )]
-    fn require_field(
-        value: &str,
-        description: &str,
-        env_var: &str,
-        toml_key: &str,
-        section: &str,
-    ) -> Result<(), ConfigError> {
+    fn require_field(value: &str, metadata: &FieldMetadata) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
             return Err(ConfigError::MissingField(format!(
-                "missing {description}: set {env_var} or add {toml_key} to [{section}] in mriya.toml"
+                "missing {}: set {} or add {} to [{}] in mriya.toml",
+                metadata.description, metadata.env_var, metadata.toml_key, metadata.section
             )));
         }
         Ok(())
@@ -104,45 +119,52 @@ impl ScalewayConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
-            "Scaleway API secret key",
-            "SCW_SECRET_KEY",
-            "secret_key",
-            "scaleway",
+            &FieldMetadata::new(
+                "Scaleway API secret key",
+                "SCW_SECRET_KEY",
+                "secret_key",
+                "scaleway",
+            ),
         )?;
         Self::require_field(
             &self.default_project_id,
-            "Scaleway project ID",
-            "SCW_DEFAULT_PROJECT_ID",
-            "default_project_id",
-            "scaleway",
+            &FieldMetadata::new(
+                "Scaleway project ID",
+                "SCW_DEFAULT_PROJECT_ID",
+                "default_project_id",
+                "scaleway",
+            ),
         )?;
         Self::require_field(
             &self.default_image,
-            "VM image",
-            "SCW_DEFAULT_IMAGE",
-            "default_image",
-            "scaleway",
+            &FieldMetadata::new("VM image", "SCW_DEFAULT_IMAGE", "default_image", "scaleway"),
         )?;
         Self::require_field(
             &self.default_instance_type,
-            "instance type",
-            "SCW_DEFAULT_INSTANCE_TYPE",
-            "default_instance_type",
-            "scaleway",
+            &FieldMetadata::new(
+                "instance type",
+                "SCW_DEFAULT_INSTANCE_TYPE",
+                "default_instance_type",
+                "scaleway",
+            ),
         )?;
         Self::require_field(
             &self.default_zone,
-            "availability zone",
-            "SCW_DEFAULT_ZONE",
-            "default_zone",
-            "scaleway",
+            &FieldMetadata::new(
+                "availability zone",
+                "SCW_DEFAULT_ZONE",
+                "default_zone",
+                "scaleway",
+            ),
         )?;
         Self::require_field(
             &self.default_architecture,
-            "CPU architecture",
-            "SCW_DEFAULT_ARCHITECTURE",
-            "default_architecture",
-            "scaleway",
+            &FieldMetadata::new(
+                "CPU architecture",
+                "SCW_DEFAULT_ARCHITECTURE",
+                "default_architecture",
+                "scaleway",
+            ),
         )?;
         Ok(())
     }
