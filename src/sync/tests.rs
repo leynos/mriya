@@ -26,6 +26,41 @@ where
     }
 }
 
+/// Helper to run a shell script via `StreamingCommandRunner` and assert expected output.
+fn assert_streaming_runner_output(
+    script: &str,
+    expected_code: Option<i32>,
+    expected_stdout: &str,
+    expected_stderr: &str,
+) {
+    let runner = StreamingCommandRunner;
+    let output = runner
+        .run("sh", &[OsString::from("-c"), OsString::from(script)])
+        .expect("command should execute successfully");
+
+    assert_eq!(output.code, expected_code);
+    assert_eq!(output.stdout, expected_stdout);
+    assert_eq!(output.stderr, expected_stderr);
+}
+
+/// Helper to assert that SSH identity validation fails with the expected error.
+fn assert_ssh_identity_validation_fails(
+    base_config: SyncConfig,
+    ssh_identity_file: Option<String>,
+) {
+    let cfg = SyncConfig {
+        ssh_identity_file,
+        ..base_config
+    };
+    let err = cfg
+        .validate()
+        .expect_err("ssh_identity_file validation should fail");
+    let SyncError::InvalidConfig { ref field } = err else {
+        panic!("expected InvalidConfig, got {err:?}");
+    };
+    assert_eq!(field, "ssh_identity_file");
+}
+
 #[fixture]
 fn base_config() -> SyncConfig {
     SyncConfig {
@@ -262,38 +297,17 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
 
 #[rstest]
 fn streaming_runner_captures_output() {
-    let runner = StreamingCommandRunner;
-    let output = runner
-        .run(
-            "sh",
-            &[
-                OsString::from("-c"),
-                OsString::from("printf out && printf err 1>&2"),
-            ],
-        )
-        .expect("command should execute successfully");
-
-    assert_eq!(output.code, Some(0));
-    assert_eq!(output.stdout, "out");
-    assert_eq!(output.stderr, "err");
+    assert_streaming_runner_output("printf out && printf err 1>&2", Some(0), "out", "err");
 }
 
 #[rstest]
 fn streaming_runner_captures_output_on_failure() {
-    let runner = StreamingCommandRunner;
-    let output = runner
-        .run(
-            "sh",
-            &[
-                OsString::from("-c"),
-                OsString::from("printf out && printf err 1>&2; exit 42"),
-            ],
-        )
-        .expect("command should execute successfully");
-
-    assert_eq!(output.code, Some(42));
-    assert_eq!(output.stdout, "out");
-    assert_eq!(output.stderr, "err");
+    assert_streaming_runner_output(
+        "printf out && printf err 1>&2; exit 42",
+        Some(42),
+        "out",
+        "err",
+    );
 }
 
 #[rstest]
@@ -359,32 +373,12 @@ fn streaming_runner_failed_spawn_returns_spawn_error() {
 
 #[rstest]
 fn sync_config_validation_rejects_missing_ssh_identity(base_config: SyncConfig) {
-    let cfg = SyncConfig {
-        ssh_identity_file: None,
-        ..base_config
-    };
-    let err = cfg
-        .validate()
-        .expect_err("missing ssh_identity_file should fail");
-    let SyncError::InvalidConfig { ref field } = err else {
-        panic!("expected InvalidConfig, got {err:?}");
-    };
-    assert_eq!(field, "ssh_identity_file");
+    assert_ssh_identity_validation_fails(base_config, None);
 }
 
 #[rstest]
 fn sync_config_validation_rejects_empty_ssh_identity(base_config: SyncConfig) {
-    let cfg = SyncConfig {
-        ssh_identity_file: Some(String::from("  ")),
-        ..base_config
-    };
-    let err = cfg
-        .validate()
-        .expect_err("empty ssh_identity_file should fail");
-    let SyncError::InvalidConfig { ref field } = err else {
-        panic!("expected InvalidConfig, got {err:?}");
-    };
-    assert_eq!(field, "ssh_identity_file");
+    assert_ssh_identity_validation_fails(base_config, Some(String::from("  ")));
 }
 
 #[rstest]
