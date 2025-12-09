@@ -1,4 +1,4 @@
-//! Utility functions for path manipulation and shell operations.
+//! Path manipulation and shell operation utilities.
 
 /// Expands a leading `~/` prefix to the user's home directory.
 ///

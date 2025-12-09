@@ -5,6 +5,9 @@ use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
 
+/// TOML section name for Scaleway configuration.
+const SCALEWAY_SECTION: &str = "scaleway";
+
 /// Scaleway specific configuration derived from environment variables,
 /// configuration files, and CLI flags.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -123,7 +126,7 @@ impl ScalewayConfig {
                 "Scaleway API secret key",
                 "SCW_SECRET_KEY",
                 "secret_key",
-                "scaleway",
+                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
@@ -132,12 +135,17 @@ impl ScalewayConfig {
                 "Scaleway project ID",
                 "SCW_DEFAULT_PROJECT_ID",
                 "default_project_id",
-                "scaleway",
+                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
             &self.default_image,
-            &FieldMetadata::new("VM image", "SCW_DEFAULT_IMAGE", "default_image", "scaleway"),
+            &FieldMetadata::new(
+                "VM image",
+                "SCW_DEFAULT_IMAGE",
+                "default_image",
+                SCALEWAY_SECTION,
+            ),
         )?;
         Self::require_field(
             &self.default_instance_type,
@@ -145,7 +153,7 @@ impl ScalewayConfig {
                 "instance type",
                 "SCW_DEFAULT_INSTANCE_TYPE",
                 "default_instance_type",
-                "scaleway",
+                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
@@ -154,7 +162,7 @@ impl ScalewayConfig {
                 "availability zone",
                 "SCW_DEFAULT_ZONE",
                 "default_zone",
-                "scaleway",
+                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
@@ -163,7 +171,7 @@ impl ScalewayConfig {
                 "CPU architecture",
                 "SCW_DEFAULT_ARCHITECTURE",
                 "default_architecture",
-                "scaleway",
+                SCALEWAY_SECTION,
             ),
         )?;
         Ok(())
