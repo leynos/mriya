@@ -2,6 +2,11 @@
 
 /// Expands a leading `~/` prefix to the user's home directory.
 ///
+/// If the `HOME` environment variable is not set, the function returns the
+/// input string unchanged (i.e., the leading `~` is not expanded). Callers
+/// should handle this case if they need a different fallback, for example
+/// returning an error or using a platform-specific home directory lookup.
+///
 /// # Examples
 ///
 /// ```
