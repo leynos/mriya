@@ -73,15 +73,15 @@ impl SyncConfig {
         Self::require_value(&self.ssh_bin, "ssh_bin")?;
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
-        Self::require_ssh_identity(self.ssh_identity_file.as_ref())?;
+        Self::require_optional_value(self.ssh_identity_file.as_deref(), "ssh_identity_file")?;
         Ok(())
     }
 
-    fn require_ssh_identity(value: Option<&String>) -> Result<(), SyncError> {
+    fn require_optional_value(value: Option<&str>, field: &str) -> Result<(), SyncError> {
         match value {
-            Some(path) if !path.trim().is_empty() => Ok(()),
+            Some(v) if !v.trim().is_empty() => Ok(()),
             _ => Err(SyncError::InvalidConfig {
-                field: String::from("ssh_identity_file"),
+                field: field.to_owned(),
             }),
         }
     }
@@ -119,12 +119,7 @@ impl SyncConfig {
     }
 
     fn require_value(value: &str, field: &str) -> Result<(), SyncError> {
-        if value.trim().is_empty() {
-            return Err(SyncError::InvalidConfig {
-                field: field.to_owned(),
-            });
-        }
-        Ok(())
+        Self::require_optional_value(Some(value), field)
     }
 }
 
