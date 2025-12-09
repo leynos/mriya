@@ -5,6 +5,9 @@ use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
 
+/// TOML section name for Scaleway configuration.
+const SCALEWAY_SECTION: &str = "scaleway";
+
 /// Scaleway specific configuration derived from environment variables,
 /// configuration files, and CLI flags.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -34,10 +37,37 @@ pub struct ScalewayConfig {
     pub default_architecture: String,
 }
 
+/// Metadata for a configuration field, used to generate actionable error messages.
+struct FieldMetadata {
+    description: &'static str,
+    env_var: &'static str,
+    toml_key: &'static str,
+    section: &'static str,
+}
+
+impl FieldMetadata {
+    const fn new(
+        description: &'static str,
+        env_var: &'static str,
+        toml_key: &'static str,
+        section: &'static str,
+    ) -> Self {
+        Self {
+            description,
+            env_var,
+            toml_key,
+            section,
+        }
+    }
+}
+
 impl ScalewayConfig {
-    fn require_non_empty(value: &str, field: &str) -> Result<(), ConfigError> {
+    fn require_field(value: &str, metadata: &FieldMetadata) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
-            return Err(ConfigError::MissingField(field.to_owned()));
+            return Err(ConfigError::MissingField(format!(
+                "missing {}: set {} or add {} to [{}] in mriya.toml",
+                metadata.description, metadata.env_var, metadata.toml_key, metadata.section
+            )));
         }
         Ok(())
     }
@@ -82,18 +112,68 @@ impl ScalewayConfig {
             .map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
-    /// Performs semantic validation on required fields.
+    /// Performs semantic validation on required fields. Error messages include
+    /// guidance on how to provide missing values via environment variables or
+    /// configuration files.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        Self::require_non_empty(&self.secret_key, "SCW_SECRET_KEY")?;
-        Self::require_non_empty(&self.default_project_id, "SCW_DEFAULT_PROJECT_ID")?;
-        Self::require_non_empty(&self.default_image, "SCW_DEFAULT_IMAGE")?;
-        Self::require_non_empty(&self.default_instance_type, "SCW_DEFAULT_INSTANCE_TYPE")?;
-        Self::require_non_empty(&self.default_zone, "SCW_DEFAULT_ZONE")?;
-        Self::require_non_empty(&self.default_architecture, "SCW_DEFAULT_ARCHITECTURE")?;
+        Self::require_field(
+            &self.secret_key,
+            &FieldMetadata::new(
+                "Scaleway API secret key",
+                "SCW_SECRET_KEY",
+                "secret_key",
+                SCALEWAY_SECTION,
+            ),
+        )?;
+        Self::require_field(
+            &self.default_project_id,
+            &FieldMetadata::new(
+                "Scaleway project ID",
+                "SCW_DEFAULT_PROJECT_ID",
+                "default_project_id",
+                SCALEWAY_SECTION,
+            ),
+        )?;
+        Self::require_field(
+            &self.default_image,
+            &FieldMetadata::new(
+                "VM image",
+                "SCW_DEFAULT_IMAGE",
+                "default_image",
+                SCALEWAY_SECTION,
+            ),
+        )?;
+        Self::require_field(
+            &self.default_instance_type,
+            &FieldMetadata::new(
+                "instance type",
+                "SCW_DEFAULT_INSTANCE_TYPE",
+                "default_instance_type",
+                SCALEWAY_SECTION,
+            ),
+        )?;
+        Self::require_field(
+            &self.default_zone,
+            &FieldMetadata::new(
+                "availability zone",
+                "SCW_DEFAULT_ZONE",
+                "default_zone",
+                SCALEWAY_SECTION,
+            ),
+        )?;
+        Self::require_field(
+            &self.default_architecture,
+            &FieldMetadata::new(
+                "CPU architecture",
+                "SCW_DEFAULT_ARCHITECTURE",
+                "default_architecture",
+                SCALEWAY_SECTION,
+            ),
+        )?;
         Ok(())
     }
 }

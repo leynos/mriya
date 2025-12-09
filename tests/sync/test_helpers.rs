@@ -122,6 +122,7 @@ pub fn build_scripted_context(
             ssh_batch_mode: true,
             ssh_strict_host_key_checking: false,
             ssh_known_hosts_file: String::from("/dev/null"),
+            ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
         },
         networking: InstanceNetworking {
             public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -194,6 +195,7 @@ pub fn base_sync_config() -> SyncConfig {
         ssh_batch_mode: true,
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
+        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
     }
 }
 

@@ -12,7 +12,12 @@ use thiserror::Error;
 
 use crate::backend::InstanceNetworking;
 mod types;
-pub use types::{CommandOutput, CommandRunner, ProcessCommandRunner, StreamingCommandRunner};
+mod util;
+pub use types::{
+    CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
+    StreamingCommandRunner, SyncDestination,
+};
+pub use util::expand_tilde;
 
 /// Default remote working directory used for rsync.
 pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
@@ -43,6 +48,10 @@ pub struct SyncConfig {
     /// Known hosts file override; defaults to `/dev/null` for ephemeral hosts.
     #[ortho_config(default = "/dev/null".to_owned())]
     pub ssh_known_hosts_file: String,
+    /// Path to the SSH private key file for remote authentication. Supports
+    /// tilde expansion (`~/.ssh/id_ed25519`). Must be provided via
+    /// configuration or environment; validation will reject empty or missing values.
+    pub ssh_identity_file: Option<String>,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
@@ -64,7 +73,17 @@ impl SyncConfig {
         Self::require_value(&self.ssh_bin, "ssh_bin")?;
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
+        Self::require_optional_value(self.ssh_identity_file.as_deref(), "ssh_identity_file")?;
         Ok(())
+    }
+
+    fn require_optional_value(value: Option<&str>, field: &str) -> Result<(), SyncError> {
+        match value {
+            Some(v) if !v.trim().is_empty() => Ok(()),
+            _ => Err(SyncError::InvalidConfig {
+                field: field.to_owned(),
+            }),
+        }
     }
 
     /// Loads configuration using defaults, configuration files, and
@@ -100,53 +119,17 @@ impl SyncConfig {
     }
 
     fn require_value(value: &str, field: &str) -> Result<(), SyncError> {
-        if value.trim().is_empty() {
-            return Err(SyncError::InvalidConfig {
-                field: field.to_owned(),
-            });
-        }
-        Ok(())
+        Self::require_optional_value(Some(value), field)
     }
-}
-
-/// Target for rsync either on a remote host or locally (used for tests).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SyncDestination {
-    /// Remote sync target.
-    Remote {
-        /// User used to authenticate via SSH.
-        user: String,
-        /// Hostname or IPv4 address.
-        host: String,
-        /// SSH port exposed by the instance.
-        port: u16,
-        /// Path on the remote machine that receives files.
-        path: Utf8PathBuf,
-    },
-    /// Local path used for behavioural tests and dry-runs.
-    Local {
-        /// Destination path for the synchronised content.
-        path: Utf8PathBuf,
-    },
-}
-
-/// Output captured from a remote command executed over SSH.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RemoteCommandOutput {
-    /// Exit code reported by the remote command (`None` when the process exits
-    /// without an exit status, for example after being killed by a signal).
-    pub exit_code: Option<i32>,
-    /// Captured standard output stream.
-    pub stdout: String,
-    /// Captured standard error stream.
-    pub stderr: String,
 }
 
 /// Errors surfaced while performing synchronisation or remote execution.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum SyncError {
-    /// Raised when configuration is missing required values.
-    #[error("invalid sync configuration: missing {field}")]
+    /// Raised when configuration is missing required values. The error message
+    /// includes guidance on how to provide the value via environment variable
+    /// or configuration file.
+    #[error("missing {field}: set MRIYA_SYNC_{env_suffix} or add {field} to [sync] in mriya.toml", env_suffix = field.to_uppercase())]
     InvalidConfig {
         /// Configuration field that failed validation.
         field: String,
@@ -347,6 +330,12 @@ impl<R: CommandRunner> Syncer<R> {
 
     fn common_ssh_options(&self, port: u16) -> Vec<OsString> {
         let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
+
+        if let Some(ref identity_file) = self.config.ssh_identity_file {
+            let expanded = expand_tilde(identity_file);
+            args.push(OsString::from("-i"));
+            args.push(OsString::from(expanded));
+        }
 
         if self.config.ssh_batch_mode {
             args.push(OsString::from("-o"));

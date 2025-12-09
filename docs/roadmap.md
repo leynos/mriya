@@ -22,7 +22,7 @@ for concrete, testable deliverables.
     user command, streams stdout/stderr, and returns the remote exit status;
     acceptance: CLI run of `cargo test` returns identical codes locally and via
     Mriya.
-  - [ ] Define minimal `mriya.toml` profile schema for Scaleway credentials,
+  - [x] Define minimal `mriya.toml` profile schema for Scaleway credentials,
     defaults, and SSH key reference; acceptance: config validation rejects
     missing token/project/image/type/key fields with actionable errors.
 

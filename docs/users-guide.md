@@ -25,6 +25,33 @@ For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags
 override everything.
 
+Example `mriya.toml`:
+
+```toml
+[scaleway]
+secret_key = "scw-secret-key-here"
+default_project_id = "11111111-2222-3333-4444-555555555555"
+
+[sync]
+ssh_identity_file = "~/.ssh/id_ed25519"
+ssh_user = "ubuntu"
+```
+
+## Configuration validation
+
+Mriya validates all required fields at startup. If a required field is missing,
+the error message includes guidance on how to provide the value:
+
+```text
+missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
+```
+
+Required fields for Scaleway credentials: `secret_key`, `default_project_id`,
+`default_image`, `default_instance_type`, `default_zone`,
+`default_architecture`.
+
+Required sync settings: `ssh_identity_file`.
+
 ## File sync semantics
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
@@ -62,6 +89,9 @@ working directory, or SSH flags via the `MRIYA_SYNC_` variables described below.
 
 Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 
+- `MRIYA_SYNC_SSH_IDENTITY_FILE` (required) — path to the SSH private key file
+  for remote authentication. Supports tilde expansion (e.g.,
+  `~/.ssh/id_ed25519`).
 - `MRIYA_SYNC_RSYNC_BIN` — path to the `rsync` executable (default: `rsync`).
 - `MRIYA_SYNC_SSH_BIN` — path to the `ssh` executable (default: `ssh`).
 - `MRIYA_SYNC_SSH_USER` — remote user for rsync and SSH (default: `root`).

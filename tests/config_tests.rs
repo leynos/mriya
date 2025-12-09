@@ -18,56 +18,90 @@ fn valid_config() -> ScalewayConfig {
 }
 
 #[test]
-fn config_validation_rejects_missing_secret() {
+fn config_validation_rejects_missing_secret_with_actionable_error() {
     let cfg = ScalewayConfig {
         secret_key: String::new(),
         ..valid_config()
     };
 
     let error = cfg.validate().expect_err("secret is required");
-    assert!(matches!(error, ConfigError::MissingField(field) if field == "SCW_SECRET_KEY"));
+    let ConfigError::MissingField(ref message) = error else {
+        panic!("expected MissingField error");
+    };
+    assert!(
+        message.contains("SCW_SECRET_KEY"),
+        "error should mention env var: {message}"
+    );
+    assert!(
+        message.contains("mriya.toml"),
+        "error should mention config file: {message}"
+    );
+    assert!(
+        message.contains("secret_key"),
+        "error should mention TOML key: {message}"
+    );
 }
 
+/// Verifies that validation produces actionable errors mentioning both the
+/// environment variable and configuration file for each required field.
 #[test]
-fn config_validation_rejects_other_fields() {
-    fn assert_missing(
+fn config_validation_produces_actionable_errors_for_all_fields() {
+    fn assert_actionable(
         mut cfg: ScalewayConfig,
         mutate: impl FnOnce(&mut ScalewayConfig),
-        expected: &str,
+        env_var: &str,
+        toml_key: &str,
     ) {
         mutate(&mut cfg);
         let error = cfg.validate().expect_err("validation should fail");
-        assert_eq!(error.to_string(), expected);
+        let message = error.to_string();
+        assert!(
+            message.contains(env_var),
+            "error should mention env var {env_var}: {message}"
+        );
+        assert!(
+            message.contains("mriya.toml"),
+            "error should mention config file: {message}"
+        );
+        assert!(
+            message.contains(toml_key),
+            "error should mention TOML key {toml_key}: {message}"
+        );
     }
 
-    assert_missing(
+    assert_actionable(
         valid_config(),
         |cfg| cfg.default_project_id.clear(),
-        "missing configuration field: SCW_DEFAULT_PROJECT_ID",
+        "SCW_DEFAULT_PROJECT_ID",
+        "default_project_id",
     );
 
-    assert_missing(
+    assert_actionable(
         valid_config(),
         |cfg| cfg.default_image.clear(),
-        "missing configuration field: SCW_DEFAULT_IMAGE",
+        "SCW_DEFAULT_IMAGE",
+        "default_image",
     );
 
-    assert_missing(
+    assert_actionable(
         valid_config(),
         |cfg| cfg.default_instance_type.clear(),
-        "missing configuration field: SCW_DEFAULT_INSTANCE_TYPE",
+        "SCW_DEFAULT_INSTANCE_TYPE",
+        "default_instance_type",
     );
 
-    assert_missing(
+    assert_actionable(
         valid_config(),
         |cfg| cfg.default_zone.clear(),
-        "missing configuration field: SCW_DEFAULT_ZONE",
+        "SCW_DEFAULT_ZONE",
+        "default_zone",
     );
 
-    assert_missing(
+    assert_actionable(
         valid_config(),
         |cfg| cfg.default_architecture.clear(),
-        "missing configuration field: SCW_DEFAULT_ARCHITECTURE",
+        "SCW_DEFAULT_ARCHITECTURE",
+        "default_architecture",
     );
 }
 
