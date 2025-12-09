@@ -5,7 +5,42 @@ use std::io::{BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::thread;
 
+use camino::Utf8PathBuf;
+
 use crate::sync::SyncError;
+
+/// Target for rsync either on a remote host or locally (used for tests).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SyncDestination {
+    /// Remote sync target.
+    Remote {
+        /// User used to authenticate via SSH.
+        user: String,
+        /// Hostname or IPv4 address.
+        host: String,
+        /// SSH port exposed by the instance.
+        port: u16,
+        /// Path on the remote machine that receives files.
+        path: Utf8PathBuf,
+    },
+    /// Local path used for behavioural tests and dry-runs.
+    Local {
+        /// Destination path for the synchronised content.
+        path: Utf8PathBuf,
+    },
+}
+
+/// Output captured from a remote command executed over SSH.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteCommandOutput {
+    /// Exit code reported by the remote command (`None` when the process exits
+    /// without an exit status, for example after being killed by a signal).
+    pub exit_code: Option<i32>,
+    /// Captured standard output stream.
+    pub stdout: String,
+    /// Captured standard error stream.
+    pub stderr: String,
+}
 
 /// Result of running an external command.
 #[derive(Clone, Debug, Eq, PartialEq)]

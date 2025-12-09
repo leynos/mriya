@@ -12,7 +12,12 @@ use thiserror::Error;
 
 use crate::backend::InstanceNetworking;
 mod types;
-pub use types::{CommandOutput, CommandRunner, ProcessCommandRunner, StreamingCommandRunner};
+mod util;
+pub use types::{
+    CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
+    StreamingCommandRunner, SyncDestination,
+};
+pub use util::expand_tilde;
 
 /// Default remote working directory used for rsync.
 pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
@@ -123,39 +128,6 @@ impl SyncConfig {
     }
 }
 
-/// Target for rsync either on a remote host or locally (used for tests).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SyncDestination {
-    /// Remote sync target.
-    Remote {
-        /// User used to authenticate via SSH.
-        user: String,
-        /// Hostname or IPv4 address.
-        host: String,
-        /// SSH port exposed by the instance.
-        port: u16,
-        /// Path on the remote machine that receives files.
-        path: Utf8PathBuf,
-    },
-    /// Local path used for behavioural tests and dry-runs.
-    Local {
-        /// Destination path for the synchronised content.
-        path: Utf8PathBuf,
-    },
-}
-
-/// Output captured from a remote command executed over SSH.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RemoteCommandOutput {
-    /// Exit code reported by the remote command (`None` when the process exits
-    /// without an exit status, for example after being killed by a signal).
-    pub exit_code: Option<i32>,
-    /// Captured standard output stream.
-    pub stdout: String,
-    /// Captured standard error stream.
-    pub stderr: String,
-}
-
 /// Errors surfaced while performing synchronisation or remote execution.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum SyncError {
@@ -193,26 +165,6 @@ pub enum SyncError {
         /// Stderr captured from the process.
         stderr: String,
     },
-}
-
-/// Expands a leading `~/` prefix to the user's home directory.
-///
-/// # Examples
-///
-/// ```
-/// # use mriya::sync::expand_tilde;
-/// let home = std::env::var("HOME").expect("HOME should be set");
-/// assert_eq!(expand_tilde("~/.ssh/id_ed25519"), format!("{home}/.ssh/id_ed25519"));
-/// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
-/// ```
-#[must_use]
-pub fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return format!("{}/{rest}", home.to_string_lossy());
-    }
-    path.to_owned()
 }
 
 /// Orchestrates rsync plus remote execution.
