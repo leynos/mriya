@@ -27,3 +27,19 @@ fn scenario_surface_sync_failures(run_context: RunContext) {
 fn scenario_surface_teardown_failures(run_context: RunContext) {
     let _ = run_context;
 }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Mount cache volume before syncing when volume ID is configured"
+)]
+fn scenario_mount_cache_volume(run_context: RunContext) {
+    let _ = run_context;
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Continue execution when volume mount fails"
+)]
+fn scenario_volume_mount_failure_continues(run_context: RunContext) {
+    let _ = run_context;
+}

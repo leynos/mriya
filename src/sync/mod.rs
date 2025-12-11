@@ -22,6 +22,9 @@ pub use util::expand_tilde;
 /// Default remote working directory used for rsync.
 pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
 
+/// Default mount path for the persistent cache volume.
+pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
+
 /// Synchronisation and SSH settings loaded via `ortho-config`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
 #[ortho_config(prefix = "MRIYA_SYNC")]
@@ -52,6 +55,9 @@ pub struct SyncConfig {
     /// tilde expansion (`~/.ssh/id_ed25519`). Must be provided via
     /// configuration or environment; validation will reject empty or missing values.
     pub ssh_identity_file: Option<String>,
+    /// Mount path for the persistent cache volume on the remote instance.
+    #[ortho_config(default = DEFAULT_VOLUME_MOUNT_PATH.to_owned())]
+    pub volume_mount_path: String,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
@@ -190,6 +196,12 @@ impl<R: CommandRunner> Syncer<R> {
     pub fn new(config: SyncConfig, runner: R) -> Result<Self, SyncError> {
         config.validate()?;
         Ok(Self { config, runner })
+    }
+
+    /// Returns a reference to the underlying configuration.
+    #[must_use]
+    pub const fn config(&self) -> &SyncConfig {
+        &self.config
     }
 
     /// Runs git-aware rsync from `source` to the chosen destination.

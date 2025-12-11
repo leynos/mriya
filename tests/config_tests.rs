@@ -14,6 +14,7 @@ fn valid_config() -> ScalewayConfig {
         default_instance_type: String::from("DEV1-S"),
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
+        default_volume_id: None,
     }
 }
 

@@ -3,6 +3,7 @@
 mod error;
 mod lifecycle;
 mod types;
+mod volume;
 
 use std::time::Duration;
 
@@ -108,12 +109,28 @@ impl Backend for ScalewayBackend {
                 Err(other) => return Err(other.into()),
             };
 
+            let handle = InstanceHandle {
+                id: server.id.clone(),
+                zone: request.zone.clone(),
+            };
+
+            // Attach cache volume before powering on (instance is stopped)
+            if let Some(ref volume_id) = request.volume_id {
+                let root_volume_id = server
+                    .volumes
+                    .volumes
+                    .get("0")
+                    .map(|v| v.id.as_str())
+                    .unwrap_or_default();
+                self.attach_volume(&handle, volume_id, root_volume_id)
+                    .await?;
+            }
+
             let snapshot = InstanceSnapshot {
-                id: server.id.clone().into(),
-                state: server.state.clone().into(),
+                id: server.id.into(),
+                state: server.state.into(),
                 allowed_actions: server
                     .allowed_actions
-                    .clone()
                     .into_iter()
                     .map(Action::from)
                     .collect(),
@@ -123,10 +140,7 @@ impl Backend for ScalewayBackend {
             let zone = Zone::from(request.zone.as_str());
             self.power_on_if_needed(&zone, &snapshot).await?;
 
-            Ok(InstanceHandle {
-                id: server.id,
-                zone: request.zone.clone(),
-            })
+            Ok(handle)
         })
     }
 

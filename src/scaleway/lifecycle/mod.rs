@@ -1,5 +1,6 @@
 //! Instance lifecycle helpers for the Scaleway backend.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -9,6 +10,7 @@ use crate::backend::{InstanceHandle, InstanceNetworking, InstanceRequest};
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 use tokio::time::sleep;
 
+use super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::{ScalewayBackend, ScalewayBackendError};
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 
@@ -241,6 +243,85 @@ impl ScalewayBackend {
 
         Err(ScalewayBackendError::ResidualResource {
             instance_id: handle.id.clone(),
+        })
+    }
+
+    /// Attaches a volume to a stopped instance.
+    ///
+    /// The volume must be in the same zone as the instance. The attachment
+    /// uses a direct HTTP PATCH call since the `scaleway-rs` crate does not
+    /// expose volume management in its instance builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] when the API
+    /// rejects the attachment request.
+    pub(super) async fn attach_volume(
+        &self,
+        handle: &InstanceHandle,
+        volume_id: &str,
+        root_volume_id: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        let mut volumes = HashMap::new();
+
+        // Preserve root volume at index "0"
+        volumes.insert(
+            String::from("0"),
+            VolumeAttachment {
+                id: root_volume_id.to_owned(),
+                boot: true,
+            },
+        );
+
+        // Add cache volume at index "1"
+        volumes.insert(
+            String::from("1"),
+            VolumeAttachment {
+                id: volume_id.to_owned(),
+                boot: false,
+            },
+        );
+
+        let request = UpdateInstanceVolumesRequest { volumes };
+        self.patch_instance_volumes(handle, &request).await
+    }
+
+    /// Sends a PATCH request to update instance volumes.
+    async fn patch_instance_volumes(
+        &self,
+        handle: &InstanceHandle,
+        request: &UpdateInstanceVolumesRequest,
+    ) -> Result<(), ScalewayBackendError> {
+        let url = format!(
+            "https://api.scaleway.com/instance/v1/zones/{}/servers/{}",
+            handle.zone, handle.id
+        );
+
+        let client = reqwest::Client::new();
+        let response = client
+            .patch(&url)
+            .header("X-Auth-Token", &self.config.secret_key)
+            .json(request)
+            .send()
+            .await
+            .map_err(|err| ScalewayBackendError::Provider {
+                message: err.to_string(),
+            })?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let error_text = response.text().await.unwrap_or_default();
+        let volume_id = request
+            .volumes
+            .get("1")
+            .map_or_else(String::new, |v| v.id.clone());
+
+        Err(ScalewayBackendError::VolumeAttachmentFailed {
+            volume_id,
+            instance_id: handle.id.clone(),
+            message: error_text,
         })
     }
 }

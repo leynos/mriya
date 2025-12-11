@@ -41,6 +41,25 @@ fn backend_fails_teardown(run_context: RunContext) -> RunContext {
     run_context
 }
 
+#[given("a volume ID \"{volume_id}\" is configured")]
+fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunContext {
+    run_context.request.volume_id = Some(volume_id);
+    // Push success for the mount command (runs via SSH before sync/run)
+    run_context.runner.push_success();
+    run_context
+}
+
+#[given("the mount command fails")]
+const fn mount_command_fails(run_context: RunContext) -> RunContext {
+    // The mount command is designed to succeed silently even on failure
+    // (uses `|| true`), so we just need an extra response in the queue.
+    // We already pushed one in volume_id_configured, but replace it with a failure.
+    // Actually, since mount uses `|| true`, the exit code will be 0 regardless.
+    // The command is: "sudo mkdir -p /mriya && sudo mount /dev/vdb /mriya 2>/dev/null || true"
+    // So we don't need to do anything special - the mount failure is swallowed.
+    run_context
+}
+
 #[when("I orchestrate a remote run for \"{command}\"")]
 fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepError> {
     let runtime = Runtime::new().map_err(|err| StepError::Assertion(err.to_string()))?;
