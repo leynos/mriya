@@ -107,7 +107,7 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 ## Persistent cache volume
 
 Mriya can attach a Block Storage volume to the ephemeral VM for caching build
-artifacts between runs. When configured, the volume is attached before the
+artefacts between runs. When configured, the volume is attached before the
 instance starts and mounted at `/mriya`. Place build caches (such as Cargo's
 target directory) on this volume to persist compiled dependencies across runs.
 
@@ -128,7 +128,7 @@ To enable the cache volume:
    default_volume_id = "11111111-2222-3333-4444-555555555555"
    ```
 
-3. Configure your build tool to use the mounted volume. For Cargo:
+3. Configure the build tool to use the mounted volume. For Cargo:
 
    ```bash
    export CARGO_TARGET_DIR=/mriya/target

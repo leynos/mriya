@@ -120,4 +120,5 @@ fn config_as_request_produces_valid_request() {
     assert_eq!(request.zone, cfg.default_zone);
     assert_eq!(request.project_id, cfg.default_project_id);
     assert_eq!(request.architecture, cfg.default_architecture);
+    assert_eq!(request.volume_id, cfg.default_volume_id);
 }

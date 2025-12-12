@@ -99,7 +99,7 @@ where
         let networking = match self.backend.wait_for_ready(&handle).await {
             Ok(net) => net,
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self.destroy_with_note(&handle, &err).await;
                 return Err(RunError::Wait {
                     message,
                     source: err,
@@ -115,7 +115,7 @@ where
         let dest = self.syncer.destination_for(&networking);
 
         if let Err(err) = self.syncer.sync(source, &dest) {
-            let message = self.destroy_with_note(handle, &err).await;
+            let message = self.destroy_with_note(&handle, &err).await;
             return Err(RunError::Sync {
                 message,
                 source: err,
@@ -125,7 +125,7 @@ where
         let output = match self.syncer.run_remote(&networking, remote_command) {
             Ok(result) => result,
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self.destroy_with_note(&handle, &err).await;
                 return Err(RunError::Remote {
                     message,
                     source: err,
@@ -144,9 +144,9 @@ where
     /// Mounts the cache volume via SSH.
     ///
     /// The mount command is idempotent: it creates the mount point directory
-    /// and attempts to mount `/dev/vdb`. Failures are logged but not surfaced
-    /// as errors to allow runs to proceed when the volume is already mounted
-    /// or formatted differently.
+    /// and attempts to mount `/dev/vdb`. The mount itself is best-effort
+    /// because the command uses `|| true` for graceful degradation. Only SSH
+    /// execution failures are surfaced as errors.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
@@ -165,7 +165,7 @@ where
         match self.syncer.run_remote(networking, &mount_command) {
             Ok(_) => Ok(()),
             Err(err) => {
-                let message = self.destroy_with_note(handle.clone(), &err).await;
+                let message = self.destroy_with_note(handle, &err).await;
                 Err(RunError::Sync {
                     message,
                     source: err,
@@ -174,8 +174,8 @@ where
         }
     }
 
-    async fn destroy_with_note<E: Display>(&self, handle: InstanceHandle, err: &E) -> String {
-        let teardown_error = self.backend.destroy(handle).await.err();
+    async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
+        let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }

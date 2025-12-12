@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use crate::backend::{InstanceHandle, InstanceNetworking, InstanceRequest};
@@ -13,6 +14,8 @@ use tokio::time::sleep;
 use super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::{ScalewayBackend, ScalewayBackendError};
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
+
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstanceSnapshot {
@@ -306,8 +309,7 @@ impl ScalewayBackend {
             handle.zone, handle.id
         );
 
-        let client = reqwest::Client::new();
-        let response = client
+        let response = HTTP_CLIENT
             .patch(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(request)
