@@ -255,20 +255,29 @@ impl ScalewayBackend {
     /// # Errors
     ///
     /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] when the API
-    /// rejects the attachment request.
+    /// rejects the attachment request. Returns
+    /// [`ScalewayBackendError::VolumeNotFound`] when the root volume is missing
+    /// from the instance snapshot used to build the attachment payload.
     pub(super) async fn attach_volume(
         &self,
         handle: &InstanceHandle,
         volume_id: &str,
-        root_volume_id: &str,
+        root_volume_id: String,
     ) -> Result<(), ScalewayBackendError> {
+        if root_volume_id.trim().is_empty() {
+            return Err(ScalewayBackendError::VolumeNotFound {
+                volume_id: String::from("0"),
+                zone: handle.zone.clone(),
+            });
+        }
+
         let mut volumes = HashMap::new();
 
         // Preserve root volume at index "0"
         volumes.insert(
             String::from("0"),
             VolumeAttachment {
-                id: root_volume_id.to_owned(),
+                id: root_volume_id,
                 boot: true,
             },
         );

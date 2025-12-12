@@ -120,8 +120,11 @@ impl Backend for ScalewayBackend {
                     .volumes
                     .volumes
                     .get("0")
-                    .map(|v| v.id.as_str())
-                    .unwrap_or_default();
+                    .map(|v| v.id.clone())
+                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
+                        volume_id: String::from("0"),
+                        zone: request.zone.clone(),
+                    })?;
                 self.attach_volume(&handle, volume_id, root_volume_id)
                     .await?;
             }

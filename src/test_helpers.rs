@@ -4,8 +4,8 @@ use std::{env, ffi::OsString};
 
 use tokio::sync::{Mutex, MutexGuard};
 
+/// Global mutex used to serialise environment mutation in tests.
 pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
-
 /// Guard that holds the env mutex and cleans up variables on drop.
 pub struct EnvGuard {
     previous: Vec<(String, Option<OsString>)>,

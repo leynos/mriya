@@ -8,6 +8,7 @@
 use std::fmt::Display;
 
 use camino::Utf8Path;
+use shell_escape::unix::escape;
 use thiserror::Error;
 
 use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
@@ -152,12 +153,13 @@ where
         networking: &InstanceNetworking,
     ) -> Result<(), RunError<B::Error>> {
         let mount_path = &self.syncer.config().volume_mount_path;
+        let escaped_mount_path = escape(mount_path.as_str().into());
         let mount_command = format!(
             concat!(
                 "sudo mkdir -p {path} && ",
                 "sudo mount /dev/vdb {path} 2>/dev/null || true"
             ),
-            path = mount_path
+            path = escaped_mount_path
         );
 
         match self.syncer.run_remote(networking, &mount_command) {
