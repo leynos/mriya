@@ -42,8 +42,12 @@ fn backend_fails_teardown(run_context: RunContext) -> RunContext {
 }
 
 #[given("a volume ID \"{volume_id}\" is configured")]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "rstest-bdd step parsing provides owned values"
+)]
 fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunContext {
-    run_context.request.volume_id = Some(volume_id);
+    run_context.request.volume_id = Some(volume_id.trim().to_owned());
     // Push success for the mount command (runs via SSH before sync/run)
     run_context.runner.push_success();
     run_context

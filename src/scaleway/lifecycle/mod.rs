@@ -5,7 +5,7 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::backend::{InstanceHandle, InstanceNetworking, InstanceRequest};
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
@@ -15,7 +15,14 @@ use super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::{ScalewayBackend, ScalewayBackendError};
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstanceSnapshot {
@@ -313,6 +320,7 @@ impl ScalewayBackend {
             .patch(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(request)
+            .timeout(HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|err| ScalewayBackendError::Provider {

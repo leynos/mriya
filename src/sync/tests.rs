@@ -93,6 +93,7 @@ fn sync_config_validate_accepts_defaults(base_config: SyncConfig) {
 
 #[tokio::test]
 async fn volume_mount_path_defaults_to_ortho_config_constant() {
+    // Set SSH identity to satisfy validation; volume_mount_path should still use the default.
     let _guard = EnvGuard::set_vars(&[("MRIYA_SYNC_SSH_IDENTITY_FILE", "~/.ssh/id_ed25519")]).await;
 
     let sync_config = SyncConfig::load_without_cli_args()

@@ -113,9 +113,9 @@ target directory) on this volume to persist compiled dependencies across runs.
 
 To enable the cache volume:
 
-1. Create a Block Storage volume in the same zone as your instances via the
+1. Create a Block Storage volume in the same zone as the instances via the
    Scaleway console or CLI.
-2. Set the volume ID in your configuration:
+2. Set the volume ID in configuration:
 
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"

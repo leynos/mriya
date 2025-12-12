@@ -70,6 +70,22 @@ impl ScalewayBackend {
     pub fn default_request(&self) -> Result<InstanceRequest, ScalewayBackendError> {
         self.config.as_request().map_err(ScalewayBackendError::from)
     }
+
+    fn validate_cache_volume_id(
+        cache_volume_id: &str,
+        root_volume_id: &str,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        if cache_volume_id.trim() == root_volume_id.trim() {
+            return Err(ScalewayBackendError::VolumeAttachmentFailed {
+                volume_id: cache_volume_id.trim().to_owned(),
+                instance_id: handle.id.clone(),
+                message: String::from("refuse to attach root volume as cache volume"),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl Backend for ScalewayBackend {
@@ -125,6 +141,7 @@ impl Backend for ScalewayBackend {
                         volume_id: String::from("0"),
                         zone: request.zone.clone(),
                     })?;
+                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
                 self.attach_volume(&handle, volume_id, root_volume_id)
                     .await?;
             }

@@ -1,5 +1,6 @@
 //! Shared test utilities for serialising environment mutation in tests only.
 
+use std::collections::BTreeSet;
 use std::{env, ffi::OsString};
 
 use tokio::sync::{Mutex, MutexGuard};
@@ -15,6 +16,13 @@ pub struct EnvGuard {
 impl EnvGuard {
     /// Sets multiple environment variables while holding a global mutex.
     pub async fn set_vars(pairs: &[(&str, &str)]) -> Self {
+        debug_assert!(
+            {
+                let mut seen = BTreeSet::new();
+                pairs.iter().all(|(key, _)| seen.insert(*key))
+            },
+            "duplicate environment variable keys passed to EnvGuard::set_vars"
+        );
         let guard = ENV_LOCK.lock().await;
         let mut previous = Vec::with_capacity(pairs.len());
         for (key, value) in pairs {
