@@ -66,6 +66,24 @@ pub enum ScalewayBackendError {
         /// Message returned by the provider SDK.
         message: String,
     },
+    /// Raised when a volume cannot be attached to an instance.
+    #[error("failed to attach volume {volume_id} to instance {instance_id}: {message}")]
+    VolumeAttachmentFailed {
+        /// Volume identifier that could not be attached.
+        volume_id: String,
+        /// Instance identifier.
+        instance_id: String,
+        /// Error message from the provider.
+        message: String,
+    },
+    /// Raised when the specified volume does not exist or is not accessible.
+    #[error("volume {volume_id} not found in zone {zone}")]
+    VolumeNotFound {
+        /// Volume identifier that was not found.
+        volume_id: String,
+        /// Zone where lookup was attempted.
+        zone: String,
+    },
 }
 
 impl From<ScalewayError> for ScalewayBackendError {

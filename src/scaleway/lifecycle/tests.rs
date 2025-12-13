@@ -69,6 +69,7 @@ fn dummy_config() -> ScalewayConfig {
         default_instance_type: String::from("type"),
         default_image: String::from("img"),
         default_architecture: String::from("x86_64"),
+        default_volume_id: None,
     }
 }
 
@@ -80,6 +81,7 @@ fn base_request() -> InstanceRequest {
         project_id: "proj".to_owned(),
         organisation_id: None,
         architecture: "x86_64".to_owned(),
+        volume_id: None,
     }
 }
 

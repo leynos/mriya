@@ -9,6 +9,8 @@ pub mod config;
 pub mod run;
 pub mod scaleway;
 pub mod sync;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod test_support;
 
 pub use backend::{

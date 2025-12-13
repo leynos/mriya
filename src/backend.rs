@@ -22,6 +22,8 @@ pub struct InstanceRequest {
     pub organisation_id: Option<String>,
     /// CPU architecture requested for the instance.
     pub architecture: String,
+    /// Optional volume ID to attach for persistent storage.
+    pub volume_id: Option<String>,
 }
 
 impl InstanceRequest {
@@ -67,6 +69,7 @@ pub struct InstanceRequestBuilder {
     project_id: String,
     organisation_id: Option<String>,
     architecture: String,
+    volume_id: Option<String>,
 }
 
 impl InstanceRequestBuilder {
@@ -118,6 +121,13 @@ impl InstanceRequestBuilder {
         self
     }
 
+    /// Sets the optional volume ID for persistent storage.
+    #[must_use]
+    pub fn volume_id(mut self, value: Option<String>) -> Self {
+        self.volume_id = value;
+        self
+    }
+
     /// Builds and validates the [`InstanceRequest`], trimming string inputs.
     ///
     /// # Errors
@@ -131,6 +141,7 @@ impl InstanceRequestBuilder {
             project_id: self.project_id.trim().to_owned(),
             organisation_id: self.organisation_id.map(|value| value.trim().to_owned()),
             architecture: self.architecture.trim().to_owned(),
+            volume_id: self.volume_id.map(|value| value.trim().to_owned()),
         };
         request.validate()?;
         Ok(request)

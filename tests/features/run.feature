@@ -19,3 +19,20 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "echo ok"
     Then teardown failure is reported
+
+  Scenario: Mount cache volume before syncing when volume ID is configured
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the run result exit code is "0"
+    And the instance is destroyed
+
+  Scenario: Continue execution when volume mount fails
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the mount command fails
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the run result exit code is "0"
+    And the instance is destroyed

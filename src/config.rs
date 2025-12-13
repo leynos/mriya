@@ -35,6 +35,9 @@ pub struct ScalewayConfig {
     /// CPU architecture used to select the correct image variant.
     #[ortho_config(default = "x86_64".to_owned())]
     pub default_architecture: String,
+    /// Optional Block Storage volume ID to attach for persistent caching.
+    /// The volume must exist in the same zone as the instance.
+    pub default_volume_id: Option<String>,
 }
 
 /// Metadata for a configuration field, used to generate actionable error messages.
@@ -108,6 +111,7 @@ impl ScalewayConfig {
             .project_id(&self.default_project_id)
             .organisation_id(self.default_organization_id.clone())
             .architecture(&self.default_architecture)
+            .volume_id(self.default_volume_id.clone())
             .build()
             .map_err(|err| ConfigError::Parse(err.to_string()))
     }

@@ -8,10 +8,11 @@
 use std::fmt::Display;
 
 use camino::Utf8Path;
+use shell_escape::unix::escape;
 use thiserror::Error;
 
-use crate::backend::{Backend, InstanceHandle, InstanceRequest};
-use crate::sync::{RemoteCommandOutput, SyncError, Syncer};
+use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
+use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
 
 /// Errors surfaced while performing a remote run.
 #[derive(Debug, Error)]
@@ -56,7 +57,7 @@ where
 
 /// Executes the remote run flow using the provided backend and syncer.
 #[derive(Debug)]
-pub struct RunOrchestrator<B, R: crate::sync::CommandRunner> {
+pub struct RunOrchestrator<B, R: CommandRunner> {
     backend: B,
     syncer: Syncer<R>,
 }
@@ -65,7 +66,7 @@ impl<B, R> RunOrchestrator<B, R>
 where
     B: Backend,
     B::Error: Display + Send + Sync + std::error::Error + 'static,
-    R: crate::sync::CommandRunner,
+    R: CommandRunner,
 {
     /// Creates a new orchestrator.
     #[must_use]
@@ -98,7 +99,7 @@ where
         let networking = match self.backend.wait_for_ready(&handle).await {
             Ok(net) => net,
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self.destroy_with_note(&handle, &err).await;
                 return Err(RunError::Wait {
                     message,
                     source: err,
@@ -106,10 +107,15 @@ where
             }
         };
 
+        // Mount cache volume if configured
+        if request.volume_id.is_some() {
+            self.mount_cache_volume(&handle, &networking).await?;
+        }
+
         let dest = self.syncer.destination_for(&networking);
 
         if let Err(err) = self.syncer.sync(source, &dest) {
-            let message = self.destroy_with_note(handle, &err).await;
+            let message = self.destroy_with_note(&handle, &err).await;
             return Err(RunError::Sync {
                 message,
                 source: err,
@@ -119,7 +125,7 @@ where
         let output = match self.syncer.run_remote(&networking, remote_command) {
             Ok(result) => result,
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self.destroy_with_note(&handle, &err).await;
                 return Err(RunError::Remote {
                     message,
                     source: err,
@@ -135,8 +141,41 @@ where
         Ok(output)
     }
 
-    async fn destroy_with_note<E: Display>(&self, handle: InstanceHandle, err: &E) -> String {
-        let teardown_error = self.backend.destroy(handle).await.err();
+    /// Mounts the cache volume via SSH.
+    ///
+    /// The mount command is idempotent: it creates the mount point directory
+    /// and attempts to mount `/dev/vdb`. The mount itself is best-effort
+    /// because the command uses `|| true` for graceful degradation. Only SSH
+    /// execution failures are surfaced as errors.
+    async fn mount_cache_volume(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+    ) -> Result<(), RunError<B::Error>> {
+        let mount_path = &self.syncer.config().volume_mount_path;
+        let escaped_mount_path = escape(mount_path.as_str().into());
+        let mount_command = format!(
+            concat!(
+                "sudo mkdir -p {path} && ",
+                "sudo mount /dev/vdb {path} 2>/dev/null || true"
+            ),
+            path = escaped_mount_path
+        );
+
+        match self.syncer.run_remote(networking, &mount_command) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Sync {
+                    message,
+                    source: err,
+                })
+            }
+        }
+    }
+
+    async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
+        let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }
