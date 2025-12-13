@@ -167,21 +167,22 @@ provisioning) that will guide subsequent optimizations.
 
 ### Volume attachment decision (December 2025)
 
-- Implement volume attachment as an optional configuration (`SCW_DEFAULT_VOLUME_ID`
+- Implement volume attachment as an optional configuration
+  (`SCW_DEFAULT_VOLUME_ID`
   or `default_volume_id` in `mriya.toml`) that attaches a pre-existing Block
   Storage volume to the instance before power-on.
 - Use a direct HTTP PATCH call to the Scaleway API for volume attachment since
   the `scaleway-rs` crate v0.1.9 does not expose volume management in its
-  instance builder. The request updates the server's volumes map, preserving the
-  root volume at index "0" and adding the cache volume at index "1".
+  instance builder. The request updates the server's volumes map, preserving
+  the root volume at index "0" and adding the cache volume at index "1".
 - Mount the volume after SSH becomes available using
-  `sudo mkdir -p /mriya && sudo mount /dev/vdb /mriya 2>/dev/null || true`.
-  The `|| true` ensures graceful degradation if the volume lacks a filesystem
-  or mounting fails for other reasons.
+  `sudo mkdir -p /mriya && sudo mount /dev/vdb /mriya 2>/dev/null || true`. The
+  `|| true` ensures graceful degradation if the volume lacks a filesystem or
+  mounting fails for other reasons.
 - Device path `/dev/vdb` is used because Scaleway assigns block devices
   sequentially: root at `/dev/vda`, first additional volume at `/dev/vdb`.
 - Add `volume_mount_path` to `SyncConfig` (default `/mriya`) to allow
-  customization of where the cache volume is mounted.
+  customisation of where the cache volume is mounted.
 - Volume ID flows through the configuration layer (`ScalewayConfig`) to
   `InstanceRequest` and is processed during the create flow, before the
   instance is powered on.
@@ -666,7 +667,7 @@ This is a fairly universal concept in cloud APIs, so our abstraction handles it
 well. We just ensure to properly format or encode it as required by each API
 (some expect base64).
 
-**Rationale:** This feature is about **environment customization**. In v0.1, we
+**Rationale:** This feature is about **environment customisation**. In v0.1, we
 introduced caching, but if the base image lacks required software, users might
 spend time installing dependencies on every run. Cloud-init lets us automate
 that on boot. For example, if the tests need a database or a particular
