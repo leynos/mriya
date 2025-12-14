@@ -188,9 +188,12 @@ fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), St
 #[then("the remote command does not route Cargo caches")]
 fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
     let remote_command = last_ssh_remote_command(run_context)?;
-    if remote_command.contains("CARGO_TARGET_DIR=")
-        || remote_command.contains("CARGO_HOME=")
-        || remote_command.contains("RUSTUP_HOME=")
+
+    const CARGO_CACHE_VARS: &[&str] = &["CARGO_TARGET_DIR=", "CARGO_HOME=", "RUSTUP_HOME="];
+
+    if CARGO_CACHE_VARS
+        .iter()
+        .any(|var| remote_command.contains(var))
     {
         return Err(StepError::Assertion(format!(
             "expected remote command to avoid cache routing, got: {remote_command}"
