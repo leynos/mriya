@@ -22,7 +22,7 @@ shell-escape = "0.1.5"
 [dev-dependencies]
 rstest = "0.22"
 rstest-bdd = "0.1.0"
-rstest-bdd-macros = "0.1.0"
+rstest-bdd-macros = "0.2.0"
 assert_cmd = "2.0"
 tempfile = "3.14"
 cap-std = { version = "3.4.5", features = ["fs_utf8"] }

@@ -1250,6 +1250,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "newt-hype"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8b7b69b0eafaa88ec8dc9fe7c3860af0a147517e5207cfbd0ecd21cd7cde18"
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1723,7 +1729,7 @@ dependencies = [
  "log",
  "once_cell",
  "regex",
- "rstest-bdd-patterns",
+ "rstest-bdd-patterns 0.1.0",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1733,22 +1739,23 @@ dependencies = [
 
 [[package]]
 name = "rstest-bdd-macros"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7db2930cac8d70e8a7d4aab1e0b6782b6aadfef3b68d6acf91179e8433ec44df"
+checksum = "225ddea765e1f1b6491aef744475f5feaea2b4070c29fea0482155b643c09ee0"
 dependencies = [
  "camino",
  "cap-std",
  "cfg-if",
  "convert_case 0.6.0",
  "gherkin",
+ "newt-hype",
  "once_cell",
  "proc-macro-crate",
  "proc-macro-error",
  "proc-macro2",
  "quote",
  "regex",
- "rstest-bdd-patterns",
+ "rstest-bdd-patterns 0.2.0",
  "syn 2.0.111",
  "walkdir",
 ]
@@ -1758,6 +1765,16 @@ name = "rstest-bdd-patterns"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dee8d9e47e63602b9061a3d73e48c0248f49d5bc730d64a8b27750f09342f81b"
+dependencies = [
+ "regex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "rstest-bdd-patterns"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da2291923de0d5f83564b4e6c193c67722129180983f0b3f424dc7e0580c0c0"
 dependencies = [
  "regex",
  "thiserror 1.0.69",
