@@ -3,6 +3,7 @@
 mod error;
 mod lifecycle;
 mod types;
+mod volume;
 
 use std::time::Duration;
 
@@ -69,6 +70,22 @@ impl ScalewayBackend {
     pub fn default_request(&self) -> Result<InstanceRequest, ScalewayBackendError> {
         self.config.as_request().map_err(ScalewayBackendError::from)
     }
+
+    fn validate_cache_volume_id(
+        cache_volume_id: &str,
+        root_volume_id: &str,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        if cache_volume_id.trim() == root_volume_id.trim() {
+            return Err(ScalewayBackendError::VolumeAttachmentFailed {
+                volume_id: cache_volume_id.trim().to_owned(),
+                instance_id: handle.id.clone(),
+                message: String::from("refuse to attach root volume as cache volume"),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl Backend for ScalewayBackend {
@@ -108,12 +125,32 @@ impl Backend for ScalewayBackend {
                 Err(other) => return Err(other.into()),
             };
 
+            let handle = InstanceHandle {
+                id: server.id.clone(),
+                zone: request.zone.clone(),
+            };
+
+            // Attach cache volume before powering on (instance is stopped)
+            if let Some(ref volume_id) = request.volume_id {
+                let root_volume_id = server
+                    .volumes
+                    .volumes
+                    .get("0")
+                    .map(|v| v.id.clone())
+                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
+                        volume_id: String::from("0"),
+                        zone: request.zone.clone(),
+                    })?;
+                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
+                self.attach_volume(&handle, volume_id, root_volume_id)
+                    .await?;
+            }
+
             let snapshot = InstanceSnapshot {
-                id: server.id.clone().into(),
-                state: server.state.clone().into(),
+                id: server.id.into(),
+                state: server.state.into(),
                 allowed_actions: server
                     .allowed_actions
-                    .clone()
                     .into_iter()
                     .map(Action::from)
                     .collect(),
@@ -123,10 +160,7 @@ impl Backend for ScalewayBackend {
             let zone = Zone::from(request.zone.as_str());
             self.power_on_if_needed(&zone, &snapshot).await?;
 
-            Ok(InstanceHandle {
-                id: server.id,
-                zone: request.zone.clone(),
-            })
+            Ok(handle)
         })
     }
 

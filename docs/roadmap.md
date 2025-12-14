@@ -30,7 +30,7 @@ for concrete, testable deliverables.
 
 - Step: Volume attachment
 
-  - [ ] Allow an optional volume ID in config and attach it at VM creation,
+  - [x] Allow an optional volume ID in config and attach it at VM creation,
     mounting to a stable path; acceptance: two consecutive runs reuse the same
     volume and retain files created in the first run.
 

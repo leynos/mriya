@@ -123,6 +123,7 @@ pub fn build_scripted_context(
             ssh_strict_host_key_checking: false,
             ssh_known_hosts_file: String::from("/dev/null"),
             ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
+            volume_mount_path: String::from("/mriya"),
         },
         networking: InstanceNetworking {
             public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -196,6 +197,7 @@ pub fn base_sync_config() -> SyncConfig {
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
         ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
+        volume_mount_path: String::from("/mriya"),
     }
 }
 

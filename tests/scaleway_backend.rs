@@ -24,8 +24,20 @@ where
     RUNTIME.block_on(future)
 }
 
+fn scaleway_integration_enabled() -> bool {
+    let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
+    matches!(
+        enabled.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes"
+    )
+}
+
 #[fixture]
 fn scaleway_config() -> Option<ScalewayConfig> {
+    if !scaleway_integration_enabled() {
+        return None;
+    }
+
     let secret = std::env::var("SCW_SECRET_KEY").ok()?;
     let project = std::env::var("SCW_DEFAULT_PROJECT_ID").ok()?;
     if secret.trim().is_empty() || project.trim().is_empty() {

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::backend::InstanceNetworking;
+use crate::test_helpers::EnvGuard;
 use crate::test_support::ScriptedRunner;
 use rstest::{fixture, rstest};
 use std::ffi::OsString;
@@ -72,6 +73,7 @@ fn base_config() -> SyncConfig {
         ssh_strict_host_key_checking: false,
         ssh_known_hosts_file: String::from("/dev/null"),
         ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
+        volume_mount_path: String::from("/mriya"),
     }
 }
 
@@ -87,6 +89,20 @@ fn networking() -> InstanceNetworking {
 fn sync_config_validate_accepts_defaults(base_config: SyncConfig) {
     let cfg = base_config;
     assert!(cfg.validate().is_ok());
+}
+
+#[tokio::test]
+async fn volume_mount_path_defaults_to_ortho_config_constant() {
+    // Set SSH identity to satisfy validation; volume_mount_path should still use the default.
+    let _guard = EnvGuard::set_vars(&[("MRIYA_SYNC_SSH_IDENTITY_FILE", "~/.ssh/id_ed25519")]).await;
+
+    let sync_config = SyncConfig::load_without_cli_args()
+        .expect("SyncConfig should load with defaults and env overrides");
+
+    assert_eq!(
+        sync_config.volume_mount_path, DEFAULT_VOLUME_MOUNT_PATH,
+        "volume_mount_path should default to DEFAULT_VOLUME_MOUNT_PATH when omitted"
+    );
 }
 
 #[rstest]
