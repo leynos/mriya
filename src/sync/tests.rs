@@ -74,6 +74,7 @@ fn base_config() -> SyncConfig {
         ssh_known_hosts_file: String::from("/dev/null"),
         ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
         volume_mount_path: String::from("/mriya"),
+        route_build_caches: true,
     }
 }
 
@@ -287,8 +288,73 @@ fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig, networking: Insta
 
     let args = syncer.build_remote_command("cargo test");
     assert!(
-        args.starts_with("cd /remote/path && cargo test"),
+        args.contains("cd /remote/path && cargo test"),
         "remote command should change directory, got: {args}"
+    );
+}
+
+#[rstest]
+fn build_remote_command_routes_cargo_caches_when_volume_is_mounted(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        volume_mount_path: String::from("/mriya"),
+        route_build_caches: true,
+        ..base_config
+    };
+    let runner = ScriptedRunner::new();
+    runner.push_success();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+
+    let command = syncer.build_remote_command("cargo test");
+    assert!(
+        command.contains("mountpoint -q /mriya"),
+        "expected mountpoint guard, got: {command}"
+    );
+    assert!(
+        command.contains("export CARGO_HOME=/mriya/cargo"),
+        "expected CARGO_HOME export, got: {command}"
+    );
+    assert!(
+        command.contains("export RUSTUP_HOME=/mriya/rustup"),
+        "expected RUSTUP_HOME export, got: {command}"
+    );
+    assert!(
+        command.contains("export CARGO_TARGET_DIR=/mriya/target"),
+        "expected CARGO_TARGET_DIR export, got: {command}"
+    );
+}
+
+#[rstest]
+fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        route_build_caches: false,
+        ..base_config
+    };
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let command = syncer.build_remote_command("cargo test");
+    assert!(
+        !command.contains("CARGO_HOME="),
+        "expected cache routing to be disabled, got: {command}"
+    );
+}
+
+#[rstest]
+fn build_remote_command_escapes_volume_mount_path_with_spaces(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        volume_mount_path: String::from("/mnt/mriya cache"),
+        route_build_caches: true,
+        ..base_config
+    };
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let command = syncer.build_remote_command("cargo test");
+    assert!(
+        command.contains("mountpoint -q '/mnt/mriya cache'"),
+        "expected mount path to be shell escaped, got: {command}"
+    );
+    assert!(
+        command.contains("export CARGO_HOME='/mnt/mriya cache/cargo'"),
+        "expected export values to be shell escaped, got: {command}"
     );
 }
 

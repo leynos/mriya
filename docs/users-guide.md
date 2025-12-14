@@ -103,6 +103,10 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
   verification (default: `false`).
 - `MRIYA_SYNC_SSH_KNOWN_HOSTS_FILE` — path to a known hosts file (default:
   `/dev/null` when host key checking is disabled).
+- `MRIYA_SYNC_VOLUME_MOUNT_PATH` — mount path for the persistent cache volume
+  (default: `/mriya`).
+- `MRIYA_SYNC_ROUTE_BUILD_CACHES` — set to `false` to disable automatic cache
+  routing to the mounted volume (default: `true`).
 
 ## Persistent cache volume
 
@@ -131,14 +135,21 @@ To enable the cache volume:
 3. Configure the build tool to use the mounted volume. For Cargo:
 
    ```bash
-   export CARGO_TARGET_DIR=/mriya/target
    mriya run -- cargo build
    ```
 
-The volume is automatically mounted to `/mriya` (configurable via
-`MRIYA_SYNC_VOLUME_MOUNT_PATH`). If mounting fails (for example, when the
-volume has no filesystem), the run continues without the cache — this allows
-graceful degradation for first-time setups.
+When the volume is mounted successfully, Mriya automatically routes common
+language caches to it by exporting environment variables in the remote session,
+including:
+
+- `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR` (Rust/Cargo)
+- `GOMODCACHE` and `GOCACHE` (Go)
+- `PIP_CACHE_DIR` (Python/pip)
+- `npm_config_cache`, `YARN_CACHE_FOLDER`, and `PNPM_STORE_PATH` (Node tooling)
+
+If mounting fails (for example, when the volume has no filesystem), the run
+continues without the cache — this allows graceful degradation for first-time
+setups.
 
 **Requirements:**
 

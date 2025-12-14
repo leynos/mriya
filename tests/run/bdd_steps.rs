@@ -18,7 +18,13 @@ pub enum StepError {
 }
 
 #[given("a ready backend and sync pipeline")]
-const fn ready_backend(run_context: RunContext) -> RunContext {
+fn ready_backend(run_context: RunContext) -> RunContext {
+    run_context
+}
+
+#[given("cache routing is disabled")]
+fn cache_routing_disabled(mut run_context: RunContext) -> RunContext {
+    run_context.sync_config.route_build_caches = false;
     run_context
 }
 
@@ -42,10 +48,6 @@ fn backend_fails_teardown(run_context: RunContext) -> RunContext {
 }
 
 #[given("a volume ID \"{volume_id}\" is configured")]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "rstest-bdd step parsing provides owned values"
-)]
 fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunContext {
     run_context.request.volume_id = Some(volume_id.trim().to_owned());
     // Push success for the mount command (runs via SSH before sync/run)
@@ -54,7 +56,7 @@ fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunCo
 }
 
 #[given("the mount command fails")]
-const fn mount_command_fails(run_context: RunContext) -> RunContext {
+fn mount_command_fails(run_context: RunContext) -> RunContext {
     // No-op: mount uses `|| true` for graceful degradation.
     run_context
 }
@@ -147,6 +149,54 @@ fn assert_failure_contains(
             "unexpected outcome: {other:?}"
         ))),
     }
+}
+
+fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let invocation = run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .rev()
+        .find(|invocation| invocation.program == ssh_bin)
+        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
+
+    let command = invocation.args.last().ok_or_else(|| {
+        StepError::Assertion(String::from("ssh invocation missing remote command"))
+    })?;
+
+    Ok(command.to_string_lossy().into_owned())
+}
+
+#[then("the remote command routes Cargo caches to the volume")]
+fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
+    let remote_command = last_ssh_remote_command(run_context)?;
+    for required in [
+        "export CARGO_HOME=/mriya/cargo",
+        "export RUSTUP_HOME=/mriya/rustup",
+        "export CARGO_TARGET_DIR=/mriya/target",
+    ] {
+        if !remote_command.contains(required) {
+            return Err(StepError::Assertion(format!(
+                "expected remote command to include '{required}', got: {remote_command}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[then("the remote command does not route Cargo caches")]
+fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
+    let remote_command = last_ssh_remote_command(run_context)?;
+    if remote_command.contains("CARGO_TARGET_DIR=")
+        || remote_command.contains("CARGO_HOME=")
+        || remote_command.contains("RUSTUP_HOME=")
+    {
+        return Err(StepError::Assertion(format!(
+            "expected remote command to avoid cache routing, got: {remote_command}"
+        )));
+    }
+    Ok(())
 }
 
 #[then("the run error mentions sync failure")]

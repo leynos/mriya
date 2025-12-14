@@ -58,6 +58,10 @@ pub struct SyncConfig {
     /// Mount path for the persistent cache volume on the remote instance.
     #[ortho_config(default = DEFAULT_VOLUME_MOUNT_PATH.to_owned())]
     pub volume_mount_path: String,
+    /// Whether to route common language build caches to the mounted cache
+    /// volume when it is available.
+    #[ortho_config(default = true)]
+    pub route_build_caches: bool,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
@@ -80,6 +84,7 @@ impl SyncConfig {
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
         Self::require_optional_value(self.ssh_identity_file.as_deref(), "ssh_identity_file")?;
+        Self::require_value(&self.volume_mount_path, "volume_mount_path")?;
         Ok(())
     }
 
@@ -382,7 +387,48 @@ impl<R: CommandRunner> Syncer<R> {
 
     fn build_remote_command(&self, remote_command: &str) -> String {
         let escaped_path = escape(self.config.remote_path.clone().into());
-        format!("cd {escaped_path} && {remote_command}")
+        let cache_preamble = self.cache_routing_preamble();
+        if cache_preamble.is_empty() {
+            format!("cd {escaped_path} && {remote_command}")
+        } else {
+            format!("{cache_preamble}cd {escaped_path} && {remote_command}")
+        }
+    }
+
+    fn cache_routing_preamble(&self) -> String {
+        if !self.config.route_build_caches {
+            return String::new();
+        }
+
+        let mount_path = &self.config.volume_mount_path;
+        let escaped_mount = escape(mount_path.as_str().into());
+
+        let exports = [
+            ("CARGO_HOME", format!("{mount_path}/cargo")),
+            ("RUSTUP_HOME", format!("{mount_path}/rustup")),
+            ("CARGO_TARGET_DIR", format!("{mount_path}/target")),
+            ("GOMODCACHE", format!("{mount_path}/go/pkg/mod")),
+            ("GOCACHE", format!("{mount_path}/go/build-cache")),
+            ("PIP_CACHE_DIR", format!("{mount_path}/pip/cache")),
+            ("npm_config_cache", format!("{mount_path}/npm/cache")),
+            ("YARN_CACHE_FOLDER", format!("{mount_path}/yarn/cache")),
+            ("PNPM_STORE_PATH", format!("{mount_path}/pnpm/store")),
+        ];
+
+        let mut preamble = String::new();
+        preamble.push_str("if mountpoint -q ");
+        preamble.push_str(escaped_mount.as_ref());
+        preamble.push_str(" 2>/dev/null; then ");
+        for (key, value) in exports {
+            let escaped_value = escape(value.into());
+            preamble.push_str("export ");
+            preamble.push_str(key);
+            preamble.push('=');
+            preamble.push_str(escaped_value.as_ref());
+            preamble.push_str("; ");
+        }
+        preamble.push_str("fi; ");
+        preamble
     }
 }
 

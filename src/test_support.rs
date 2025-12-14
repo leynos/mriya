@@ -1,5 +1,7 @@
 //! Test support utilities shared across unit and integration tests.
 
+use std::ffi::OsString;
+
 /// Scripted command runner that returns pre-seeded outputs in FIFO order.
 ///
 /// Used to drive deterministic command outcomes without spawning processes.
@@ -7,6 +9,16 @@
 pub struct ScriptedRunner {
     responses:
         std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<crate::sync::CommandOutput>>>,
+    invocations: std::rc::Rc<std::cell::RefCell<Vec<CommandInvocation>>>,
+}
+
+/// Records a single invocation made through [`ScriptedRunner`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandInvocation {
+    /// Program name as passed to the runner.
+    pub program: String,
+    /// Arguments passed to the program.
+    pub args: Vec<OsString>,
 }
 
 impl ScriptedRunner {
@@ -14,6 +26,12 @@ impl ScriptedRunner {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns a snapshot of all invocations recorded so far.
+    #[must_use]
+    pub fn invocations(&self) -> Vec<CommandInvocation> {
+        self.invocations.borrow().clone()
     }
 
     /// Pushes a successful exit status.
@@ -65,8 +83,12 @@ impl crate::sync::CommandRunner for ScriptedRunner {
     fn run(
         &self,
         program: &str,
-        _args: &[std::ffi::OsString],
+        args: &[std::ffi::OsString],
     ) -> Result<crate::sync::CommandOutput, crate::sync::SyncError> {
+        self.invocations.borrow_mut().push(CommandInvocation {
+            program: program.to_owned(),
+            args: args.to_vec(),
+        });
         self.responses
             .borrow_mut()
             .pop_front()

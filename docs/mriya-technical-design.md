@@ -168,9 +168,8 @@ provisioning) that will guide subsequent optimizations.
 ### Volume attachment decision (December 2025)
 
 - Implement volume attachment as an optional configuration
-  (`SCW_DEFAULT_VOLUME_ID`
-  or `default_volume_id` in `mriya.toml`) that attaches a pre-existing Block
-  Storage volume to the instance before power-on.
+  (`SCW_DEFAULT_VOLUME_ID` or `default_volume_id` in `mriya.toml`) that
+  attaches a pre-existing Block Storage volume to the instance before power-on.
 - Use a direct HTTP PATCH call to the Scaleway API for volume attachment since
   the `scaleway-rs` crate v0.1.9 does not expose volume management in its
   instance builder. The request updates the server's volumes map, preserving
@@ -186,6 +185,18 @@ provisioning) that will guide subsequent optimizations.
 - Volume ID flows through the configuration layer (`ScalewayConfig`) to
   `InstanceRequest` and is processed during the create flow, before the
   instance is powered on.
+
+### Cache routing decision (December 2025)
+
+- Route build caches to the attached volume by exporting language-specific
+  environment variables in the remote session, gated by a `mountpoint -q` check
+  to avoid polluting runs when the volume is not mounted.
+- Default Rust routing sets `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR`
+  under the configured `volume_mount_path` so repeated `cargo test` runs reuse
+  compiled artefacts with unchanged source.
+- Provide a `SyncConfig` toggle `route_build_caches` (default `true`) so users
+  can opt out when debugging cache behaviour or when the mount point is shared
+  with other tooling.
 
 ### Remote execution flow decision (December 2025)
 
