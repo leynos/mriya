@@ -1709,9 +1709,9 @@ dependencies = [
 
 [[package]]
 name = "rstest-bdd"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0c58a595280bc9d8386a1888aac2264838ce90f29450dfa50d4b9a00cbbcc63"
+checksum = "4fcefde6aee6db6d70c149d48e17111e9e088a1ff71da92234e986a23fb4c134"
 dependencies = [
  "ctor",
  "derive_more",
@@ -1723,7 +1723,7 @@ dependencies = [
  "log",
  "once_cell",
  "regex",
- "rstest-bdd-patterns",
+ "rstest-bdd-patterns 0.2.0",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1748,7 +1748,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rstest-bdd-patterns",
+ "rstest-bdd-patterns 0.1.0",
  "syn 2.0.111",
  "walkdir",
 ]
@@ -1758,6 +1758,16 @@ name = "rstest-bdd-patterns"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dee8d9e47e63602b9061a3d73e48c0248f49d5bc730d64a8b27750f09342f81b"
+dependencies = [
+ "regex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "rstest-bdd-patterns"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da2291923de0d5f83564b4e6c193c67722129180983f0b3f424dc7e0580c0c0"
 dependencies = [
  "regex",
  "thiserror 1.0.69",
