@@ -23,19 +23,20 @@ owner, the developer, and the tester.
 
 ## Toolchain requirements
 
-`rstest-bdd` targets Rust 1.75 or newer across every crate in the workspace.
-Each `Cargo.toml` declares `rust-version = "1.75"`, so `cargo` will refuse to
-compile the project on older stable compilers. The workspace now settles on the
-Rust 2021 edition to keep the declared Minimum Supported Rust Version (MSRV)
-and edition compatible. The repository still pins a nightly toolchain for
-development because the runtime uses auto traits and negative impls. Those
-nightly-only features remain behind the existing `rust-toolchain.toml` pin and
-do not alter the public MSRV. Step definitions and writers remain synchronous
-functions; the framework no longer depends on the `async-trait` crate to
-express async methods in traits. Projects that previously relied on
-`#[async_trait]` in helper traits should replace those methods with ordinary
-functions—`StepFn` continues to execute synchronously and exposes results via
-`StepExecution`.
+`rstest-bdd` targets Rust 1.85 or newer across every crate in the workspace.
+Each `Cargo.toml` declares `rust-version = "1.85"`, so `cargo` will refuse to
+compile the project on older compilers. The workspace uses the Rust 2024
+edition.
+
+The `rstest-bdd` crate currently requires the Rust nightly compiler because it
+relies on auto traits and negative impls to normalise step return values. The
+repository pins a nightly toolchain for development via `rust-toolchain.toml`.
+
+Step definitions and writers remain synchronous functions; the framework no
+longer depends on the `async-trait` crate to express async methods in traits.
+Projects that previously relied on `#[async_trait]` in helper traits should
+replace those methods with ordinary functions—`StepFn` continues to execute
+synchronously and exposes results via `StepExecution`.
 
 ## The three amigos
 
@@ -635,15 +636,20 @@ substring matching to confirm that a message contains the expected reason.
 
 ```rust,no_run
 use rstest_bdd::{assert_scenario_skipped, assert_step_skipped, StepExecution};
-use rstest_bdd::reporting::{ScenarioRecord, ScenarioStatus, SkippedScenario};
+use rstest_bdd::reporting::{ScenarioMetadata, ScenarioRecord, ScenarioStatus, SkippedScenario};
 
 let outcome = StepExecution::skipped(Some("maintenance pending".into()));
 let message = assert_step_skipped!(outcome, message = "maintenance");
 assert_eq!(message, Some("maintenance pending".into()));
 
-let record = ScenarioRecord::new(
+let metadata = ScenarioMetadata::new(
     "features/unhappy.feature",
     "pending work",
+    12,
+    vec!["@allow_skipped".into()],
+);
+let record = ScenarioRecord::from_metadata(
+    metadata,
     ScenarioStatus::Skipped(SkippedScenario::new(None, true, false)),
 );
 let details = assert_scenario_skipped!(
@@ -1145,24 +1151,34 @@ https://docs.rs/i18n-embed/latest/i18n_embed/fluent/struct.FluentLanguageLoader.
 Synopsis
 
 - `cargo bdd steps`
+- `cargo bdd steps --skipped`
 - `cargo bdd unused`
 - `cargo bdd duplicates`
+- `cargo bdd skipped`
 
 Examples
 
 - `cargo bdd steps`
+- `cargo bdd steps --skipped --json`
 - `cargo bdd unused --quiet`
 - `cargo bdd duplicates --json`
+- `cargo bdd skipped --reasons`
+- `cargo bdd steps --skipped --json` must be paired; using `--json` without
+  `--skipped` is rejected by the CLI so invalid combinations fail fast.
 
-The tool inspects the runtime step registry and offers three commands:
+The tool inspects the runtime step registry and offers four commands:
 
 - `cargo bdd steps` prints every registered step with its source location and
   appends any skipped scenario outcomes using lowercase status labels whilst
   preserving long messages.
+- `cargo bdd steps --skipped` limits the listing to step definitions that were
+  bypassed after a scenario requested a skip, preserving the scenario context.
 - `cargo bdd unused` lists steps that were never executed in the current
   process.
 - `cargo bdd duplicates` groups step definitions that share the same keyword
   and pattern, helping to identify accidental copies.
+- `cargo bdd skipped` lists skipped scenarios and supports `--reasons` to show
+  file and line numbers alongside the explanatory message.
 
 The subcommand builds each test target in the workspace and runs the resulting
 binary with `RSTEST_BDD_DUMP_STEPS=1` and a private `--dump-steps` flag to
@@ -1171,6 +1187,12 @@ Because usage tracking is process local, `unused` only reflects steps invoked
 during that same execution. The merged output powers the commands above and the
 skip status summary, helping to keep the step library tidy and discover dead
 code early in the development cycle.
+
+`steps --skipped` and `skipped` accept `--json` and emit objects that always
+include `feature`, `scenario`, `line`, `tags`, and `reason` fields. The former
+adds an embedded `step` object describing each bypassed definition (keyword,
+pattern, file, and line) to help trace which definitions were sidelined by a
+runtime skip.
 
 ### Scenario report writers
 
@@ -1196,6 +1218,93 @@ rstest_bdd::reporting::junit::write_snapshot(&mut xml)?;
 
 Both writers accept explicit `&[ScenarioRecord]` slices when callers want to
 serialize a custom selection of outcomes rather than the full snapshot.
+
+## Language server
+
+The `rstest-bdd-server` crate provides a Language Server Protocol (LSP)
+implementation that bridges Gherkin `.feature` files and Rust step definitions.
+The binary is named `rstest-bdd-lsp` and communicates over stdin/stdout using
+JSON-RPC, making it compatible with any editor supporting the LSP (VS Code,
+Neovim, Zed, Helix, etc.).
+
+### Installation
+
+Build and install the language server from the workspace:
+
+```bash
+cargo install --path crates/rstest-bdd-server
+```
+
+The binary `rstest-bdd-lsp` is placed in the Cargo bin directory.
+
+### Configuration
+
+The server reads configuration from environment variables:
+
+| Variable                     | Description                                         | Default |
+| ---------------------------- | --------------------------------------------------- | ------- |
+| `RSTEST_BDD_LSP_LOG_LEVEL`   | Logging verbosity (trace, debug, info, warn, error) | `info`  |
+| `RSTEST_BDD_LSP_DEBOUNCE_MS` | Delay (ms) before processing file changes           | `300`   |
+
+Example:
+
+```bash
+RSTEST_BDD_LSP_LOG_LEVEL=debug rstest-bdd-lsp
+```
+
+### Editor integration
+
+#### VS Code
+
+Add a configuration in the `settings.json` file or use an extension that allows
+custom LSP servers. A minimal example using the
+[LSP-client](https://marketplace.visualstudio.com/items?itemName=ACharLuk.easy-lsp-client)
+ extension:
+
+```json
+{
+  "easylsp.servers": [
+    {
+      "language": ["rust", "gherkin"],
+      "command": "rstest-bdd-lsp"
+    }
+  ]
+}
+```
+
+#### Neovim (nvim-lspconfig)
+
+```lua
+local lspconfig = require('lspconfig')
+local configs = require('lspconfig.configs')
+
+if not configs.rstest_bdd then
+  configs.rstest_bdd = {
+    default_config = {
+      cmd = { 'rstest-bdd-lsp' },
+      filetypes = { 'rust', 'cucumber' },
+      root_dir = lspconfig.util.root_pattern('Cargo.toml'),
+    },
+  }
+end
+
+lspconfig.rstest_bdd.setup({})
+```
+
+### Current capabilities
+
+The initial release provides the LSP scaffolding:
+
+- **Lifecycle handlers**: Responds to `initialize`, `initialized`, and
+  `shutdown` requests per the LSP specification.
+- **Workspace discovery**: Uses `cargo metadata` to locate the workspace root
+  and enumerate packages.
+- **Structured logging**: Configurable via environment variables; logs are
+  written to stderr using the `tracing` framework.
+
+Future releases will add indexing, navigation (go-to-definition,
+go-to-implementation), and diagnostics as outlined in the
+[Language Server Design Document](rstest-bdd-language-server-design.md).
 
 ## Summary
 
