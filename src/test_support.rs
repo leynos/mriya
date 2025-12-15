@@ -77,6 +77,22 @@ impl ScriptedRunner {
                 stderr: String::new(),
             });
     }
+
+    /// Pushes an explicit command output response.
+    pub fn push_output(
+        &self,
+        code: Option<i32>,
+        stdout: impl Into<String>,
+        stderr: impl Into<String>,
+    ) {
+        self.responses
+            .borrow_mut()
+            .push_back(crate::sync::CommandOutput {
+                code,
+                stdout: stdout.into(),
+                stderr: stderr.into(),
+            });
+    }
 }
 
 impl crate::sync::CommandRunner for ScriptedRunner {

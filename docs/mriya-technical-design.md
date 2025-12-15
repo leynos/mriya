@@ -198,6 +198,24 @@ provisioning) that will guide subsequent optimizations.
   can opt out when debugging cache behaviour or when the mount point is shared
   with other tooling.
 
+### Test janitor decision (December 2025)
+
+- Integration tests may be interrupted (panic, Ctrl+C, CI cancellation),
+  leaving cloud resources behind. To mitigate this, introduce a janitor binary
+  that sweeps resources tagged for a specific test run and verifies the set is
+  empty afterwards.
+- The test harness generates a unique run id via `uuidgen` and exports it as
+  `MRIYA_TEST_RUN_ID`. Instances created during the run are tagged with
+  `mriya-test-run-<id>`.
+- The janitor uses the Scaleway CLI (`scw`) to list candidate servers (scoped
+  to the configured project) and deletes only those that include the test run
+  tag. Server deletion is performed with `with-volumes=none` to avoid deleting
+  user-managed persistent cache volumes; tagged volumes (if any are created in
+  future phases) are deleted separately.
+- The Makefile target `make scaleway-test` runs a pre-sweep, executes the
+  Scaleway integration suite, and ensures a post-sweep runs via a shell `trap`
+  so cleanup executes even when tests fail.
+
 ### Remote execution flow decision (December 2025)
 
 - Keep the system `ssh` client for MVP and stream stdout/stderr via a

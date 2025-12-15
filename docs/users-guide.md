@@ -179,9 +179,15 @@ The behavioural suite provisions a real DEV1-S instance to prove create → wait
 `SCW_*` variables are set, then run:
 
 ```bash
-make test -- scaleway_backend -- --test-threads=1
+make scaleway-test
 ```
 
-The extra `--test-threads=1` keeps only one instance alive at a time. Cleanup
-is built into the backend, but cancelling the run may still leave resources;
-rerun `make test` to let the teardown step finish.
+The target:
+
+- Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the Scaleway behavioural suite.
+- Generates `MRIYA_TEST_RUN_ID` via `uuidgen` and tags created instances.
+- Runs `mriya-janitor` before and after tests so leaked instances are cleaned
+  up even when the test command fails.
+
+The underlying `cargo test` uses `--test-threads=1` to keep only one instance
+alive at a time.

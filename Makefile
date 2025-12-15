@@ -1,4 +1,4 @@
-.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie typecheck
+.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie typecheck scaleway-test scaleway-janitor
 
 
 TARGET ?= mriya
@@ -22,6 +22,18 @@ clean: ## Remove build artifacts
 
 test: ## Run tests with warnings treated as errors
 	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
+
+scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
+	$(CARGO) run --bin mriya-janitor
+
+scaleway-test: ## Run Scaleway integration tests with janitor sweep
+	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)
+	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
+	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
+	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
+	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor >/dev/null || true' EXIT ; \
+	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor ; \
+	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) test --test scaleway_backend -- --test-threads=1
 
 typecheck: ## Typecheck the workspace
 	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) check $(CARGO_FLAGS) $(BUILD_JOBS)

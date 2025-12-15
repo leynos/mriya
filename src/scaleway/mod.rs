@@ -14,6 +14,8 @@ use scaleway_rs::{ScalewayApi, ScalewayCreateInstanceBuilder, ScalewayError};
 use types::{Action, Zone};
 use uuid::Uuid;
 
+use crate::janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX};
+
 const DEFAULT_SSH_PORT: u16 = 22;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -86,6 +88,19 @@ impl ScalewayBackend {
 
         Ok(())
     }
+
+    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
+        let mut tags = vec![String::from("mriya"), String::from("ephemeral")];
+        let Some(id) = test_run_id else {
+            return tags;
+        };
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return tags;
+        }
+        tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
+        tags
+    }
 }
 
 impl Backend for ScalewayBackend {
@@ -100,6 +115,8 @@ impl Backend for ScalewayBackend {
             let image_id = self.resolve_image_id(request).await?;
 
             let name = format!("mriya-{}", Uuid::new_v4().simple());
+            let test_run_id = std::env::var(TEST_RUN_ID_ENV).ok();
+            let tags = Self::instance_tags(test_run_id.as_deref());
             let server = match ScalewayCreateInstanceBuilder::new(
                 self.api.clone(),
                 &request.zone,
@@ -109,7 +126,7 @@ impl Backend for ScalewayBackend {
             .image(&image_id)
             .project(&request.project_id)
             .routed_ip_enabled(true)
-            .tags(vec![String::from("mriya"), String::from("ephemeral")])
+            .tags(tags)
             .run_async()
             .await
             {
@@ -178,5 +195,29 @@ impl Backend for ScalewayBackend {
                 .await?;
             self.wait_until_gone(&handle).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScalewayBackend;
+
+    #[test]
+    fn instance_tags_omits_test_tag_when_unset() {
+        let tags = ScalewayBackend::instance_tags(None);
+        assert_eq!(tags, vec![String::from("mriya"), String::from("ephemeral")]);
+    }
+
+    #[test]
+    fn instance_tags_adds_test_run_tag() {
+        let tags = ScalewayBackend::instance_tags(Some("run-123"));
+        assert_eq!(
+            tags,
+            vec![
+                String::from("mriya"),
+                String::from("ephemeral"),
+                String::from("mriya-test-run-run-123"),
+            ]
+        );
     }
 }
