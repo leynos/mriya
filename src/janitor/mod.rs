@@ -199,25 +199,12 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    fn run_scw_json(&self, args: &[OsString], resource: &str) -> Result<String, JanitorError> {
-        let output = self.runner.run(&self.config.scw_bin, args)?;
-        if output.is_success() {
-            return Ok(output.stdout);
-        }
-
-        let status_text = output
-            .code
-            .map_or_else(|| String::from("unknown"), |code| code.to_string());
-        Err(JanitorError::CommandFailure {
-            program: self.config.scw_bin.clone(),
-            status: output.code,
-            status_text,
-            stderr: format!("{resource}: {}", output.stderr),
-        })
-    }
-
-    fn run_scw(&self, args: &[OsString], resource: &str) -> Result<CommandOutput, JanitorError> {
-        let output = self.runner.run(&self.config.scw_bin, args)?;
+    /// Checks command output and converts failure to `JanitorError`.
+    fn check_scw_output(
+        &self,
+        output: CommandOutput,
+        resource: &str,
+    ) -> Result<CommandOutput, JanitorError> {
         if output.is_success() {
             return Ok(output);
         }
@@ -233,6 +220,33 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
+    /// Lists resources using scw, returning parsed JSON.
+    fn list_scw_resources<T>(
+        &self,
+        args: &[OsString],
+        resource_name: &str,
+    ) -> Result<Vec<T>, JanitorError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let stdout = self.run_scw_json(args, resource_name)?;
+        serde_json::from_str::<Vec<T>>(&stdout).map_err(|err| JanitorError::Parse {
+            resource: resource_name.to_owned(),
+            message: err.to_string(),
+        })
+    }
+
+    fn run_scw_json(&self, args: &[OsString], resource: &str) -> Result<String, JanitorError> {
+        let output = self.runner.run(&self.config.scw_bin, args)?;
+        self.check_scw_output(output, resource)
+            .map(|out| out.stdout)
+    }
+
+    fn run_scw(&self, args: &[OsString], resource: &str) -> Result<CommandOutput, JanitorError> {
+        let output = self.runner.run(&self.config.scw_bin, args)?;
+        self.check_scw_output(output, resource)
+    }
+
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
         let args = vec![
             OsString::from("instance"),
@@ -244,11 +258,7 @@ impl<R: CommandRunner> Janitor<R> {
             OsString::from("-o"),
             OsString::from("json"),
         ];
-        let stdout = self.run_scw_json(&args, "server list")?;
-        serde_json::from_str::<Vec<ScwServer>>(&stdout).map_err(|err| JanitorError::Parse {
-            resource: String::from("servers"),
-            message: err.to_string(),
-        })
+        self.list_scw_resources(&args, "servers")
     }
 
     fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
@@ -276,11 +286,7 @@ impl<R: CommandRunner> Janitor<R> {
             OsString::from("-o"),
             OsString::from("json"),
         ];
-        let stdout = self.run_scw_json(&args, "volume list")?;
-        serde_json::from_str::<Vec<ScwVolume>>(&stdout).map_err(|err| JanitorError::Parse {
-            resource: String::from("volumes"),
-            message: err.to_string(),
-        })
+        self.list_scw_resources(&args, "volumes")
     }
 
     fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
