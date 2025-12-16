@@ -236,6 +236,35 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
+    /// Builds argument vector for scw list commands.
+    fn build_list_args(&self, subcommand_path: &[&str], filters: &[String]) -> Vec<OsString> {
+        let mut args = Vec::new();
+
+        // Subcommand path (e.g., ["instance", "server"])
+        for part in subcommand_path {
+            args.push(OsString::from(*part));
+        }
+
+        // Common list arguments
+        args.push(OsString::from("list"));
+        args.push(OsString::from(format!(
+            "project-id={}",
+            self.config.project_id
+        )));
+        args.push(OsString::from("zone=all"));
+
+        // Additional filters
+        for filter in filters {
+            args.push(OsString::from(filter));
+        }
+
+        // JSON output format
+        args.push(OsString::from("-o"));
+        args.push(OsString::from("json"));
+
+        args
+    }
+
     fn run_scw_json(&self, args: &[OsString], resource: &str) -> Result<String, JanitorError> {
         let output = self.runner.run(&self.config.scw_bin, args)?;
         self.check_scw_output(output, resource)
@@ -248,16 +277,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
-        let args = vec![
-            OsString::from("instance"),
-            OsString::from("server"),
-            OsString::from("list"),
-            OsString::from(format!("project-id={}", self.config.project_id)),
-            OsString::from("zone=all"),
-            OsString::from("name=mriya-"),
-            OsString::from("-o"),
-            OsString::from("json"),
-        ];
+        let args = self.build_list_args(&["instance", "server"], &[String::from("name=mriya-")]);
         self.list_scw_resources(&args, "servers")
     }
 
@@ -277,15 +297,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
-        let args = vec![
-            OsString::from("block"),
-            OsString::from("volume"),
-            OsString::from("list"),
-            OsString::from(format!("project-id={}", self.config.project_id)),
-            OsString::from("zone=all"),
-            OsString::from("-o"),
-            OsString::from("json"),
-        ];
+        let args = self.build_list_args(&["block", "volume"], &[]);
         self.list_scw_resources(&args, "volumes")
     }
 
