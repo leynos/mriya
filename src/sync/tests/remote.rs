@@ -69,18 +69,22 @@ fn build_remote_command_routes_cargo_caches_when_volume_is_mounted(base_config: 
         command.contains("mountpoint -q /mriya"),
         "expected mountpoint guard, got: {command}"
     );
-    assert!(
-        command.contains("export CARGO_HOME=/mriya/cargo"),
-        "expected CARGO_HOME export, got: {command}"
-    );
-    assert!(
-        command.contains("export RUSTUP_HOME=/mriya/rustup"),
-        "expected RUSTUP_HOME export, got: {command}"
-    );
-    assert!(
-        command.contains("export CARGO_TARGET_DIR=/mriya/target"),
-        "expected CARGO_TARGET_DIR export, got: {command}"
-    );
+    for required in [
+        "export CARGO_HOME=/mriya/cargo",
+        "export RUSTUP_HOME=/mriya/rustup",
+        "export CARGO_TARGET_DIR=/mriya/target",
+        "export GOMODCACHE=/mriya/go/pkg/mod",
+        "export GOCACHE=/mriya/go/build-cache",
+        "export PIP_CACHE_DIR=/mriya/pip/cache",
+        "export npm_config_cache=/mriya/npm/cache",
+        "export YARN_CACHE_FOLDER=/mriya/yarn/cache",
+        "export PNPM_STORE_PATH=/mriya/pnpm/store",
+    ] {
+        assert!(
+            command.contains(required),
+            "expected export '{required}', got: {command}"
+        );
+    }
 }
 
 #[rstest]

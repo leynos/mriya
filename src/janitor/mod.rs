@@ -8,6 +8,7 @@
 use std::ffi::OsString;
 
 use serde::Deserialize;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::sync::{CommandOutput, CommandRunner, ProcessCommandRunner, SyncError};
@@ -239,12 +240,10 @@ impl<R: CommandRunner> Janitor<R> {
             .collect())
     }
 
-    /// Checks command output and converts failure to `JanitorError`.
-    fn check_scw_output(
-        &self,
-        output: CommandOutput,
-        resource: &str,
-    ) -> Result<CommandOutput, JanitorError> {
+    fn run_scw(&self, args: &[&str], resource: &str) -> Result<CommandOutput, JanitorError> {
+        let os_args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let output = self.runner.run(&self.config.scw_bin, &os_args)?;
+
         if output.is_success() {
             return Ok(output);
         }
@@ -260,26 +259,22 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    /// Lists resources using scw, returning parsed JSON.
-    fn list_scw_resources<T>(
-        &self,
-        args: &[OsString],
-        resource_name: &str,
-    ) -> Result<Vec<T>, JanitorError>
+    fn run_scw_json(&self, args: &[&str], resource: &str) -> Result<String, JanitorError> {
+        self.run_scw(args, resource).map(|out| out.stdout)
+    }
+
+    fn parse_scw_list<T>(stdout: &str, resource_name: &str) -> Result<Vec<T>, JanitorError>
     where
         T: serde::de::DeserializeOwned,
     {
-        let stdout = self.run_scw_json(args, resource_name)?;
-        let payload = serde_json::from_str::<serde_json::Value>(&stdout).map_err(|err| {
-            JanitorError::Parse {
-                resource: resource_name.to_owned(),
-                message: err.to_string(),
-            }
+        let payload = serde_json::from_str::<Value>(stdout).map_err(|err| JanitorError::Parse {
+            resource: resource_name.to_owned(),
+            message: err.to_string(),
         })?;
 
         let items = match payload {
-            serde_json::Value::Array(_) => payload,
-            serde_json::Value::Object(mut map) => {
+            Value::Array(items) => Value::Array(items),
+            Value::Object(mut map) => {
                 map.remove(resource_name)
                     .ok_or_else(|| JanitorError::Parse {
                         resource: resource_name.to_owned(),
@@ -300,78 +295,60 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    /// Builds argument vector for scw list commands.
-    fn build_list_args(&self, subcommand_path: &[&str], filters: &[String]) -> Vec<OsString> {
-        let mut args = Vec::new();
-
-        // Subcommand path (e.g., ["instance", "server"])
-        for part in subcommand_path {
-            args.push(OsString::from(*part));
-        }
-
-        // Common list arguments
-        args.push(OsString::from("list"));
-        args.push(OsString::from(format!(
-            "project-id={}",
-            self.config.project_id
-        )));
-        args.push(OsString::from("zone=all"));
-
-        // Additional filters
-        for filter in filters {
-            args.push(OsString::from(filter));
-        }
-
-        // JSON output format
-        args.push(OsString::from("-o"));
-        args.push(OsString::from("json"));
-
-        args
-    }
-
-    fn run_scw_json(&self, args: &[OsString], resource: &str) -> Result<String, JanitorError> {
-        let output = self.runner.run(&self.config.scw_bin, args)?;
-        self.check_scw_output(output, resource)
-            .map(|out| out.stdout)
-    }
-
-    fn run_scw(&self, args: &[OsString], resource: &str) -> Result<CommandOutput, JanitorError> {
-        let output = self.runner.run(&self.config.scw_bin, args)?;
-        self.check_scw_output(output, resource)
-    }
-
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
-        let args = self.build_list_args(&["instance", "server"], &[] as &[String]);
-        self.list_scw_resources(&args, "servers")
+        let project_arg = format!("project-id={}", self.config.project_id);
+        let args = [
+            "instance",
+            "server",
+            "list",
+            project_arg.as_str(),
+            "zone=all",
+            "-o",
+            "json",
+        ];
+        let stdout = self.run_scw_json(&args, "servers")?;
+        Self::parse_scw_list(&stdout, "servers")
     }
 
     fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
-        let args = vec![
-            OsString::from("instance"),
-            OsString::from("server"),
-            OsString::from("delete"),
-            OsString::from(&server.id),
-            OsString::from(format!("zone={}", server.zone)),
-            OsString::from("with-ip=true"),
-            OsString::from("with-volumes=none"),
-            OsString::from("force-shutdown=true"),
-            OsString::from("--wait"),
+        let zone_arg = format!("zone={}", server.zone);
+        let args = [
+            "instance",
+            "server",
+            "delete",
+            server.id.as_str(),
+            zone_arg.as_str(),
+            "with-ip=true",
+            "with-volumes=none",
+            "force-shutdown=true",
+            "--wait",
         ];
         self.run_scw(&args, "server delete")
     }
 
     fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
-        let args = self.build_list_args(&["block", "volume"], &[] as &[String]);
-        self.list_scw_resources(&args, "volumes")
+        let project_arg = format!("project-id={}", self.config.project_id);
+        let args = [
+            "block",
+            "volume",
+            "list",
+            project_arg.as_str(),
+            "zone=all",
+            "-o",
+            "json",
+        ];
+        let stdout = self.run_scw_json(&args, "volumes")?;
+        Self::parse_scw_list(&stdout, "volumes")
     }
 
     fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
-        let args = vec![
-            OsString::from("block"),
-            OsString::from("volume"),
-            OsString::from("delete"),
-            OsString::from(&volume.id),
-            OsString::from(format!("zone={}", volume.zone)),
+        let zone_arg = format!("zone={}", volume.zone);
+        let args = [
+            "block",
+            "volume",
+            "delete",
+            volume.id.as_str(),
+            zone_arg.as_str(),
         ];
         self.run_scw(&args, "volume delete")
     }
