@@ -159,44 +159,84 @@ impl<R: CommandRunner> Janitor<R> {
     pub fn sweep(&self) -> Result<SweepSummary, JanitorError> {
         let tag = self.config.test_run_tag();
 
-        let mut deleted_servers = 0;
-        let servers = self.list_servers()?;
-        for server in servers.iter().filter(|srv| srv.tags.contains(&tag)) {
-            self.delete_server(server)?;
-            deleted_servers += 1;
-        }
-
-        let mut deleted_volumes = 0;
-        let volumes = self.list_volumes()?;
-        for volume in volumes.iter().filter(|vol| vol.tags.contains(&tag)) {
-            self.delete_volume(volume)?;
-            deleted_volumes += 1;
-        }
-
-        let remaining_servers = self
-            .list_servers()?
-            .into_iter()
-            .filter(|srv| srv.tags.contains(&tag))
-            .collect::<Vec<_>>();
-        let remaining_volumes = self
-            .list_volumes()?
-            .into_iter()
-            .filter(|vol| vol.tags.contains(&tag))
-            .collect::<Vec<_>>();
-
-        if !remaining_servers.is_empty() || !remaining_volumes.is_empty() {
-            let message = format!(
-                "servers remaining: {}, volumes remaining: {}",
-                remaining_servers.len(),
-                remaining_volumes.len()
-            );
-            return Err(JanitorError::NotClean { message });
-        }
+        let deleted_servers = self.delete_tagged_servers(&tag)?;
+        let deleted_volumes = self.delete_tagged_volumes(&tag)?;
+        self.ensure_no_remaining(&tag)?;
 
         Ok(SweepSummary {
             deleted_servers,
             deleted_volumes,
         })
+    }
+
+    fn delete_tagged_servers(&self, tag: &str) -> Result<usize, JanitorError> {
+        let servers = self.list_tagged_servers(tag)?;
+        for server in &servers {
+            self.delete_server(server)?;
+        }
+        Ok(servers.len())
+    }
+
+    fn delete_tagged_volumes(&self, tag: &str) -> Result<usize, JanitorError> {
+        let volumes = self.list_tagged_volumes(tag)?;
+        for volume in &volumes {
+            self.delete_volume(volume)?;
+        }
+        Ok(volumes.len())
+    }
+
+    fn ensure_no_remaining(&self, tag: &str) -> Result<(), JanitorError> {
+        const MAX_ITEMS_TO_SHOW: usize = 5;
+
+        let remaining_servers = self.list_tagged_servers(tag)?;
+        let remaining_volumes = self.list_tagged_volumes(tag)?;
+
+        if remaining_servers.is_empty() && remaining_volumes.is_empty() {
+            return Ok(());
+        }
+
+        let remaining_server_ids = remaining_servers
+            .iter()
+            .take(MAX_ITEMS_TO_SHOW)
+            .map(|srv| format!("{}@{}", srv.id, srv.zone))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let remaining_volume_ids = remaining_volumes
+            .iter()
+            .take(MAX_ITEMS_TO_SHOW)
+            .map(|vol| format!("{}@{}", vol.id, vol.zone))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let message = format!(
+            "servers remaining: {} [{}], volumes remaining: {} [{}] (showing up to {} of each)",
+            remaining_servers.len(),
+            remaining_server_ids,
+            remaining_volumes.len(),
+            remaining_volume_ids,
+            MAX_ITEMS_TO_SHOW
+        );
+        Err(JanitorError::NotClean { message })
+    }
+
+    fn has_tag(tags: &[String], tag: &str) -> bool {
+        tags.iter().any(|existing| existing == tag)
+    }
+
+    fn list_tagged_servers(&self, tag: &str) -> Result<Vec<ScwServer>, JanitorError> {
+        Ok(self
+            .list_servers()?
+            .into_iter()
+            .filter(|srv| Self::has_tag(&srv.tags, tag))
+            .collect())
+    }
+
+    fn list_tagged_volumes(&self, tag: &str) -> Result<Vec<ScwVolume>, JanitorError> {
+        Ok(self
+            .list_volumes()?
+            .into_iter()
+            .filter(|vol| Self::has_tag(&vol.tags, tag))
+            .collect())
     }
 
     /// Checks command output and converts failure to `JanitorError`.
@@ -230,7 +270,31 @@ impl<R: CommandRunner> Janitor<R> {
         T: serde::de::DeserializeOwned,
     {
         let stdout = self.run_scw_json(args, resource_name)?;
-        serde_json::from_str::<Vec<T>>(&stdout).map_err(|err| JanitorError::Parse {
+        let payload = serde_json::from_str::<serde_json::Value>(&stdout).map_err(|err| {
+            JanitorError::Parse {
+                resource: resource_name.to_owned(),
+                message: err.to_string(),
+            }
+        })?;
+
+        let items = match payload {
+            serde_json::Value::Array(_) => payload,
+            serde_json::Value::Object(mut map) => {
+                map.remove(resource_name)
+                    .ok_or_else(|| JanitorError::Parse {
+                        resource: resource_name.to_owned(),
+                        message: format!("missing '{resource_name}' field"),
+                    })?
+            }
+            other => {
+                return Err(JanitorError::Parse {
+                    resource: resource_name.to_owned(),
+                    message: format!("unexpected JSON shape: {other}"),
+                });
+            }
+        };
+
+        serde_json::from_value::<Vec<T>>(items).map_err(|err| JanitorError::Parse {
             resource: resource_name.to_owned(),
             message: err.to_string(),
         })
@@ -277,7 +341,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
-        let args = self.build_list_args(&["instance", "server"], &[String::from("name=mriya-")]);
+        let args = self.build_list_args(&["instance", "server"], &[] as &[String]);
         self.list_scw_resources(&args, "servers")
     }
 
@@ -297,7 +361,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
-        let args = self.build_list_args(&["block", "volume"], &[]);
+        let args = self.build_list_args(&["block", "volume"], &[] as &[String]);
         self.list_scw_resources(&args, "volumes")
     }
 

@@ -114,3 +114,38 @@ impl crate::sync::CommandRunner for ScriptedRunner {
             })
     }
 }
+
+fn json_tagged_resources(items: &[(&str, &str, &[&str])]) -> String {
+    items
+        .iter()
+        .map(|(id, zone, tags)| {
+            let tags_json = tags
+                .iter()
+                .map(|tag| format!("\"{tag}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{\"id\":\"{id}\",\"zone\":\"{zone}\",\"tags\":[{tags_json}]}}")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Produces a minimal JSON payload matching `scw instance server list -o json`.
+#[must_use]
+pub fn json_servers(servers: &[(&str, &str, &[&str])]) -> String {
+    let items = json_tagged_resources(servers);
+    format!(
+        "{{\"servers\":[{items}],\"total_count\":{}}}",
+        servers.len()
+    )
+}
+
+/// Produces a minimal JSON payload matching `scw block volume list -o json`.
+#[must_use]
+pub fn json_volumes(volumes: &[(&str, &str, &[&str])]) -> String {
+    let items = json_tagged_resources(volumes);
+    format!(
+        "{{\"volumes\":[{items}],\"total_count\":{}}}",
+        volumes.len()
+    )
+}

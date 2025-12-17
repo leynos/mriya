@@ -9,8 +9,12 @@ use shell_escape::unix::escape;
 
 use super::SyncConfig;
 
+/// Builds a remote command string with an optional cache routing preamble.
+///
+/// The remote path is shell-escaped, cache exports are prepended when enabled,
+/// and the user command is wrapped with a directory change.
 pub(crate) fn build_remote_command(config: &SyncConfig, remote_command: &str) -> String {
-    let escaped_path = escape(config.remote_path.clone().into());
+    let escaped_path = escape(config.remote_path.as_str().into());
     let cache_preamble = cache_routing_preamble(config);
     if cache_preamble.is_empty() {
         format!("cd {escaped_path} && {remote_command}")

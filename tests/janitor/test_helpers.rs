@@ -26,38 +26,6 @@ pub fn janitor_context() -> JanitorContext {
     }
 }
 
-pub fn json_servers(servers: &[(&str, &str, &[&str])]) -> String {
-    let items = servers
-        .iter()
-        .map(|(id, zone, tags)| {
-            let tags_json = tags
-                .iter()
-                .map(|tag| format!("\"{tag}\""))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{{\"id\":\"{id}\",\"zone\":\"{zone}\",\"tags\":[{tags_json}]}}")
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{items}]")
-}
-
-pub fn json_volumes(volumes: &[(&str, &str, &[&str])]) -> String {
-    let items = volumes
-        .iter()
-        .map(|(id, zone, tags)| {
-            let tags_json = tags
-                .iter()
-                .map(|tag| format!("\"{tag}\""))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{{\"id\":\"{id}\",\"zone\":\"{zone}\",\"tags\":[{tags_json}]}}")
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{items}]")
-}
-
 pub fn build_config(project: &str, run_id: &str) -> JanitorConfig {
     JanitorConfig::new(project, run_id, DEFAULT_SCW_BIN)
         .unwrap_or_else(|err| panic!("janitor config should be valid: {err}"))

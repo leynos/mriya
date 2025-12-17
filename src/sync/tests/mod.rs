@@ -4,6 +4,7 @@
 //! below the 400-line guideline while remaining easy to navigate.
 
 mod config;
+mod fixtures;
 mod remote;
 mod rsync;
 mod ssh;

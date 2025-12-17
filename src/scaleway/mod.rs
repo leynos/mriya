@@ -27,6 +27,7 @@ pub use error::ScalewayBackendError;
 pub struct ScalewayBackend {
     api: ScalewayApi,
     config: ScalewayConfig,
+    test_run_id: Option<String>,
     ssh_port: u16,
     poll_interval: Duration,
     wait_timeout: Duration,
@@ -53,10 +54,25 @@ impl ScalewayBackend {
     /// Returns [`ScalewayBackendError::Config`] when the provided configuration
     /// fails validation.
     pub fn new(config: ScalewayConfig) -> Result<Self, ScalewayBackendError> {
+        let test_run_id = std::env::var(TEST_RUN_ID_ENV).ok();
+        Self::new_with_test_run_id(config, test_run_id)
+    }
+
+    /// Constructs a new backend with an explicit test run ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::Config`] when the provided configuration
+    /// fails validation.
+    pub fn new_with_test_run_id(
+        config: ScalewayConfig,
+        test_run_id: Option<String>,
+    ) -> Result<Self, ScalewayBackendError> {
         config.validate()?;
         Ok(Self {
             api: ScalewayApi::new(&config.secret_key),
             config,
+            test_run_id,
             ssh_port: DEFAULT_SSH_PORT,
             poll_interval: POLL_INTERVAL,
             wait_timeout: WAIT_TIMEOUT,
@@ -115,8 +131,7 @@ impl Backend for ScalewayBackend {
             let image_id = self.resolve_image_id(request).await?;
 
             let name = format!("mriya-{}", Uuid::new_v4().simple());
-            let test_run_id = std::env::var(TEST_RUN_ID_ENV).ok();
-            let tags = Self::instance_tags(test_run_id.as_deref());
+            let tags = Self::instance_tags(self.test_run_id.as_deref());
             let server = match ScalewayCreateInstanceBuilder::new(
                 self.api.clone(),
                 &request.zone,

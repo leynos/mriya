@@ -1,9 +1,10 @@
 //! BDD step definitions for janitor behaviour.
 
 use mriya::janitor::Janitor;
+use mriya::test_support::{json_servers, json_volumes};
 use rstest_bdd_macros::{given, then, when};
 
-use super::test_helpers::{JanitorContext, SweepOutcome, build_config, json_servers, json_volumes};
+use super::test_helpers::{JanitorContext, SweepOutcome, build_config};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {

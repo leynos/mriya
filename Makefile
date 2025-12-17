@@ -31,7 +31,7 @@ scaleway-test: ## Run Scaleway integration tests with janitor sweep
 	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
 	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
 	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
-	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor >/dev/null || true' EXIT ; \
+	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
 	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor ; \
 	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) test --test scaleway_backend -- --test-threads=1
 

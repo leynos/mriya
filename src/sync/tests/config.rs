@@ -3,8 +3,10 @@
 use super::super::*;
 use crate::backend::InstanceNetworking;
 use crate::test_helpers::EnvGuard;
-use rstest::{fixture, rstest};
-use std::net::{IpAddr, Ipv4Addr};
+use rstest::rstest;
+use std::net::Ipv4Addr;
+
+use super::fixtures::{base_config, networking};
 
 /// Helper to assert validation rejects empty or whitespace values for a given field.
 fn assert_validation_rejects_field<F>(mut cfg: SyncConfig, field_name: &str, set_field: F)
@@ -39,30 +41,6 @@ fn assert_ssh_identity_validation_fails(
         panic!("expected InvalidConfig, got {err:?}");
     };
     assert_eq!(field, "ssh_identity_file");
-}
-
-#[fixture]
-fn base_config() -> SyncConfig {
-    SyncConfig {
-        rsync_bin: String::from("rsync"),
-        ssh_bin: String::from("ssh"),
-        ssh_user: String::from("ubuntu"),
-        remote_path: String::from("/remote/path"),
-        ssh_batch_mode: true,
-        ssh_strict_host_key_checking: false,
-        ssh_known_hosts_file: String::from("/dev/null"),
-        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
-        volume_mount_path: String::from("/mriya"),
-        route_build_caches: true,
-    }
-}
-
-#[fixture]
-fn networking() -> InstanceNetworking {
-    InstanceNetworking {
-        public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        ssh_port: 2222,
-    }
 }
 
 #[rstest]

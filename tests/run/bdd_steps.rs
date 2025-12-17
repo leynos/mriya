@@ -172,9 +172,17 @@ fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError
 fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
     let remote_command = last_ssh_remote_command(run_context)?;
     for required in [
+        "if mountpoint -q /mriya 2>/dev/null; then",
         "export CARGO_HOME=/mriya/cargo",
         "export RUSTUP_HOME=/mriya/rustup",
         "export CARGO_TARGET_DIR=/mriya/target",
+        "export GOMODCACHE=/mriya/go/pkg/mod",
+        "export GOCACHE=/mriya/go/build-cache",
+        "export PIP_CACHE_DIR=/mriya/pip/cache",
+        "export npm_config_cache=/mriya/npm/cache",
+        "export YARN_CACHE_FOLDER=/mriya/yarn/cache",
+        "export PNPM_STORE_PATH=/mriya/pnpm/store",
+        "fi; cd",
     ] {
         if !remote_command.contains(required) {
             return Err(StepError::Assertion(format!(

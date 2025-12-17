@@ -204,7 +204,7 @@ provisioning) that will guide subsequent optimizations.
   leaving cloud resources behind. To mitigate this, introduce a janitor binary
   that sweeps resources tagged for a specific test run and verifies the set is
   empty afterwards.
-- The test harness generates a unique run id via `uuidgen` and exports it as
+- The test harness generates a unique run ID via `uuidgen` and exports it as
   `MRIYA_TEST_RUN_ID`. Instances created during the run are tagged with
   `mriya-test-run-<id>`.
 - The janitor uses the Scaleway CLI (`scw`) to list candidate servers (scoped

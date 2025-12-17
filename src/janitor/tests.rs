@@ -1,45 +1,33 @@
 //! Unit tests for the janitor module.
 
 use super::*;
-use crate::test_support::ScriptedRunner;
+use crate::test_support::{ScriptedRunner, json_servers, json_volumes};
 use rstest::rstest;
-
-fn json_servers(servers: &[(&str, &str, &[&str])]) -> String {
-    let items = servers
-        .iter()
-        .map(|(id, zone, tags)| {
-            let tags_json = tags
-                .iter()
-                .map(|tag| format!("\"{tag}\""))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{{\"id\":\"{id}\",\"zone\":\"{zone}\",\"tags\":[{tags_json}]}}")
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{items}]")
-}
-
-fn json_volumes(volumes: &[(&str, &str, &[&str])]) -> String {
-    let items = volumes
-        .iter()
-        .map(|(id, zone, tags)| {
-            let tags_json = tags
-                .iter()
-                .map(|tag| format!("\"{tag}\""))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{{\"id\":\"{id}\",\"zone\":\"{zone}\",\"tags\":[{tags_json}]}}")
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{items}]")
-}
 
 #[rstest]
 fn janitor_config_builds_test_run_tag() {
     let cfg = JanitorConfig::new("proj", "abc", DEFAULT_SCW_BIN).expect("config should build");
     assert_eq!(cfg.test_run_tag(), "mriya-test-run-abc");
+}
+
+#[rstest]
+#[case("project_id", " ", "run-1", DEFAULT_SCW_BIN)]
+#[case("test_run_id", "proj", " ", DEFAULT_SCW_BIN)]
+#[case("scw_bin", "proj", "run-1", "  ")]
+fn janitor_config_rejects_blank_fields(
+    #[case] expected_field: &str,
+    #[case] project_id: &str,
+    #[case] test_run_id: &str,
+    #[case] scw_bin: &str,
+) {
+    let err =
+        JanitorConfig::new(project_id, test_run_id, scw_bin).expect_err("expected invalid config");
+    assert_eq!(
+        err,
+        JanitorError::InvalidConfig {
+            field: expected_field.to_owned()
+        }
+    );
 }
 
 #[rstest]
@@ -142,5 +130,45 @@ fn sweep_errors_when_tagged_resources_remain() {
 
     let janitor = Janitor::new(cfg, runner);
     let err = janitor.sweep().expect_err("sweep should fail");
-    assert!(matches!(err, JanitorError::NotClean { .. }));
+    let JanitorError::NotClean { message } = err else {
+        panic!("expected NotClean, got {err:?}");
+    };
+    assert!(
+        message.contains("srv-a@fr-par-1"),
+        "expected remaining server ID, got: {message}"
+    );
+}
+
+#[rstest]
+fn sweep_surfaces_scw_command_failures() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    runner.push_output(Some(2), "", "permission denied");
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    assert!(matches!(err, JanitorError::CommandFailure { .. }));
+}
+
+#[rstest]
+fn sweep_surfaces_parse_failures() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    runner.push_output(Some(0), "not-json", "");
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    assert!(matches!(err, JanitorError::Parse { .. }));
+}
+
+#[rstest]
+fn sweep_surfaces_runner_failures() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    assert!(matches!(err, JanitorError::Runner(_)));
 }

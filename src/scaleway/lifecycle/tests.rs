@@ -89,6 +89,7 @@ fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         config: dummy_config(),
+        test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
         poll_interval: Duration::from_millis(1),
         wait_timeout: Duration::from_millis(5),
