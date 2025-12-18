@@ -22,6 +22,25 @@ pub const TEST_RUN_TAG_PREFIX: &str = "mriya-test-run-";
 /// Default Scaleway CLI binary name.
 pub const DEFAULT_SCW_BIN: &str = "scw";
 
+/// Scaleway resource type for janitor operations.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum ResourceType {
+    /// Instance servers.
+    Servers,
+    /// Block storage volumes.
+    Volumes,
+}
+
+impl ResourceType {
+    /// Returns the resource name used in scw CLI commands and JSON parsing.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Servers => "servers",
+            Self::Volumes => "volumes",
+        }
+    }
+}
+
 /// Configuration for a janitor sweep.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JanitorConfig {
@@ -240,7 +259,11 @@ impl<R: CommandRunner> Janitor<R> {
             .collect())
     }
 
-    fn run_scw(&self, args: &[&str], resource: &str) -> Result<CommandOutput, JanitorError> {
+    fn run_scw(
+        &self,
+        args: &[&str],
+        resource: ResourceType,
+    ) -> Result<CommandOutput, JanitorError> {
         let os_args = args.iter().map(OsString::from).collect::<Vec<_>>();
         let output = self.runner.run(&self.config.scw_bin, &os_args)?;
 
@@ -255,18 +278,19 @@ impl<R: CommandRunner> Janitor<R> {
             program: self.config.scw_bin.clone(),
             status: output.code,
             status_text,
-            stderr: format!("{resource}: {}", output.stderr),
+            stderr: format!("{}: {}", resource.as_str(), output.stderr),
         })
     }
 
-    fn run_scw_json(&self, args: &[&str], resource: &str) -> Result<String, JanitorError> {
+    fn run_scw_json(&self, args: &[&str], resource: ResourceType) -> Result<String, JanitorError> {
         self.run_scw(args, resource).map(|out| out.stdout)
     }
 
-    fn parse_scw_list<T>(stdout: &str, resource_name: &str) -> Result<Vec<T>, JanitorError>
+    fn parse_scw_list<T>(stdout: &str, resource: ResourceType) -> Result<Vec<T>, JanitorError>
     where
         T: serde::de::DeserializeOwned,
     {
+        let resource_name = resource.as_str();
         let payload = serde_json::from_str::<Value>(stdout).map_err(|err| JanitorError::Parse {
             resource: resource_name.to_owned(),
             message: err.to_string(),
@@ -299,7 +323,7 @@ impl<R: CommandRunner> Janitor<R> {
     fn list_scw_resources<T>(
         &self,
         subcommand_path: &[&str],
-        resource_name: &str,
+        resource: ResourceType,
     ) -> Result<Vec<T>, JanitorError>
     where
         T: serde::de::DeserializeOwned,
@@ -310,12 +334,12 @@ impl<R: CommandRunner> Janitor<R> {
         args.extend_from_slice(subcommand_path);
         args.extend_from_slice(&["list", project_arg.as_str(), "zone=all", "-o", "json"]);
 
-        let stdout = self.run_scw_json(&args, resource_name)?;
-        Self::parse_scw_list(&stdout, resource_name)
+        let stdout = self.run_scw_json(&args, resource)?;
+        Self::parse_scw_list(&stdout, resource)
     }
 
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
-        self.list_scw_resources(&["instance", "server"], "servers")
+        self.list_scw_resources(&["instance", "server"], ResourceType::Servers)
     }
 
     fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
@@ -331,11 +355,11 @@ impl<R: CommandRunner> Janitor<R> {
             "force-shutdown=true",
             "--wait",
         ];
-        self.run_scw(&args, "server delete")
+        self.run_scw(&args, ResourceType::Servers)
     }
 
     fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
-        self.list_scw_resources(&["block", "volume"], "volumes")
+        self.list_scw_resources(&["block", "volume"], ResourceType::Volumes)
     }
 
     fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
@@ -347,7 +371,7 @@ impl<R: CommandRunner> Janitor<R> {
             volume.id.as_str(),
             zone_arg.as_str(),
         ];
-        self.run_scw(&args, "volume delete")
+        self.run_scw(&args, ResourceType::Volumes)
     }
 }
 
