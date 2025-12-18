@@ -12,8 +12,8 @@ use thiserror::Error;
 
 use crate::sync::{CommandOutput, CommandRunner, ProcessCommandRunner, SyncError};
 
-mod types;
-use types::{ScwServer, ScwVolume};
+pub mod types;
+pub use types::{ScwServer, ScwVolume};
 
 /// Environment variable used by test harnesses to identify a test run.
 pub const TEST_RUN_ID_ENV: &str = "MRIYA_TEST_RUN_ID";
