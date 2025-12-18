@@ -295,19 +295,27 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
+    /// Lists Scaleway resources of a specific type using the scw CLI.
+    fn list_scw_resources<T>(
+        &self,
+        subcommand_path: &[&str],
+        resource_name: &str,
+    ) -> Result<Vec<T>, JanitorError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
         let project_arg = format!("project-id={}", self.config.project_id);
-        let args = [
-            "instance",
-            "server",
-            "list",
-            project_arg.as_str(),
-            "zone=all",
-            "-o",
-            "json",
-        ];
-        let stdout = self.run_scw_json(&args, "servers")?;
-        Self::parse_scw_list(&stdout, "servers")
+
+        let mut args = Vec::with_capacity(subcommand_path.len() + 5);
+        args.extend_from_slice(subcommand_path);
+        args.extend_from_slice(&["list", project_arg.as_str(), "zone=all", "-o", "json"]);
+
+        let stdout = self.run_scw_json(&args, resource_name)?;
+        Self::parse_scw_list(&stdout, resource_name)
+    }
+
+    fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
+        self.list_scw_resources(&["instance", "server"], "servers")
     }
 
     fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
@@ -327,18 +335,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
-        let project_arg = format!("project-id={}", self.config.project_id);
-        let args = [
-            "block",
-            "volume",
-            "list",
-            project_arg.as_str(),
-            "zone=all",
-            "-o",
-            "json",
-        ];
-        let stdout = self.run_scw_json(&args, "volumes")?;
-        Self::parse_scw_list(&stdout, "volumes")
+        self.list_scw_resources(&["block", "volume"], "volumes")
     }
 
     fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
