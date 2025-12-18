@@ -154,7 +154,7 @@ fn run_remote_invokes_ssh_with_wrapped_command(
     );
     assert_eq!(
         invocation.args.last(),
-        Some(&OsString::from(expected_wrapped.clone())),
+        Some(&OsString::from(expected_wrapped.as_str())),
         "expected wrapped remote command to be passed as last argument"
     );
 
