@@ -33,39 +33,23 @@ fn run_remote_with_fake_output(
 }
 
 #[rstest]
-fn run_remote_returns_missing_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let (runner, output) = run_remote_with_fake_output(base_config, &networking, |runner| {
-        runner.push_missing_exit_code();
-    })
-    .expect("missing exit code should be propagated as None");
-    assert!(output.exit_code.is_none());
+#[case(None, "")]
+#[case(Some(7), "")]
+fn run_remote_propagates_exit_codes(
+    base_config: SyncConfig,
+    networking: InstanceNetworking,
+    #[case] exit_code: Option<i32>,
+    #[case] expected_stdout: &str,
+) {
+    let (runner, output) =
+        run_remote_with_fake_output(base_config, &networking, |runner| match exit_code {
+            None => runner.push_missing_exit_code(),
+            Some(code) => runner.push_exit_code(code),
+        })
+        .expect("run_remote should succeed regardless of exit code presence");
 
-    let invocations = runner.invocations();
-    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
-    let invocation = invocations
-        .first()
-        .expect("expected a single invocation to exist");
-    let command = invocation.command_string();
-    assert!(
-        command.contains("cd /remote/path && echo ok"),
-        "expected remote command to change directory, got: {command}"
-    );
-    for fragment in ["mountpoint -q /mriya", "export CARGO_HOME=/mriya/cargo"] {
-        assert!(
-            command.contains(fragment),
-            "expected invocation to include '{fragment}', got: {command}"
-        );
-    }
-}
-
-#[rstest]
-fn run_remote_propagates_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let (runner, output) = run_remote_with_fake_output(base_config, &networking, |runner| {
-        runner.push_exit_code(7);
-    })
-    .expect("run_remote should succeed");
-    assert_eq!(output.exit_code, Some(7));
-    assert_eq!(output.stdout, "");
+    assert_eq!(output.exit_code, exit_code);
+    assert_eq!(output.stdout, expected_stdout);
 
     let invocations = runner.invocations();
     assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
