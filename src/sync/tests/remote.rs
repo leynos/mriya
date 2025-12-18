@@ -39,14 +39,9 @@ fn run_remote_propagates_exit_code(base_config: SyncConfig, networking: Instance
 }
 
 #[rstest]
-fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig, networking: InstanceNetworking) {
+fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig) {
     let runner = ScriptedRunner::new();
-    runner.push_success();
     let syncer = Syncer::new(base_config, runner).expect("config should validate");
-    let _ = syncer
-        .run_remote(&networking, "cargo test")
-        .expect("run_remote should succeed");
-
     let args = syncer.build_remote_command("cargo test");
     assert!(
         args.contains("cd /remote/path && cargo test"),
@@ -56,13 +51,8 @@ fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig, networking: Insta
 
 #[rstest]
 fn build_remote_command_routes_cargo_caches_when_volume_is_mounted(base_config: SyncConfig) {
-    let cfg = SyncConfig {
-        volume_mount_path: String::from("/mriya"),
-        route_build_caches: true,
-        ..base_config
-    };
     let runner = ScriptedRunner::new();
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let syncer = Syncer::new(base_config, runner).expect("config should validate");
 
     let command = syncer.build_remote_command("cargo test");
     assert!(
@@ -88,6 +78,37 @@ fn build_remote_command_routes_cargo_caches_when_volume_is_mounted(base_config: 
 }
 
 #[rstest]
+fn run_remote_invokes_ssh_with_wrapped_command(
+    base_config: SyncConfig,
+    networking: InstanceNetworking,
+) {
+    let runner = ScriptedRunner::new();
+    runner.push_success();
+    let syncer = Syncer::new(base_config, runner.clone()).expect("config should validate");
+
+    let remote_command = "echo ok";
+    let expected_wrapped = syncer.build_remote_command(remote_command);
+    let _ = syncer
+        .run_remote(&networking, remote_command)
+        .expect("run_remote should succeed");
+
+    let invocations = runner.invocations();
+    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
+    let invocation = invocations
+        .first()
+        .expect("expected a single invocation to exist");
+    assert_eq!(
+        invocation.program, "ssh",
+        "expected ssh binary invocation, got: {invocation:?}"
+    );
+    assert_eq!(
+        invocation.args.last(),
+        Some(&OsString::from(expected_wrapped)),
+        "expected wrapped remote command to be passed as last argument"
+    );
+}
+
+#[rstest]
 fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
     let cfg = SyncConfig {
         route_build_caches: false,
@@ -106,7 +127,6 @@ fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
 fn build_remote_command_escapes_volume_mount_path_with_spaces(base_config: SyncConfig) {
     let cfg = SyncConfig {
         volume_mount_path: String::from("/mnt/mriya cache"),
-        route_build_caches: true,
         ..base_config
     };
     let runner = ScriptedRunner::new();

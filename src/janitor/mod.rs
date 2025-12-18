@@ -7,11 +7,13 @@
 
 use std::ffi::OsString;
 
-use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::sync::{CommandOutput, CommandRunner, ProcessCommandRunner, SyncError};
+
+mod types;
+use types::{ScwServer, ScwVolume};
 
 /// Environment variable used by test harnesses to identify a test run.
 pub const TEST_RUN_ID_ENV: &str = "MRIYA_TEST_RUN_ID";
@@ -390,22 +392,6 @@ impl<R: CommandRunner> Janitor<R> {
         ];
         self.run_scw(&args, ResourceType::Volumes)
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct ScwServer {
-    id: String,
-    zone: String,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct ScwVolume {
-    id: String,
-    zone: String,
-    #[serde(default)]
-    tags: Vec<String>,
 }
 
 #[cfg(test)]
