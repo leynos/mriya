@@ -193,6 +193,8 @@ fn sweep_surfaces_parse_failures(
 #[rstest]
 fn sweep_surfaces_runner_failures() {
     let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    // ScriptedRunner with no outputs will return an error when sweep attempts to run a command,
+    // simulating a runner-level failure.
     let runner = ScriptedRunner::new();
 
     let janitor = Janitor::new(cfg, runner);

@@ -21,6 +21,21 @@ pub struct CommandInvocation {
     pub args: Vec<OsString>,
 }
 
+impl CommandInvocation {
+    /// Returns a shell-like command string for assertions.
+    #[must_use]
+    pub fn command_string(&self) -> String {
+        let mut parts = Vec::with_capacity(self.args.len() + 1);
+        parts.push(self.program.clone());
+        parts.extend(
+            self.args
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned()),
+        );
+        parts.join(" ")
+    }
+}
+
 impl ScriptedRunner {
     /// Creates a new runner with no queued responses.
     #[must_use]

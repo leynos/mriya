@@ -8,45 +8,112 @@ use std::ffi::OsString;
 
 use super::fixtures::{base_config, networking};
 
+const CACHE_ROUTING_VARS: &[&str] = &[
+    "CARGO_HOME=",
+    "RUSTUP_HOME=",
+    "CARGO_TARGET_DIR=",
+    "GOMODCACHE=",
+    "GOCACHE=",
+    "PIP_CACHE_DIR=",
+    "npm_config_cache=",
+    "YARN_CACHE_FOLDER=",
+    "PNPM_STORE_PATH=",
+];
+
 fn run_remote_with_fake_output(
     cfg: SyncConfig,
     networking: &InstanceNetworking,
     script: impl Fn(&ScriptedRunner),
-) -> Result<RemoteCommandOutput, SyncError> {
+) -> Result<(ScriptedRunner, RemoteCommandOutput), SyncError> {
     let runner = ScriptedRunner::new();
     script(&runner);
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    syncer.run_remote(networking, "echo ok")
+    let syncer = Syncer::new(cfg, runner.clone()).expect("config should validate");
+    let output = syncer.run_remote(networking, "echo ok")?;
+    Ok((runner, output))
 }
 
 #[rstest]
 fn run_remote_returns_missing_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let output = run_remote_with_fake_output(base_config, &networking, |runner| {
+    let (runner, output) = run_remote_with_fake_output(base_config, &networking, |runner| {
         runner.push_missing_exit_code();
     })
     .expect("missing exit code should be propagated as None");
     assert!(output.exit_code.is_none());
+
+    let invocations = runner.invocations();
+    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
+    let invocation = invocations
+        .first()
+        .expect("expected a single invocation to exist");
+    let command = invocation.command_string();
+    assert!(
+        command.contains("cd /remote/path && echo ok"),
+        "expected remote command to change directory, got: {command}"
+    );
+    for fragment in ["mountpoint -q /mriya", "export CARGO_HOME=/mriya/cargo"] {
+        assert!(
+            command.contains(fragment),
+            "expected invocation to include '{fragment}', got: {command}"
+        );
+    }
 }
 
 #[rstest]
 fn run_remote_propagates_exit_code(base_config: SyncConfig, networking: InstanceNetworking) {
-    let output = run_remote_with_fake_output(base_config, &networking, |runner| {
+    let (runner, output) = run_remote_with_fake_output(base_config, &networking, |runner| {
         runner.push_exit_code(7);
     })
     .expect("run_remote should succeed");
     assert_eq!(output.exit_code, Some(7));
     assert_eq!(output.stdout, "");
+
+    let invocations = runner.invocations();
+    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
+    let invocation = invocations
+        .first()
+        .expect("expected a single invocation to exist");
+    let command = invocation.command_string();
+    assert!(
+        command.contains("cd /remote/path && echo ok"),
+        "expected remote command to change directory, got: {command}"
+    );
+    for fragment in ["mountpoint -q /mriya", "export CARGO_HOME=/mriya/cargo"] {
+        assert!(
+            command.contains(fragment),
+            "expected invocation to include '{fragment}', got: {command}"
+        );
+    }
 }
 
 #[rstest]
 fn run_remote_cd_prefixes_remote_path(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        route_build_caches: false,
+        ..base_config
+    };
     let runner = ScriptedRunner::new();
-    let syncer = Syncer::new(base_config, runner).expect("config should validate");
-    let args = syncer.build_remote_command("cargo test");
+    runner.push_success();
+    let syncer = Syncer::new(cfg, runner.clone()).expect("config should validate");
+    let _ = syncer
+        .run_remote(&networking(), "cargo test")
+        .expect("run_remote should succeed");
+
+    let invocations = runner.invocations();
+    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
+    let invocation = invocations
+        .first()
+        .expect("expected a single invocation to exist");
+    let command = invocation.command_string();
     assert!(
-        args.contains("cd /remote/path && cargo test"),
-        "remote command should change directory, got: {args}"
+        command.contains("cd /remote/path && cargo test"),
+        "expected remote command to change directory, got: {command}"
     );
+    for var in CACHE_ROUTING_VARS {
+        assert!(
+            !command.contains(var),
+            "expected invocation to avoid cache routing var '{var}', got: {command}"
+        );
+    }
 }
 
 #[rstest]
@@ -103,8 +170,14 @@ fn run_remote_invokes_ssh_with_wrapped_command(
     );
     assert_eq!(
         invocation.args.last(),
-        Some(&OsString::from(expected_wrapped)),
+        Some(&OsString::from(expected_wrapped.clone())),
         "expected wrapped remote command to be passed as last argument"
+    );
+
+    let command = invocation.command_string();
+    assert!(
+        command.contains(&expected_wrapped),
+        "expected invocation to contain the wrapped remote command, got: {command}"
     );
 }
 
@@ -117,10 +190,12 @@ fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
     let command = syncer.build_remote_command("cargo test");
-    assert!(
-        !command.contains("CARGO_HOME="),
-        "expected cache routing to be disabled, got: {command}"
-    );
+    for var in CACHE_ROUTING_VARS {
+        assert!(
+            !command.contains(var),
+            "expected cache routing var '{var}' to be absent, got: {command}"
+        );
+    }
 }
 
 #[rstest]
