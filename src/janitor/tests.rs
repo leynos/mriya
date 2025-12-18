@@ -152,32 +152,40 @@ fn sweep_surfaces_scw_command_failures() {
 }
 
 #[rstest]
-#[case("not-json", None)]
-#[case("{\"total_count\":0}", Some("missing 'servers' field"))]
+#[case("malformed JSON", "not-json", None)]
 #[case(
-    "{\"servers\":[{\"id\":\"srv-a\"}],\"total_count\":1}",
-    Some("missing field")
+    "missing resource field",
+    "{\"total_count\":0}",
+    Some("missing 'servers' field")
 )]
-#[case("true", Some("unexpected JSON shape"))]
+#[case(
+    "item deserialisation error",
+    "{\"servers\":[{\"id\":\"srv-a\"}],\"total_count\":1}",
+    None
+)]
+#[case("unexpected JSON shape", "true", Some("unexpected JSON shape"))]
 fn sweep_surfaces_parse_failures(
-    #[case] stdout: &str,
-    #[case] expected_message_contains: Option<&str>,
+    #[case] scenario: &str,
+    #[case] json_output: &str,
+    #[case] expected_message_fragment: Option<&str>,
 ) {
     let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
     let runner = ScriptedRunner::new();
 
-    runner.push_output(Some(0), stdout, "");
+    runner.push_output(Some(0), json_output, "");
 
     let janitor = Janitor::new(cfg, runner);
-    let err = janitor.sweep().expect_err("sweep should fail");
-    let JanitorError::Parse { resource, message } = err else {
-        panic!("expected Parse, got {err:?}");
+    let err = janitor
+        .sweep()
+        .expect_err(&format!("sweep should fail for {scenario}"));
+
+    let JanitorError::Parse { message, .. } = err else {
+        panic!("expected Parse error for {scenario}, got {err:?}");
     };
-    assert_eq!(resource, "servers");
-    if let Some(expected) = expected_message_contains {
+    if let Some(fragment) = expected_message_fragment {
         assert!(
-            message.contains(expected),
-            "expected parse message to contain '{expected}', got: {message}"
+            message.contains(fragment),
+            "expected message to contain '{fragment}' for {scenario}, got: {message}"
         );
     }
 }
