@@ -43,6 +43,22 @@ fn assert_ssh_identity_validation_fails(
     assert_eq!(field, "ssh_identity_file");
 }
 
+fn set_rsync_bin(cfg: &mut SyncConfig, val: String) {
+    cfg.rsync_bin = val;
+}
+
+fn set_ssh_bin(cfg: &mut SyncConfig, val: String) {
+    cfg.ssh_bin = val;
+}
+
+fn set_ssh_user(cfg: &mut SyncConfig, val: String) {
+    cfg.ssh_user = val;
+}
+
+fn set_remote_path(cfg: &mut SyncConfig, val: String) {
+    cfg.remote_path = val;
+}
+
 #[rstest]
 fn sync_config_validate_accepts_defaults(base_config: SyncConfig) {
     assert!(base_config.validate().is_ok());
@@ -63,23 +79,16 @@ async fn volume_mount_path_defaults_to_ortho_config_constant() {
 }
 
 #[rstest]
-fn sync_config_validation_rejects_rsync_bin(base_config: SyncConfig) {
-    assert_validation_rejects_field(base_config, "rsync_bin", |cfg, val| cfg.rsync_bin = val);
-}
-
-#[rstest]
-fn sync_config_validation_rejects_ssh_bin(base_config: SyncConfig) {
-    assert_validation_rejects_field(base_config, "ssh_bin", |cfg, val| cfg.ssh_bin = val);
-}
-
-#[rstest]
-fn sync_config_validation_rejects_ssh_user(base_config: SyncConfig) {
-    assert_validation_rejects_field(base_config, "ssh_user", |cfg, val| cfg.ssh_user = val);
-}
-
-#[rstest]
-fn sync_config_validation_rejects_remote_path(base_config: SyncConfig) {
-    assert_validation_rejects_field(base_config, "remote_path", |cfg, val| cfg.remote_path = val);
+#[case("rsync_bin", set_rsync_bin)]
+#[case("ssh_bin", set_ssh_bin)]
+#[case("ssh_user", set_ssh_user)]
+#[case("remote_path", set_remote_path)]
+fn sync_config_validation_rejects_invalid_field(
+    base_config: SyncConfig,
+    #[case] field_name: &str,
+    #[case] set_field: fn(&mut SyncConfig, String),
+) {
+    assert_validation_rejects_field(base_config, field_name, set_field);
 }
 
 #[rstest]

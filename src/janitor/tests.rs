@@ -164,6 +164,58 @@ fn sweep_surfaces_parse_failures() {
 }
 
 #[rstest]
+fn sweep_surfaces_parse_failures_for_missing_resource_field() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    runner.push_output(Some(0), "{\"total_count\":0}", "");
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    let JanitorError::Parse { message, .. } = err else {
+        panic!("expected Parse, got {err:?}");
+    };
+    assert!(
+        message.contains("missing 'servers' field"),
+        "expected missing field message, got: {message}"
+    );
+}
+
+#[rstest]
+fn sweep_surfaces_parse_failures_for_item_deserialisation_errors() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    runner.push_output(
+        Some(0),
+        "{\"servers\":[{\"id\":\"srv-a\"}],\"total_count\":1}",
+        "",
+    );
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    assert!(matches!(err, JanitorError::Parse { .. }));
+}
+
+#[rstest]
+fn sweep_surfaces_parse_failures_for_unexpected_json_shapes() {
+    let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
+    let runner = ScriptedRunner::new();
+
+    runner.push_output(Some(0), "true", "");
+
+    let janitor = Janitor::new(cfg, runner);
+    let err = janitor.sweep().expect_err("sweep should fail");
+    let JanitorError::Parse { message, .. } = err else {
+        panic!("expected Parse, got {err:?}");
+    };
+    assert!(
+        message.contains("unexpected JSON shape"),
+        "expected unexpected JSON shape message, got: {message}"
+    );
+}
+
+#[rstest]
 fn sweep_surfaces_runner_failures() {
     let cfg = JanitorConfig::new("project", "run-1", DEFAULT_SCW_BIN).expect("config");
     let runner = ScriptedRunner::new();

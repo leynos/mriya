@@ -53,6 +53,21 @@ pub struct JanitorConfig {
 }
 
 impl JanitorConfig {
+    /// Trims a required field and rejects blank values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JanitorError::InvalidConfig`] when any required field is blank.
+    fn require_non_blank(value: &str, field: &'static str) -> Result<String, JanitorError> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(JanitorError::InvalidConfig {
+                field: field.to_owned(),
+            });
+        }
+        Ok(trimmed.to_owned())
+    }
+
     /// Constructs a config, trimming whitespace.
     ///
     /// # Errors
@@ -63,24 +78,13 @@ impl JanitorConfig {
         test_run_id: impl Into<String>,
         scw_bin: impl Into<String>,
     ) -> Result<Self, JanitorError> {
-        let trimmed_project_id = project_id.into().trim().to_owned();
-        let trimmed_test_run_id = test_run_id.into().trim().to_owned();
-        let trimmed_scw_bin = scw_bin.into().trim().to_owned();
-        if trimmed_project_id.is_empty() {
-            return Err(JanitorError::InvalidConfig {
-                field: String::from("project_id"),
-            });
-        }
-        if trimmed_test_run_id.is_empty() {
-            return Err(JanitorError::InvalidConfig {
-                field: String::from("test_run_id"),
-            });
-        }
-        if trimmed_scw_bin.is_empty() {
-            return Err(JanitorError::InvalidConfig {
-                field: String::from("scw_bin"),
-            });
-        }
+        let raw_project_id = project_id.into();
+        let raw_test_run_id = test_run_id.into();
+        let raw_scw_bin = scw_bin.into();
+
+        let trimmed_project_id = Self::require_non_blank(&raw_project_id, "project_id")?;
+        let trimmed_test_run_id = Self::require_non_blank(&raw_test_run_id, "test_run_id")?;
+        let trimmed_scw_bin = Self::require_non_blank(&raw_scw_bin, "scw_bin")?;
         Ok(Self {
             project_id: trimmed_project_id,
             test_run_id: trimmed_test_run_id,
@@ -189,20 +193,25 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    fn delete_tagged_servers(&self, tag: &str) -> Result<usize, JanitorError> {
-        let servers = self.list_tagged_servers(tag)?;
-        for server in &servers {
-            self.delete_server(server)?;
+    fn delete_tagged<T>(
+        &self,
+        tag: &str,
+        list: fn(&Self, &str) -> Result<Vec<T>, JanitorError>,
+        delete: fn(&Self, &T) -> Result<CommandOutput, JanitorError>,
+    ) -> Result<usize, JanitorError> {
+        let items = list(self, tag)?;
+        for item in &items {
+            delete(self, item)?;
         }
-        Ok(servers.len())
+        Ok(items.len())
+    }
+
+    fn delete_tagged_servers(&self, tag: &str) -> Result<usize, JanitorError> {
+        self.delete_tagged(tag, Self::list_tagged_servers, Self::delete_server)
     }
 
     fn delete_tagged_volumes(&self, tag: &str) -> Result<usize, JanitorError> {
-        let volumes = self.list_tagged_volumes(tag)?;
-        for volume in &volumes {
-            self.delete_volume(volume)?;
-        }
-        Ok(volumes.len())
+        self.delete_tagged(tag, Self::list_tagged_volumes, Self::delete_volume)
     }
 
     fn ensure_no_remaining(&self, tag: &str) -> Result<(), JanitorError> {
@@ -296,22 +305,7 @@ impl<R: CommandRunner> Janitor<R> {
             message: err.to_string(),
         })?;
 
-        let items = match payload {
-            Value::Array(items) => Value::Array(items),
-            Value::Object(mut map) => {
-                map.remove(resource_name)
-                    .ok_or_else(|| JanitorError::Parse {
-                        resource: resource_name.to_owned(),
-                        message: format!("missing '{resource_name}' field"),
-                    })?
-            }
-            other => {
-                return Err(JanitorError::Parse {
-                    resource: resource_name.to_owned(),
-                    message: format!("unexpected JSON shape: {other}"),
-                });
-            }
-        };
+        let items = Self::unwrap_scw_list_items(payload, resource_name)?;
 
         serde_json::from_value::<Vec<T>>(items).map_err(|err| JanitorError::Parse {
             resource: resource_name.to_owned(),
@@ -330,12 +324,35 @@ impl<R: CommandRunner> Janitor<R> {
     {
         let project_arg = format!("project-id={}", self.config.project_id);
 
+        // Capacity: `subcommand_path` + ["list", project_arg, "zone=all", "-o", "json"].
         let mut args = Vec::with_capacity(subcommand_path.len() + 5);
         args.extend_from_slice(subcommand_path);
         args.extend_from_slice(&["list", project_arg.as_str(), "zone=all", "-o", "json"]);
 
         let stdout = self.run_scw_json(&args, resource)?;
         Self::parse_scw_list(&stdout, resource)
+    }
+
+    fn unwrap_scw_list_items(payload: Value, resource_name: &str) -> Result<Value, JanitorError> {
+        match payload {
+            Value::Array(items) => Ok(Value::Array(items)),
+            Value::Object(map) => Self::extract_scw_list_field(map, resource_name),
+            other => Err(JanitorError::Parse {
+                resource: resource_name.to_owned(),
+                message: format!("unexpected JSON shape: {other}"),
+            }),
+        }
+    }
+
+    fn extract_scw_list_field(
+        mut map: serde_json::Map<String, Value>,
+        resource_name: &str,
+    ) -> Result<Value, JanitorError> {
+        map.remove(resource_name)
+            .ok_or_else(|| JanitorError::Parse {
+                resource: resource_name.to_owned(),
+                message: format!("missing '{resource_name}' field"),
+            })
     }
 
     fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {

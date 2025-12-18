@@ -33,7 +33,7 @@ fn run_remote_propagates_exit_code(base_config: SyncConfig, networking: Instance
     let output = run_remote_with_fake_output(base_config, &networking, |runner| {
         runner.push_exit_code(7);
     })
-    .unwrap_or_else(|err| panic!("run_remote should succeed: {err}"));
+    .expect("run_remote should succeed");
     assert_eq!(output.exit_code, Some(7));
     assert_eq!(output.stdout, "");
 }
@@ -127,10 +127,9 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
     base_config: SyncConfig,
     networking: InstanceNetworking,
 ) {
-    let cfg = base_config;
     let runner = ScriptedRunner::new();
     runner.push_success();
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    let syncer = Syncer::new(base_config, runner).expect("config should validate");
     let wrapped = syncer.build_remote_command("echo ok");
     let args = syncer.build_ssh_args(&networking, &wrapped);
 
