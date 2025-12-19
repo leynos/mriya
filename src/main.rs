@@ -20,8 +20,8 @@ use shell_escape::unix::escape;
 use thiserror::Error;
 
 use mriya::{
-    RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig,
-    StreamingCommandRunner, SyncConfig, Syncer,
+    InstanceRequest, RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError,
+    ScalewayConfig, StreamingCommandRunner, SyncConfig, Syncer,
 };
 
 #[cfg(test)]
@@ -40,6 +40,20 @@ enum Cli {
 
 #[derive(Debug, Parser)]
 struct RunCommand {
+    /// Override the Scaleway instance type (commercial type) for this run.
+    ///
+    /// The Scaleway backend validates availability in the selected zone during
+    /// provisioning, and rejects unknown values with a provider-specific
+    /// error.
+    #[arg(long, value_name = "TYPE")]
+    instance_type: Option<String>,
+    /// Override the image label for this run.
+    ///
+    /// The Scaleway backend resolves the label to a concrete image identifier
+    /// for the selected architecture and zone, and rejects unknown labels with
+    /// a provider-specific error.
+    #[arg(long, value_name = "IMAGE")]
+    image: Option<String>,
     /// Command to execute on the remote host (use -- to separate flags).
     #[arg(required = true, trailing_var_arg = true)]
     command: Vec<String>,
@@ -59,6 +73,11 @@ enum CliError {
     Run(#[from] RunError<ScalewayBackendError>),
     #[error("invalid command argument: {0}")]
     InvalidCommand(String),
+    #[error("invalid override for {field}: {message}")]
+    InvalidOverride {
+        field: &'static str,
+        message: String,
+    },
 }
 
 #[tokio::main]
@@ -102,9 +121,10 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
     let backend =
         ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
-    let request = backend
+    let mut request = backend
         .default_request()
         .map_err(|err| CliError::Backend(err.to_string()))?;
+    apply_instance_overrides(&mut request, &args)?;
 
     let sync_config =
         SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
@@ -123,6 +143,32 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         .await?;
 
     output.exit_code.ok_or(CliError::MissingExitCode)
+}
+
+fn apply_instance_overrides(
+    request: &mut InstanceRequest,
+    args: &RunCommand,
+) -> Result<(), CliError> {
+    if let Some(instance_type) = args.instance_type.as_deref() {
+        request.instance_type = parse_override("instance_type", instance_type)?;
+    }
+
+    if let Some(image) = args.image.as_deref() {
+        request.image_label = parse_override("image", image)?;
+    }
+
+    Ok(())
+}
+
+fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CliError::InvalidOverride {
+            field,
+            message: String::from("must not be empty or whitespace"),
+        });
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn render_remote_command(args: &[String]) -> String {
@@ -183,7 +229,6 @@ fn enable_fake_modes() -> bool {
 #[cfg(any(test, feature = "test-backdoors"))]
 fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
-    let _ = args; // suppress unused warning when compiled without tests hitting this path
     match mode.as_str() {
         "exit-0" => {
             writeln!(io::stdout(), "fake-stdout").ok();
@@ -195,6 +240,7 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
             writeln!(io::stderr(), "fake-stderr").ok();
             Some(Ok(7))
         }
+        "dump-request" => Some(fake_dump_request(args)),
         "missing-exit" => {
             writeln!(io::stdout(), "fake-stdout").ok();
             writeln!(io::stderr(), "fake-stderr").ok();
@@ -202,6 +248,22 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
         }
         _ => None,
     }
+}
+
+#[cfg(any(test, feature = "test-backdoors"))]
+fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
+    let scaleway_config =
+        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let backend =
+        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
+    let mut request = backend
+        .default_request()
+        .map_err(|err| CliError::Backend(err.to_string()))?;
+    apply_instance_overrides(&mut request, args)?;
+
+    writeln!(io::stdout(), "instance_type={}", request.instance_type).ok();
+    writeln!(io::stdout(), "image_label={}", request.image_label).ok();
+    Ok(0)
 }
 
 #[cfg(any(test, feature = "test-backdoors"))]
@@ -231,6 +293,8 @@ mod tests {
     {
         *RUN_COMMAND_HOOK.lock().await = Some(Box::new(move |cmd| Box::pin(hook(cmd))));
         let result = exec_run(RunCommand {
+            instance_type: None,
+            image: None,
             command: vec![String::from("echo")],
         })
         .await;
@@ -283,6 +347,8 @@ mod tests {
         ])
         .await;
         let result = run_command(RunCommand {
+            instance_type: None,
+            image: None,
             command: vec![String::from("echo")],
         })
         .await;
@@ -301,6 +367,8 @@ mod tests {
         ])
         .await;
         let result = run_command(RunCommand {
+            instance_type: None,
+            image: None,
             command: vec![String::from("echo")],
         })
         .await;
@@ -315,6 +383,46 @@ mod tests {
     async fn dispatch_uses_hook_result() {
         let result = dispatch_with_hook(|_| async { Ok(42) }).await;
         assert!(matches!(result, Ok(42)));
+    }
+
+    #[test]
+    fn parse_override_trims_and_accepts_nonempty_values() {
+        let parsed = parse_override("instance_type", "  DEV1-M  ")
+            .unwrap_or_else(|err| panic!("expected override to parse: {err}"));
+        assert_eq!(parsed, "DEV1-M");
+    }
+
+    #[test]
+    fn parse_override_rejects_empty_or_whitespace_values() {
+        let err = parse_override("image", "   ").expect_err("whitespace override should fail");
+        assert!(
+            matches!(err, CliError::InvalidOverride { field: "image", .. }),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_instance_overrides_updates_request() {
+        let mut request = InstanceRequest::builder()
+            .image_label("Ubuntu 24.04 Noble Numbat")
+            .instance_type("DEV1-S")
+            .zone("fr-par-1")
+            .project_id("project")
+            .architecture("x86_64")
+            .build()
+            .expect("base request should build");
+
+        let args = RunCommand {
+            instance_type: Some(String::from("  DEV1-M  ")),
+            image: Some(String::from("  ubuntu-22-04  ")),
+            command: vec![String::from("echo"), String::from("ok")],
+        };
+
+        apply_instance_overrides(&mut request, &args)
+            .unwrap_or_else(|err| panic!("expected overrides to apply: {err}"));
+
+        assert_eq!(request.instance_type, "DEV1-M");
+        assert_eq!(request.image_label, "ubuntu-22-04");
     }
 
     #[test]

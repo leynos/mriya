@@ -45,7 +45,7 @@ for concrete, testable deliverables.
 
 - Step: Instance configurability
 
-  - [ ] Support per-run or per-profile overrides for instance type and image,
+  - [x] Support per-run or per-profile overrides for instance type and image,
     with provider-specific validation; acceptance: unsupported type/image names
     yield clear errors and valid overrides take effect in create requests.
 
