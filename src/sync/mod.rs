@@ -7,10 +7,10 @@ use std::ffi::OsString;
 use camino::{Utf8Path, Utf8PathBuf};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
-use shell_escape::unix::escape;
 use thiserror::Error;
 
 use crate::backend::InstanceNetworking;
+mod remote_command;
 mod types;
 mod util;
 pub use types::{
@@ -58,6 +58,10 @@ pub struct SyncConfig {
     /// Mount path for the persistent cache volume on the remote instance.
     #[ortho_config(default = DEFAULT_VOLUME_MOUNT_PATH.to_owned())]
     pub volume_mount_path: String,
+    /// Whether to route common language build caches to the mounted cache
+    /// volume when it is available.
+    #[ortho_config(default = true)]
+    pub route_build_caches: bool,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
@@ -80,6 +84,7 @@ impl SyncConfig {
         Self::require_value(&self.ssh_user, "ssh_user")?;
         Self::require_value(&self.remote_path, "remote_path")?;
         Self::require_optional_value(self.ssh_identity_file.as_deref(), "ssh_identity_file")?;
+        Self::require_value(&self.volume_mount_path, "volume_mount_path")?;
         Ok(())
     }
 
@@ -381,8 +386,7 @@ impl<R: CommandRunner> Syncer<R> {
     }
 
     fn build_remote_command(&self, remote_command: &str) -> String {
-        let escaped_path = escape(self.config.remote_path.clone().into());
-        format!("cd {escaped_path} && {remote_command}")
+        remote_command::build_remote_command(&self.config, remote_command)
     }
 }
 

@@ -103,6 +103,10 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
   verification (default: `false`).
 - `MRIYA_SYNC_SSH_KNOWN_HOSTS_FILE` — path to a known hosts file (default:
   `/dev/null` when host key checking is disabled).
+- `MRIYA_SYNC_VOLUME_MOUNT_PATH` — mount path for the persistent cache volume
+  (default: `/mriya`).
+- `MRIYA_SYNC_ROUTE_BUILD_CACHES` — set to `false` to disable automatic cache
+  routing to the mounted volume (default: `true`).
 
 ## Persistent cache volume
 
@@ -131,14 +135,21 @@ To enable the cache volume:
 3. Configure the build tool to use the mounted volume. For Cargo:
 
    ```bash
-   export CARGO_TARGET_DIR=/mriya/target
    mriya run -- cargo build
    ```
 
-The volume is automatically mounted to `/mriya` (configurable via
-`MRIYA_SYNC_VOLUME_MOUNT_PATH`). If mounting fails (for example, when the
-volume has no filesystem), the run continues without the cache — this allows
-graceful degradation for first-time setups.
+When the volume is mounted successfully, Mriya automatically routes common
+language caches to it by exporting environment variables in the remote session,
+including:
+
+- `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR` (Rust/Cargo)
+- `GOMODCACHE` and `GOCACHE` (Go)
+- `PIP_CACHE_DIR` (Python/pip)
+- `npm_config_cache`, `YARN_CACHE_FOLDER`, and `PNPM_STORE_PATH` (Node tooling)
+
+If mounting fails (for example, when the volume has no filesystem), the run
+continues without the cache — this allows graceful degradation for first-time
+setups.
 
 **Requirements:**
 
@@ -168,9 +179,15 @@ The behavioural suite provisions a real DEV1-S instance to prove create → wait
 `SCW_*` variables are set, then run:
 
 ```bash
-make test -- scaleway_backend -- --test-threads=1
+make scaleway-test
 ```
 
-The extra `--test-threads=1` keeps only one instance alive at a time. Cleanup
-is built into the backend, but cancelling the run may still leave resources;
-rerun `make test` to let the teardown step finish.
+The target:
+
+- Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the Scaleway behavioural suite.
+- Generates `MRIYA_TEST_RUN_ID` via `uuidgen` and tags created instances.
+- Runs `mriya-janitor` before and after tests so leaked instances are cleaned
+  up even when the test command fails.
+
+The underlying `cargo test` uses `--test-threads=1` to keep only one instance
+alive at a time.

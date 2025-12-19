@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod janitor;
 pub mod run;
 pub mod scaleway;
 pub mod sync;
@@ -17,6 +18,9 @@ pub use backend::{
     Backend, InstanceHandle, InstanceNetworking, InstanceRequest, InstanceRequestBuilder,
 };
 pub use config::ScalewayConfig;
+pub use janitor::{
+    Janitor, JanitorConfig, JanitorError, SweepSummary, TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX,
+};
 pub use run::{RunError, RunOrchestrator};
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
 pub use sync::{

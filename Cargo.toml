@@ -7,7 +7,7 @@ edition = "2024"
 test-backdoors = []
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 ortho_config = { version = "0.6.0", features = ["yaml", "json5"] }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "json"] }
 scaleway-rs = { version = "0.1.9", default-features = false, features = ["rustls"] }
@@ -21,8 +21,8 @@ shell-escape = "0.1.5"
 
 [dev-dependencies]
 rstest = "0.22"
-rstest-bdd = "0.1.0"
-rstest-bdd-macros = "0.1.0"
+rstest-bdd = "0.2.0"
+rstest-bdd-macros = "0.2.0"
 assert_cmd = "2.0"
 tempfile = "3.14"
 cap-std = { version = "3.4.5", features = ["fs_utf8"] }
@@ -93,4 +93,6 @@ result_large_err                    = "deny"
 
 [lints.rust]
 missing_docs                        = "deny"
+
+[lints.rustdoc]
 missing_crate_level_docs            = "deny"

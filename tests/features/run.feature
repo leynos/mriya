@@ -36,3 +36,20 @@ Feature: Remote execution via mriya run
     When I orchestrate a remote run for "cargo build"
     Then the run result exit code is "0"
     And the instance is destroyed
+
+  Scenario: Route Cargo caches to the mounted cache volume
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo test"
+    Then the remote command routes Cargo caches to the volume
+    And the instance is destroyed
+
+  Scenario: Allow disabling cache routing
+    Given a ready backend and sync pipeline
+    And cache routing is disabled
+    And a volume ID "vol-12345" is configured
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo test"
+    Then the remote command does not route Cargo caches
+    And the instance is destroyed

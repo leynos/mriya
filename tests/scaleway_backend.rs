@@ -178,10 +178,6 @@ fn request_invalid_type(
 }
 
 #[then("the request is rejected because the instance type is unavailable")]
-#[expect(
-    clippy::missing_const_for_fn,
-    reason = "step may gather additional assertions"
-)]
 fn rejects_unknown_type() {}
 
 #[when("I request image label \"{label}\"")]
@@ -205,10 +201,6 @@ fn request_invalid_image(
 }
 
 #[then("the request is rejected because the image cannot be resolved")]
-#[expect(
-    clippy::missing_const_for_fn,
-    reason = "step may gather additional assertions"
-)]
 fn rejects_unknown_image() {}
 
 #[scenario(

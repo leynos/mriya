@@ -36,7 +36,7 @@ for concrete, testable deliverables.
 
 - Step: Cache routing
 
-  - [ ] Route build caches to the volume by setting `CARGO_HOME`, `RUSTUP_HOME`,
+  - [x] Route build caches to the volume by setting `CARGO_HOME`, `RUSTUP_HOME`,
     and `CARGO_TARGET_DIR` (and equivalents for other languages) in the remote
     session; acceptance: repeated `cargo test` runs compile incrementally with
     unchanged source.
