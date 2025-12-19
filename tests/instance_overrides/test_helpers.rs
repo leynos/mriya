@@ -6,6 +6,11 @@ use std::sync::LazyLock;
 use escargot::CargoBuild;
 use rstest::fixture;
 
+pub const DEFAULT_INSTANCE_TYPE: &str = "DEV1-S";
+pub const DEFAULT_IMAGE_LABEL: &str = "Ubuntu 24.04 Noble Numbat";
+pub const DUMMY_SECRET_KEY: &str = "dummy-secret";
+pub const DUMMY_PROJECT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
 #[derive(Clone, Debug)]
 pub struct CliOutput {
     pub status_code: i32,
@@ -59,11 +64,8 @@ impl CliContext {
         let mut cmd = mriya_cmd();
         cmd.env("MRIYA_FAKE_RUN_ENABLE", "1");
         cmd.env("MRIYA_FAKE_RUN_MODE", "dump-request");
-        cmd.env("SCW_SECRET_KEY", "dummy-secret");
-        cmd.env(
-            "SCW_DEFAULT_PROJECT_ID",
-            "11111111-2222-3333-4444-555555555555",
-        );
+        cmd.env("SCW_SECRET_KEY", DUMMY_SECRET_KEY);
+        cmd.env("SCW_DEFAULT_PROJECT_ID", DUMMY_PROJECT_ID);
         cmd.env("SCW_DEFAULT_INSTANCE_TYPE", &self.default_instance_type);
         cmd.env("SCW_DEFAULT_IMAGE", &self.default_image);
         cmd
@@ -73,8 +75,8 @@ impl CliContext {
 #[fixture]
 pub fn cli_context() -> CliContext {
     CliContext {
-        default_instance_type: String::from("DEV1-S"),
-        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
+        default_instance_type: String::from(DEFAULT_INSTANCE_TYPE),
+        default_image: String::from(DEFAULT_IMAGE_LABEL),
         output: None,
     }
 }

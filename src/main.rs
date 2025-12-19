@@ -117,14 +117,7 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         }
     }
 
-    let scaleway_config =
-        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
-    let backend =
-        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
-    let mut request = backend
-        .default_request()
-        .map_err(|err| CliError::Backend(err.to_string()))?;
-    apply_instance_overrides(&mut request, &args)?;
+    let (backend, request) = build_backend_and_request(&args)?;
 
     let sync_config =
         SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
@@ -145,16 +138,30 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     output.exit_code.ok_or(CliError::MissingExitCode)
 }
 
+fn build_backend_and_request(
+    args: &RunCommand,
+) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
+    let scaleway_config =
+        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let backend =
+        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
+    let mut request = backend
+        .default_request()
+        .map_err(|err| CliError::Backend(err.to_string()))?;
+    apply_instance_overrides(&mut request, args)?;
+    Ok((backend, request))
+}
+
 fn apply_instance_overrides(
     request: &mut InstanceRequest,
     args: &RunCommand,
 ) -> Result<(), CliError> {
     if let Some(instance_type) = args.instance_type.as_deref() {
-        request.instance_type = parse_override("instance_type", instance_type)?;
+        request.instance_type = parse_override("--instance-type", instance_type)?;
     }
 
     if let Some(image) = args.image.as_deref() {
-        request.image_label = parse_override("image", image)?;
+        request.image_label = parse_override("--image", image)?;
     }
 
     Ok(())
@@ -252,14 +259,7 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
 
 #[cfg(any(test, feature = "test-backdoors"))]
 fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
-    let scaleway_config =
-        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
-    let backend =
-        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
-    let mut request = backend
-        .default_request()
-        .map_err(|err| CliError::Backend(err.to_string()))?;
-    apply_instance_overrides(&mut request, args)?;
+    let (_backend, request) = build_backend_and_request(args)?;
 
     writeln!(io::stdout(), "instance_type={}", request.instance_type).ok();
     writeln!(io::stdout(), "image_label={}", request.image_label).ok();
@@ -387,16 +387,22 @@ mod tests {
 
     #[test]
     fn parse_override_trims_and_accepts_nonempty_values() {
-        let parsed = parse_override("instance_type", "  DEV1-M  ")
+        let parsed = parse_override("--instance-type", "  DEV1-M  ")
             .unwrap_or_else(|err| panic!("expected override to parse: {err}"));
         assert_eq!(parsed, "DEV1-M");
     }
 
     #[test]
     fn parse_override_rejects_empty_or_whitespace_values() {
-        let err = parse_override("image", "   ").expect_err("whitespace override should fail");
+        let err = parse_override("--image", "   ").expect_err("whitespace override should fail");
         assert!(
-            matches!(err, CliError::InvalidOverride { field: "image", .. }),
+            matches!(
+                err,
+                CliError::InvalidOverride {
+                    field: "--image",
+                    ..
+                }
+            ),
             "unexpected error: {err}"
         );
     }
