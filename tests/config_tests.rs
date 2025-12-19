@@ -5,6 +5,7 @@ mod test_constants;
 
 use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
+use tempfile::TempDir;
 
 use test_constants::DEFAULT_INSTANCE_TYPE;
 
@@ -20,6 +21,8 @@ fn valid_config() -> ScalewayConfig {
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
     }
 }
 
@@ -126,4 +129,59 @@ fn config_as_request_produces_valid_request() {
     assert_eq!(request.project_id, cfg.default_project_id);
     assert_eq!(request.architecture, cfg.default_architecture);
     assert_eq!(request.volume_id, cfg.default_volume_id);
+    assert_eq!(request.cloud_init_user_data, None);
+}
+
+#[test]
+fn config_rejects_cloud_init_inline_and_file_together() {
+    let cfg = ScalewayConfig {
+        cloud_init_user_data: Some(String::from("#cloud-config\npackages: [jq]\n")),
+        cloud_init_user_data_file: Some(String::from("/tmp/user-data.yml")),
+        ..valid_config()
+    };
+
+    let err = cfg.validate().expect_err("expected conflict to error");
+    assert!(
+        err.to_string().contains("SCW_CLOUD_INIT_USER_DATA"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn config_rejects_empty_cloud_init_inline() {
+    let cfg = ScalewayConfig {
+        cloud_init_user_data: Some(String::from("   ")),
+        ..valid_config()
+    };
+
+    let err = cfg.validate().expect_err("expected empty inline to error");
+    assert!(
+        err.to_string()
+            .contains("cloud-init user-data must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn config_reads_cloud_init_user_data_from_file() {
+    let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
+    let path = tmp.path().join("user-data.txt");
+    std::fs::write(&path, "file-user-data").unwrap_or_else(|err| panic!("write file: {err}"));
+    let path_str = path
+        .to_str()
+        .unwrap_or_else(|| panic!("temp path should be utf8: {}", path.display()))
+        .to_owned();
+
+    let cfg = ScalewayConfig {
+        cloud_init_user_data_file: Some(path_str),
+        ..valid_config()
+    };
+
+    let request = cfg
+        .as_request()
+        .unwrap_or_else(|err| panic!("as_request should succeed: {err}"));
+    assert_eq!(
+        request.cloud_init_user_data,
+        Some(String::from("file-user-data"))
+    );
 }

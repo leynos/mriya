@@ -174,7 +174,7 @@ pub enum SyncError {
 }
 
 /// Orchestrates rsync plus remote execution.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Syncer<R: CommandRunner> {
     config: SyncConfig,
     runner: R,

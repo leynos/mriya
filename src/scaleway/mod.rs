@@ -3,6 +3,7 @@
 mod error;
 mod lifecycle;
 mod types;
+mod user_data;
 mod volume;
 
 use std::time::Duration;
@@ -162,6 +163,11 @@ impl Backend for ScalewayBackend {
                 zone: request.zone.clone(),
             };
 
+            // Apply cloud-init user-data before the first boot.
+            if let Some(ref user_data) = request.cloud_init_user_data {
+                self.set_cloud_init_user_data(&handle, user_data).await?;
+            }
+
             // Attach cache volume before powering on (instance is stopped)
             if let Some(ref volume_id) = request.volume_id {
                 let root_volume_id = server
@@ -200,7 +206,11 @@ impl Backend for ScalewayBackend {
         &'a self,
         handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
-        Box::pin(async move { self.wait_for_public_ip(handle).await })
+        Box::pin(async move {
+            let networking = self.wait_for_public_ip(handle).await?;
+            self.wait_for_ssh_ready(handle, &networking).await?;
+            Ok(networking)
+        })
     }
 
     fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {

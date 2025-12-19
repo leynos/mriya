@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use crate::backend::{InstanceHandle, InstanceNetworking, InstanceRequest};
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 use tokio::time::sleep;
+use tokio::{net::TcpStream, time::timeout};
 
+use super::user_data::{CLOUD_INIT_USER_DATA_KEY, user_data_url};
 use super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::{ScalewayBackend, ScalewayBackendError};
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
@@ -239,6 +241,27 @@ impl ScalewayBackend {
         }
     }
 
+    pub(super) async fn wait_for_ssh_ready(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+    ) -> Result<(), ScalewayBackendError> {
+        let deadline = Instant::now() + self.wait_timeout;
+        while Instant::now() <= deadline {
+            let addr = (networking.public_ip, networking.ssh_port);
+            let connect = timeout(Duration::from_secs(2), TcpStream::connect(addr)).await;
+            if matches!(connect, Ok(Ok(_))) {
+                return Ok(());
+            }
+            sleep(self.poll_interval).await;
+        }
+
+        Err(ScalewayBackendError::Timeout {
+            action: String::from("wait_for_ssh_ready"),
+            instance_id: handle.id.clone(),
+        })
+    }
+
     pub(super) async fn wait_until_gone(
         &self,
         handle: &InstanceHandle,
@@ -303,6 +326,42 @@ impl ScalewayBackend {
 
         let request = UpdateInstanceVolumesRequest { volumes };
         self.patch_instance_volumes(handle, &request).await
+    }
+
+    pub(super) async fn set_cloud_init_user_data(
+        &self,
+        handle: &InstanceHandle,
+        user_data: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        if user_data.trim().is_empty() {
+            return Err(ScalewayBackendError::CloudInitUserDataEmpty {
+                instance_id: handle.id.clone(),
+            });
+        }
+
+        let url = user_data_url(&handle.zone, &handle.id, CLOUD_INIT_USER_DATA_KEY);
+        let response = HTTP_CLIENT
+            .put(&url)
+            .header("X-Auth-Token", &self.config.secret_key)
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body(user_data.to_owned())
+            .timeout(HTTP_TIMEOUT)
+            .send()
+            .await
+            .map_err(|err| ScalewayBackendError::Provider {
+                message: err.to_string(),
+            })?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let error_text = response.text().await.unwrap_or_default();
+        Err(ScalewayBackendError::UserDataFailed {
+            key: String::from(CLOUD_INIT_USER_DATA_KEY),
+            instance_id: handle.id.clone(),
+            message: error_text,
+        })
     }
 
     /// Sends a PATCH request to update instance volumes.

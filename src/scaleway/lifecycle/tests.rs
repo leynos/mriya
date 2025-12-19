@@ -70,6 +70,8 @@ fn dummy_config() -> ScalewayConfig {
         default_image: String::from("img"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
     }
 }
 
@@ -82,6 +84,7 @@ fn base_request() -> InstanceRequest {
         organisation_id: None,
         architecture: "x86_64".to_owned(),
         volume_id: None,
+        cloud_init_user_data: None,
     }
 }
 
@@ -210,6 +213,66 @@ async fn wait_for_public_ip_returns_missing_ip() {
         ),
         "unexpected wait_for_public_ip outcome: {result:?}"
     );
+}
+
+#[tokio::test]
+async fn wait_for_ssh_ready_succeeds_when_port_listens() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|err| panic!("bind listener: {err}"));
+    let addr = listener
+        .local_addr()
+        .unwrap_or_else(|err| panic!("listener addr: {err}"));
+    tokio::spawn(async move { if let Ok((_stream, _addr)) = listener.accept().await {} });
+
+    let backend = ScalewayBackend {
+        api: ScalewayApi::new("dummy"),
+        config: dummy_config(),
+        test_run_id: None,
+        ssh_port: DEFAULT_SSH_PORT,
+        poll_interval: Duration::from_millis(1),
+        wait_timeout: Duration::from_millis(200),
+    };
+
+    let handle = InstanceHandle {
+        id: String::from("id"),
+        zone: String::from("zone"),
+    };
+    let networking = InstanceNetworking {
+        public_ip: addr.ip(),
+        ssh_port: addr.port(),
+    };
+    backend
+        .wait_for_ssh_ready(&handle, &networking)
+        .await
+        .unwrap_or_else(|err| panic!("ssh should be reachable: {err}"));
+}
+
+#[tokio::test]
+async fn wait_for_ssh_ready_times_out_when_port_closed() {
+    let backend = ScalewayBackend {
+        api: ScalewayApi::new("dummy"),
+        config: dummy_config(),
+        test_run_id: None,
+        ssh_port: DEFAULT_SSH_PORT,
+        poll_interval: Duration::from_millis(1),
+        wait_timeout: Duration::from_millis(50),
+    };
+
+    let handle = InstanceHandle {
+        id: String::from("id"),
+        zone: String::from("zone"),
+    };
+    let networking = InstanceNetworking {
+        public_ip: IpAddr::from_str("127.0.0.1")
+            .unwrap_or_else(|err| panic!("loopback ip parse: {err}")),
+        ssh_port: 9,
+    };
+    let err = backend
+        .wait_for_ssh_ready(&handle, &networking)
+        .await
+        .expect_err("expected timeout");
+    assert!(matches!(err, ScalewayBackendError::Timeout { .. }));
 }
 
 #[test]

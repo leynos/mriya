@@ -55,6 +55,30 @@ fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunCo
     run_context
 }
 
+#[given("cloud-init user data is configured")]
+fn cloud_init_configured(mut run_context: RunContext) -> RunContext {
+    run_context.request.cloud_init_user_data = Some(String::from("cloud-init-user-data"));
+    run_context
+}
+
+#[given("the rsync step succeeds")]
+fn rsync_succeeds(run_context: RunContext) -> RunContext {
+    run_context.runner.push_success();
+    run_context
+}
+
+#[given("cloud-init is already finished")]
+fn cloud_init_already_finished(run_context: RunContext) -> RunContext {
+    run_context.runner.push_success();
+    run_context
+}
+
+#[given("the remote command returns exit code \"{code}\"")]
+fn remote_command_exit_code(run_context: RunContext, code: i32) -> RunContext {
+    run_context.runner.push_exit_code(code);
+    run_context
+}
+
 #[given("the mount command fails")]
 fn mount_command_fails(run_context: RunContext) -> RunContext {
     // No-op: mount uses `|| true` for graceful degradation.
@@ -210,9 +234,59 @@ fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Resul
     Ok(())
 }
 
+#[then("cloud-init readiness is checked before executing the remote command")]
+fn cloud_init_checked_before_remote_command(run_context: &RunContext) -> Result<(), StepError> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let ssh_invocations = run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .filter(|invocation| invocation.program == ssh_bin)
+        .collect::<Vec<_>>();
+
+    if ssh_invocations.len() < 2 {
+        return Err(StepError::Assertion(format!(
+            "expected at least 2 ssh invocations, got {}",
+            ssh_invocations.len()
+        )));
+    }
+
+    let cloud_init_index = ssh_invocations.iter().position(|invocation| {
+        invocation
+            .args
+            .last()
+            .is_some_and(|arg| arg.to_string_lossy().contains("boot-finished"))
+    });
+
+    let remote_index = ssh_invocations.iter().position(|invocation| {
+        invocation
+            .args
+            .last()
+            .is_some_and(|arg| arg.to_string_lossy().contains("echo ok"))
+    });
+
+    match (cloud_init_index, remote_index) {
+        (Some(ci), Some(remote)) if ci < remote => Ok(()),
+        (Some(_), Some(_)) => Err(StepError::Assertion(String::from(
+            "expected cloud-init check to run before the remote command",
+        ))),
+        (None, _) => Err(StepError::Assertion(String::from(
+            "missing cloud-init readiness check invocation",
+        ))),
+        (_, None) => Err(StepError::Assertion(String::from(
+            "missing remote command invocation",
+        ))),
+    }
+}
+
 #[then("the run error mentions sync failure")]
 fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
     assert_failure_contains(run_context, "sync")
+}
+
+#[then("the run error mentions provisioning failure")]
+fn provisioning_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+    assert_failure_contains(run_context, "provisioning")
 }
 
 #[then("teardown failure is reported")]

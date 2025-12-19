@@ -60,6 +60,22 @@ pub enum ScalewayBackendError {
         /// Current state reported by the provider.
         state: String,
     },
+    /// Raised when cloud-init user-data is unexpectedly empty.
+    #[error("cloud-init user-data is empty for instance {instance_id}")]
+    CloudInitUserDataEmpty {
+        /// Instance identifier.
+        instance_id: String,
+    },
+    /// Raised when applying instance user-data fails.
+    #[error("failed to set user-data {key} for instance {instance_id}: {message}")]
+    UserDataFailed {
+        /// User-data key.
+        key: String,
+        /// Instance identifier.
+        instance_id: String,
+        /// Error message from the provider.
+        message: String,
+    },
     /// Wrapper for provider level failures.
     #[error("provider error: {message}")]
     Provider {

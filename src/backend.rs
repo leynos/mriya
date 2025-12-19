@@ -24,6 +24,12 @@ pub struct InstanceRequest {
     pub architecture: String,
     /// Optional volume ID to attach for persistent storage.
     pub volume_id: Option<String>,
+    /// Optional cloud-init user-data payload (cloud-config YAML or script).
+    ///
+    /// When provided, the backend passes the blob through to the provider so
+    /// cloud-init can provision packages and other system configuration before
+    /// the remote command begins.
+    pub cloud_init_user_data: Option<String>,
 }
 
 impl InstanceRequest {
@@ -55,6 +61,15 @@ impl InstanceRequest {
         if self.architecture.is_empty() {
             return Err(BackendError::Validation("architecture".to_owned()));
         }
+        if self
+            .cloud_init_user_data
+            .as_deref()
+            .is_some_and(|data| data.trim().is_empty())
+        {
+            return Err(BackendError::Validation(String::from(
+                "cloud_init_user_data",
+            )));
+        }
         Ok(())
     }
 }
@@ -70,6 +85,7 @@ pub struct InstanceRequestBuilder {
     organisation_id: Option<String>,
     architecture: String,
     volume_id: Option<String>,
+    cloud_init_user_data: Option<String>,
 }
 
 impl InstanceRequestBuilder {
@@ -128,6 +144,13 @@ impl InstanceRequestBuilder {
         self
     }
 
+    /// Sets optional cloud-init user-data content.
+    #[must_use]
+    pub fn cloud_init_user_data(mut self, value: Option<String>) -> Self {
+        self.cloud_init_user_data = value;
+        self
+    }
+
     /// Builds and validates the [`InstanceRequest`], trimming string inputs.
     ///
     /// # Errors
@@ -142,6 +165,7 @@ impl InstanceRequestBuilder {
             organisation_id: self.organisation_id.map(|value| value.trim().to_owned()),
             architecture: self.architecture.trim().to_owned(),
             volume_id: self.volume_id.map(|value| value.trim().to_owned()),
+            cloud_init_user_data: self.cloud_init_user_data,
         };
         request.validate()?;
         Ok(request)

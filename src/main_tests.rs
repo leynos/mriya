@@ -16,6 +16,8 @@ where
     let result = exec_run(RunCommand {
         instance_type: None,
         image: None,
+        cloud_init: None,
+        cloud_init_file: None,
         command: vec![String::from("echo")],
     })
     .await;
@@ -70,6 +72,8 @@ async fn run_command_prefail_variants(
     let result = run_command(RunCommand {
         instance_type: None,
         image: None,
+        cloud_init: None,
+        cloud_init_file: None,
         command: vec![String::from("echo")],
     })
     .await;
@@ -90,6 +94,8 @@ async fn run_command_missing_exit_code_from_fake_mode() {
     let result = run_command(RunCommand {
         instance_type: None,
         image: None,
+        cloud_init: None,
+        cloud_init_file: None,
         command: vec![String::from("echo")],
     })
     .await;
@@ -142,6 +148,8 @@ fn apply_instance_overrides_updates_request() {
     let args = RunCommand {
         instance_type: Some(String::from("  DEV1-M  ")),
         image: Some(String::from("  ubuntu-22-04  ")),
+        cloud_init: None,
+        cloud_init_file: None,
         command: vec![String::from("echo"), String::from("ok")],
     };
 

@@ -59,3 +59,19 @@ fn scenario_route_cargo_caches(run_context: RunContext) {
 fn scenario_disable_cache_routing(run_context: RunContext) {
     let _ = run_context;
 }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Wait for cloud-init readiness before executing the remote command"
+)]
+fn scenario_cloud_init_wait(run_context: RunContext) {
+    let _ = run_context;
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Surface cloud-init provisioning check failures and still teardown"
+)]
+fn scenario_cloud_init_failure(run_context: RunContext) {
+    let _ = run_context;
+}
