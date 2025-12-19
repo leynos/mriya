@@ -14,116 +14,46 @@ pub enum StepError {
     Execution(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct InstanceType(String);
+macro_rules! string_newtype {
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        struct $name(String);
 
-impl From<String> for InstanceType {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self(value)
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(self.as_ref())
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = std::convert::Infallible;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Ok(Self(value.to_owned()))
+            }
+        }
+    };
 }
 
-impl AsRef<str> for InstanceType {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
+string_newtype!(InstanceType);
+string_newtype!(ImageLabel);
+string_newtype!(ErrorSnippet);
+string_newtype!(OutputKey);
 
-impl fmt::Display for InstanceType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
-    }
-}
-
-impl std::str::FromStr for InstanceType {
-    type Err = std::convert::Infallible;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self(value.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ImageLabel(String);
-
-impl From<String> for ImageLabel {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl AsRef<str> for ImageLabel {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl fmt::Display for ImageLabel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
-    }
-}
-
-impl std::str::FromStr for ImageLabel {
-    type Err = std::convert::Infallible;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self(value.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ErrorSnippet(String);
-
-impl From<String> for ErrorSnippet {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl AsRef<str> for ErrorSnippet {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl fmt::Display for ErrorSnippet {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
-    }
-}
-
-impl std::str::FromStr for ErrorSnippet {
-    type Err = std::convert::Infallible;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self(value.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct OutputKey(String);
-
-impl From<String> for OutputKey {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl AsRef<str> for OutputKey {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl fmt::Display for OutputKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_ref())
-    }
-}
-
-fn extract_value(stdout: &str, key: OutputKey) -> Option<String> {
-    let OutputKey(key_value) = key;
+fn extract_value(stdout: &str, key: &OutputKey) -> Option<String> {
+    let key_value = key.as_ref();
     stdout
         .lines()
         .find_map(|line| line.strip_prefix(&format!("{key_value}=")))
@@ -182,7 +112,8 @@ fn assert_field_value(
         return Err(StepError::Assertion(String::from("missing command output")));
     };
 
-    let actual = extract_value(&output.stdout, OutputKey(key.to_owned())).ok_or_else(|| {
+    let output_key = OutputKey(key.to_owned());
+    let actual = extract_value(&output.stdout, &output_key).ok_or_else(|| {
         StepError::Assertion(format!(
             "stdout missing {field_name} key, got: {}",
             output.stdout
