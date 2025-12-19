@@ -1,5 +1,7 @@
 //! BDD step definitions for instance overrides on `mriya run`.
 
+use std::fmt;
+
 use rstest_bdd_macros::{given, then, when};
 
 use super::test_helpers::{CliContext, CliOutput};
@@ -12,10 +14,119 @@ pub enum StepError {
     Execution(String),
 }
 
-fn extract_value(stdout: &str, key: &str) -> Option<String> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InstanceType(String);
+
+impl From<String> for InstanceType {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<str> for InstanceType {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for InstanceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
+impl std::str::FromStr for InstanceType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImageLabel(String);
+
+impl From<String> for ImageLabel {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<str> for ImageLabel {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for ImageLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
+impl std::str::FromStr for ImageLabel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ErrorSnippet(String);
+
+impl From<String> for ErrorSnippet {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<str> for ErrorSnippet {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for ErrorSnippet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
+impl std::str::FromStr for ErrorSnippet {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OutputKey(String);
+
+impl From<String> for OutputKey {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<str> for OutputKey {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for OutputKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
+fn extract_value(stdout: &str, key: OutputKey) -> Option<String> {
+    let OutputKey(key_value) = key;
     stdout
         .lines()
-        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .find_map(|line| line.strip_prefix(&format!("{key_value}=")))
         .map(str::to_owned)
 }
 
@@ -39,16 +150,16 @@ fn run_without_overrides(mut cli_context: CliContext) -> Result<CliContext, Step
 #[when("I run mriya with instance type \"{instance_type}\" and image \"{image}\"")]
 fn run_with_overrides(
     mut cli_context: CliContext,
-    instance_type: String,
-    image: String,
+    instance_type: InstanceType,
+    image: ImageLabel,
 ) -> Result<CliContext, StepError> {
     let mut cmd = cli_context.base_command();
     cmd.args([
         "run",
         "--instance-type",
-        instance_type.as_str(),
+        instance_type.as_ref(),
         "--image",
-        image.as_str(),
+        image.as_ref(),
         "--",
         "echo",
         "ok",
@@ -61,48 +172,55 @@ fn run_with_overrides(
     Ok(cli_context)
 }
 
-#[then("the run request uses instance type \"{instance_type}\"")]
-fn assert_instance_type(cli_context: &CliContext, instance_type: String) -> Result<(), StepError> {
+fn assert_field_value(
+    cli_context: &CliContext,
+    field_name: &str,
+    key: &str,
+    expected: &str,
+) -> Result<(), StepError> {
     let Some(output) = &cli_context.output else {
         return Err(StepError::Assertion(String::from("missing command output")));
     };
-    let actual = extract_value(&output.stdout, "instance_type").ok_or_else(|| {
+
+    let actual = extract_value(&output.stdout, OutputKey(key.to_owned())).ok_or_else(|| {
         StepError::Assertion(format!(
-            "stdout missing instance_type key, got: {}",
+            "stdout missing {field_name} key, got: {}",
             output.stdout
         ))
     })?;
 
-    if actual != instance_type {
+    if actual != expected {
         return Err(StepError::Assertion(format!(
-            "expected instance_type '{instance_type}', got '{actual}'"
+            "expected {field_name} '{expected}', got '{actual}'"
         )));
     }
+
     Ok(())
+}
+
+#[then("the run request uses instance type \"{instance_type}\"")]
+fn assert_instance_type(
+    cli_context: &CliContext,
+    instance_type: InstanceType,
+) -> Result<(), StepError> {
+    assert_field_value(
+        cli_context,
+        "instance_type",
+        "instance_type",
+        instance_type.as_ref(),
+    )
 }
 
 #[then("the run request uses image \"{image}\"")]
-fn assert_image(cli_context: &CliContext, image: String) -> Result<(), StepError> {
-    let Some(output) = &cli_context.output else {
-        return Err(StepError::Assertion(String::from("missing command output")));
-    };
-    let actual = extract_value(&output.stdout, "image_label").ok_or_else(|| {
-        StepError::Assertion(format!(
-            "stdout missing image_label key, got: {}",
-            output.stdout
-        ))
-    })?;
-
-    if actual != image {
-        return Err(StepError::Assertion(format!(
-            "expected image_label '{image}', got '{actual}'"
-        )));
-    }
-    Ok(())
+fn assert_image(cli_context: &CliContext, image: ImageLabel) -> Result<(), StepError> {
+    assert_field_value(cli_context, "image_label", "image_label", image.as_ref())
 }
 
 #[then("the run fails with error containing \"{snippet}\"")]
-fn assert_run_fails_with_error(cli_context: &CliContext, snippet: String) -> Result<(), StepError> {
+fn assert_run_fails_with_error(
+    cli_context: &CliContext,
+    snippet: ErrorSnippet,
+) -> Result<(), StepError> {
     let Some(output) = &cli_context.output else {
         return Err(StepError::Assertion(String::from("missing command output")));
     };
@@ -111,7 +229,7 @@ fn assert_run_fails_with_error(cli_context: &CliContext, snippet: String) -> Res
             "expected non-zero exit status",
         )));
     }
-    if !output.stderr.contains(&snippet) {
+    if !output.stderr.contains(snippet.as_ref()) {
         return Err(StepError::Assertion(format!(
             "expected stderr to contain '{snippet}', got: {}",
             output.stderr
