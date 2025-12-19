@@ -6,10 +6,11 @@ use std::sync::LazyLock;
 use escargot::CargoBuild;
 use rstest::fixture;
 
-pub const DEFAULT_INSTANCE_TYPE: &str = "DEV1-S";
-pub const DEFAULT_IMAGE_LABEL: &str = "Ubuntu 24.04 Noble Numbat";
-pub const DUMMY_SECRET_KEY: &str = "dummy-secret";
-pub const DUMMY_PROJECT_ID: &str = "11111111-2222-3333-4444-555555555555";
+use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+
+const DEFAULT_IMAGE_LABEL: &str = "Ubuntu 24.04 Noble Numbat";
+const DUMMY_SECRET_KEY: &str = "dummy-secret";
+const DUMMY_PROJECT_ID: &str = "11111111-2222-3333-4444-555555555555";
 
 #[derive(Clone, Debug)]
 pub struct CliOutput {

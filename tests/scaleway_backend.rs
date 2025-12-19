@@ -127,7 +127,7 @@ fn valid_scaleway_credentials(
     }
 }
 
-#[when("I provision and tear down a DEV1-S instance from \"{image}\"")]
+#[when("I provision and tear down an instance from \"{image}\"")]
 fn provision_and_teardown(
     scaleway_backend: Option<ScalewayBackend>,
     base_request: Option<InstanceRequest>,

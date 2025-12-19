@@ -2,7 +2,7 @@ Feature: Scaleway backend lifecycle
 
   Scenario: Provision and destroy minimal instance
     Given valid Scaleway credentials
-    When I provision and tear down a DEV1-S instance from "Ubuntu 24.04 Noble Numbat"
+    When I provision and tear down an instance from "Ubuntu 24.04 Noble Numbat"
     Then the backend reports a reachable public IPv4 address
 
   Scenario: Reject unknown instance type
