@@ -1,7 +1,12 @@
 //! Unit tests for configuration and request validation.
 
+#[path = "common/test_constants.rs"]
+mod test_constants;
+
 use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
+
+use test_constants::DEFAULT_INSTANCE_TYPE;
 
 #[fixture]
 fn valid_config() -> ScalewayConfig {
@@ -11,7 +16,7 @@ fn valid_config() -> ScalewayConfig {
         default_organization_id: None,
         default_project_id: String::from("11111111-2222-3333-4444-555555555555"),
         default_zone: String::from("fr-par-1"),
-        default_instance_type: String::from("DEV1-S"),
+        default_instance_type: String::from(DEFAULT_INSTANCE_TYPE),
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,

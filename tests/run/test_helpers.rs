@@ -8,6 +8,7 @@ use tempfile::TempDir;
 use thiserror::Error;
 
 use super::test_doubles::ScriptedBackend;
+use crate::test_constants::DEFAULT_INSTANCE_TYPE;
 use mriya::test_support::ScriptedRunner;
 
 #[derive(Clone, Debug)]
@@ -66,7 +67,7 @@ pub fn build_run_context() -> Result<RunContext, RunTestError> {
 pub fn request() -> InstanceRequest {
     InstanceRequestBuilder::new()
         .image_label("ubuntu")
-        .instance_type("DEV1-S")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
         .zone("fr-par-1")
         .project_id("project")
         .architecture("x86_64")

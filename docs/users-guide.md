@@ -75,6 +75,18 @@ the remote command's status code; when the remote process terminates without a
 status (for example, due to a signal), Mriya exits with code 1 and reports the
 missing status.
 
+To override the Scaleway instance type or image for a single run, pass
+`--instance-type` and/or `--image`:
+
+```bash
+mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo test
+```
+
+The Scaleway backend validates that the instance type exists in the selected
+zone during provisioning, and resolves image labels for the selected
+architecture. Unsupported values yield provider-specific errors (for example,
+unknown instance types).
+
 Commands always execute from `MRIYA_SYNC_REMOTE_PATH` (default:
 `/home/ubuntu/project`) so `mriya run -- cargo test` mirrors running
 `cargo test` locally after syncing the workspace. Customize the remote user,

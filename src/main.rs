@@ -20,10 +20,12 @@ use shell_escape::unix::escape;
 use thiserror::Error;
 
 use mriya::{
-    RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig,
-    StreamingCommandRunner, SyncConfig, Syncer,
+    InstanceRequest, RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError,
+    ScalewayConfig, StreamingCommandRunner, SyncConfig, Syncer,
 };
 
+#[cfg(test)]
+mod main_tests;
 #[cfg(test)]
 mod test_helpers;
 
@@ -40,6 +42,20 @@ enum Cli {
 
 #[derive(Debug, Parser)]
 struct RunCommand {
+    /// Override the Scaleway instance type (commercial type) for this run.
+    ///
+    /// The Scaleway backend validates availability in the selected zone during
+    /// provisioning, and rejects unknown values with a provider-specific
+    /// error.
+    #[arg(long, value_name = "TYPE")]
+    instance_type: Option<String>,
+    /// Override the image label for this run.
+    ///
+    /// The Scaleway backend resolves the label to a concrete image identifier
+    /// for the selected architecture and zone, and rejects unknown labels with
+    /// a provider-specific error.
+    #[arg(long, value_name = "IMAGE")]
+    image: Option<String>,
     /// Command to execute on the remote host (use -- to separate flags).
     #[arg(required = true, trailing_var_arg = true)]
     command: Vec<String>,
@@ -59,6 +75,11 @@ enum CliError {
     Run(#[from] RunError<ScalewayBackendError>),
     #[error("invalid command argument: {0}")]
     InvalidCommand(String),
+    #[error("invalid override for {field}: {message}")]
+    InvalidOverride {
+        field: &'static str,
+        message: String,
+    },
 }
 
 #[tokio::main]
@@ -98,13 +119,7 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         }
     }
 
-    let scaleway_config =
-        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
-    let backend =
-        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
-    let request = backend
-        .default_request()
-        .map_err(|err| CliError::Backend(err.to_string()))?;
+    let (backend, request) = build_backend_and_request(&args)?;
 
     let sync_config =
         SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
@@ -123,6 +138,46 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         .await?;
 
     output.exit_code.ok_or(CliError::MissingExitCode)
+}
+
+fn build_backend_and_request(
+    args: &RunCommand,
+) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
+    let scaleway_config =
+        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let backend =
+        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
+    let mut request = backend
+        .default_request()
+        .map_err(|err| CliError::Backend(err.to_string()))?;
+    apply_instance_overrides(&mut request, args)?;
+    Ok((backend, request))
+}
+
+fn apply_instance_overrides(
+    request: &mut InstanceRequest,
+    args: &RunCommand,
+) -> Result<(), CliError> {
+    if let Some(instance_type) = args.instance_type.as_deref() {
+        request.instance_type = parse_override("--instance-type", instance_type)?;
+    }
+
+    if let Some(image) = args.image.as_deref() {
+        request.image_label = parse_override("--image", image)?;
+    }
+
+    Ok(())
+}
+
+fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CliError::InvalidOverride {
+            field,
+            message: String::from("must not be empty or whitespace"),
+        });
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn render_remote_command(args: &[String]) -> String {
@@ -183,7 +238,6 @@ fn enable_fake_modes() -> bool {
 #[cfg(any(test, feature = "test-backdoors"))]
 fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
     let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
-    let _ = args; // suppress unused warning when compiled without tests hitting this path
     match mode.as_str() {
         "exit-0" => {
             writeln!(io::stdout(), "fake-stdout").ok();
@@ -195,6 +249,7 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
             writeln!(io::stderr(), "fake-stderr").ok();
             Some(Ok(7))
         }
+        "dump-request" => Some(fake_dump_request(args)),
         "missing-exit" => {
             writeln!(io::stdout(), "fake-stdout").ok();
             writeln!(io::stderr(), "fake-stderr").ok();
@@ -202,6 +257,15 @@ fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
         }
         _ => None,
     }
+}
+
+#[cfg(any(test, feature = "test-backdoors"))]
+fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
+    let (_backend, request) = build_backend_and_request(args)?;
+
+    writeln!(io::stdout(), "instance_type={}", request.instance_type).ok();
+    writeln!(io::stdout(), "image_label={}", request.image_label).ok();
+    Ok(0)
 }
 
 #[cfg(any(test, feature = "test-backdoors"))]
@@ -215,117 +279,5 @@ fn prefail_from_env() -> Option<CliError> {
             ScalewayBackendError::Config(String::from("fake")),
         ))),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_helpers::EnvGuard;
-    use rstest::rstest;
-
-    async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
-    where
-        F: Fn(RunCommand) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<i32, CliError>> + Send + 'static,
-    {
-        *RUN_COMMAND_HOOK.lock().await = Some(Box::new(move |cmd| Box::pin(hook(cmd))));
-        let result = exec_run(RunCommand {
-            command: vec![String::from("echo")],
-        })
-        .await;
-        // Clear the hook after use to prevent interference with other tests
-        *RUN_COMMAND_HOOK.lock().await = None;
-        result
-    }
-
-    #[test]
-    fn validate_command_args_rejects_control_characters() {
-        let err = validate_command_args(&[String::from("echo\tbad")])
-            .expect_err("tab should be rejected");
-
-        assert!(
-            matches!(err, CliError::InvalidCommand(ref message) if message.contains("control characters")),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn validate_command_args_accepts_safe_arguments() {
-        assert!(validate_command_args(&[String::from("echo"), String::from("ok")]).is_ok());
-    }
-
-    #[test]
-    fn render_remote_command_escapes_arguments() {
-        let args = vec![
-            String::from("echo"),
-            String::from("a b"),
-            String::from("c'd"),
-        ];
-        let rendered = render_remote_command(&args);
-
-        assert_eq!(rendered, "echo 'a b' 'c'\\''d'");
-    }
-
-    #[rstest]
-    #[case::config("config", |err: &CliError| matches!(err, CliError::Config(_)))]
-    #[case::sync("sync", |err: &CliError| matches!(err, CliError::Sync(_)))]
-    #[case::backend("backend", |err: &CliError| matches!(err, CliError::Backend(_)))]
-    #[case::run("run", |err: &CliError| matches!(err, CliError::Run(_)))]
-    #[tokio::test(flavor = "current_thread")]
-    async fn run_command_prefail_variants(
-        #[case] mode: &str,
-        #[case] predicate: fn(&CliError) -> bool,
-    ) {
-        let _guard = EnvGuard::set_vars(&[
-            ("MRIYA_FAKE_RUN_ENABLE", "1"),
-            ("MRIYA_FAKE_RUN_PREFAIL", mode),
-        ])
-        .await;
-        let result = run_command(RunCommand {
-            command: vec![String::from("echo")],
-        })
-        .await;
-        let err = result.expect_err("prefail should error");
-        assert!(
-            predicate(&err),
-            "mode {mode} produced unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn run_command_missing_exit_code_from_fake_mode() {
-        let _guard = EnvGuard::set_vars(&[
-            ("MRIYA_FAKE_RUN_ENABLE", "1"),
-            ("MRIYA_FAKE_RUN_MODE", "missing-exit"),
-        ])
-        .await;
-        let result = run_command(RunCommand {
-            command: vec![String::from("echo")],
-        })
-        .await;
-
-        assert!(
-            matches!(result, Err(CliError::MissingExitCode)),
-            "expected MissingExitCode, got {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn dispatch_uses_hook_result() {
-        let result = dispatch_with_hook(|_| async { Ok(42) }).await;
-        assert!(matches!(result, Ok(42)));
-    }
-
-    #[test]
-    fn write_error_writes_cli_error() {
-        let mut buf = Vec::new();
-        let err = CliError::MissingExitCode;
-        write_error(&mut buf, &err);
-        let rendered = String::from_utf8(buf).expect("utf8");
-        assert!(
-            rendered.contains("remote command terminated without an exit status"),
-            "rendered: {rendered}"
-        );
     }
 }

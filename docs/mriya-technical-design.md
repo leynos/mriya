@@ -652,6 +652,17 @@ require the exact type name. Initially, we’ll keep it literal (the user
 provides the exact type string as known in that cloud, e.g., Scaleway’s
 “DEV1-M” or DO’s “s-2vcpu-4gb”).
 
+#### Instance override decision (December 2025)
+
+- Add `mriya run --instance-type <TYPE>` and `mriya run --image <LABEL>` to
+  override `SCW_DEFAULT_INSTANCE_TYPE` and `SCW_DEFAULT_IMAGE` for a single run.
+- Reject empty/whitespace overrides as CLI errors before provisioning starts.
+- Keep provider-specific validation in the backend:
+  - Scaleway rejects unknown instance types during create.
+  - Scaleway rejects unknown image labels when resolving the image identifier.
+- Avoid preflight enumeration (listing every instance type or image) to keep
+  API calls minimal and reduce drift between cached metadata and the provider.
+
 **Cloud-Init User Data:** We introduce support for a `user_data` field in the
 config or a separate file reference. This allows the user to provide a
 cloud-init script (either cloud-config YAML or shell script) that the VM will

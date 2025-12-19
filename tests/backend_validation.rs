@@ -1,5 +1,10 @@
 //! Unit tests for backend request construction and validation.
 
+#[path = "common/test_constants.rs"]
+mod test_constants;
+
+use test_constants::DEFAULT_INSTANCE_TYPE;
+
 use mriya::{InstanceRequest, backend::BackendError};
 
 #[test]
@@ -14,7 +19,7 @@ fn validate_rejects_empty_fields() {
 fn validate_rejects_other_missing_fields() {
     let base = InstanceRequest::builder()
         .image_label("ubuntu-22-04")
-        .instance_type("DEV1-S")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
         .zone("fr-par-1")
         .project_id("project-id")
         .architecture("x86_64")
