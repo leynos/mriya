@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use rstest::{fixture, rstest};
 use scaleway_rs::{ScalewayApi, ScalewayImage};
 
 use super::InstanceSnapshot;
@@ -61,6 +62,7 @@ fn image(spec: ImageSpec) -> ScalewayImage {
     }
 }
 
+#[fixture]
 fn dummy_config() -> ScalewayConfig {
     ScalewayConfig {
         access_key: None,
@@ -77,6 +79,7 @@ fn dummy_config() -> ScalewayConfig {
     }
 }
 
+#[fixture]
 fn base_request() -> InstanceRequest {
     InstanceRequest {
         image_label: "label".to_owned(),
@@ -90,6 +93,7 @@ fn base_request() -> InstanceRequest {
     }
 }
 
+#[fixture]
 fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
@@ -101,23 +105,28 @@ fn backend_fixture() -> ScalewayBackend {
     }
 }
 
+#[rstest]
 #[tokio::test]
-async fn power_on_if_needed_returns_ok_for_running() {
+async fn power_on_if_needed_returns_ok_for_running(backend_fixture: ScalewayBackend) {
     let snap = snapshot("id", "running", [Action::from("poweron")], Some("1.1.1.1"));
     let zone = Zone::from("zone");
-    let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
-    assert!(result.is_ok());
+    let result = backend_fixture.power_on_if_needed(&zone, &snap).await;
+    assert!(
+        result.is_ok(),
+        "expected Ok for running instance snapshot, got {result:?}"
+    );
 }
 
+#[rstest]
 #[tokio::test]
-async fn power_on_if_needed_errors_when_not_allowed() {
+async fn power_on_if_needed_errors_when_not_allowed(backend_fixture: ScalewayBackend) {
     let snap = snapshot("id", "stopped", Vec::<Action>::new(), None);
     let zone = Zone::from("zone");
-    let result = backend_fixture().power_on_if_needed(&zone, &snap).await;
-    assert!(matches!(
-        result,
-        Err(ScalewayBackendError::PowerOnNotAllowed { .. })
-    ));
+    let result = backend_fixture.power_on_if_needed(&zone, &snap).await;
+    assert!(
+        matches!(result, Err(ScalewayBackendError::PowerOnNotAllowed { .. })),
+        "expected PowerOnNotAllowed error, got {result:?}"
+    );
 }
 
 mod image;

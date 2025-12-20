@@ -186,8 +186,12 @@ pub struct EnvGuard {
 
 impl EnvGuard {
     /// Sets multiple environment variables while holding a global mutex.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `pairs` contains duplicate keys.
     pub async fn set_vars(pairs: &[(&str, &str)]) -> Self {
-        debug_assert!(
+        assert!(
             {
                 let mut seen = BTreeSet::new();
                 pairs.iter().all(|(key, _)| seen.insert(*key))

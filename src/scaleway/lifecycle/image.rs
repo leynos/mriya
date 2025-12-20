@@ -81,8 +81,15 @@ impl ScalewayBackend {
                 zone: request.zone.clone(),
             });
         }
-        candidates.sort_by(|lhs, rhs| rhs.creation_date.cmp(&lhs.creation_date));
-        Ok(candidates.remove(0).id)
+        candidates.sort_by(|lhs, rhs| lhs.creation_date.cmp(&rhs.creation_date));
+        let selected = candidates
+            .pop()
+            .ok_or_else(|| ScalewayBackendError::ImageNotFound {
+                label: request.image_label.clone(),
+                arch: request.architecture.clone(),
+                zone: request.zone.clone(),
+            })?;
+        Ok(selected.id)
     }
 
     pub(in crate::scaleway) fn select_image_from_sources(
