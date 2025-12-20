@@ -159,28 +159,28 @@ fn assert_field_value(
     Ok(())
 }
 
-#[then("the run request has cloud-init user-data present \"{present}\"")]
-fn assert_cloud_init_present(
-    cli_context: &CliContext,
-    present: OutputValue,
-) -> Result<(), StepError> {
-    assert_field_value(
-        cli_context,
-        "cloud_init_user_data_present",
-        "cloud_init_user_data_present",
-        present.as_ref(),
-    )
+macro_rules! cloud_init_field_assertion {
+    ($fn_name:ident, $step_pattern:literal, $field:literal, $param:ident) => {
+        #[then($step_pattern)]
+        fn $fn_name(cli_context: &CliContext, $param: OutputValue) -> Result<(), StepError> {
+            assert_field_value(cli_context, $field, $field, $param.as_ref())
+        }
+    };
 }
 
-#[then("the run request has cloud-init user-data size \"{size}\"")]
-fn assert_cloud_init_size(cli_context: &CliContext, size: OutputValue) -> Result<(), StepError> {
-    assert_field_value(
-        cli_context,
-        "cloud_init_user_data_size",
-        "cloud_init_user_data_size",
-        size.as_ref(),
-    )
-}
+cloud_init_field_assertion!(
+    assert_cloud_init_present,
+    "the run request has cloud-init user-data present \"{present}\"",
+    "cloud_init_user_data_present",
+    present
+);
+
+cloud_init_field_assertion!(
+    assert_cloud_init_size,
+    "the run request has cloud-init user-data size \"{size}\"",
+    "cloud_init_user_data_size",
+    size
+);
 
 #[then("the run fails with error containing \"{snippet}\"")]
 fn assert_run_fails_with_error(
