@@ -1,4 +1,7 @@
-//! Shared test utilities for serialising environment mutation in tests only.
+//! Shared test utilities for serialising environment mutation in crate tests.
+//!
+//! Integration tests should prefer `mriya::test_support::EnvGuard`, which is
+//! available without `cfg(test)` gating.
 
 use std::collections::BTreeSet;
 use std::{env, ffi::OsString};
@@ -7,6 +10,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 /// Global mutex used to serialise environment mutation in tests.
 pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
 /// Guard that holds the env mutex and cleans up variables on drop.
 pub struct EnvGuard {
     previous: Vec<(String, Option<OsString>)>,
@@ -23,6 +27,7 @@ impl EnvGuard {
             },
             "duplicate environment variable keys passed to EnvGuard::set_vars"
         );
+
         let guard = ENV_LOCK.lock().await;
         let mut previous = Vec::with_capacity(pairs.len());
         for (key, value) in pairs {
@@ -31,6 +36,7 @@ impl EnvGuard {
             unsafe { env::set_var(key, value) };
             previous.push((key.to_string(), old));
         }
+
         Self {
             previous,
             _guard: guard,

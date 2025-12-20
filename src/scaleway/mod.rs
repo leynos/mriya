@@ -3,7 +3,6 @@
 mod error;
 mod lifecycle;
 mod types;
-mod user_data;
 mod volume;
 
 use std::time::Duration;
@@ -11,9 +10,8 @@ use std::time::Duration;
 use crate::backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest};
 use crate::config::ScalewayConfig;
 use lifecycle::InstanceSnapshot;
-use scaleway_rs::{ScalewayApi, ScalewayCreateInstanceBuilder, ScalewayError};
+use scaleway_rs::ScalewayApi;
 use types::{Action, Zone};
-use uuid::Uuid;
 
 use crate::janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX};
 
@@ -131,42 +129,12 @@ impl Backend for ScalewayBackend {
             request.validate()?;
             let image_id = self.resolve_image_id(request).await?;
 
-            let name = format!("mriya-{}", Uuid::new_v4().simple());
-            let tags = Self::instance_tags(self.test_run_id.as_deref());
-            let server = match ScalewayCreateInstanceBuilder::new(
-                self.api.clone(),
-                &request.zone,
-                &name,
-                &request.instance_type,
-            )
-            .image(&image_id)
-            .project(&request.project_id)
-            .routed_ip_enabled(true)
-            .tags(tags)
-            .run_async()
-            .await
-            {
-                Ok(server) => server,
-                Err(ScalewayError::Api(api_err))
-                    if Self::is_instance_type_error(&api_err, request) =>
-                {
-                    return Err(ScalewayBackendError::InstanceTypeUnavailable {
-                        instance_type: request.instance_type.clone(),
-                        zone: request.zone.clone(),
-                    });
-                }
-                Err(other) => return Err(other.into()),
-            };
+            let server = self.create_instance_stopped(request, &image_id).await?;
 
             let handle = InstanceHandle {
                 id: server.id.clone(),
                 zone: request.zone.clone(),
             };
-
-            // Apply cloud-init user-data before the first boot.
-            if let Some(ref user_data) = request.cloud_init_user_data {
-                self.set_cloud_init_user_data(&handle, user_data).await?;
-            }
 
             // Attach cache volume before powering on (instance is stopped)
             if let Some(ref volume_id) = request.volume_id {

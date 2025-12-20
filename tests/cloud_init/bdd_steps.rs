@@ -1,8 +1,9 @@
 //! BDD step definitions for cloud-init user-data CLI handling.
 
 use std::fmt;
-use std::fs;
 
+use camino::Utf8PathBuf;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use rstest_bdd_macros::{given, then, when};
 use tempfile::TempDir;
 
@@ -111,7 +112,13 @@ fn run_with_cloud_init_file(
 ) -> Result<CliContext, StepError> {
     let tmp_dir = TempDir::new().map_err(|err| StepError::TempFile(err.to_string()))?;
     let file_path = tmp_dir.path().join("user-data.txt");
-    fs::write(&file_path, content.as_ref()).map_err(|err| StepError::TempFile(err.to_string()))?;
+    let tmp_root = Utf8PathBuf::from_path_buf(tmp_dir.path().to_path_buf()).map_err(|path| {
+        StepError::TempFile(format!("non-utf8 temp dir path: {}", path.display()))
+    })?;
+    Dir::open_ambient_dir(&tmp_root, ambient_authority())
+        .map_err(|err| StepError::TempFile(err.to_string()))?
+        .write("user-data.txt", content.as_ref())
+        .map_err(|err| StepError::TempFile(err.to_string()))?;
 
     let file_path_string = file_path
         .to_str()

@@ -177,43 +177,37 @@ fn apply_instance_overrides(
         request.image_label = parse_override("--image", image)?;
     }
 
-    let cloud_init = resolve_cloud_init_for_run(args)?;
-    if cloud_init.is_some() {
-        request.cloud_init_user_data = cloud_init;
+    if args.cloud_init.is_some() || args.cloud_init_file.is_some() {
+        request.cloud_init_user_data = resolve_cloud_init_for_run(args)?;
     }
 
     Ok(())
 }
 
 fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliError> {
-    match (args.cloud_init.as_deref(), args.cloud_init_file.as_deref()) {
-        (None, None) => Ok(None),
-        (Some(inline), None) => {
-            if inline.trim().is_empty() {
-                return Err(CliError::InvalidCloudInit(String::from(
-                    "--cloud-init must not be empty or whitespace",
-                )));
-            }
-            Ok(Some(inline.to_owned()))
+    mriya::cloud_init::resolve_cloud_init_user_data(
+        args.cloud_init.as_deref(),
+        args.cloud_init_file.as_deref(),
+    )
+    .map_err(|err| match err {
+        mriya::cloud_init::CloudInitError::BothProvided => CliError::InvalidCloudInit(
+            String::from("provide only one of --cloud-init or --cloud-init-file"),
+        ),
+        mriya::cloud_init::CloudInitError::InlineEmpty => {
+            CliError::InvalidCloudInit(String::from("--cloud-init must not be empty or whitespace"))
         }
-        (None, Some(path)) => {
-            let expanded = mriya::sync::expand_tilde(path);
-            let content = std::fs::read_to_string(&expanded).map_err(|err| {
-                CliError::InvalidCloudInit(format!(
-                    "failed to read --cloud-init-file {expanded}: {err}"
-                ))
-            })?;
-            if content.trim().is_empty() {
-                return Err(CliError::InvalidCloudInit(String::from(
-                    "--cloud-init-file must not be empty",
-                )));
-            }
-            Ok(Some(content))
+        mriya::cloud_init::CloudInitError::FilePathEmpty => CliError::InvalidCloudInit(
+            String::from("--cloud-init-file must not be empty or whitespace"),
+        ),
+        mriya::cloud_init::CloudInitError::FileEmpty => {
+            CliError::InvalidCloudInit(String::from("--cloud-init-file must not be empty"))
         }
-        (Some(_), Some(_)) => Err(CliError::InvalidCloudInit(String::from(
-            "provide only one of --cloud-init or --cloud-init-file",
-        ))),
-    }
+        mriya::cloud_init::CloudInitError::FileRead { path, message } => {
+            CliError::InvalidCloudInit(format!(
+                "failed to read --cloud-init-file {path}: {message}"
+            ))
+        }
+    })
 }
 
 fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {

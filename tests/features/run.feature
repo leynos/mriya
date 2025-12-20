@@ -72,3 +72,14 @@ Feature: Remote execution via mriya run
     When I orchestrate a remote run for "echo ok"
     Then the run error mentions provisioning failure
     And the instance is destroyed
+
+  Scenario: Surface cloud-init provisioning timeout and still teardown
+    Given a ready backend and sync pipeline
+    And a backend that fails during teardown
+    And cloud-init user data is configured
+    And the rsync step succeeds
+    And cloud-init provisioning times out
+    When I orchestrate a remote run for "echo ok"
+    Then the run error is a provisioning timeout
+    And the run error includes a teardown failure note
+    And the instance is destroyed

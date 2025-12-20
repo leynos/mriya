@@ -80,6 +80,8 @@ where
 pub struct RunOrchestrator<B, R: CommandRunner> {
     backend: B,
     syncer: Syncer<R>,
+    cloud_init_poll_interval: Duration,
+    cloud_init_wait_timeout: Duration,
 }
 
 impl<B, R> RunOrchestrator<B, R>
@@ -91,7 +93,30 @@ where
     /// Creates a new orchestrator.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
-        Self { backend, syncer }
+        Self {
+            backend,
+            syncer,
+            cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
+            cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
+        }
+    }
+
+    /// Overrides the cloud-init polling interval.
+    ///
+    /// This is primarily used by tests to keep timeout scenarios fast.
+    #[must_use]
+    pub const fn with_cloud_init_poll_interval(mut self, interval: Duration) -> Self {
+        self.cloud_init_poll_interval = interval;
+        self
+    }
+
+    /// Overrides the cloud-init wait timeout.
+    ///
+    /// This is primarily used by tests to keep timeout scenarios fast.
+    #[must_use]
+    pub const fn with_cloud_init_wait_timeout(mut self, timeout: Duration) -> Self {
+        self.cloud_init_wait_timeout = timeout;
+        self
     }
 
     /// Runs the end-to-end workflow and returns the remote command output.
@@ -239,16 +264,13 @@ where
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
     ) -> Result<(), RunError<B::Error>> {
-        let deadline = Instant::now() + CLOUD_INIT_WAIT_TIMEOUT;
+        let deadline = Instant::now() + self.cloud_init_wait_timeout;
         let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
         let command = format!("sudo test -f {cloud_init_finished_marker}");
 
         while Instant::now() <= deadline {
-            match self.syncer.run_remote(networking, &command) {
-                Ok(output) if matches!(output.exit_code, Some(0)) => return Ok(()),
-                Ok(_) => {
-                    sleep(CLOUD_INIT_POLL_INTERVAL).await;
-                }
+            let finished = match self.syncer.run_remote(networking, &command) {
+                Ok(output) => matches!(output.exit_code, Some(0)),
                 Err(err) => {
                     let message = self.destroy_with_note(handle, &err).await;
                     return Err(RunError::Provisioning {
@@ -256,15 +278,20 @@ where
                         source: err,
                     });
                 }
+            };
+
+            if finished {
+                return Ok(());
             }
+
+            sleep(self.cloud_init_poll_interval).await;
         }
 
         let timeout_message = format!(
             "cloud-init did not finish within {} seconds",
-            CLOUD_INIT_WAIT_TIMEOUT.as_secs()
+            self.cloud_init_wait_timeout.as_secs()
         );
-        let teardown_error = self.backend.destroy(handle.clone()).await.err();
-        let message_with_teardown = append_teardown_note(timeout_message, teardown_error.as_ref());
+        let message_with_teardown = self.destroy_with_note(handle, &timeout_message).await;
         Err(RunError::ProvisioningTimeout {
             message: message_with_teardown,
         })

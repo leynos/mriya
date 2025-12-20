@@ -6,6 +6,8 @@ use std::pin::Pin;
 
 use thiserror::Error;
 
+use crate::cloud_init;
+
 /// Parameters required to create a new instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstanceRequest {
@@ -61,10 +63,8 @@ impl InstanceRequest {
         if self.architecture.is_empty() {
             return Err(BackendError::Validation("architecture".to_owned()));
         }
-        if self
-            .cloud_init_user_data
-            .as_deref()
-            .is_some_and(|data| data.trim().is_empty())
+        if let Some(payload) = self.cloud_init_user_data.as_deref()
+            && cloud_init::validate_payload(payload).is_err()
         {
             return Err(BackendError::Validation(String::from(
                 "cloud_init_user_data",

@@ -1,14 +1,17 @@
-use super::*;
+use super::InstanceSnapshot;
 use crate::ScalewayConfig;
+use crate::backend::{InstanceHandle, InstanceNetworking, InstanceRequest};
 use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
-use scaleway_rs::ScalewayApi;
+use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use scaleway_rs::{ScalewayApi, ScalewayImage};
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
+use tokio::time::sleep;
 
 fn snapshot(
     id: impl Into<InstanceId>,

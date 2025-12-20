@@ -28,34 +28,46 @@ fn scaleway_integration_enabled() -> bool {
 }
 
 #[fixture]
-fn scaleway_backend() -> Option<ScalewayBackend> {
+fn scaleway_backend() -> Result<ScalewayBackend, String> {
     if !scaleway_integration_enabled() {
-        return None;
+        return Err(String::from(
+            "Scaleway integration tests disabled (set MRIYA_RUN_SCALEWAY_TESTS=1 to enable)",
+        ));
     }
 
-    let secret = std::env::var("SCW_SECRET_KEY").ok()?;
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").ok()?;
+    let secret =
+        std::env::var("SCW_SECRET_KEY").map_err(|err| format!("missing SCW_SECRET_KEY: {err}"))?;
+    let project = std::env::var("SCW_DEFAULT_PROJECT_ID")
+        .map_err(|err| format!("missing SCW_DEFAULT_PROJECT_ID: {err}"))?;
     if secret.trim().is_empty() || project.trim().is_empty() {
-        return None;
+        return Err(String::from(
+            "empty SCW_SECRET_KEY or SCW_DEFAULT_PROJECT_ID",
+        ));
     }
 
-    let config = ScalewayConfig::load_without_cli_args().ok()?;
-    ScalewayBackend::new(config).ok()
+    let config = ScalewayConfig::load_without_cli_args()
+        .map_err(|err| format!("failed to load config: {err}"))?;
+    ScalewayBackend::new(config).map_err(|err| format!("failed to build backend: {err}"))
 }
 
 #[fixture]
-fn syncer() -> Option<Syncer<ProcessCommandRunner>> {
+fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
     if !scaleway_integration_enabled() {
-        return None;
+        return Err(String::from(
+            "Scaleway integration tests disabled (set MRIYA_RUN_SCALEWAY_TESTS=1 to enable)",
+        ));
     }
 
-    let identity = std::env::var("MRIYA_SYNC_SSH_IDENTITY_FILE").ok()?;
+    let identity = std::env::var("MRIYA_SYNC_SSH_IDENTITY_FILE")
+        .map_err(|err| format!("missing MRIYA_SYNC_SSH_IDENTITY_FILE: {err}"))?;
     if identity.trim().is_empty() {
-        return None;
+        return Err(String::from("empty MRIYA_SYNC_SSH_IDENTITY_FILE"));
     }
 
-    let sync_config = SyncConfig::load_without_cli_args().ok()?;
-    Syncer::new(sync_config, ProcessCommandRunner).ok()
+    let sync_config = SyncConfig::load_without_cli_args()
+        .map_err(|err| format!("failed to load sync config: {err}"))?;
+    Syncer::new(sync_config, ProcessCommandRunner)
+        .map_err(|err| format!("syncer init failed: {err}"))
 }
 
 #[fixture]
@@ -74,46 +86,44 @@ const CLOUD_INIT_JQ: &str = concat!(
 
 #[given("valid Scaleway credentials and SSH sync configuration")]
 fn valid_scaleway_credentials_and_sync(
-    scaleway_backend: Option<ScalewayBackend>,
-    syncer: Option<Syncer<ProcessCommandRunner>>,
+    scaleway_backend: Result<ScalewayBackend, String>,
+    syncer: Result<Syncer<ProcessCommandRunner>, String>,
 ) {
-    match (scaleway_backend, syncer) {
-        (Some(_), Some(_)) => {}
-        _ => skip!("Scaleway credentials or SSH sync configuration not available"),
-    }
+    let _backend = scaleway_backend.unwrap_or_else(|err| skip!("{}", err));
+    let _syncer = syncer.unwrap_or_else(|err| skip!("{}", err));
 }
 
 #[when("I provision an instance with cloud-init installing jq and run \"{command}\"")]
 fn provision_with_cloud_init_and_run(
-    scaleway_backend: Option<ScalewayBackend>,
-    syncer: Option<Syncer<ProcessCommandRunner>>,
+    scaleway_backend: Result<ScalewayBackend, String>,
+    syncer: Result<Syncer<ProcessCommandRunner>, String>,
     temp_source_dir: std::sync::Arc<TempDir>,
     command: String,
-) -> Result<mriya::sync::RemoteCommandOutput, ScalewayBackendError> {
-    let backend = scaleway_backend.unwrap_or_else(|| skip!("Scaleway backend unavailable"));
-    let sync_pipeline = syncer.unwrap_or_else(|| skip!("Syncer unavailable"));
+) -> Result<mriya::sync::RemoteCommandOutput, mriya::RunError<ScalewayBackendError>> {
+    let backend = scaleway_backend.unwrap_or_else(|err| skip!("{}", err));
+    let sync_pipeline = syncer.unwrap_or_else(|err| skip!("{}", err));
 
-    let mut request = backend.default_request()?;
+    let mut request = backend
+        .default_request()
+        .map_err(mriya::RunError::Provision)?;
     request.cloud_init_user_data = Some(String::from(CLOUD_INIT_JQ));
 
     let source = camino::Utf8PathBuf::from_path_buf(temp_source_dir.path().to_path_buf()).map_err(
-        |path| ScalewayBackendError::Provider {
-            message: format!("temp dir should be utf8: {}", path.display()),
+        |path| {
+            mriya::RunError::Provision(ScalewayBackendError::Provider {
+                message: format!("temp dir should be utf8: {}", path.display()),
+            })
         },
     )?;
 
     let orchestrator: RunOrchestrator<ScalewayBackend, ProcessCommandRunner> =
         RunOrchestrator::new(backend, sync_pipeline);
 
-    RUNTIME
-        .block_on(async {
-            orchestrator
-                .execute(&request, &source, command.as_str())
-                .await
-        })
-        .map_err(|err| ScalewayBackendError::Provider {
-            message: err.to_string(),
-        })
+    RUNTIME.block_on(async {
+        orchestrator
+            .execute(&request, &source, command.as_str())
+            .await
+    })
 }
 
 #[then("the remote command succeeds and reports a jq version")]
@@ -136,9 +146,9 @@ fn jq_available(output: &mriya::sync::RemoteCommandOutput) {
     name = "Cloud-init installs packages before the command runs"
 )]
 fn scenario_cloud_init_install_jq(
-    scaleway_backend: Option<ScalewayBackend>,
-    syncer: Option<Syncer<ProcessCommandRunner>>,
+    scaleway_backend: Result<ScalewayBackend, String>,
+    syncer: Result<Syncer<ProcessCommandRunner>, String>,
     temp_source_dir: std::sync::Arc<TempDir>,
 ) {
-    let _ = (scaleway_backend, syncer, temp_source_dir);
+    drop((scaleway_backend, syncer, temp_source_dir));
 }

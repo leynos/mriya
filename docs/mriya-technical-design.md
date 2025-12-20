@@ -756,8 +756,9 @@ Mriya code path.
     configured defaults.
 - Pass the payload through the abstraction as
   `InstanceRequest.cloud_init_user_data`.
-- For Scaleway, apply the payload before first boot using the instance user-data
-  endpoint with the reserved key `cloud-init`.
+- For Scaleway, supply the payload in the server create request using the
+  `cloud_init` field and ensure the VM stays stopped (`stopped=true`) until
+  after creation, so cloud-init consumes it on the very first boot.
 - Treat “SSH readiness” as “port 22 is reachable” by probing the TCP socket
   after the instance reaches `running` and exposes a public IP.
 - Ensure remote commands do not start until cloud-init finishes by checking for

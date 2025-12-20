@@ -1,5 +1,7 @@
 //! Shared fixtures for run BDD scenarios.
 
+use std::time::Duration;
+
 use camino::Utf8PathBuf;
 use mriya::sync::{RemoteCommandOutput, SyncConfig, SyncError};
 use mriya::{InstanceRequest, InstanceRequestBuilder};
@@ -18,14 +20,33 @@ pub struct RunContext {
     pub sync_config: SyncConfig,
     pub request: InstanceRequest,
     pub source: Utf8PathBuf,
+    pub cloud_init_poll_interval_override: Option<Duration>,
+    pub cloud_init_wait_timeout_override: Option<Duration>,
     pub outcome: Option<RunResult>,
     pub(crate) source_tmp: std::sync::Arc<TempDir>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunFailureKind {
+    Provision,
+    Wait,
+    Provisioning,
+    ProvisioningTimeout,
+    Sync,
+    Remote,
+    Teardown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunFailure {
+    pub kind: RunFailureKind,
+    pub message: String,
 }
 
 #[derive(Clone, Debug)]
 pub enum RunResult {
     Success(RemoteCommandOutput),
-    Failure(String),
+    Failure(RunFailure),
 }
 
 #[derive(Clone, Debug, Error)]
@@ -59,6 +80,8 @@ pub fn build_run_context() -> Result<RunContext, RunTestError> {
         sync_config: sync_config(),
         request: request(),
         source,
+        cloud_init_poll_interval_override: None,
+        cloud_init_wait_timeout_override: None,
         outcome: None,
         source_tmp: std::sync::Arc::new(tmp_dir),
     })

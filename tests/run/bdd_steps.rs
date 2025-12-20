@@ -3,10 +3,11 @@
 use mriya::RunOrchestrator;
 use mriya::sync::{RemoteCommandOutput, Syncer};
 use rstest_bdd_macros::{given, then, when};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
 use super::test_doubles::ScriptedBackend;
-use super::test_helpers::{RunContext, RunResult, RunTestError};
+use super::test_helpers::{RunContext, RunFailure, RunFailureKind, RunResult, RunTestError};
 use mriya::test_support::ScriptedRunner;
 
 #[derive(Debug, thiserror::Error)]
@@ -73,6 +74,16 @@ fn cloud_init_already_finished(run_context: RunContext) -> RunContext {
     run_context
 }
 
+#[given("cloud-init provisioning times out")]
+fn cloud_init_times_out(mut run_context: RunContext) -> RunContext {
+    run_context.cloud_init_poll_interval_override = Some(Duration::from_millis(1));
+    run_context.cloud_init_wait_timeout_override = Some(Duration::from_millis(5));
+    for _ in 0..64 {
+        run_context.runner.push_exit_code(1);
+    }
+    run_context
+}
+
 #[given("the remote command returns exit code \"{code}\"")]
 fn remote_command_exit_code(run_context: RunContext, code: i32) -> RunContext {
     run_context.runner.push_exit_code(code);
@@ -94,14 +105,22 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
         sync_config,
         request,
         source,
+        cloud_init_poll_interval_override,
+        cloud_init_wait_timeout_override,
         source_tmp,
         ..
     } = run_context;
     let syncer = Syncer::new(sync_config.clone(), runner.clone())
         .map_err(RunTestError::from)
         .map_err(StepError::from)?;
-    let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
+    let mut orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
         RunOrchestrator::new(backend.clone(), syncer);
+    if let Some(interval) = cloud_init_poll_interval_override {
+        orchestrator = orchestrator.with_cloud_init_poll_interval(interval);
+    }
+    if let Some(timeout) = cloud_init_wait_timeout_override {
+        orchestrator = orchestrator.with_cloud_init_wait_timeout(timeout);
+    }
 
     let request_clone = request.clone();
     let source_clone = source.clone();
@@ -113,7 +132,21 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
 
     let result_enum = match result {
         Ok(output) => RunResult::Success(output),
-        Err(err) => RunResult::Failure(err.to_string()),
+        Err(err) => {
+            let kind = match &err {
+                mriya::RunError::Provision(_) => RunFailureKind::Provision,
+                mriya::RunError::Wait { .. } => RunFailureKind::Wait,
+                mriya::RunError::Provisioning { .. } => RunFailureKind::Provisioning,
+                mriya::RunError::ProvisioningTimeout { .. } => RunFailureKind::ProvisioningTimeout,
+                mriya::RunError::Sync { .. } => RunFailureKind::Sync,
+                mriya::RunError::Remote { .. } => RunFailureKind::Remote,
+                mriya::RunError::Teardown(_) => RunFailureKind::Teardown,
+            };
+            RunResult::Failure(RunFailure {
+                kind,
+                message: err.to_string(),
+            })
+        }
     };
 
     Ok(RunContext {
@@ -122,6 +155,8 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
         sync_config,
         request,
         source,
+        cloud_init_poll_interval_override,
+        cloud_init_wait_timeout_override,
         outcome: Some(result_enum),
         source_tmp,
     })
@@ -143,7 +178,8 @@ fn run_exit_code(run_context: &RunContext, code: i32) -> Result<(), StepError> {
             other.exit_code
         ))),
         RunResult::Failure(err) => Err(StepError::Assertion(format!(
-            "run failed unexpectedly: {err}"
+            "run failed unexpectedly: {}",
+            err.message
         ))),
     }
 }
@@ -168,11 +204,37 @@ fn assert_failure_contains(
     };
 
     match result {
-        RunResult::Failure(message) if message.contains(expected_substring) => Ok(()),
+        RunResult::Failure(failure) if failure.message.contains(expected_substring) => Ok(()),
         other => Err(StepError::Assertion(format!(
             "unexpected outcome: {other:?}"
         ))),
     }
+}
+
+#[then("the run error is a provisioning timeout")]
+fn provisioning_timeout(run_context: &RunContext) -> Result<(), StepError> {
+    let Some(result) = &run_context.outcome else {
+        return Err(StepError::Assertion(String::from("missing outcome")));
+    };
+
+    match result {
+        RunResult::Failure(failure) if failure.kind == RunFailureKind::ProvisioningTimeout => {
+            Ok(())
+        }
+        RunResult::Failure(failure) => Err(StepError::Assertion(format!(
+            "expected provisioning timeout, got {kind:?}: {message}",
+            kind = failure.kind,
+            message = failure.message
+        ))),
+        RunResult::Success(_) => Err(StepError::Assertion(String::from(
+            "expected failure, got success",
+        ))),
+    }
+}
+
+#[then("the run error includes a teardown failure note")]
+fn teardown_failure_note_present(run_context: &RunContext) -> Result<(), StepError> {
+    assert_failure_contains(run_context, "teardown also failed")
 }
 
 fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {

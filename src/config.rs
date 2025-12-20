@@ -1,7 +1,7 @@
 //! Configuration loading via `ortho-config`.
 
 use crate::backend::InstanceRequest;
-use crate::sync::expand_tilde;
+use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
@@ -108,7 +108,7 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError`] when validation fails.
     pub fn as_request(&self) -> Result<InstanceRequest, ConfigError> {
-        self.validate()?;
+        self.validate_required_fields()?;
         let cloud_init_user_data = self.resolve_cloud_init_user_data()?;
         InstanceRequest::builder()
             .image_label(&self.default_image)
@@ -124,46 +124,31 @@ impl ScalewayConfig {
     }
 
     fn resolve_cloud_init_user_data(&self) -> Result<Option<String>, ConfigError> {
-        let inline = self.cloud_init_user_data.as_deref();
-        let file = self.cloud_init_user_data_file.as_deref();
-
-        if inline.is_some() && file.is_some() {
-            return Err(ConfigError::CloudInit(String::from(concat!(
+        resolve_cloud_init_user_data(
+            self.cloud_init_user_data.as_deref(),
+            self.cloud_init_user_data_file.as_deref(),
+        )
+        .map_err(|err| match err {
+            CloudInitError::BothProvided => ConfigError::CloudInit(String::from(concat!(
                 "cloud-init user-data can be provided either inline or via a file, not both; ",
                 "set only one of SCW_CLOUD_INIT_USER_DATA or SCW_CLOUD_INIT_USER_DATA_FILE ",
                 "(or cloud_init_user_data / cloud_init_user_data_file in [scaleway])"
-            ))));
-        }
-
-        if let Some(data) = inline {
-            if data.trim().is_empty() {
-                return Err(ConfigError::CloudInit(String::from(concat!(
-                    "cloud-init user-data must not be empty; set SCW_CLOUD_INIT_USER_DATA ",
-                    "(or cloud_init_user_data in [scaleway])"
-                ))));
+            ))),
+            CloudInitError::InlineEmpty => ConfigError::CloudInit(String::from(concat!(
+                "cloud-init user-data must not be empty; set SCW_CLOUD_INIT_USER_DATA ",
+                "(or cloud_init_user_data in [scaleway])"
+            ))),
+            CloudInitError::FilePathEmpty | CloudInitError::FileEmpty => {
+                ConfigError::CloudInit(String::from(concat!(
+                    "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
+                    "(or cloud_init_user_data_file in [scaleway])"
+                )))
             }
-            return Ok(Some(data.to_owned()));
-        }
-
-        let Some(path) = file else {
-            return Ok(None);
-        };
-
-        let expanded = expand_tilde(path);
-        let content =
-            std::fs::read_to_string(&expanded).map_err(|err| ConfigError::CloudInitFileRead {
-                path: expanded.clone(),
-                message: err.to_string(),
-            })?;
-
-        if content.trim().is_empty() {
-            return Err(ConfigError::CloudInit(String::from(concat!(
-                "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
-                "(or cloud_init_user_data_file in [scaleway])"
-            ))));
-        }
-
-        Ok(Some(content))
+            CloudInitError::FileRead { path, message } => ConfigError::CloudInitFileRead {
+                path,
+                message,
+            },
+        })
     }
 
     /// Performs semantic validation on required fields. Error messages include
@@ -174,6 +159,12 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_required_fields()?;
+        let _ = self.resolve_cloud_init_user_data()?;
+        Ok(())
+    }
+
+    fn validate_required_fields(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
             &FieldMetadata::new(
@@ -228,7 +219,6 @@ impl ScalewayConfig {
                 SCALEWAY_SECTION,
             ),
         )?;
-        let _ = self.resolve_cloud_init_user_data()?;
         Ok(())
     }
 }

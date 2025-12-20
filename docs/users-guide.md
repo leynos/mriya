@@ -93,7 +93,7 @@ unknown instance types).
 ## Cloud-init provisioning
 
 Mriya can pass a cloud-init *user-data* payload through to the provider when
-creating the VM. This allows you to install system packages or perform other
+creating the VM. This allows installation of system packages or other
 first-boot provisioning before the remote command starts.
 
 Provide user-data either inline or via a local file:

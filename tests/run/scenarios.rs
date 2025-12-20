@@ -75,3 +75,11 @@ fn scenario_cloud_init_wait(run_context: RunContext) {
 fn scenario_cloud_init_failure(run_context: RunContext) {
     let _ = run_context;
 }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Surface cloud-init provisioning timeout and still teardown"
+)]
+fn scenario_cloud_init_timeout(run_context: RunContext) {
+    let _ = run_context;
+}
