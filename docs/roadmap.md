@@ -51,7 +51,7 @@ for concrete, testable deliverables.
 
 - Step: Cloud-init provisioning
 
-  - [ ] Accept inline or file-based cloud-init user data, pass it through the
+  - [x] Accept inline or file-based cloud-init user data, pass it through the
     backend, and wait for SSH readiness; acceptance: provisioning script
     installs declared packages before the test command starts, verified by an
     integration run that uses a cloud-config to install a package and then

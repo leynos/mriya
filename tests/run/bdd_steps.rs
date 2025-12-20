@@ -3,10 +3,11 @@
 use mriya::RunOrchestrator;
 use mriya::sync::{RemoteCommandOutput, Syncer};
 use rstest_bdd_macros::{given, then, when};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
 use super::test_doubles::ScriptedBackend;
-use super::test_helpers::{RunContext, RunResult, RunTestError};
+use super::test_helpers::{RunContext, RunFailure, RunFailureKind, RunResult, RunTestError};
 use mriya::test_support::ScriptedRunner;
 
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +56,59 @@ fn volume_id_configured(mut run_context: RunContext, volume_id: String) -> RunCo
     run_context
 }
 
+#[given("cloud-init user data is configured")]
+fn cloud_init_configured(mut run_context: RunContext) -> RunContext {
+    run_context.request.cloud_init_user_data = Some(String::from("cloud-init-user-data"));
+    run_context
+}
+
+#[given("the rsync step succeeds")]
+fn rsync_succeeds(run_context: RunContext) -> RunContext {
+    run_context.runner.push_success();
+    run_context
+}
+
+#[given("cloud-init is already finished")]
+fn cloud_init_already_finished(run_context: RunContext) -> RunContext {
+    run_context.runner.push_success();
+    run_context
+}
+
+#[given("cloud-init check fails")]
+fn cloud_init_check_fails(run_context: RunContext) -> RunContext {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    run_context
+        .runner
+        .fail_next_spawn(ssh_bin, "simulated cloud-init readiness check failure");
+    run_context
+}
+
+#[given("cloud-init provisioning times out")]
+fn cloud_init_times_out(mut run_context: RunContext) -> RunContext {
+    let poll_interval = Duration::from_millis(1);
+    let wait_timeout = Duration::from_millis(5);
+    run_context.cloud_init_poll_interval_override = Some(poll_interval);
+    run_context.cloud_init_wait_timeout_override = Some(wait_timeout);
+
+    // Ensure enough stubbed responses are queued so the wait loop times out
+    // deterministically instead of failing early due to a missing response.
+    const ATTEMPT_MARGIN: u128 = 16;
+    let poll_nanos = poll_interval.as_nanos().max(1);
+    let min_attempts = wait_timeout.as_nanos().div_ceil(poll_nanos);
+    let attempt_budget_nanos = min_attempts.saturating_add(ATTEMPT_MARGIN);
+    let attempt_budget = attempt_budget_nanos.min(usize::MAX as u128) as usize;
+    for _ in 0..attempt_budget {
+        run_context.runner.push_exit_code(1);
+    }
+    run_context
+}
+
+#[given("the remote command returns exit code \"{code}\"")]
+fn remote_command_exit_code(run_context: RunContext, code: i32) -> RunContext {
+    run_context.runner.push_exit_code(code);
+    run_context
+}
+
 #[given("the mount command fails")]
 fn mount_command_fails(run_context: RunContext) -> RunContext {
     // No-op: mount uses `|| true` for graceful degradation.
@@ -70,14 +124,22 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
         sync_config,
         request,
         source,
+        cloud_init_poll_interval_override,
+        cloud_init_wait_timeout_override,
         source_tmp,
         ..
     } = run_context;
     let syncer = Syncer::new(sync_config.clone(), runner.clone())
         .map_err(RunTestError::from)
         .map_err(StepError::from)?;
-    let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
+    let mut orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
         RunOrchestrator::new(backend.clone(), syncer);
+    if let Some(interval) = cloud_init_poll_interval_override {
+        orchestrator = orchestrator.with_cloud_init_poll_interval(interval);
+    }
+    if let Some(timeout) = cloud_init_wait_timeout_override {
+        orchestrator = orchestrator.with_cloud_init_wait_timeout(timeout);
+    }
 
     let request_clone = request.clone();
     let source_clone = source.clone();
@@ -89,7 +151,21 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
 
     let result_enum = match result {
         Ok(output) => RunResult::Success(output),
-        Err(err) => RunResult::Failure(err.to_string()),
+        Err(err) => {
+            let kind = match &err {
+                mriya::RunError::Provision(_) => RunFailureKind::Provision,
+                mriya::RunError::Wait { .. } => RunFailureKind::Wait,
+                mriya::RunError::Provisioning { .. } => RunFailureKind::Provisioning,
+                mriya::RunError::ProvisioningTimeout { .. } => RunFailureKind::ProvisioningTimeout,
+                mriya::RunError::Sync { .. } => RunFailureKind::Sync,
+                mriya::RunError::Remote { .. } => RunFailureKind::Remote,
+                mriya::RunError::Teardown(_) => RunFailureKind::Teardown,
+            };
+            RunResult::Failure(RunFailure {
+                kind,
+                message: err.to_string(),
+            })
+        }
     };
 
     Ok(RunContext {
@@ -98,6 +174,8 @@ fn outcome(run_context: RunContext, command: String) -> Result<RunContext, StepE
         sync_config,
         request,
         source,
+        cloud_init_poll_interval_override,
+        cloud_init_wait_timeout_override,
         outcome: Some(result_enum),
         source_tmp,
     })
@@ -119,7 +197,8 @@ fn run_exit_code(run_context: &RunContext, code: i32) -> Result<(), StepError> {
             other.exit_code
         ))),
         RunResult::Failure(err) => Err(StepError::Assertion(format!(
-            "run failed unexpectedly: {err}"
+            "run failed unexpectedly: {}",
+            err.message
         ))),
     }
 }
@@ -144,11 +223,37 @@ fn assert_failure_contains(
     };
 
     match result {
-        RunResult::Failure(message) if message.contains(expected_substring) => Ok(()),
+        RunResult::Failure(failure) if failure.message.contains(expected_substring) => Ok(()),
         other => Err(StepError::Assertion(format!(
             "unexpected outcome: {other:?}"
         ))),
     }
+}
+
+#[then("the run error is a provisioning timeout")]
+fn provisioning_timeout(run_context: &RunContext) -> Result<(), StepError> {
+    let Some(result) = &run_context.outcome else {
+        return Err(StepError::Assertion(String::from("missing outcome")));
+    };
+
+    match result {
+        RunResult::Failure(failure) if failure.kind == RunFailureKind::ProvisioningTimeout => {
+            Ok(())
+        }
+        RunResult::Failure(failure) => Err(StepError::Assertion(format!(
+            "expected provisioning timeout, got {kind:?}: {message}",
+            kind = failure.kind,
+            message = failure.message
+        ))),
+        RunResult::Success(_) => Err(StepError::Assertion(String::from(
+            "expected failure, got success",
+        ))),
+    }
+}
+
+#[then("the run error includes a teardown failure note")]
+fn teardown_failure_note_present(run_context: &RunContext) -> Result<(), StepError> {
+    assert_failure_contains(run_context, "teardown also failed")
 }
 
 fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
@@ -210,9 +315,59 @@ fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Resul
     Ok(())
 }
 
+#[then("cloud-init readiness is checked before executing the remote command")]
+fn cloud_init_checked_before_remote_command(run_context: &RunContext) -> Result<(), StepError> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let ssh_invocations = run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .filter(|invocation| invocation.program == ssh_bin)
+        .collect::<Vec<_>>();
+
+    if ssh_invocations.len() < 2 {
+        return Err(StepError::Assertion(format!(
+            "expected at least 2 ssh invocations, got {}",
+            ssh_invocations.len()
+        )));
+    }
+
+    let cloud_init_index = ssh_invocations.iter().position(|invocation| {
+        invocation
+            .args
+            .last()
+            .is_some_and(|arg| arg.to_string_lossy().contains("boot-finished"))
+    });
+
+    let remote_index = ssh_invocations.iter().position(|invocation| {
+        invocation
+            .args
+            .last()
+            .is_some_and(|arg| arg.to_string_lossy().contains("echo ok"))
+    });
+
+    match (cloud_init_index, remote_index) {
+        (Some(ci), Some(remote)) if ci < remote => Ok(()),
+        (Some(_), Some(_)) => Err(StepError::Assertion(String::from(
+            "expected cloud-init check to run before the remote command",
+        ))),
+        (None, _) => Err(StepError::Assertion(String::from(
+            "missing cloud-init readiness check invocation",
+        ))),
+        (_, None) => Err(StepError::Assertion(String::from(
+            "missing remote command invocation",
+        ))),
+    }
+}
+
 #[then("the run error mentions sync failure")]
 fn sync_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
     assert_failure_contains(run_context, "sync")
+}
+
+#[then("the run error mentions provisioning failure")]
+fn provisioning_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
+    assert_failure_contains(run_context, "provisioning")
 }
 
 #[then("teardown failure is reported")]

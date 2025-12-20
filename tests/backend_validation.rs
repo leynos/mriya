@@ -75,3 +75,20 @@ fn new_trims_whitespace() {
         .expect_err("whitespace-only values should fail");
     assert_eq!(error, BackendError::Validation(String::from("image_label")));
 }
+
+#[test]
+fn validate_rejects_empty_cloud_init_user_data() {
+    let error = InstanceRequest::builder()
+        .image_label("ubuntu-22-04")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
+        .zone("fr-par-1")
+        .project_id("project-id")
+        .architecture("x86_64")
+        .cloud_init_user_data(Some(String::from("   ")))
+        .build()
+        .expect_err("empty cloud-init should fail");
+    assert_eq!(
+        error,
+        BackendError::Validation(String::from("cloud_init_user_data"))
+    );
+}

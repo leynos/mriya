@@ -20,6 +20,9 @@ prefix:
 - `SCW_DEFAULT_INSTANCE_TYPE` — defaults to `DEV1-S` (smallest, cheapest).
 - `SCW_DEFAULT_IMAGE` — defaults to `Ubuntu 24.04 Noble Numbat`.
 - `SCW_DEFAULT_ARCHITECTURE` — defaults to `x86_64`.
+- `SCW_CLOUD_INIT_USER_DATA` — optional cloud-init user-data content.
+- `SCW_CLOUD_INIT_USER_DATA_FILE` — optional path to a cloud-init user-data
+  file.
 
 For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags
@@ -86,6 +89,42 @@ The Scaleway backend validates that the instance type exists in the selected
 zone during provisioning, and resolves image labels for the selected
 architecture. Unsupported values yield provider-specific errors (for example,
 unknown instance types).
+
+## Cloud-init provisioning
+
+Mriya can pass a cloud-init *user-data* payload through to the provider when
+creating the VM. This allows installation of system packages or other
+first-boot provisioning before the remote command starts.
+
+Provide user-data either inline or via a local file:
+
+```bash
+mriya run --cloud-init-file ./cloud-init.yml -- jq --version
+```
+
+Or inline (handy for short scripts):
+
+```bash
+mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
+```
+
+When cloud-init user-data is configured, Mriya:
+
+- syncs the workspace as usual
+- waits for cloud-init to finish (by checking
+  `/var/lib/cloud/instance/boot-finished`)
+- only then executes the remote command
+
+Cloud-init settings use `ortho-config` layering with the `SCW_` prefix:
+
+- `SCW_CLOUD_INIT_USER_DATA` — cloud-init user-data content (optional).
+- `SCW_CLOUD_INIT_USER_DATA_FILE` — path to a file containing cloud-init
+  user-data (optional).
+
+In `mriya.toml`, configure one of the following under `[scaleway]`:
+
+- `cloud_init_user_data = "..."` (inline)
+- `cloud_init_user_data_file = "./cloud-init.yml"` (file-based)
 
 Commands always execute from `MRIYA_SYNC_REMOTE_PATH` (default:
 `/home/ubuntu/project`) so `mriya run -- cargo test` mirrors running

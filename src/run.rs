@@ -6,13 +6,18 @@
 //! codes are preserved so callers observe the same status locally.
 
 use std::fmt::Display;
+use std::time::{Duration, Instant};
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
 use thiserror::Error;
+use tokio::time::sleep;
 
 use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
 use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
+
+const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Errors surfaced while performing a remote run.
 #[derive(Debug, Error)]
@@ -31,6 +36,21 @@ where
         /// Provider-specific error.
         #[source]
         source: BackendError,
+    },
+    /// Raised when cloud-init provisioning does not complete.
+    #[error("instance provisioning did not complete: {message}")]
+    Provisioning {
+        /// Human-readable description of the failure.
+        message: String,
+        /// Underlying synchronisation error.
+        #[source]
+        source: SyncError,
+    },
+    /// Raised when cloud-init provisioning does not complete before the timeout.
+    #[error("instance provisioning did not complete: {message}")]
+    ProvisioningTimeout {
+        /// Human-readable description of the failure.
+        message: String,
     },
     /// Raised when workspace synchronisation fails.
     #[error("workspace sync failed: {message}")]
@@ -60,6 +80,8 @@ where
 pub struct RunOrchestrator<B, R: CommandRunner> {
     backend: B,
     syncer: Syncer<R>,
+    cloud_init_poll_interval: Duration,
+    cloud_init_wait_timeout: Duration,
 }
 
 impl<B, R> RunOrchestrator<B, R>
@@ -71,7 +93,30 @@ where
     /// Creates a new orchestrator.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
-        Self { backend, syncer }
+        Self {
+            backend,
+            syncer,
+            cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
+            cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
+        }
+    }
+
+    /// Overrides the cloud-init polling interval.
+    ///
+    /// This is primarily used by tests to keep timeout scenarios fast.
+    #[must_use]
+    pub const fn with_cloud_init_poll_interval(mut self, interval: Duration) -> Self {
+        self.cloud_init_poll_interval = interval;
+        self
+    }
+
+    /// Overrides the cloud-init wait timeout.
+    ///
+    /// This is primarily used by tests to keep timeout scenarios fast.
+    #[must_use]
+    pub const fn with_cloud_init_wait_timeout(mut self, timeout: Duration) -> Self {
+        self.cloud_init_wait_timeout = timeout;
+        self
     }
 
     /// Runs the end-to-end workflow and returns the remote command output.
@@ -95,43 +140,21 @@ where
             .create(request)
             .await
             .map_err(RunError::Provision)?;
+        let networking = self.wait_for_ready_or_destroy(&handle).await?;
 
-        let networking = match self.backend.wait_for_ready(&handle).await {
-            Ok(net) => net,
-            Err(err) => {
-                let message = self.destroy_with_note(&handle, &err).await;
-                return Err(RunError::Wait {
-                    message,
-                    source: err,
-                });
-            }
-        };
-
-        // Mount cache volume if configured
-        if request.volume_id.is_some() {
-            self.mount_cache_volume(&handle, &networking).await?;
-        }
+        self.mount_volume_if_needed(&handle, &networking, request)
+            .await?;
 
         let dest = self.syncer.destination_for(&networking);
+        self.sync_or_destroy(&handle, source, &dest).await?;
 
-        if let Err(err) = self.syncer.sync(source, &dest) {
-            let message = self.destroy_with_note(&handle, &err).await;
-            return Err(RunError::Sync {
-                message,
-                source: err,
-            });
+        if request.cloud_init_user_data.is_some() {
+            self.wait_for_cloud_init(&handle, &networking).await?;
         }
 
-        let output = match self.syncer.run_remote(&networking, remote_command) {
-            Ok(result) => result,
-            Err(err) => {
-                let message = self.destroy_with_note(&handle, &err).await;
-                return Err(RunError::Remote {
-                    message,
-                    source: err,
-                });
-            }
-        };
+        let output = self
+            .run_remote_or_destroy(&handle, &networking, remote_command)
+            .await?;
 
         self.backend
             .destroy(handle)
@@ -139,6 +162,68 @@ where
             .map_err(RunError::Teardown)?;
 
         Ok(output)
+    }
+
+    async fn wait_for_ready_or_destroy(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<InstanceNetworking, RunError<B::Error>> {
+        match self.backend.wait_for_ready(handle).await {
+            Ok(net) => Ok(net),
+            Err(err) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Wait {
+                    message,
+                    source: err,
+                })
+            }
+        }
+    }
+
+    async fn mount_volume_if_needed(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+        request: &InstanceRequest,
+    ) -> Result<(), RunError<B::Error>> {
+        if request.volume_id.is_some() {
+            self.mount_cache_volume(handle, networking).await?;
+        }
+        Ok(())
+    }
+
+    async fn sync_or_destroy(
+        &self,
+        handle: &InstanceHandle,
+        source: &Utf8Path,
+        dest: &crate::sync::SyncDestination,
+    ) -> Result<(), RunError<B::Error>> {
+        if let Err(err) = self.syncer.sync(source, dest) {
+            let message = self.destroy_with_note(handle, &err).await;
+            return Err(RunError::Sync {
+                message,
+                source: err,
+            });
+        }
+        Ok(())
+    }
+
+    async fn run_remote_or_destroy(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+        remote_command: &str,
+    ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
+        match self.syncer.run_remote(networking, remote_command) {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Remote {
+                    message,
+                    source: err,
+                })
+            }
+        }
     }
 
     /// Mounts the cache volume via SSH.
@@ -172,6 +257,44 @@ where
                 })
             }
         }
+    }
+
+    async fn wait_for_cloud_init(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+    ) -> Result<(), RunError<B::Error>> {
+        let deadline = Instant::now() + self.cloud_init_wait_timeout;
+        let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
+        let command = format!("sudo test -f {cloud_init_finished_marker}");
+
+        while Instant::now() <= deadline {
+            let finished = match self.syncer.run_remote(networking, &command) {
+                Ok(output) => matches!(output.exit_code, Some(0)),
+                Err(err) => {
+                    let message = self.destroy_with_note(handle, &err).await;
+                    return Err(RunError::Provisioning {
+                        message,
+                        source: err,
+                    });
+                }
+            };
+
+            if finished {
+                return Ok(());
+            }
+
+            sleep(self.cloud_init_poll_interval).await;
+        }
+
+        let timeout_message = format!(
+            "cloud-init did not finish within {} seconds",
+            self.cloud_init_wait_timeout.as_secs()
+        );
+        let message_with_teardown = self.destroy_with_note(handle, &timeout_message).await;
+        Err(RunError::ProvisioningTimeout {
+            message: message_with_teardown,
+        })
     }
 
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {

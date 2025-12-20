@@ -26,8 +26,6 @@ use mriya::{
 
 #[cfg(test)]
 mod main_tests;
-#[cfg(test)]
-mod test_helpers;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,6 +54,15 @@ struct RunCommand {
     /// a provider-specific error.
     #[arg(long, value_name = "IMAGE")]
     image: Option<String>,
+    /// Provide cloud-init user-data inline for this run (cloud-config YAML or script).
+    ///
+    /// This payload is passed through to the backend and applied during the
+    /// instance's first boot before the remote command is executed.
+    #[arg(long, value_name = "USER_DATA", conflicts_with = "cloud_init_file")]
+    cloud_init: Option<String>,
+    /// Provide cloud-init user-data from a local file for this run.
+    #[arg(long, value_name = "PATH", conflicts_with = "cloud_init")]
+    cloud_init_file: Option<String>,
     /// Command to execute on the remote host (use -- to separate flags).
     #[arg(required = true, trailing_var_arg = true)]
     command: Vec<String>,
@@ -80,6 +87,8 @@ enum CliError {
         field: &'static str,
         message: String,
     },
+    #[error("invalid cloud-init configuration: {0}")]
+    InvalidCloudInit(String),
 }
 
 #[tokio::main]
@@ -166,7 +175,37 @@ fn apply_instance_overrides(
         request.image_label = parse_override("--image", image)?;
     }
 
+    if args.cloud_init.is_some() || args.cloud_init_file.is_some() {
+        request.cloud_init_user_data = resolve_cloud_init_for_run(args)?;
+    }
+
     Ok(())
+}
+
+fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliError> {
+    mriya::cloud_init::resolve_cloud_init_user_data(
+        args.cloud_init.as_deref(),
+        args.cloud_init_file.as_deref(),
+    )
+    .map_err(|err| match err {
+        mriya::cloud_init::CloudInitError::BothProvided => CliError::InvalidCloudInit(
+            String::from("provide only one of --cloud-init or --cloud-init-file"),
+        ),
+        mriya::cloud_init::CloudInitError::InlineEmpty => {
+            CliError::InvalidCloudInit(String::from("--cloud-init must not be empty or whitespace"))
+        }
+        mriya::cloud_init::CloudInitError::FilePathEmpty => CliError::InvalidCloudInit(
+            String::from("--cloud-init-file must not be empty or whitespace"),
+        ),
+        mriya::cloud_init::CloudInitError::FileEmpty => {
+            CliError::InvalidCloudInit(String::from("--cloud-init-file must not be empty"))
+        }
+        mriya::cloud_init::CloudInitError::FileRead { path, message } => {
+            CliError::InvalidCloudInit(format!(
+                "failed to read --cloud-init-file {path}: {message}"
+            ))
+        }
+    })
 }
 
 fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {
@@ -265,6 +304,18 @@ fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
 
     writeln!(io::stdout(), "instance_type={}", request.instance_type).ok();
     writeln!(io::stdout(), "image_label={}", request.image_label).ok();
+    writeln!(
+        io::stdout(),
+        "cloud_init_user_data_present={}",
+        request.cloud_init_user_data.is_some()
+    )
+    .ok();
+    writeln!(
+        io::stdout(),
+        "cloud_init_user_data_size={}",
+        request.cloud_init_user_data.as_deref().map_or(0, str::len)
+    )
+    .ok();
     Ok(0)
 }
 

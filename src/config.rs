@@ -1,6 +1,7 @@
 //! Configuration loading via `ortho-config`.
 
 use crate::backend::InstanceRequest;
+use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
@@ -38,6 +39,10 @@ pub struct ScalewayConfig {
     /// Optional Block Storage volume ID to attach for persistent caching.
     /// The volume must exist in the same zone as the instance.
     pub default_volume_id: Option<String>,
+    /// Optional cloud-init user-data payload (cloud-config YAML or script).
+    pub cloud_init_user_data: Option<String>,
+    /// Optional path to a file containing cloud-init user-data.
+    pub cloud_init_user_data_file: Option<String>,
 }
 
 /// Metadata for a configuration field, used to generate actionable error messages.
@@ -103,7 +108,8 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError`] when validation fails.
     pub fn as_request(&self) -> Result<InstanceRequest, ConfigError> {
-        self.validate()?;
+        self.validate_required_fields()?;
+        let cloud_init_user_data = self.resolve_cloud_init_user_data()?;
         InstanceRequest::builder()
             .image_label(&self.default_image)
             .instance_type(&self.default_instance_type)
@@ -112,8 +118,37 @@ impl ScalewayConfig {
             .organisation_id(self.default_organization_id.clone())
             .architecture(&self.default_architecture)
             .volume_id(self.default_volume_id.clone())
+            .cloud_init_user_data(cloud_init_user_data)
             .build()
             .map_err(|err| ConfigError::Parse(err.to_string()))
+    }
+
+    fn resolve_cloud_init_user_data(&self) -> Result<Option<String>, ConfigError> {
+        resolve_cloud_init_user_data(
+            self.cloud_init_user_data.as_deref(),
+            self.cloud_init_user_data_file.as_deref(),
+        )
+        .map_err(|err| match err {
+            CloudInitError::BothProvided => ConfigError::CloudInit(String::from(concat!(
+                "cloud-init user-data can be provided either inline or via a file, not both; ",
+                "set only one of SCW_CLOUD_INIT_USER_DATA or SCW_CLOUD_INIT_USER_DATA_FILE ",
+                "(or cloud_init_user_data / cloud_init_user_data_file in [scaleway])"
+            ))),
+            CloudInitError::InlineEmpty => ConfigError::CloudInit(String::from(concat!(
+                "cloud-init user-data must not be empty; set SCW_CLOUD_INIT_USER_DATA ",
+                "(or cloud_init_user_data in [scaleway])"
+            ))),
+            CloudInitError::FilePathEmpty | CloudInitError::FileEmpty => {
+                ConfigError::CloudInit(String::from(concat!(
+                    "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
+                    "(or cloud_init_user_data_file in [scaleway])"
+                )))
+            }
+            CloudInitError::FileRead { path, message } => ConfigError::CloudInitFileRead {
+                path,
+                message,
+            },
+        })
     }
 
     /// Performs semantic validation on required fields. Error messages include
@@ -124,6 +159,11 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_required_fields()?;
+        Ok(())
+    }
+
+    fn validate_required_fields(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
             &FieldMetadata::new(
@@ -191,6 +231,17 @@ pub enum ConfigError {
     /// Surfaces errors from the `ortho-config` loader.
     #[error("configuration parsing failed: {0}")]
     Parse(String),
+    /// Raised when cloud-init user-data configuration is invalid.
+    #[error("{0}")]
+    CloudInit(String),
+    /// Raised when reading cloud-init user-data from a file fails.
+    #[error("failed to read cloud-init user-data file {path}: {message}")]
+    CloudInitFileRead {
+        /// Path to the user-data file.
+        path: String,
+        /// Underlying read error message.
+        message: String,
+    },
 }
 
 impl From<ortho_config::OrthoError> for ConfigError {

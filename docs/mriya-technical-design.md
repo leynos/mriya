@@ -745,6 +745,26 @@ Mriya code path.
   user is root by default with key auth; for others, we’ll confirm). In config,
   we might allow specifying the username for SSH if needed.
 
+#### Cloud-init provisioning decision (December 2025)
+
+- Accept cloud-init user-data either inline or file-based, using
+  `ortho-config` layering under the `SCW_` prefix:
+  - `SCW_CLOUD_INIT_USER_DATA` / `cloud_init_user_data` in `[scaleway]`
+  - `SCW_CLOUD_INIT_USER_DATA_FILE` / `cloud_init_user_data_file` in
+    `[scaleway]`
+  - CLI flags `mriya run --cloud-init` and `--cloud-init-file` override the
+    configured defaults.
+- Pass the payload through the abstraction as
+  `InstanceRequest.cloud_init_user_data`.
+- For Scaleway, supply the payload in the server create request using the
+  `cloud_init` field and ensure the VM stays stopped (`stopped=true`) until
+  after creation, so cloud-init consumes it on the very first boot.
+- Treat “SSH readiness” as “port 22 is reachable” by probing the TCP socket
+  after the instance reaches `running` and exposes a public IP.
+- Ensure remote commands do not start until cloud-init finishes by checking for
+  `/var/lib/cloud/instance/boot-finished` over SSH, with a fixed timeout (10
+  minutes).
+
 ### v0.3 – `mriya init`: Project Volume Initialization
 
 **Feature:** Introduce a command `mriya init` that prepares a persistent volume

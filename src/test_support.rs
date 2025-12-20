@@ -1,6 +1,10 @@
 //! Test support utilities shared across unit and integration tests.
 
+use std::collections::BTreeSet;
+use std::env;
 use std::ffi::OsString;
+
+use tokio::sync::{Mutex, MutexGuard};
 
 /// Scripted command runner that returns pre-seeded outputs in FIFO order.
 ///
@@ -10,6 +14,13 @@ pub struct ScriptedRunner {
     responses:
         std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<crate::sync::CommandOutput>>>,
     invocations: std::rc::Rc<std::cell::RefCell<Vec<CommandInvocation>>>,
+    next_error: std::rc::Rc<std::cell::RefCell<Option<ScopedError>>>,
+}
+
+#[derive(Clone, Debug)]
+struct ScopedError {
+    program: String,
+    error: crate::sync::SyncError,
 }
 
 /// Records a single invocation made through [`ScriptedRunner`].
@@ -108,6 +119,25 @@ impl ScriptedRunner {
                 stderr: stderr.into(),
             });
     }
+
+    /// Forces the next invocation of `program` to return the provided error.
+    pub fn fail_next_for(&self, program: &str, error: crate::sync::SyncError) {
+        *self.next_error.borrow_mut() = Some(ScopedError {
+            program: program.to_owned(),
+            error,
+        });
+    }
+
+    /// Forces the next invocation to return a spawn error with the provided message.
+    pub fn fail_next_spawn(&self, program: &str, message: &str) {
+        self.fail_next_for(
+            program,
+            crate::sync::SyncError::Spawn {
+                program: program.to_owned(),
+                message: message.to_owned(),
+            },
+        );
+    }
 }
 
 impl crate::sync::CommandRunner for ScriptedRunner {
@@ -120,6 +150,21 @@ impl crate::sync::CommandRunner for ScriptedRunner {
             program: program.to_owned(),
             args: args.to_vec(),
         });
+
+        let error_to_return = {
+            let mut pending = self.next_error.borrow_mut();
+            match pending.as_ref() {
+                Some(scoped) if scoped.program == program => {
+                    pending.take().map(|taken| taken.error)
+                }
+                _ => None,
+            }
+        };
+
+        if let Some(error) = error_to_return {
+            return Err(error);
+        }
+
         self.responses
             .borrow_mut()
             .pop_front()
@@ -127,6 +172,60 @@ impl crate::sync::CommandRunner for ScriptedRunner {
                 program: program.to_owned(),
                 message: String::from("no scripted response available"),
             })
+    }
+}
+
+/// Global mutex used to serialise environment mutation in tests.
+pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+/// Guard that holds the env mutex and cleans up variables on drop.
+pub struct EnvGuard {
+    previous: Vec<(String, Option<OsString>)>,
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl EnvGuard {
+    /// Sets multiple environment variables while holding a global mutex.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `pairs` contains duplicate keys.
+    pub async fn set_vars(pairs: &[(&str, &str)]) -> Self {
+        assert!(
+            {
+                let mut seen = BTreeSet::new();
+                pairs.iter().all(|(key, _)| seen.insert(*key))
+            },
+            "duplicate environment variable keys passed to EnvGuard::set_vars"
+        );
+
+        let guard = ENV_LOCK.lock().await;
+        let mut previous = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            let old = env::var_os(key);
+            // SAFETY: Environment mutation is serialised by `ENV_LOCK`, preventing races.
+            unsafe { env::set_var(key, value) };
+            previous.push((key.to_string(), old));
+        }
+
+        Self {
+            previous,
+            _guard: guard,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, old) in &self.previous {
+            // SAFETY: Environment mutation is serialised by holding `_guard`.
+            unsafe {
+                match old {
+                    Some(val) => env::set_var(key, val),
+                    None => env::remove_var(key),
+                }
+            }
+        }
     }
 }
 

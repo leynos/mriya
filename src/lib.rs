@@ -5,6 +5,7 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod cloud_init;
 pub mod config;
 pub mod janitor;
 pub mod run;
