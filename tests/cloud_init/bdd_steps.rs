@@ -78,8 +78,8 @@ fn execute_run_command(
         .output()
         .map_err(|err| StepError::Execution(err.to_string()))?;
 
-    if let Some(tmp_dir) = tmp_dir {
-        cli_context.tmp_dir = Some(std::sync::Arc::new(tmp_dir));
+    if let Some(temp_dir) = tmp_dir {
+        cli_context.tmp_dir = Some(std::sync::Arc::new(temp_dir));
     }
 
     cli_context.output = Some(CliOutput::from_process_output(output));
