@@ -6,21 +6,27 @@
 
 use camino::Utf8Path;
 use cap_std::{ambient_authority, fs_utf8::Dir};
+use thiserror::Error;
 
 use crate::sync::expand_tilde;
 
 /// Errors raised while resolving cloud-init user-data.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum CloudInitError {
     /// Raised when both inline and file sources are provided.
+    #[error("cloud-init user-data cannot be provided both inline and via file")]
     BothProvided,
     /// Raised when an inline payload is empty or only whitespace.
+    #[error("cloud-init user-data must not be empty")]
     InlineEmpty,
     /// Raised when a file path is empty or only whitespace.
+    #[error("cloud-init user-data file path must not be empty")]
     FilePathEmpty,
     /// Raised when a file resolves to empty or only whitespace.
+    #[error("cloud-init user-data file must not be empty")]
     FileEmpty,
     /// Raised when reading the file source fails.
+    #[error("failed to read cloud-init user-data file `{path}`: {message}")]
     FileRead {
         /// Expanded path that failed to read.
         path: String,

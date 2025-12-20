@@ -14,6 +14,13 @@ pub struct ScriptedRunner {
     responses:
         std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<crate::sync::CommandOutput>>>,
     invocations: std::rc::Rc<std::cell::RefCell<Vec<CommandInvocation>>>,
+    next_error: std::rc::Rc<std::cell::RefCell<Option<ScopedError>>>,
+}
+
+#[derive(Clone, Debug)]
+struct ScopedError {
+    program: String,
+    error: crate::sync::SyncError,
 }
 
 /// Records a single invocation made through [`ScriptedRunner`].
@@ -112,6 +119,25 @@ impl ScriptedRunner {
                 stderr: stderr.into(),
             });
     }
+
+    /// Forces the next invocation of `program` to return the provided error.
+    pub fn fail_next_for(&self, program: &str, error: crate::sync::SyncError) {
+        *self.next_error.borrow_mut() = Some(ScopedError {
+            program: program.to_owned(),
+            error,
+        });
+    }
+
+    /// Forces the next invocation to return a spawn error with the provided message.
+    pub fn fail_next_spawn(&self, program: &str, message: &str) {
+        self.fail_next_for(
+            program,
+            crate::sync::SyncError::Spawn {
+                program: program.to_owned(),
+                message: message.to_owned(),
+            },
+        );
+    }
 }
 
 impl crate::sync::CommandRunner for ScriptedRunner {
@@ -124,6 +150,21 @@ impl crate::sync::CommandRunner for ScriptedRunner {
             program: program.to_owned(),
             args: args.to_vec(),
         });
+
+        let error_to_return = {
+            let mut pending = self.next_error.borrow_mut();
+            match pending.as_ref() {
+                Some(scoped) if scoped.program == program => {
+                    pending.take().map(|taken| taken.error)
+                }
+                _ => None,
+            }
+        };
+
+        if let Some(error) = error_to_return {
+            return Err(error);
+        }
+
         self.responses
             .borrow_mut()
             .pop_front()

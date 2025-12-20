@@ -74,11 +74,30 @@ fn cloud_init_already_finished(run_context: RunContext) -> RunContext {
     run_context
 }
 
+#[given("cloud-init check fails")]
+fn cloud_init_check_fails(run_context: RunContext) -> RunContext {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    run_context
+        .runner
+        .fail_next_spawn(ssh_bin, "simulated cloud-init readiness check failure");
+    run_context
+}
+
 #[given("cloud-init provisioning times out")]
 fn cloud_init_times_out(mut run_context: RunContext) -> RunContext {
-    run_context.cloud_init_poll_interval_override = Some(Duration::from_millis(1));
-    run_context.cloud_init_wait_timeout_override = Some(Duration::from_millis(5));
-    for _ in 0..64 {
+    let poll_interval = Duration::from_millis(1);
+    let wait_timeout = Duration::from_millis(5);
+    run_context.cloud_init_poll_interval_override = Some(poll_interval);
+    run_context.cloud_init_wait_timeout_override = Some(wait_timeout);
+
+    // Ensure enough stubbed responses are queued so the wait loop times out
+    // deterministically instead of failing early due to a missing response.
+    const ATTEMPT_MARGIN: u128 = 16;
+    let poll_nanos = poll_interval.as_nanos().max(1);
+    let min_attempts = wait_timeout.as_nanos().div_ceil(poll_nanos);
+    let attempt_budget_nanos = min_attempts.saturating_add(ATTEMPT_MARGIN);
+    let attempt_budget = attempt_budget_nanos.min(usize::MAX as u128) as usize;
+    for _ in 0..attempt_budget {
         run_context.runner.push_exit_code(1);
     }
     run_context

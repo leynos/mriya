@@ -165,22 +165,25 @@ fn config_rejects_empty_cloud_init_inline() {
     );
 }
 
+fn write_cloud_init_user_data_file(tmp: &TempDir, file_name: &str, content: &str) -> String {
+    let tmp_root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap_or_else(|path| {
+        panic!("temp dir should be utf8: {}", path.display());
+    });
+    Dir::open_ambient_dir(&tmp_root, ambient_authority())
+        .unwrap_or_else(|err| panic!("open temp dir: {err}"))
+        .write(file_name, content)
+        .unwrap_or_else(|err| panic!("write file: {err}"));
+
+    let path = tmp.path().join(file_name);
+    path.to_str()
+        .unwrap_or_else(|| panic!("temp path should be utf8: {}", path.display()))
+        .to_owned()
+}
+
 #[test]
 fn config_reads_cloud_init_user_data_from_file() {
     let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
-    let path = tmp.path().join("user-data.txt");
-    let tmp_root =
-        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap_or_else(|non_utf8_path| {
-            panic!("temp dir should be utf8: {}", non_utf8_path.display())
-        });
-    Dir::open_ambient_dir(&tmp_root, ambient_authority())
-        .unwrap_or_else(|err| panic!("open temp dir: {err}"))
-        .write("user-data.txt", "file-user-data")
-        .unwrap_or_else(|err| panic!("write file: {err}"));
-    let path_str = path
-        .to_str()
-        .unwrap_or_else(|| panic!("temp path should be utf8: {}", path.display()))
-        .to_owned();
+    let path_str = write_cloud_init_user_data_file(&tmp, "user-data.txt", "file-user-data");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
@@ -224,19 +227,7 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
 #[test]
 fn config_errors_when_cloud_init_user_data_file_is_empty() {
     let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
-    let path = tmp.path().join("user-data-empty.txt");
-    let tmp_root =
-        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap_or_else(|non_utf8_path| {
-            panic!("temp dir should be utf8: {}", non_utf8_path.display())
-        });
-    Dir::open_ambient_dir(&tmp_root, ambient_authority())
-        .unwrap_or_else(|err| panic!("open temp dir: {err}"))
-        .write("user-data-empty.txt", "   \n\t  ")
-        .unwrap_or_else(|err| panic!("write empty file: {err}"));
-    let path_str = path
-        .to_str()
-        .unwrap_or_else(|| panic!("temp path should be utf8: {}", path.display()))
-        .to_owned();
+    let path_str = write_cloud_init_user_data_file(&tmp, "user-data-empty.txt", "   \n\t  ");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),

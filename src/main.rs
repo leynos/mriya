@@ -26,8 +26,6 @@ use mriya::{
 
 #[cfg(test)]
 mod main_tests;
-#[cfg(test)]
-mod test_helpers;
 
 #[derive(Debug, Parser)]
 #[command(

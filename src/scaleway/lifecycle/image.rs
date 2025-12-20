@@ -98,14 +98,6 @@ impl ScalewayBackend {
 
         let candidates = Self::filter_images(primary, request);
 
-        if candidates.is_empty() {
-            return Err(ScalewayBackendError::ImageNotFound {
-                label: request.image_label.clone(),
-                arch: request.architecture.clone(),
-                zone: request.zone.clone(),
-            });
-        }
-
         Self::select_image_id(candidates, request)
     }
 

@@ -13,6 +13,8 @@ use crate::scaleway::types::Action;
 use super::super::{ScalewayBackend, ScalewayBackendError};
 use super::InstanceSnapshot;
 
+const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
 impl ScalewayBackend {
     pub(in crate::scaleway) async fn fetch_instance(
         &self,
@@ -43,14 +45,9 @@ impl ScalewayBackend {
         handle: &InstanceHandle,
     ) -> Result<InstanceNetworking, ScalewayBackendError> {
         let deadline = Instant::now() + self.wait_timeout;
-        loop {
-            if Instant::now() > deadline {
-                return Err(ScalewayBackendError::Timeout {
-                    action: "wait_for_ready".to_owned(),
-                    instance_id: handle.id.clone(),
-                });
-            }
+        let mut saw_running = false;
 
+        while Instant::now() <= deadline {
             let Some(server) = self.fetch_instance(handle).await? else {
                 sleep(self.poll_interval).await;
                 continue;
@@ -60,6 +57,8 @@ impl ScalewayBackend {
                 sleep(self.poll_interval).await;
                 continue;
             }
+
+            saw_running = true;
 
             if let Some(address) = server
                 .public_ip
@@ -72,14 +71,19 @@ impl ScalewayBackend {
                 });
             }
 
-            if Instant::now() > deadline {
-                return Err(ScalewayBackendError::MissingPublicIp {
-                    instance_id: handle.id.clone(),
-                });
-            }
-
             sleep(self.poll_interval).await;
         }
+
+        if saw_running {
+            return Err(ScalewayBackendError::MissingPublicIp {
+                instance_id: handle.id.clone(),
+            });
+        }
+
+        Err(ScalewayBackendError::Timeout {
+            action: "wait_for_ready".to_owned(),
+            instance_id: handle.id.clone(),
+        })
     }
 
     pub(in crate::scaleway) async fn wait_for_ssh_ready(
@@ -90,7 +94,7 @@ impl ScalewayBackend {
         let deadline = Instant::now() + self.wait_timeout;
         while Instant::now() <= deadline {
             let addr = (networking.public_ip, networking.ssh_port);
-            let connect = timeout(Duration::from_secs(2), TcpStream::connect(addr)).await;
+            let connect = timeout(SSH_CONNECT_TIMEOUT, TcpStream::connect(addr)).await;
             if matches!(connect, Ok(Ok(_))) {
                 return Ok(());
             }

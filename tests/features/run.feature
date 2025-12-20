@@ -69,6 +69,7 @@ Feature: Remote execution via mriya run
     Given a ready backend and sync pipeline
     And cloud-init user data is configured
     And the rsync step succeeds
+    And cloud-init check fails
     When I orchestrate a remote run for "echo ok"
     Then the run error mentions provisioning failure
     And the instance is destroyed

@@ -64,14 +64,17 @@ impl ScalewayBackend {
         request: &UpdateInstanceVolumesRequest,
     ) -> Result<(), ScalewayBackendError> {
         let url = format!(
-            "https://api.scaleway.com/instance/v1/zones/{}/servers/{}",
-            handle.zone, handle.id
+            "{}/zones/{}/servers/{}",
+            super::SCALEWAY_INSTANCE_API_BASE,
+            handle.zone,
+            handle.id
         );
 
         let response = super::HTTP_CLIENT
             .patch(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(request)
+            .timeout(super::HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|err| ScalewayBackendError::Provider {

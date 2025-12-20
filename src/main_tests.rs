@@ -4,7 +4,7 @@
 //! and within the repository's file size limits.
 
 use super::*;
-use crate::test_helpers::EnvGuard;
+use mriya::test_support::EnvGuard;
 use rstest::rstest;
 
 async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>

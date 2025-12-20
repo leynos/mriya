@@ -67,7 +67,8 @@ impl ScalewayBackend {
         image_id: &str,
     ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
         let url = format!(
-            "https://api.scaleway.com/instance/v1/zones/{}/servers",
+            "{}/zones/{}/servers",
+            super::SCALEWAY_INSTANCE_API_BASE,
             request.zone
         );
         let name = format!("mriya-{}", Uuid::new_v4().simple());
