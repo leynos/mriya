@@ -65,48 +65,48 @@ fn extract_value(stdout: &str, key: &OutputKey) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn execute_run_command(
+    mut cli_context: CliContext,
+    additional_args: &[&str],
+    tmp_dir: Option<TempDir>,
+) -> Result<CliContext, StepError> {
+    let mut cmd = cli_context.base_command();
+    cmd.arg("run");
+    cmd.args(additional_args);
+    cmd.args(["--", "echo", "ok"]);
+    let output = cmd
+        .output()
+        .map_err(|err| StepError::Execution(err.to_string()))?;
+
+    if let Some(tmp_dir) = tmp_dir {
+        cli_context.tmp_dir = Some(std::sync::Arc::new(tmp_dir));
+    }
+
+    cli_context.output = Some(CliOutput::from_process_output(output));
+    Ok(cli_context)
+}
+
 #[given("fake request dumping is enabled for cloud-init")]
 fn fake_dumping_enabled(cli_context: CliContext) -> CliContext {
     cli_context
 }
 
 #[when("I run mriya without cloud-init user-data")]
-fn run_without_cloud_init(mut cli_context: CliContext) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
-    cmd.args(["run", "--", "echo", "ok"]);
-    let output = cmd
-        .output()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-
-    cli_context.output = Some(CliOutput::from_process_output(output));
-    Ok(cli_context)
+fn run_without_cloud_init(cli_context: CliContext) -> Result<CliContext, StepError> {
+    execute_run_command(cli_context, &[], None)
 }
 
 #[when("I run mriya with inline cloud-init user-data \"{user_data}\"")]
 fn run_with_inline_cloud_init(
-    mut cli_context: CliContext,
+    cli_context: CliContext,
     user_data: UserData,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
-    cmd.args([
-        "run",
-        "--cloud-init",
-        user_data.as_ref(),
-        "--",
-        "echo",
-        "ok",
-    ]);
-    let output = cmd
-        .output()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-
-    cli_context.output = Some(CliOutput::from_process_output(output));
-    Ok(cli_context)
+    execute_run_command(cli_context, &["--cloud-init", user_data.as_ref()], None)
 }
 
 #[when("I run mriya with cloud-init user-data file containing \"{content}\"")]
 fn run_with_cloud_init_file(
-    mut cli_context: CliContext,
+    cli_context: CliContext,
     content: UserData,
 ) -> Result<CliContext, StepError> {
     let tmp_dir = TempDir::new().map_err(|err| StepError::TempFile(err.to_string()))?;
@@ -117,44 +117,19 @@ fn run_with_cloud_init_file(
         .to_str()
         .ok_or_else(|| StepError::TempFile(String::from("non-utf8 file path")))?;
 
-    let mut cmd = cli_context.base_command();
-    cmd.args([
-        "run",
-        "--cloud-init-file",
-        file_path_string,
-        "--",
-        "echo",
-        "ok",
-    ]);
-    let output = cmd
-        .output()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-
-    cli_context.tmp_dir = Some(std::sync::Arc::new(tmp_dir));
-    cli_context.output = Some(CliOutput::from_process_output(output));
-    Ok(cli_context)
+    execute_run_command(
+        cli_context,
+        &["--cloud-init-file", file_path_string],
+        Some(tmp_dir),
+    )
 }
 
 #[when("I run mriya with missing cloud-init file \"{path}\"")]
 fn run_with_missing_cloud_init_file(
-    mut cli_context: CliContext,
+    cli_context: CliContext,
     path: FilePath,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
-    cmd.args([
-        "run",
-        "--cloud-init-file",
-        path.as_ref(),
-        "--",
-        "echo",
-        "ok",
-    ]);
-    let output = cmd
-        .output()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-
-    cli_context.output = Some(CliOutput::from_process_output(output));
-    Ok(cli_context)
+    execute_run_command(cli_context, &["--cloud-init-file", path.as_ref()], None)
 }
 
 fn assert_field_value(
