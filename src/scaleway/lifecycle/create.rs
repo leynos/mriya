@@ -61,16 +61,15 @@ impl ScalewayBackend {
         })
     }
 
-    /// Creates a Scaleway instance in a stopped state.
+    /// Creates a Scaleway instance in a stopped state so optional cloud-init
+    /// user-data can be supplied before first boot.
     ///
-    /// The instance is created with `stopped: true` so that optional cloud-init
-    /// user-data can be supplied in the creation request and consumed on the
-    /// first boot after the instance is powered on.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScalewayBackendError`] when the Scaleway API request fails or
-    /// the provider rejects the requested instance type or image.
+    /// - `&self`: Backend instance used to authenticate against the Scaleway API.
+    /// - `request`: Desired instance configuration (zone, type, project, optional cloud-init).
+    /// - `image_id`: Provider image identifier to boot from.
+    /// - Returns: `Result<ScalewayInstance, ScalewayBackendError>` containing the created instance.
+    /// - Errors: `Provider`/network failures, and `InstanceTypeUnavailable` when the requested
+    ///   instance type is not available in the selected zone.
     pub(in crate::scaleway) async fn create_instance_stopped(
         &self,
         request: &InstanceRequest,
