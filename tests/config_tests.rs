@@ -163,9 +163,12 @@ fn config_rejects_cloud_init_inline_and_file_together() {
         ..valid_config()
     };
 
-    let err = cfg.validate().expect_err("expected conflict to error");
+    let err = cfg
+        .as_request()
+        .expect_err("expected conflict to error")
+        .to_string();
     assert!(
-        err.to_string().contains("SCW_CLOUD_INIT_USER_DATA"),
+        err.contains("SCW_CLOUD_INIT_USER_DATA"),
         "unexpected error: {err}"
     );
 }
@@ -177,10 +180,12 @@ fn config_rejects_empty_cloud_init_inline() {
         ..valid_config()
     };
 
-    let err = cfg.validate().expect_err("expected empty inline to error");
+    let err = cfg
+        .as_request()
+        .expect_err("expected empty inline to error")
+        .to_string();
     assert!(
-        err.to_string()
-            .contains("cloud-init user-data must not be empty"),
+        err.contains("cloud-init user-data must not be empty"),
         "unexpected error: {err}"
     );
 }
@@ -218,7 +223,7 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
     };
 
     let err = cfg
-        .validate()
+        .as_request()
         .expect_err("expected missing user-data file to error");
 
     let ConfigError::CloudInitFileRead { path, .. } = err else {
@@ -238,7 +243,7 @@ fn config_errors_when_cloud_init_user_data_file_is_empty() {
     };
 
     let err = cfg
-        .validate()
+        .as_request()
         .expect_err("expected whitespace-only user-data file to error");
 
     let ConfigError::CloudInit(message) = err else {

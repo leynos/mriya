@@ -160,7 +160,6 @@ impl ScalewayConfig {
     /// Returns [`ConfigError::MissingField`] when a required field is empty.
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.validate_required_fields()?;
-        let _ = self.resolve_cloud_init_user_data()?;
         Ok(())
     }
 
