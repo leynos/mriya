@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest};
 use crate::config::ScalewayConfig;
+use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
 use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
 use types::{Action, Zone};
@@ -188,6 +189,23 @@ impl Backend for ScalewayBackend {
                 .await?;
             self.wait_until_gone(&handle).await
         })
+    }
+}
+
+impl VolumeBackend for ScalewayBackend {
+    fn create_volume<'a>(
+        &'a self,
+        request: &'a VolumeRequest,
+    ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
+        Box::pin(async move { Self::create_volume(self, request).await })
+    }
+
+    fn detach_volume<'a>(
+        &'a self,
+        handle: &'a InstanceHandle,
+        volume_id: &'a str,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        Box::pin(async move { Self::detach_volume(self, handle, volume_id).await })
     }
 }
 

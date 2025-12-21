@@ -218,3 +218,33 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
         "ssh args should forward the already wrapped remote command"
     );
 }
+
+#[rstest]
+fn run_remote_raw_avoids_wrapping(base_config: SyncConfig, networking: InstanceNetworking) {
+    let runner = ScriptedRunner::new();
+    runner.push_success();
+    let syncer = Syncer::new(base_config, runner.clone()).expect("config should validate");
+    let command = "sudo mkfs.ext4 -F /dev/vdb";
+    let _ = syncer
+        .run_remote_raw(&networking, command)
+        .expect("run_remote_raw should succeed");
+
+    let invocations = runner.invocations();
+    assert_eq!(invocations.len(), 1, "expected a single ssh invocation");
+    let invocation = invocations
+        .first()
+        .expect("expected a single invocation to exist");
+    let rendered = invocation.command_string();
+    assert!(
+        rendered.contains(command),
+        "expected raw command to be passed through, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("cd /remote/path"),
+        "expected no directory change wrapper, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("mountpoint -q /mriya"),
+        "expected no cache routing preamble, got: {rendered}"
+    );
+}

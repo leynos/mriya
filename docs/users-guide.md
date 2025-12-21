@@ -26,7 +26,8 @@ prefix:
 
 For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags
-override everything.
+override everything. Set `MRIYA_CONFIG_PATH` to point to a specific config file
+if you need to override discovery.
 
 Example `mriya.toml`:
 
@@ -168,9 +169,10 @@ target directory) on this volume to persist compiled dependencies across runs.
 
 To enable the cache volume:
 
-1. Create a Block Storage volume in the same zone as the instances via the
-   Scaleway console or CLI.
-2. Set the volume ID in configuration:
+1. Run `mriya init` to create and format a Block Storage volume in the
+   configured zone. The command writes the new volume ID into `mriya.toml`. Use
+   `mriya init --force` if you want to replace an existing configured volume ID.
+2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
@@ -202,11 +204,20 @@ If mounting fails (for example, when the volume has no filesystem), the run
 continues without the cache — this allows graceful degradation for first-time
 setups.
 
+`mriya init` uses a temporary formatter instance and runs `mkfs.ext4` against
+the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
+`mriya.toml`:
+
+```toml
+[init]
+volume_size_gb = 50
+```
+
 **Requirements:**
 
 - The volume must exist in the same zone as the instance.
 - The volume should be formatted with a filesystem (ext4 recommended) before
-  first use.
+  first use. `mriya init` formats the volume automatically.
 - Only one instance can attach a given volume at a time.
 
 ## What the Scaleway backend does now

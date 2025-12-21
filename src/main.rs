@@ -20,8 +20,9 @@ use shell_escape::unix::escape;
 use thiserror::Error;
 
 use mriya::{
-    InstanceRequest, RunError, RunOrchestrator, ScalewayBackend, ScalewayBackendError,
-    ScalewayConfig, StreamingCommandRunner, SyncConfig, Syncer,
+    ConfigStore, InitConfig, InitError, InitOrchestrator, InitRequest, InstanceRequest, RunError,
+    RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig, StreamingCommandRunner,
+    SyncConfig, Syncer,
 };
 
 #[cfg(test)]
@@ -36,6 +37,8 @@ mod main_tests;
 enum Cli {
     #[command(name = "run", about = "Provision, sync, and run a command over SSH")]
     Run(RunCommand),
+    #[command(name = "init", about = "Prepare a cache volume for this project")]
+    Init(InitCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -68,6 +71,13 @@ struct RunCommand {
     command: Vec<String>,
 }
 
+#[derive(Debug, Parser)]
+struct InitCommand {
+    /// Overwrite an existing cache volume ID in configuration.
+    #[arg(long)]
+    force: bool,
+}
+
 #[derive(Debug, Error)]
 enum CliError {
     #[error("configuration error: {0}")]
@@ -89,6 +99,8 @@ enum CliError {
     },
     #[error("invalid cloud-init configuration: {0}")]
     InvalidCloudInit(String),
+    #[error("init failed: {0}")]
+    Init(#[from] InitError<ScalewayBackendError>),
 }
 
 #[tokio::main]
@@ -96,6 +108,7 @@ async fn main() {
     let cli = Cli::parse();
     let exit_code = match cli {
         Cli::Run(command) => exec_run(command).await,
+        Cli::Init(command) => exec_init(command).await,
     }
     .unwrap_or_else(|err| {
         report_error(&err);
@@ -112,6 +125,10 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
     }
 
     run_command(command).await
+}
+
+async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
+    init_command(command).await
 }
 
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
@@ -147,6 +164,42 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
         .await?;
 
     output.exit_code.ok_or(CliError::MissingExitCode)
+}
+
+async fn init_command(args: InitCommand) -> Result<i32, CliError> {
+    let scaleway_config =
+        ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let init_config =
+        InitConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+    let sync_config =
+        SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
+
+    let backend = ScalewayBackend::new(scaleway_config.clone())
+        .map_err(|err| CliError::Backend(err.to_string()))?;
+    let syncer = Syncer::new(sync_config, StreamingCommandRunner)
+        .map_err(|err| CliError::Sync(err.to_string()))?;
+
+    let cwd = std::env::current_dir().map_err(|err| CliError::Config(err.to_string()))?;
+    let cwd_path = Utf8PathBuf::from_path_buf(cwd)
+        .map_err(|path| CliError::Config(path.display().to_string()))?;
+    let project_name = cwd_path.file_name().unwrap_or("mriya");
+
+    let request =
+        InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
+            .map_err(|err| CliError::Config(err.to_string()))?;
+
+    let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
+    let outcome = orchestrator.execute(&request).await?;
+
+    writeln!(
+        io::stdout(),
+        "created cache volume {} and updated {}",
+        outcome.volume_id,
+        outcome.config_path
+    )
+    .ok();
+
+    Ok(0)
 }
 
 fn build_backend_and_request(

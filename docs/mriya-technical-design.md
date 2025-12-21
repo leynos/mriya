@@ -797,6 +797,19 @@ We’ll document that `mriya init` should be run once per project (or whenever
 they want to create a fresh cache volume). If `mriya.toml` already has a
 volume, the command can warn or ask if they want to replace it.
 
+#### Volume init decisions (December 2025)
+
+- Use OrthoConfig discovery with `mriya.toml` (overridable via
+  `MRIYA_CONFIG_PATH`) so `mriya init` updates the same configuration file
+  consumed by `mriya run`.
+- Provision a short-lived formatter instance and run
+  `mkfs.ext4 -F /dev/vdb` over SSH. We do not pass through user cloud-init to
+  avoid unintended side effects during formatting.
+- Default the volume size to 20 GB, configurable via
+  `MRIYA_INIT_VOLUME_SIZE_GB` or `[init].volume_size_gb`.
+- If a volume ID is already configured, `mriya init` fails unless `--force` is
+  supplied to overwrite the existing value.
+
 **Mounting Convention:** We decide on a standard mount point (like `/mnt/mriya`
 or `/home`). For Scaleway, perhaps we mount at `/mnt/mriya` and then in
 user-data or in our runtime, we symlink `/home/ubuntu -> /mnt/mriya` for

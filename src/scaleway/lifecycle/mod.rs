@@ -6,6 +6,8 @@ use std::time::Duration;
 mod create;
 mod image;
 mod volume_attach;
+mod volume_create;
+mod volume_detach;
 mod wait;
 
 use crate::scaleway::types::{Action, InstanceId, InstanceState};

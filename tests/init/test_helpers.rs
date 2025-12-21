@@ -1,0 +1,103 @@
+//! Shared fixtures for init BDD scenarios.
+
+use mriya::sync::{SyncConfig, SyncError};
+use mriya::test_support::ScriptedRunner;
+use mriya::{InitRequest, InstanceRequestBuilder, VolumeRequest};
+use rstest::fixture;
+use thiserror::Error;
+
+use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
+use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+
+const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct InitContext {
+    pub backend: ScriptedVolumeBackend,
+    pub runner: ScriptedRunner,
+    pub sync_config: SyncConfig,
+    pub request: InitRequest,
+    pub config_store: MemoryConfigStore,
+    pub outcome: Option<InitResult>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InitFailureKind {
+    Volume,
+    Provision,
+    Wait,
+    Format,
+    Detach,
+    Teardown,
+    Config,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitFailure {
+    pub kind: InitFailureKind,
+    pub message: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum InitResult {
+    Success,
+    Failure(InitFailure),
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum InitTestError {
+    #[error(transparent)]
+    Sync(#[from] SyncError),
+    #[error("invalid init fixture: {0}")]
+    Fixture(String),
+}
+
+#[fixture]
+pub fn init_context_result() -> Result<InitContext, InitTestError> {
+    build_init_context()
+}
+
+#[fixture]
+pub fn init_context(init_context_result: Result<InitContext, InitTestError>) -> InitContext {
+    init_context_result
+        .unwrap_or_else(|err| panic!("init context fixture should initialise: {err}"))
+}
+
+fn build_init_context() -> Result<InitContext, InitTestError> {
+    let sync_config = SyncConfig {
+        rsync_bin: String::from("rsync"),
+        ssh_bin: String::from("ssh"),
+        ssh_user: String::from("ubuntu"),
+        remote_path: String::from("/remote"),
+        ssh_batch_mode: true,
+        ssh_strict_host_key_checking: false,
+        ssh_known_hosts_file: String::from("/dev/null"),
+        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
+        volume_mount_path: String::from("/mriya"),
+        route_build_caches: true,
+    };
+
+    let instance_request = InstanceRequestBuilder::new()
+        .image_label("ubuntu")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
+        .zone("fr-par-1")
+        .project_id("project")
+        .architecture("x86_64")
+        .build()
+        .map_err(|err| InitTestError::Fixture(format!("instance request: {err}")))?;
+
+    let volume = VolumeRequest::new("mriya-test-cache", 10 * BYTES_PER_GB, "fr-par-1", "project");
+
+    Ok(InitContext {
+        backend: ScriptedVolumeBackend::new(),
+        runner: ScriptedRunner::new(),
+        sync_config,
+        request: InitRequest {
+            volume,
+            instance_request,
+            overwrite_existing_volume_id: false,
+        },
+        config_store: MemoryConfigStore::new(),
+        outcome: None,
+    })
+}
