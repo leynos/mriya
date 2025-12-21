@@ -58,6 +58,13 @@ struct State {
     destroy_calls: u32,
 }
 
+#[derive(Clone)]
+struct OperationSpec {
+    context: &'static str,
+    failure_mode: FailureMode,
+    error: ScriptedVolumeBackendError,
+}
+
 impl ScriptedVolumeBackend {
     pub fn new() -> Self {
         Self {
@@ -118,6 +125,29 @@ impl ScriptedVolumeBackend {
             .unwrap_or_else(|err| panic!("lock poisoned: destroy_calls: {err}"))
             .destroy_calls
     }
+
+    /// Execute an operation with scripted failure checking.
+    fn execute_with_failure_check<T>(
+        &self,
+        operation: OperationSpec,
+        increment: impl FnOnce(&mut State),
+        success: impl FnOnce() -> T,
+    ) -> Result<T, ScriptedVolumeBackendError> {
+        let mut state = self.state.lock().map_err(|err| {
+            ScriptedVolumeBackendError::Lock(format!(
+                "lock poisoned in {}: {err}",
+                operation.context
+            ))
+        })?;
+
+        increment(&mut state);
+
+        if state.failures.contains(operation.failure_mode) {
+            return Err(operation.error);
+        }
+
+        Ok(success())
+    }
 }
 
 /// Errors raised by the scripted backend to model failure points.
@@ -133,6 +163,8 @@ pub enum ScriptedVolumeBackendError {
     Detach,
     #[error("destroy failure")]
     Destroy,
+    #[error("{0}")]
+    Lock(String),
 }
 
 impl Backend for ScriptedVolumeBackend {
@@ -143,17 +175,18 @@ impl Backend for ScriptedVolumeBackend {
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
-            let state = self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("lock poisoned in create: {err}"));
-            if state.failures.contains(FailureMode::Provision) {
-                return Err(ScriptedVolumeBackendError::Provision);
-            }
-            Ok(InstanceHandle {
-                id: String::from("instance-123"),
-                zone: String::from("test-zone"),
-            })
+            self.execute_with_failure_check(
+                OperationSpec {
+                    context: "create",
+                    failure_mode: FailureMode::Provision,
+                    error: ScriptedVolumeBackendError::Provision,
+                },
+                |_| {},
+                || InstanceHandle {
+                    id: String::from("instance-123"),
+                    zone: String::from("test-zone"),
+                },
+            )
         })
     }
 
@@ -162,31 +195,34 @@ impl Backend for ScriptedVolumeBackend {
         _handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
         Box::pin(async move {
-            let state = self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("lock poisoned in wait: {err}"));
-            if state.failures.contains(FailureMode::Wait) {
-                return Err(ScriptedVolumeBackendError::Wait);
-            }
-            Ok(InstanceNetworking {
-                public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                ssh_port: 22,
-            })
+            self.execute_with_failure_check(
+                OperationSpec {
+                    context: "wait_for_ready",
+                    failure_mode: FailureMode::Wait,
+                    error: ScriptedVolumeBackendError::Wait,
+                },
+                |_| {},
+                || InstanceNetworking {
+                    public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    ssh_port: 22,
+                },
+            )
         })
     }
 
     fn destroy(&self, _handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
         Box::pin(async move {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("lock poisoned in destroy: {err}"));
-            state.destroy_calls += 1;
-            if state.failures.contains(FailureMode::Destroy) {
-                return Err(ScriptedVolumeBackendError::Destroy);
-            }
-            Ok(())
+            self.execute_with_failure_check(
+                OperationSpec {
+                    context: "destroy",
+                    failure_mode: FailureMode::Destroy,
+                    error: ScriptedVolumeBackendError::Destroy,
+                },
+                |state| {
+                    state.destroy_calls += 1;
+                },
+                || (),
+            )
         })
     }
 }
@@ -197,18 +233,20 @@ impl VolumeBackend for ScriptedVolumeBackend {
         _request: &'a VolumeRequest,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
         Box::pin(async move {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("lock poisoned in create_volume: {err}"));
-            state.create_volume_calls += 1;
-            if state.failures.contains(FailureMode::CreateVolume) {
-                return Err(ScriptedVolumeBackendError::VolumeCreate);
-            }
-            Ok(VolumeHandle {
-                id: String::from("vol-123"),
-                zone: String::from("test-zone"),
-            })
+            self.execute_with_failure_check(
+                OperationSpec {
+                    context: "create_volume",
+                    failure_mode: FailureMode::CreateVolume,
+                    error: ScriptedVolumeBackendError::VolumeCreate,
+                },
+                |state| {
+                    state.create_volume_calls += 1;
+                },
+                || VolumeHandle {
+                    id: String::from("vol-123"),
+                    zone: String::from("test-zone"),
+                },
+            )
         })
     }
 
@@ -218,14 +256,15 @@ impl VolumeBackend for ScriptedVolumeBackend {
         _volume_id: &'a str,
     ) -> BackendFuture<'a, (), Self::Error> {
         Box::pin(async move {
-            let state = self
-                .state
-                .lock()
-                .unwrap_or_else(|err| panic!("lock poisoned in detach: {err}"));
-            if state.failures.contains(FailureMode::Detach) {
-                return Err(ScriptedVolumeBackendError::Detach);
-            }
-            Ok(())
+            self.execute_with_failure_check(
+                OperationSpec {
+                    context: "detach_volume",
+                    failure_mode: FailureMode::Detach,
+                    error: ScriptedVolumeBackendError::Detach,
+                },
+                |_| {},
+                || (),
+            )
         })
     }
 }

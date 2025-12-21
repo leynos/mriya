@@ -183,7 +183,7 @@ struct ConfigTarget {
     exists: bool,
 }
 
-fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
+fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreError> {
     let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
     let file_name = path
         .file_name()
@@ -191,6 +191,11 @@ fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
             path: path.to_path_buf(),
             message: String::from("configuration file path is missing a filename"),
         })?;
+    Ok((parent, file_name))
+}
+
+fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
+    let (parent, file_name) = split_config_path(path)?;
 
     match Dir::open_ambient_dir(parent, ambient_authority()) {
         Ok(dir) => dir
@@ -208,13 +213,7 @@ fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
 }
 
 fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
-    let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration file path is missing a filename"),
-        })?;
+    let (parent, file_name) = split_config_path(path)?;
 
     let dir =
         Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {

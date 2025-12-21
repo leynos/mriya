@@ -313,19 +313,35 @@ where
         }
     }
 
+    async fn handle_failure_or_destroy<E>(
+        &self,
+        handle: &InstanceHandle,
+        result: Result<(), E>,
+        make_error: impl FnOnce(String, E) -> InitError<B::Error>,
+    ) -> Result<(), InitError<B::Error>>
+    where
+        E: Display,
+    {
+        match result {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(make_error(message, err))
+            }
+        }
+    }
+
     async fn format_or_destroy(
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
     ) -> Result<(), InitError<B::Error>> {
-        if let Err(failure) = self.format_volume(networking) {
-            let message = self.destroy_with_note(handle, &failure.message).await;
-            return Err(InitError::Format {
-                message,
-                source: failure.source,
-            });
-        }
-        Ok(())
+        let result = self.format_volume(networking);
+        self.handle_failure_or_destroy(handle, result, |message, failure| InitError::Format {
+            message,
+            source: failure.source,
+        })
+        .await
     }
 
     async fn detach_or_destroy(
@@ -333,14 +349,12 @@ where
         handle: &InstanceHandle,
         volume_id: &str,
     ) -> Result<(), InitError<B::Error>> {
-        if let Err(err) = self.backend.detach_volume(handle, volume_id).await {
-            let message = self.destroy_with_note(handle, &err).await;
-            return Err(InitError::Detach {
-                message,
-                source: err,
-            });
-        }
-        Ok(())
+        let result = self.backend.detach_volume(handle, volume_id).await;
+        self.handle_failure_or_destroy(handle, result, |message, err| InitError::Detach {
+            message,
+            source: err,
+        })
+        .await
     }
 
     fn format_volume(&self, networking: &InstanceNetworking) -> Result<(), FormatFailure> {
@@ -372,6 +386,12 @@ where
 struct FormatFailure {
     message: String,
     source: Option<SyncError>,
+}
+
+impl Display for FormatFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
 }
 
 fn format_failure_message(output: &RemoteCommandOutput) -> String {

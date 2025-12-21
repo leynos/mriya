@@ -289,14 +289,7 @@ impl<R: CommandRunner> Syncer<R> {
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
         let remote_cmd_wrapped = self.build_remote_command(remote_command);
-        let args = self.build_ssh_args(networking, &remote_cmd_wrapped);
-        let output = self.runner.run(&self.config.ssh_bin, &args)?;
-
-        Ok(RemoteCommandOutput {
-            exit_code: output.code,
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })
+        self.execute_ssh(networking, &remote_cmd_wrapped)
     }
 
     /// Executes `remote_command` over SSH without applying the working
@@ -316,7 +309,15 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let args = self.build_ssh_args(networking, remote_command);
+        self.execute_ssh(networking, remote_command)
+    }
+
+    fn execute_ssh(
+        &self,
+        networking: &InstanceNetworking,
+        command: &str,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        let args = self.build_ssh_args(networking, command);
         let output = self.runner.run(&self.config.ssh_bin, &args)?;
 
         Ok(RemoteCommandOutput {
