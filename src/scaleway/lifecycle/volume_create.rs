@@ -60,6 +60,7 @@ impl ScalewayBackend {
             .post(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(&payload)
+            .timeout(super::HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|err| ScalewayBackendError::Provider {

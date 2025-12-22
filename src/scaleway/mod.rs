@@ -105,8 +105,7 @@ impl ScalewayBackend {
         Ok(())
     }
 
-    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
-        let mut tags = vec![String::from("mriya"), String::from("ephemeral")];
+    fn build_tags(mut tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
         let Some(id) = test_run_id else {
             return tags;
         };
@@ -118,17 +117,18 @@ impl ScalewayBackend {
         tags
     }
 
+    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
+        Self::build_tags(
+            vec![String::from("mriya"), String::from("ephemeral")],
+            test_run_id,
+        )
+    }
+
     fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
-        let mut tags = vec![String::from("mriya"), String::from("cache")];
-        let Some(id) = test_run_id else {
-            return tags;
-        };
-        let trimmed = id.trim();
-        if trimmed.is_empty() {
-            return tags;
-        }
-        tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
-        tags
+        Self::build_tags(
+            vec![String::from("mriya"), String::from("cache")],
+            test_run_id,
+        )
     }
 }
 

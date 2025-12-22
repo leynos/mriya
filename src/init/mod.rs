@@ -6,16 +6,18 @@ use std::fmt::Display;
 use camino::Utf8PathBuf;
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
-use thiserror::Error;
 
 use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::config::{ConfigError, ScalewayConfig};
+use crate::config::ScalewayConfig;
 use crate::config_store::{ConfigStoreError, ConfigWriter};
 use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
 use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
+use helpers::{format_command, volume_name_for_project, volume_size_bytes};
 
-const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
-const FORMAT_COMMAND: &str = "sudo mkfs.ext4 -F /dev/vdb";
+mod error;
+mod helpers;
+
+pub use error::{InitConfigError, InitError, InitRequestError};
 
 /// Init-specific configuration values layered via `OrthoConfig`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -61,16 +63,6 @@ impl InitConfig {
 }
 
 /// Errors raised while loading init configuration.
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum InitConfigError {
-    /// Raised when configuration parsing fails.
-    #[error("init configuration parsing failed: {0}")]
-    Parse(String),
-    /// Raised when volume size is invalid.
-    #[error("volume size must be greater than zero")]
-    InvalidVolumeSize,
-}
-
 /// Inputs required to prepare a cache volume.
 #[derive(Clone, Debug)]
 pub struct InitRequest {
@@ -130,26 +122,6 @@ impl InitRequest {
     }
 }
 
-/// Errors raised while preparing an init request.
-#[derive(Debug, Error)]
-pub enum InitRequestError {
-    /// Raised when Scaleway configuration is invalid.
-    #[error("scaleway configuration error: {0}")]
-    Config(#[from] ConfigError),
-    /// Raised when init configuration is invalid.
-    #[error("init configuration error: {0}")]
-    InitConfig(#[from] InitConfigError),
-    /// Raised when building the formatter instance request fails.
-    #[error("instance request error: {0}")]
-    RequestBuild(String),
-    /// Raised when the computed volume name is invalid.
-    #[error("volume name must not be empty")]
-    InvalidVolumeName,
-    /// Raised when the volume size cannot be represented in bytes.
-    #[error("volume size is too large to represent")]
-    SizeOverflow,
-}
-
 /// Outcome returned after successfully preparing a cache volume.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitOutcome {
@@ -157,53 +129,6 @@ pub struct InitOutcome {
     pub volume_id: String,
     /// Configuration file path that was updated.
     pub config_path: Utf8PathBuf,
-}
-
-/// Errors raised while initialising a cache volume.
-#[derive(Debug, Error)]
-pub enum InitError<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    /// Raised when configuration updates fail.
-    #[error("configuration update failed: {0}")]
-    Config(#[from] ConfigStoreError),
-    /// Raised when volume creation fails.
-    #[error("failed to create volume: {0}")]
-    Volume(#[source] BackendError),
-    /// Raised when instance creation fails.
-    #[error("failed to provision formatter instance: {0}")]
-    Provision(#[source] BackendError),
-    /// Raised when instance readiness checks fail.
-    #[error("instance did not become ready: {message}")]
-    Wait {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Provider-specific error.
-        #[source]
-        source: BackendError,
-    },
-    /// Raised when formatting fails.
-    #[error("volume format failed: {message}")]
-    Format {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying sync error, if any.
-        #[source]
-        source: Option<SyncError>,
-    },
-    /// Raised when volume detachment fails.
-    #[error("failed to detach volume: {message}")]
-    Detach {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Provider-specific error.
-        #[source]
-        source: BackendError,
-    },
-    /// Raised when teardown fails after formatting succeeds.
-    #[error("failed to destroy formatter instance: {0}")]
-    Teardown(#[source] BackendError),
 }
 
 /// Coordinates volume creation, formatting, and configuration updates.
@@ -247,7 +172,8 @@ where
             .map_err(InitError::Volume)?;
 
         let (handle, networking) = self.prepare_instance(request, &volume).await?;
-        self.format_or_destroy(&handle, &networking).await?;
+        self.format_or_destroy(&handle, &networking, &volume.id)
+            .await?;
         self.detach_or_destroy(&handle, &volume.id).await?;
 
         self.backend
@@ -335,8 +261,9 @@ where
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
+        volume_id: &str,
     ) -> Result<(), InitError<B::Error>> {
-        let result = self.format_volume(networking);
+        let result = self.format_volume(networking, volume_id);
         self.handle_failure_or_destroy(handle, result, |message, failure| InitError::Format {
             message,
             source: failure.source,
@@ -357,10 +284,14 @@ where
         .await
     }
 
-    fn format_volume(&self, networking: &InstanceNetworking) -> Result<(), FormatFailure> {
+    fn format_volume(
+        &self,
+        networking: &InstanceNetworking,
+        volume_id: &str,
+    ) -> Result<(), FormatFailure> {
         let output = self
             .syncer
-            .run_remote_raw(networking, FORMAT_COMMAND)
+            .run_remote_raw(networking, &format_command(volume_id))
             .map_err(|err| FormatFailure {
                 message: String::from("failed to execute format command"),
                 source: Some(err),
@@ -409,55 +340,5 @@ fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>)
         format!("{message} (teardown also failed: {teardown})")
     } else {
         message
-    }
-}
-
-fn volume_size_bytes(size_gb: u32) -> Option<u64> {
-    u64::from(size_gb).checked_mul(BYTES_PER_GB)
-}
-
-fn volume_name_for_project(project_name: &str) -> String {
-    let slug = slugify(project_name);
-    if slug.is_empty() {
-        return String::from("mriya-cache");
-    }
-    format!("mriya-{slug}-cache")
-}
-
-fn slugify(value: &str) -> String {
-    let mut slug = String::new();
-    let mut last_dash = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            slug.push('-');
-            last_dash = true;
-        }
-    }
-    slug.trim_matches('-').to_owned()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn volume_name_for_project_defaults_when_empty() {
-        let name = volume_name_for_project("");
-        assert_eq!(name, "mriya-cache");
-    }
-
-    #[test]
-    fn volume_name_for_project_slugifies() {
-        let name = volume_name_for_project("Fancy Project!");
-        assert_eq!(name, "mriya-fancy-project-cache");
-    }
-
-    #[test]
-    fn volume_size_bytes_converts_gb() {
-        let bytes = volume_size_bytes(2).unwrap_or_else(|| panic!("size bytes"));
-        assert_eq!(bytes, 2 * BYTES_PER_GB);
     }
 }

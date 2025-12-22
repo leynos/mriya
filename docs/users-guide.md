@@ -171,7 +171,7 @@ To enable the cache volume:
 
 1. Run `mriya init` to create and format a Block Storage volume in the
    configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` if you want to replace an existing configured volume ID.
+   `mriya init --force` to replace an existing configured volume ID.
 2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash

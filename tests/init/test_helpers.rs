@@ -7,6 +7,7 @@ use rstest::fixture;
 use thiserror::Error;
 
 use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
+use crate::sync_config::sync_config;
 use crate::test_constants::DEFAULT_INSTANCE_TYPE;
 
 const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
@@ -64,18 +65,7 @@ pub fn init_context(init_context_result: Result<InitContext, InitTestError>) -> 
 }
 
 fn build_init_context() -> Result<InitContext, InitTestError> {
-    let sync_config = SyncConfig {
-        rsync_bin: String::from("rsync"),
-        ssh_bin: String::from("ssh"),
-        ssh_user: String::from("ubuntu"),
-        remote_path: String::from("/remote"),
-        ssh_batch_mode: true,
-        ssh_strict_host_key_checking: false,
-        ssh_known_hosts_file: String::from("/dev/null"),
-        ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
-        volume_mount_path: String::from("/mriya"),
-        route_build_caches: true,
-    };
+    let sync_config = sync_config();
 
     let instance_request = InstanceRequestBuilder::new()
         .image_label("ubuntu")

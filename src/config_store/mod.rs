@@ -108,10 +108,6 @@ impl ConfigStore {
 
     fn resolve_target(&self) -> Result<ConfigTarget, ConfigStoreError> {
         let candidates = self.discovery.utf8_candidates();
-        if candidates.is_empty() {
-            return Err(ConfigStoreError::NoCandidates);
-        }
-
         for candidate in &candidates {
             if path_exists(candidate)? {
                 return Ok(ConfigTarget {
@@ -121,10 +117,9 @@ impl ConfigStore {
             }
         }
 
-        let fallback = candidates
-            .last()
-            .cloned()
-            .ok_or(ConfigStoreError::NoCandidates)?;
+        let Some(fallback) = candidates.last().cloned() else {
+            return Err(ConfigStoreError::NoCandidates);
+        };
         Ok(ConfigTarget {
             path: fallback,
             exists: false,
@@ -303,20 +298,13 @@ fn write_volume_id_value(
 }
 
 fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreError> {
-    let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
+    let (parent, file_name) = split_config_path(path)?;
     Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
         ConfigStoreError::Io {
             path: parent.to_path_buf(),
             message: err.to_string(),
         }
     })?;
-
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration file path is missing a filename"),
-        })?;
     let dir =
         Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {
             path: parent.to_path_buf(),
@@ -336,85 +324,4 @@ fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreE
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn discovery_for_path(path: &Utf8Path) -> ConfigDiscovery {
-        let root = path
-            .parent()
-            .expect("temp path should have a parent directory");
-        ConfigDiscovery::builder(APP_NAME)
-            .env_var(CONFIG_ENV_VAR)
-            .config_file_name(CONFIG_FILE_NAME)
-            .dotfile_name(DOTFILE_NAME)
-            .project_file_name(PROJECT_FILE_NAME)
-            .clear_project_roots()
-            .add_project_root(root)
-            .build()
-    }
-
-    fn temp_config_path(tmp: &TempDir) -> Utf8PathBuf {
-        Utf8PathBuf::from_path_buf(tmp.path().join("mriya.toml"))
-            .unwrap_or_else(|err| panic!("temp path should be utf8: {}", err.display()))
-    }
-
-    #[test]
-    fn write_volume_id_creates_config_file() {
-        let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
-        let path = temp_config_path(&tmp);
-        let store = ConfigStore::with_discovery(discovery_for_path(&path));
-
-        let written_path = store
-            .write_volume_id("vol-123", true)
-            .unwrap_or_else(|err| panic!("write volume id: {err}"));
-
-        assert_eq!(written_path, path);
-        let contents = read_config(&path).unwrap_or_else(|err| panic!("read config: {err}"));
-        let value =
-            parse_toml(&path, &contents).unwrap_or_else(|err| panic!("parse config: {err}"));
-        let volume_id =
-            read_volume_id(&path, &value).unwrap_or_else(|err| panic!("extract volume id: {err}"));
-        assert_eq!(volume_id, Some(String::from("vol-123")));
-    }
-
-    #[test]
-    fn write_volume_id_rejects_existing_without_force() {
-        let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
-        let path = temp_config_path(&tmp);
-        let store = ConfigStore::with_discovery(discovery_for_path(&path));
-        store
-            .write_volume_id("vol-123", true)
-            .unwrap_or_else(|err| panic!("seed config: {err}"));
-
-        let Err(err) = store.write_volume_id("vol-456", false) else {
-            panic!("overwrite should fail without force");
-        };
-
-        let ConfigStoreError::VolumeAlreadyConfigured { volume_id } = err else {
-            panic!("expected VolumeAlreadyConfigured error");
-        };
-        assert_eq!(volume_id, "vol-123");
-    }
-
-    #[test]
-    fn write_volume_id_overwrites_when_forced() {
-        let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
-        let path = temp_config_path(&tmp);
-        let store = ConfigStore::with_discovery(discovery_for_path(&path));
-        store
-            .write_volume_id("vol-123", true)
-            .unwrap_or_else(|err| panic!("seed config: {err}"));
-
-        store
-            .write_volume_id("vol-456", true)
-            .unwrap_or_else(|err| panic!("overwrite config: {err}"));
-
-        let contents = read_config(&path).unwrap_or_else(|err| panic!("read config: {err}"));
-        let value =
-            parse_toml(&path, &contents).unwrap_or_else(|err| panic!("parse config: {err}"));
-        let volume_id =
-            read_volume_id(&path, &value).unwrap_or_else(|err| panic!("extract volume id: {err}"));
-        assert_eq!(volume_id, Some(String::from("vol-456")));
-    }
-}
+mod tests;

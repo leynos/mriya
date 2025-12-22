@@ -149,11 +149,12 @@ fn volume_formatted(init_context: &InitContext) -> Result<(), StepError> {
         .first()
         .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
     let command = invocation.command_string();
-    if command.contains("mkfs.ext4") {
+    let expected_path = "/dev/disk/by-id/scsi-0SCW_BSSD_vol-123";
+    if command.contains("mkfs.ext4") && command.contains(expected_path) {
         Ok(())
     } else {
         Err(StepError::Assertion(format!(
-            "expected mkfs.ext4 command, got: {command}"
+            "expected mkfs.ext4 command for {expected_path}, got: {command}"
         )))
     }
 }

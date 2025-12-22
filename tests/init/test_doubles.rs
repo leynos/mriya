@@ -330,11 +330,11 @@ impl ConfigWriter for MemoryConfigStore {
         force: bool,
     ) -> Result<Utf8PathBuf, ConfigStoreError> {
         let mut state = self.lock_state("write_volume_id")?;
-        if let Some(existing) = state.existing_volume_id.clone()
+        if let Some(existing) = state.existing_volume_id.as_ref()
             && !force
         {
             return Err(ConfigStoreError::VolumeAlreadyConfigured {
-                volume_id: existing,
+                volume_id: existing.clone(),
             });
         }
         state.existing_volume_id = Some(volume_id.to_owned());
