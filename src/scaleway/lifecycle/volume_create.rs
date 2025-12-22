@@ -53,7 +53,7 @@ impl ScalewayBackend {
             volume_type: String::from(VOLUME_TYPE_BLOCK),
             project: request.project_id.clone(),
             organization: request.organisation_id.clone(),
-            tags: vec![String::from("mriya"), String::from("cache")],
+            tags: Self::volume_tags(self.test_run_id.as_deref()),
         };
 
         let response = super::HTTP_CLIENT

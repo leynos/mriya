@@ -117,6 +117,19 @@ impl ScalewayBackend {
         tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
         tags
     }
+
+    fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
+        let mut tags = vec![String::from("mriya"), String::from("cache")];
+        let Some(id) = test_run_id else {
+            return tags;
+        };
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return tags;
+        }
+        tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
+        tags
+    }
 }
 
 impl Backend for ScalewayBackend {
@@ -227,6 +240,25 @@ mod tests {
             vec![
                 String::from("mriya"),
                 String::from("ephemeral"),
+                String::from("mriya-test-run-run-123"),
+            ]
+        );
+    }
+
+    #[test]
+    fn volume_tags_omits_test_tag_when_unset() {
+        let tags = ScalewayBackend::volume_tags(None);
+        assert_eq!(tags, vec![String::from("mriya"), String::from("cache")]);
+    }
+
+    #[test]
+    fn volume_tags_adds_test_run_tag() {
+        let tags = ScalewayBackend::volume_tags(Some("run-123"));
+        assert_eq!(
+            tags,
+            vec![
+                String::from("mriya"),
+                String::from("cache"),
                 String::from("mriya-test-run-run-123"),
             ]
         );
