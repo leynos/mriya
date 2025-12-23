@@ -105,7 +105,8 @@ impl ScalewayBackend {
         Ok(())
     }
 
-    fn build_tags(mut tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
+    fn build_tags(base_tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
+        let mut tags = base_tags;
         let Some(id) = test_run_id else {
             return tags;
         };
