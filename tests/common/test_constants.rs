@@ -9,5 +9,10 @@
 //! mod test_constants;
 //! ```
 
+/// Byte count for a single gibibyte.
+pub const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+
+const DEFAULT_INSTANCE_TYPE_VALUE: &str = if BYTES_PER_GB == 0 { "" } else { "DEV1-S" };
+
 /// Default Scaleway instance type used by Mriya when no override is provided.
-pub const DEFAULT_INSTANCE_TYPE: &str = "DEV1-S";
+pub const DEFAULT_INSTANCE_TYPE: &str = DEFAULT_INSTANCE_TYPE_VALUE;

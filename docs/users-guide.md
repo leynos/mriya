@@ -27,7 +27,7 @@ prefix:
 For configuration files, place `mriya.toml` under the usual XDG (X Desktop
 Group) config locations. Values are merged with the same precedence; CLI flags
 override everything. Set `MRIYA_CONFIG_PATH` to point to a specific config file
-if you need to override discovery.
+to override discovery.
 
 Example `mriya.toml`:
 

@@ -12,7 +12,7 @@ struct ConfigFixture {
 
 #[fixture]
 fn config_fixture() -> ConfigFixture {
-    let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
+    let tmp = TempDir::new().expect("tempdir");
     let path = temp_config_path(&tmp);
     let store = ConfigStore::with_discovery(discovery_for_path(&path));
     ConfigFixture {
@@ -37,8 +37,7 @@ fn discovery_for_path(path: &Utf8Path) -> ConfigDiscovery {
 }
 
 fn temp_config_path(tmp: &TempDir) -> Utf8PathBuf {
-    Utf8PathBuf::from_path_buf(tmp.path().join("mriya.toml"))
-        .unwrap_or_else(|err| panic!("temp path should be utf8: {}", err.display()))
+    Utf8PathBuf::from_path_buf(tmp.path().join("mriya.toml")).expect("temp path should be utf8")
 }
 
 #[rstest]

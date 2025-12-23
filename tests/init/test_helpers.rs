@@ -8,9 +8,7 @@ use thiserror::Error;
 
 use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
 use crate::sync_config::sync_config;
-use crate::test_constants::DEFAULT_INSTANCE_TYPE;
-
-const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+use crate::test_constants::{BYTES_PER_GB, DEFAULT_INSTANCE_TYPE};
 
 #[derive(Clone, Debug)]
 pub struct InitContext {

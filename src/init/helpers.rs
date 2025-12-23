@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn volume_size_bytes_converts_gb() {
-        let bytes = volume_size_bytes(2).unwrap_or_else(|| panic!("size bytes"));
+        let bytes = volume_size_bytes(2).expect("size bytes");
         assert_eq!(bytes, 2 * BYTES_PER_GB);
     }
 

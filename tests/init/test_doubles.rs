@@ -148,6 +148,18 @@ impl ScriptedVolumeBackend {
 
         Ok(success())
     }
+
+    fn run_operation<'a, T>(
+        &'a self,
+        operation: OperationSpec,
+        increment: impl FnOnce(&mut State) + Send + 'a,
+        success: impl FnOnce() -> T + Send + 'a,
+    ) -> BackendFuture<'a, T, ScriptedVolumeBackendError>
+    where
+        T: Send + 'a,
+    {
+        Box::pin(async move { self.execute_with_failure_check(operation, increment, success) })
+    }
 }
 
 /// Errors raised by the scripted backend to model failure points.
@@ -174,56 +186,50 @@ impl Backend for ScriptedVolumeBackend {
         &'a self,
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
-        Box::pin(async move {
-            self.execute_with_failure_check(
-                OperationSpec {
-                    context: "create",
-                    failure_mode: FailureMode::Provision,
-                    error: ScriptedVolumeBackendError::Provision,
-                },
-                |_| {},
-                || InstanceHandle {
-                    id: String::from("instance-123"),
-                    zone: String::from("test-zone"),
-                },
-            )
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "create",
+                failure_mode: FailureMode::Provision,
+                error: ScriptedVolumeBackendError::Provision,
+            },
+            |_| {},
+            || InstanceHandle {
+                id: String::from("instance-123"),
+                zone: String::from("test-zone"),
+            },
+        )
     }
 
     fn wait_for_ready<'a>(
         &'a self,
         _handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
-        Box::pin(async move {
-            self.execute_with_failure_check(
-                OperationSpec {
-                    context: "wait_for_ready",
-                    failure_mode: FailureMode::Wait,
-                    error: ScriptedVolumeBackendError::Wait,
-                },
-                |_| {},
-                || InstanceNetworking {
-                    public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    ssh_port: 22,
-                },
-            )
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "wait_for_ready",
+                failure_mode: FailureMode::Wait,
+                error: ScriptedVolumeBackendError::Wait,
+            },
+            |_| {},
+            || InstanceNetworking {
+                public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ssh_port: 22,
+            },
+        )
     }
 
     fn destroy(&self, _handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
-        Box::pin(async move {
-            self.execute_with_failure_check(
-                OperationSpec {
-                    context: "destroy",
-                    failure_mode: FailureMode::Destroy,
-                    error: ScriptedVolumeBackendError::Destroy,
-                },
-                |state| {
-                    state.destroy_calls += 1;
-                },
-                || (),
-            )
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "destroy",
+                failure_mode: FailureMode::Destroy,
+                error: ScriptedVolumeBackendError::Destroy,
+            },
+            |state| {
+                state.destroy_calls += 1;
+            },
+            || (),
+        )
     }
 }
 
@@ -232,22 +238,20 @@ impl VolumeBackend for ScriptedVolumeBackend {
         &'a self,
         _request: &'a VolumeRequest,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
-        Box::pin(async move {
-            self.execute_with_failure_check(
-                OperationSpec {
-                    context: "create_volume",
-                    failure_mode: FailureMode::CreateVolume,
-                    error: ScriptedVolumeBackendError::VolumeCreate,
-                },
-                |state| {
-                    state.create_volume_calls += 1;
-                },
-                || VolumeHandle {
-                    id: String::from("vol-123"),
-                    zone: String::from("test-zone"),
-                },
-            )
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "create_volume",
+                failure_mode: FailureMode::CreateVolume,
+                error: ScriptedVolumeBackendError::VolumeCreate,
+            },
+            |state| {
+                state.create_volume_calls += 1;
+            },
+            || VolumeHandle {
+                id: String::from("vol-123"),
+                zone: String::from("test-zone"),
+            },
+        )
     }
 
     fn detach_volume<'a>(
@@ -255,17 +259,15 @@ impl VolumeBackend for ScriptedVolumeBackend {
         _handle: &'a InstanceHandle,
         _volume_id: &'a str,
     ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move {
-            self.execute_with_failure_check(
-                OperationSpec {
-                    context: "detach_volume",
-                    failure_mode: FailureMode::Detach,
-                    error: ScriptedVolumeBackendError::Detach,
-                },
-                |_| {},
-                || (),
-            )
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "detach_volume",
+                failure_mode: FailureMode::Detach,
+                error: ScriptedVolumeBackendError::Detach,
+            },
+            |_| {},
+            || (),
+        )
     }
 }
 

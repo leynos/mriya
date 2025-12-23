@@ -62,7 +62,6 @@ impl InitConfig {
     }
 }
 
-/// Errors raised while loading init configuration.
 /// Inputs required to prepare a cache volume.
 #[derive(Clone, Debug)]
 pub struct InitRequest {
@@ -172,9 +171,21 @@ where
             .map_err(InitError::Volume)?;
 
         let (handle, networking) = self.prepare_instance(request, &volume).await?;
-        self.format_or_destroy(&handle, &networking, &volume.id)
-            .await?;
-        self.detach_or_destroy(&handle, &volume.id).await?;
+        let format_result = self.format_volume(&networking, &volume.id);
+        self.handle_failure_or_destroy(&handle, format_result, |message, failure| {
+            InitError::Format {
+                message,
+                source: failure.source,
+            }
+        })
+        .await?;
+
+        let detach_result = self.backend.detach_volume(&handle, &volume.id).await;
+        self.handle_failure_or_destroy(&handle, detach_result, |message, err| InitError::Detach {
+            message,
+            source: err,
+        })
+        .await?;
 
         self.backend
             .destroy(handle)
@@ -255,33 +266,6 @@ where
                 Err(make_error(message, err))
             }
         }
-    }
-
-    async fn format_or_destroy(
-        &self,
-        handle: &InstanceHandle,
-        networking: &InstanceNetworking,
-        volume_id: &str,
-    ) -> Result<(), InitError<B::Error>> {
-        let result = self.format_volume(networking, volume_id);
-        self.handle_failure_or_destroy(handle, result, |message, failure| InitError::Format {
-            message,
-            source: failure.source,
-        })
-        .await
-    }
-
-    async fn detach_or_destroy(
-        &self,
-        handle: &InstanceHandle,
-        volume_id: &str,
-    ) -> Result<(), InitError<B::Error>> {
-        let result = self.backend.detach_volume(handle, volume_id).await;
-        self.handle_failure_or_destroy(handle, result, |message, err| InitError::Detach {
-            message,
-            source: err,
-        })
-        .await
     }
 
     fn format_volume(
