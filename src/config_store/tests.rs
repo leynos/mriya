@@ -46,7 +46,7 @@ fn write_volume_id_creates_config_file(config_fixture: ConfigFixture) {
 
     let written_path = store
         .write_volume_id("vol-123", true)
-        .unwrap_or_else(|err| panic!("write volume id: {err}"));
+        .expect("write volume id should succeed");
 
     assert_eq!(written_path, path);
     let contents = read_config(&path).expect("read config");
