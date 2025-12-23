@@ -198,46 +198,51 @@ fn volume_formatted(init_context_result: &InitContextResult) -> Result<(), StepE
     }
 }
 
-#[then("the config is updated")]
-fn config_updated(init_context_result: &InitContextResult) -> Result<(), StepError> {
+fn assert_counter_condition(
+    init_context_result: &InitContextResult,
+    get_counter: impl FnOnce(&InitContext) -> u32,
+    predicate: impl FnOnce(u32) -> bool,
+    error_message: &str,
+) -> Result<(), StepError> {
     let init_context = init_context_result
         .as_ref()
         .map_err(|err| StepError::Assertion(err.to_string()))?;
-    let calls = init_context.config_store.write_calls();
-    if calls == 0 {
-        return Err(StepError::Assertion(String::from(
-            "config writer should be invoked",
-        )));
+    let count = get_counter(init_context);
+    if predicate(count) {
+        Ok(())
+    } else {
+        Err(StepError::Assertion(String::from(error_message)))
     }
-    Ok(())
+}
+
+#[then("the config is updated")]
+fn config_updated(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.config_store.write_calls(),
+        |count| count > 0,
+        "config writer should be invoked",
+    )
 }
 
 #[then("the instance is destroyed")]
 fn instance_destroyed(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    let init_context = init_context_result
-        .as_ref()
-        .map_err(|err| StepError::Assertion(err.to_string()))?;
-    if init_context.backend.destroy_calls() > 0 {
-        Ok(())
-    } else {
-        Err(StepError::Assertion(String::from(
-            "backend.destroy should be invoked",
-        )))
-    }
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.backend.destroy_calls(),
+        |count| count > 0,
+        "backend.destroy should be invoked",
+    )
 }
 
 #[then("the volume is not created")]
 fn volume_not_created(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    let init_context = init_context_result
-        .as_ref()
-        .map_err(|err| StepError::Assertion(err.to_string()))?;
-    if init_context.backend.create_volume_calls() == 0 {
-        Ok(())
-    } else {
-        Err(StepError::Assertion(String::from(
-            "volume should not be created",
-        )))
-    }
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.backend.create_volume_calls(),
+        |count| count == 0,
+        "volume should not be created",
+    )
 }
 
 const fn map_failure_kind(
