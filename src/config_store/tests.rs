@@ -12,7 +12,7 @@ struct ConfigFixture {
 
 #[fixture]
 fn config_fixture() -> ConfigFixture {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = TempDir::new().expect("failed to create tempdir");
     let path = temp_config_path(&tmp);
     let store = ConfigStore::with_discovery(discovery_for_path(&path));
     ConfigFixture {
@@ -49,9 +49,9 @@ fn write_volume_id_creates_config_file(config_fixture: ConfigFixture) {
         .expect("write volume id should succeed");
 
     assert_eq!(written_path, path);
-    let contents = read_config(&path).expect("read config");
-    let value = parse_toml(&path, &contents).expect("parse config");
-    let volume_id = read_volume_id(&path, &value).expect("extract volume id");
+    let contents = read_config(&path).expect("read config should succeed");
+    let value = parse_toml(&path, &contents).expect("parse config should succeed");
+    let volume_id = read_volume_id(&path, &value).expect("extract volume id should succeed");
     assert_eq!(volume_id, Some(String::from("vol-123")));
 }
 
@@ -84,9 +84,10 @@ fn write_volume_id_overwrites_when_forced(config_fixture: ConfigFixture) {
         .write_volume_id("vol-456", true)
         .expect("overwrite config");
 
-    let contents = read_config(&config_fixture.path).expect("read config");
-    let value = parse_toml(&config_fixture.path, &contents).expect("parse config");
-    let volume_id = read_volume_id(&config_fixture.path, &value).expect("extract volume id");
+    let contents = read_config(&config_fixture.path).expect("read config should succeed");
+    let value = parse_toml(&config_fixture.path, &contents).expect("parse config should succeed");
+    let volume_id =
+        read_volume_id(&config_fixture.path, &value).expect("extract volume id should succeed");
     assert_eq!(volume_id, Some(String::from("vol-456")));
 }
 

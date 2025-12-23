@@ -7,8 +7,9 @@ use rstest::fixture;
 use thiserror::Error;
 
 use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
+use crate::size_constants::BYTES_PER_GB;
 use crate::sync_config::sync_config;
-use crate::test_constants::{BYTES_PER_GB, DEFAULT_INSTANCE_TYPE};
+use crate::test_constants::DEFAULT_INSTANCE_TYPE;
 
 #[derive(Clone, Debug)]
 pub struct InitContext {
