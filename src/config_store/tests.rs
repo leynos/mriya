@@ -49,10 +49,9 @@ fn write_volume_id_creates_config_file(config_fixture: ConfigFixture) {
         .unwrap_or_else(|err| panic!("write volume id: {err}"));
 
     assert_eq!(written_path, path);
-    let contents = read_config(&path).unwrap_or_else(|err| panic!("read config: {err}"));
-    let value = parse_toml(&path, &contents).unwrap_or_else(|err| panic!("parse config: {err}"));
-    let volume_id =
-        read_volume_id(&path, &value).unwrap_or_else(|err| panic!("extract volume id: {err}"));
+    let contents = read_config(&path).expect("read config");
+    let value = parse_toml(&path, &contents).expect("parse config");
+    let volume_id = read_volume_id(&path, &value).expect("extract volume id");
     assert_eq!(volume_id, Some(String::from("vol-123")));
 }
 
@@ -61,7 +60,7 @@ fn write_volume_id_rejects_existing_without_force(config_fixture: ConfigFixture)
     config_fixture
         .store
         .write_volume_id("vol-123", true)
-        .unwrap_or_else(|err| panic!("seed config: {err}"));
+        .expect("seed config");
 
     let Err(err) = config_fixture.store.write_volume_id("vol-456", false) else {
         panic!("overwrite should fail without force");
@@ -78,19 +77,16 @@ fn write_volume_id_overwrites_when_forced(config_fixture: ConfigFixture) {
     config_fixture
         .store
         .write_volume_id("vol-123", true)
-        .unwrap_or_else(|err| panic!("seed config: {err}"));
+        .expect("seed config");
 
     config_fixture
         .store
         .write_volume_id("vol-456", true)
-        .unwrap_or_else(|err| panic!("overwrite config: {err}"));
+        .expect("overwrite config");
 
-    let contents =
-        read_config(&config_fixture.path).unwrap_or_else(|err| panic!("read config: {err}"));
-    let value = parse_toml(&config_fixture.path, &contents)
-        .unwrap_or_else(|err| panic!("parse config: {err}"));
-    let volume_id = read_volume_id(&config_fixture.path, &value)
-        .unwrap_or_else(|err| panic!("extract volume id: {err}"));
+    let contents = read_config(&config_fixture.path).expect("read config");
+    let value = parse_toml(&config_fixture.path, &contents).expect("parse config");
+    let volume_id = read_volume_id(&config_fixture.path, &value).expect("extract volume id");
     assert_eq!(volume_id, Some(String::from("vol-456")));
 }
 

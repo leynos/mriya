@@ -12,7 +12,10 @@
 /// Byte count for a single gibibyte.
 pub const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
 
-const DEFAULT_INSTANCE_TYPE_VALUE: &str = if BYTES_PER_GB == 0 { "" } else { "DEV1-S" };
+const fn default_instance_type(bytes_per_gb: u64) -> &'static str {
+    let _ = bytes_per_gb;
+    "DEV1-S"
+}
 
 /// Default Scaleway instance type used by Mriya when no override is provided.
-pub const DEFAULT_INSTANCE_TYPE: &str = DEFAULT_INSTANCE_TYPE_VALUE;
+pub const DEFAULT_INSTANCE_TYPE: &str = default_instance_type(BYTES_PER_GB);
