@@ -52,15 +52,11 @@ pub enum InitTestError {
     Fixture(String),
 }
 
-#[fixture]
-pub fn init_context_result() -> Result<InitContext, InitTestError> {
-    build_init_context()
-}
+pub type InitContextResult = Result<InitContext, InitTestError>;
 
 #[fixture]
-pub fn init_context(init_context_result: Result<InitContext, InitTestError>) -> InitContext {
-    init_context_result
-        .unwrap_or_else(|err| panic!("init context fixture should initialise: {err}"))
+pub fn init_context_result() -> InitContextResult {
+    build_init_context()
 }
 
 fn build_init_context() -> Result<InitContext, InitTestError> {

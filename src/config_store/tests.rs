@@ -1,4 +1,10 @@
 //! Tests for configuration store helpers.
+//!
+//! The configuration store handles discovery of `mriya.toml`, reads and parses
+//! its content, and writes the `volume_id` entry used to mount cache volumes.
+//! These tests cover creation and overwrite flows, plus error paths such as
+//! invalid TOML and missing parent directories. Temporary directories and
+//! fixtures keep each case isolated from repo configuration.
 
 use super::*;
 use rstest::{fixture, rstest};
@@ -60,7 +66,7 @@ fn write_volume_id_rejects_existing_without_force(config_fixture: ConfigFixture)
     config_fixture
         .store
         .write_volume_id("vol-123", true)
-        .expect("seed config");
+        .expect("seed config should succeed");
 
     let Err(err) = config_fixture.store.write_volume_id("vol-456", false) else {
         panic!("overwrite should fail without force");
@@ -77,12 +83,12 @@ fn write_volume_id_overwrites_when_forced(config_fixture: ConfigFixture) {
     config_fixture
         .store
         .write_volume_id("vol-123", true)
-        .expect("seed config");
+        .expect("seed config should succeed");
 
     config_fixture
         .store
         .write_volume_id("vol-456", true)
-        .expect("overwrite config");
+        .expect("overwrite config should succeed");
 
     let contents = read_config(&config_fixture.path).expect("read config should succeed");
     let value = parse_toml(&config_fixture.path, &contents).expect("parse config should succeed");
@@ -106,13 +112,11 @@ fn parse_toml_rejects_invalid_content(config_fixture: ConfigFixture, #[case] con
 
 #[rstest]
 fn read_config_reports_missing_parent_dir(config_fixture: ConfigFixture) {
-    let missing_path = config_fixture
+    let parent = config_fixture
         .path
         .parent()
-        .unwrap_or_else(|| Utf8Path::new("."))
-        .join("missing")
-        .join("nested")
-        .join("mriya.toml");
+        .expect("config path should have a parent directory");
+    let missing_path = parent.join("missing").join("nested").join("mriya.toml");
 
     let Err(err) = read_config(&missing_path) else {
         panic!("read should fail");
@@ -124,7 +128,7 @@ fn read_config_reports_missing_parent_dir(config_fixture: ConfigFixture) {
         path,
         missing_path
             .parent()
-            .unwrap_or_else(|| Utf8Path::new("."))
+            .expect("missing path should have a parent directory")
             .to_path_buf()
     );
 }
