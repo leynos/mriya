@@ -793,9 +793,21 @@ setup required for caching.
   we might add `volume_id = "<uuid>"` under the profile or under a per-project
   config section. This ties the volume to the project.
 
-We’ll document that `mriya init` should be run once per project (or whenever
-they want to create a fresh cache volume). If `mriya.toml` already has a
-volume, the command can warn or ask if they want to replace it.
+#### Volume init decisions (December 2025)
+
+- Document `mriya init` as a once-per-project step; rerunning is reserved for
+  replacing the cache volume with `--force`.
+- Use OrthoConfig discovery with `mriya.toml` (overridable via
+  `MRIYA_CONFIG_PATH`) so `mriya init` updates the same configuration file
+  consumed by `mriya run`.
+- Provision a short-lived formatter instance and run
+  `mkfs.ext4 -F /dev/disk/by-id/scsi-0SCW_BSSD_<volume-id>` over SSH. User
+  cloud-init is not passed through to avoid unintended side effects during
+  formatting.
+- Default the volume size to 20 GB, configurable via
+  `MRIYA_INIT_VOLUME_SIZE_GB` or `[init].volume_size_gb`.
+- If a volume ID is already configured, `mriya init` fails unless `--force` is
+  supplied to overwrite the existing value.
 
 **Mounting Convention:** We decide on a standard mount point (like `/mnt/mriya`
 or `/home`). For Scaleway, perhaps we mount at `/mnt/mriya` and then in

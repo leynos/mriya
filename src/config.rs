@@ -12,7 +12,16 @@ const SCALEWAY_SECTION: &str = "scaleway";
 /// Scaleway specific configuration derived from environment variables,
 /// configuration files, and CLI flags.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
-#[ortho_config(prefix = "SCW")]
+#[ortho_config(
+    prefix = "SCW",
+    discovery(
+        app_name = "mriya",
+        env_var = "MRIYA_CONFIG_PATH",
+        config_file_name = "mriya.toml",
+        dotfile_name = ".mriya.toml",
+        project_file_name = "mriya.toml"
+    )
+)]
 pub struct ScalewayConfig {
     /// Access key assigned to the Scaleway application. While not required for
     /// API calls, it is captured to support future audit logging.

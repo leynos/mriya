@@ -7,6 +7,56 @@ use crate::backend::InstanceHandle;
 use super::super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::super::{ScalewayBackend, ScalewayBackendError};
 
+#[derive(Copy, Clone, Debug)]
+pub(super) enum VolumePatchAction {
+    Attach,
+    Detach,
+}
+
+impl VolumePatchAction {
+    const fn into_error(
+        self,
+        volume_id: String,
+        instance_id: String,
+        message: String,
+    ) -> ScalewayBackendError {
+        match self {
+            Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
+                volume_id,
+                instance_id,
+                message,
+            },
+            Self::Detach => ScalewayBackendError::VolumeDetachFailed {
+                volume_id,
+                instance_id,
+                message,
+            },
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(super) struct VolumePatchContext<'a> {
+    volume_id: &'a str,
+    action: VolumePatchAction,
+}
+
+impl<'a> VolumePatchContext<'a> {
+    pub(super) const fn attach(volume_id: &'a str) -> Self {
+        Self {
+            volume_id,
+            action: VolumePatchAction::Attach,
+        }
+    }
+
+    pub(super) const fn detach(volume_id: &'a str) -> Self {
+        Self {
+            volume_id,
+            action: VolumePatchAction::Detach,
+        }
+    }
+}
+
 impl ScalewayBackend {
     /// Attaches a volume to a stopped instance.
     ///
@@ -54,14 +104,16 @@ impl ScalewayBackend {
         );
 
         let request = UpdateInstanceVolumesRequest { volumes };
-        self.patch_instance_volumes(handle, &request).await
+        self.patch_instance_volumes(handle, &request, VolumePatchContext::attach(volume_id))
+            .await
     }
 
     /// Sends a PATCH request to update instance volumes.
-    async fn patch_instance_volumes(
+    pub(super) async fn patch_instance_volumes(
         &self,
         handle: &InstanceHandle,
         request: &UpdateInstanceVolumesRequest,
+        context: VolumePatchContext<'_>,
     ) -> Result<(), ScalewayBackendError> {
         let url = format!(
             "{}/zones/{}/servers/{}",
@@ -86,15 +138,8 @@ impl ScalewayBackend {
         }
 
         let error_text = response.text().await.unwrap_or_default();
-        let volume_id = request
-            .volumes
-            .get("1")
-            .map_or_else(String::new, |v| v.id.clone());
-
-        Err(ScalewayBackendError::VolumeAttachmentFailed {
-            volume_id,
-            instance_id: handle.id.clone(),
-            message: error_text,
-        })
+        Err(context
+            .action
+            .into_error(context.volume_id.to_owned(), handle.id.clone(), error_text))
     }
 }

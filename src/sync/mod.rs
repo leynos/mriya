@@ -27,7 +27,16 @@ pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
 
 /// Synchronisation and SSH settings loaded via `ortho-config`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
-#[ortho_config(prefix = "MRIYA_SYNC")]
+#[ortho_config(
+    prefix = "MRIYA_SYNC",
+    discovery(
+        app_name = "mriya",
+        env_var = "MRIYA_CONFIG_PATH",
+        config_file_name = "mriya.toml",
+        dotfile_name = ".mriya.toml",
+        project_file_name = "mriya.toml"
+    )
+)]
 pub struct SyncConfig {
     /// Path to the `rsync` executable.
     #[ortho_config(default = "rsync".to_owned())]
@@ -280,7 +289,35 @@ impl<R: CommandRunner> Syncer<R> {
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
         let remote_cmd_wrapped = self.build_remote_command(remote_command);
-        let args = self.build_ssh_args(networking, &remote_cmd_wrapped);
+        self.execute_ssh(networking, &remote_cmd_wrapped)
+    }
+
+    /// Executes `remote_command` over SSH without applying the working
+    /// directory prefix or cache routing preamble.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure to spawn or execute the SSH command from the
+    /// configured [`CommandRunner`].
+    ///
+    /// # Security
+    ///
+    /// `remote_command` is passed verbatim to the SSH client. Ensure any
+    /// caller-provided arguments are validated or quoted upstream.
+    pub fn run_remote_raw(
+        &self,
+        networking: &InstanceNetworking,
+        remote_command: &str,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        self.execute_ssh(networking, remote_command)
+    }
+
+    fn execute_ssh(
+        &self,
+        networking: &InstanceNetworking,
+        command: &str,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        let args = self.build_ssh_args(networking, command);
         let output = self.runner.run(&self.config.ssh_bin, &args)?;
 
         Ok(RemoteCommandOutput {

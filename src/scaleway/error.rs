@@ -76,6 +76,26 @@ pub enum ScalewayBackendError {
         /// Error message from the provider.
         message: String,
     },
+    /// Raised when a volume cannot be detached from an instance.
+    #[error("failed to detach volume {volume_id} from instance {instance_id}: {message}")]
+    VolumeDetachFailed {
+        /// Volume identifier that could not be detached.
+        volume_id: String,
+        /// Instance identifier.
+        instance_id: String,
+        /// Error message from the provider.
+        message: String,
+    },
+    /// Raised when a volume cannot be created.
+    #[error("failed to create volume {name} in zone {zone}: {message}")]
+    VolumeCreateFailed {
+        /// Volume name requested.
+        name: String,
+        /// Zone where creation was attempted.
+        zone: String,
+        /// Error message from the provider.
+        message: String,
+    },
     /// Raised when the specified volume does not exist or is not accessible.
     #[error("volume {volume_id} not found in zone {zone}")]
     VolumeNotFound {

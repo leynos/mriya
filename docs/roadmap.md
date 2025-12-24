@@ -61,7 +61,7 @@ for concrete, testable deliverables.
 
 - Step: Volume lifecycle automation
 
-  - [ ] Implement `mriya init` to create a provider volume in the configured
+  - [x] Implement `mriya init` to create a provider volume in the configured
     zone, format it (ext4), and detach it cleanly; acceptance: the new volume
     ID is written to `mriya.toml` and can be attached on the next `mriya run`.
 

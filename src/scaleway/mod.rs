@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest};
 use crate::config::ScalewayConfig;
+use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
 use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
 use types::{Action, Zone};
@@ -104,8 +105,8 @@ impl ScalewayBackend {
         Ok(())
     }
 
-    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
-        let mut tags = vec![String::from("mriya"), String::from("ephemeral")];
+    fn build_tags(base_tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
+        let mut tags = base_tags;
         let Some(id) = test_run_id else {
             return tags;
         };
@@ -115,6 +116,20 @@ impl ScalewayBackend {
         }
         tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
         tags
+    }
+
+    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
+        Self::build_tags(
+            vec![String::from("mriya"), String::from("ephemeral")],
+            test_run_id,
+        )
+    }
+
+    fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
+        Self::build_tags(
+            vec![String::from("mriya"), String::from("cache")],
+            test_run_id,
+        )
     }
 }
 
@@ -191,6 +206,23 @@ impl Backend for ScalewayBackend {
     }
 }
 
+impl VolumeBackend for ScalewayBackend {
+    fn create_volume<'a>(
+        &'a self,
+        request: &'a VolumeRequest,
+    ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
+        Box::pin(async move { Self::create_volume(self, request).await })
+    }
+
+    fn detach_volume<'a>(
+        &'a self,
+        handle: &'a InstanceHandle,
+        volume_id: &'a str,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        Box::pin(async move { Self::detach_volume(self, handle, volume_id).await })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ScalewayBackend;
@@ -209,6 +241,25 @@ mod tests {
             vec![
                 String::from("mriya"),
                 String::from("ephemeral"),
+                String::from("mriya-test-run-run-123"),
+            ]
+        );
+    }
+
+    #[test]
+    fn volume_tags_omits_test_tag_when_unset() {
+        let tags = ScalewayBackend::volume_tags(None);
+        assert_eq!(tags, vec![String::from("mriya"), String::from("cache")]);
+    }
+
+    #[test]
+    fn volume_tags_adds_test_run_tag() {
+        let tags = ScalewayBackend::volume_tags(Some("run-123"));
+        assert_eq!(
+            tags,
+            vec![
+                String::from("mriya"),
+                String::from("cache"),
                 String::from("mriya-test-run-run-123"),
             ]
         );
