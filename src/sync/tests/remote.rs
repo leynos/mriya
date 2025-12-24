@@ -291,11 +291,11 @@ fn create_cache_directories_command_includes_all_subdirectories() {
 fn create_cache_directories_command_escapes_special_characters() {
     let cmd = create_cache_directories_command("/mnt/mriya cache");
 
-    // Verify the mount path is properly escaped (the subdirectory is appended
-    // after escaping, so the result is `'/mnt/mriya cache'/cargo`)
+    // Verify the full path is properly escaped (each complete path is escaped,
+    // so the result is `'/mnt/mriya cache/cargo'` not `'/mnt/mriya cache'/cargo`)
     assert!(
-        cmd.contains("'/mnt/mriya cache'/cargo"),
-        "expected escaped mount path with cargo suffix, got: {cmd}"
+        cmd.contains("'/mnt/mriya cache/cargo'"),
+        "expected properly escaped full path, got: {cmd}"
     );
 }
 

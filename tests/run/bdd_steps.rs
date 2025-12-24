@@ -256,21 +256,43 @@ fn teardown_failure_note_present(run_context: &RunContext) -> Result<(), StepErr
     assert_failure_contains(run_context, "teardown also failed")
 }
 
-fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
+/// Direction for SSH invocation lookup.
+#[derive(Clone, Copy)]
+enum SshLookupDirection {
+    /// Return the first matching SSH invocation.
+    First,
+    /// Return the last matching SSH invocation.
+    Last,
+}
+
+/// Finds an SSH invocation's remote command string.
+///
+/// Common logic for extracting the remote command from SSH invocations.
+fn find_ssh_command(
+    run_context: &RunContext,
+    direction: SshLookupDirection,
+) -> Result<String, StepError> {
     let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    let invocation = run_context
-        .runner
-        .invocations()
-        .into_iter()
-        .rev()
-        .find(|invocation| invocation.program == ssh_bin)
-        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
+    let invocations = run_context.runner.invocations();
+
+    let invocation = match direction {
+        SshLookupDirection::First => invocations.into_iter().find(|inv| inv.program == ssh_bin),
+        SshLookupDirection::Last => invocations
+            .into_iter()
+            .rev()
+            .find(|inv| inv.program == ssh_bin),
+    }
+    .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
 
     let command = invocation.args.last().ok_or_else(|| {
         StepError::Assertion(String::from("ssh invocation missing remote command"))
     })?;
 
     Ok(command.to_string_lossy().into_owned())
+}
+
+fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
+    find_ssh_command(run_context, SshLookupDirection::Last)
 }
 
 #[then("the remote command routes Cargo caches to the volume")]
@@ -382,19 +404,7 @@ fn cache_directory_creation_disabled(mut run_context: RunContext) -> RunContext 
 }
 
 fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> {
-    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    let invocation = run_context
-        .runner
-        .invocations()
-        .into_iter()
-        .find(|invocation| invocation.program == ssh_bin)
-        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
-
-    let command = invocation.args.last().ok_or_else(|| {
-        StepError::Assertion(String::from("ssh invocation missing remote command"))
-    })?;
-
-    Ok(command.to_string_lossy().into_owned())
+    find_ssh_command(run_context, SshLookupDirection::First)
 }
 
 #[then("the mount command creates cache subdirectories")]

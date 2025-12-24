@@ -97,10 +97,12 @@ fn cache_routing_preamble(config: &SyncConfig) -> String {
 /// ```
 #[must_use]
 pub fn create_cache_directories_command(mount_path: &str) -> String {
-    let escaped_mount = escape(mount_path.into());
     let paths: Vec<String> = CACHE_SUBDIRECTORIES
         .iter()
-        .map(|sub| format!("{escaped_mount}/{sub}"))
+        .map(|sub| {
+            let full_path = format!("{mount_path}/{sub}");
+            escape(full_path.into()).into_owned()
+        })
         .collect();
     format!("sudo mkdir -p {} 2>/dev/null || true", paths.join(" "))
 }

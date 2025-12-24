@@ -199,12 +199,10 @@ When the volume is mounted successfully, Mriya:
    immediately (`cargo`, `rustup`, `target`, `go/pkg/mod`, `go/build-cache`,
    `pip/cache`, `npm/cache`, `yarn/cache`, `pnpm/store`).
 2. Exports environment variables in the remote session to route common language
-   caches to the volume, including:
-   - `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR` (Rust/Cargo)
-   - `GOMODCACHE` and `GOCACHE` (Go)
-   - `PIP_CACHE_DIR` (Python/pip)
-   - `npm_config_cache`, `YARN_CACHE_FOLDER`, and `PNPM_STORE_PATH` (Node
-     tooling)
+   caches to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
+   `CARGO_TARGET_DIR` (Rust/Cargo); `GOMODCACHE` and `GOCACHE` (Go);
+   `PIP_CACHE_DIR` (Python/pip); `npm_config_cache`, `YARN_CACHE_FOLDER`, and
+   `PNPM_STORE_PATH` (Node tooling).
 
 If mounting fails (for example, when the volume has no filesystem), the run
 continues without the cache — this allows graceful degradation for first-time
