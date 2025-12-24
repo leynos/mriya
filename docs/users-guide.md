@@ -159,6 +159,8 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
   (default: `/mriya`).
 - `MRIYA_SYNC_ROUTE_BUILD_CACHES` — set to `false` to disable automatic cache
   routing to the mounted volume (default: `true`).
+- `MRIYA_SYNC_CREATE_CACHE_DIRECTORIES` — set to `false` to disable automatic
+  creation of cache subdirectories on the mounted volume (default: `true`).
 
 ## Persistent cache volume
 
@@ -191,14 +193,18 @@ To enable the cache volume:
    mriya run -- cargo build
    ```
 
-When the volume is mounted successfully, Mriya automatically routes common
-language caches to it by exporting environment variables in the remote session,
-including:
+When the volume is mounted successfully, Mriya:
 
-- `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR` (Rust/Cargo)
-- `GOMODCACHE` and `GOCACHE` (Go)
-- `PIP_CACHE_DIR` (Python/pip)
-- `npm_config_cache`, `YARN_CACHE_FOLDER`, and `PNPM_STORE_PATH` (Node tooling)
+1. Creates cache subdirectories under the mount point so toolchains can write
+   immediately (`cargo`, `rustup`, `target`, `go/pkg/mod`, `go/build-cache`,
+   `pip/cache`, `npm/cache`, `yarn/cache`, `pnpm/store`).
+2. Exports environment variables in the remote session to route common language
+   caches to the volume, including:
+   - `CARGO_HOME`, `RUSTUP_HOME`, and `CARGO_TARGET_DIR` (Rust/Cargo)
+   - `GOMODCACHE` and `GOCACHE` (Go)
+   - `PIP_CACHE_DIR` (Python/pip)
+   - `npm_config_cache`, `YARN_CACHE_FOLDER`, and `PNPM_STORE_PATH` (Node
+     tooling)
 
 If mounting fails (for example, when the volume has no filesystem), the run
 continues without the cache — this allows graceful degradation for first-time

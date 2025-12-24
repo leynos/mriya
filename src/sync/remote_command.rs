@@ -9,6 +9,24 @@ use shell_escape::unix::escape;
 
 use super::SyncConfig;
 
+/// Subdirectories created under the cache volume mount point.
+///
+/// These paths correspond to the environment variables exported by the cache
+/// routing preamble. Creating them eagerly after mount ensures language
+/// toolchains can write immediately without failing due to missing
+/// directories.
+pub const CACHE_SUBDIRECTORIES: &[&str] = &[
+    "cargo",
+    "rustup",
+    "target",
+    "go/pkg/mod",
+    "go/build-cache",
+    "pip/cache",
+    "npm/cache",
+    "yarn/cache",
+    "pnpm/store",
+];
+
 /// Builds a remote command string with an optional cache routing preamble.
 ///
 /// The remote path is shell-escaped, cache exports are prepended when enabled,
@@ -57,4 +75,30 @@ fn cache_routing_preamble(config: &SyncConfig) -> String {
     }
     preamble.push_str("fi; ");
     preamble
+}
+
+/// Builds a shell command that creates all cache subdirectories under the
+/// given mount path.
+///
+/// The command uses `mkdir -p` to create the directory tree idempotently.
+/// Fails silently if the directories cannot be created (the volume may be
+/// read-only or the mount may have failed).
+///
+/// # Example
+///
+/// ```
+/// use mriya::sync::create_cache_directories_command;
+///
+/// let cmd = create_cache_directories_command("/mriya");
+/// assert!(cmd.contains("mkdir -p"));
+/// assert!(cmd.contains("/mriya/cargo"));
+/// ```
+#[must_use]
+pub fn create_cache_directories_command(mount_path: &str) -> String {
+    let escaped_mount = escape(mount_path.into());
+    let paths: Vec<String> = CACHE_SUBDIRECTORIES
+        .iter()
+        .map(|sub| format!("{escaped_mount}/{sub}"))
+        .collect();
+    format!("mkdir -p {} 2>/dev/null || true", paths.join(" "))
 }

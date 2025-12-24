@@ -67,7 +67,7 @@ for concrete, testable deliverables.
 
 - Step: Mount conventions
 
-  - [ ] Establish a default mount point (for example `/mriya` or `/home`) and
+  - [x] Establish a default mount point (for example `/mriya` or `/home`) and
     set symlinks or environment overrides so language toolchains and build
     outputs land on the volume; acceptance: after `mriya init`, caches survive
     VM teardown and are discovered automatically on subsequent runs.

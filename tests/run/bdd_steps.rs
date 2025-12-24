@@ -374,3 +374,66 @@ fn provisioning_failure_reported(run_context: &RunContext) -> Result<(), StepErr
 fn teardown_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
     assert_failure_contains(run_context, "failed to destroy instance")
 }
+
+#[given("cache directory creation is disabled")]
+fn cache_directory_creation_disabled(mut run_context: RunContext) -> RunContext {
+    run_context.sync_config.create_cache_directories = false;
+    run_context
+}
+
+fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let invocation = run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .find(|invocation| invocation.program == ssh_bin)
+        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
+
+    let command = invocation.args.last().ok_or_else(|| {
+        StepError::Assertion(String::from("ssh invocation missing remote command"))
+    })?;
+
+    Ok(command.to_string_lossy().into_owned())
+}
+
+#[then("the mount command creates cache subdirectories")]
+fn mount_command_creates_cache_subdirectories(run_context: &RunContext) -> Result<(), StepError> {
+    // The first SSH command is the mount + mkdir cache dirs command
+    let mount_command = first_ssh_raw_command(run_context)?;
+
+    // Verify the mkdir -p command is present with cache subdirectories
+    for required in ["mkdir -p", "/mriya/cargo", "/mriya/rustup", "/mriya/target"] {
+        if !mount_command.contains(required) {
+            return Err(StepError::Assertion(format!(
+                "expected mount command to include '{required}', got: {mount_command}"
+            )));
+        }
+    }
+
+    // Verify the mkdir is gated by a mountpoint check
+    if !mount_command.contains("if mountpoint -q /mriya") {
+        return Err(StepError::Assertion(format!(
+            "expected mkdir to be gated by mountpoint check, got: {mount_command}"
+        )));
+    }
+
+    Ok(())
+}
+
+#[then("the mount command does not create cache subdirectories")]
+fn mount_command_does_not_create_cache_subdirectories(
+    run_context: &RunContext,
+) -> Result<(), StepError> {
+    // The first SSH command is the mount command
+    let mount_command = first_ssh_raw_command(run_context)?;
+
+    // Verify the mkdir command is NOT present for cache subdirectories
+    if mount_command.contains("/mriya/cargo") || mount_command.contains("/mriya/rustup") {
+        return Err(StepError::Assertion(format!(
+            "expected mount command to NOT create cache directories, got: {mount_command}"
+        )));
+    }
+
+    Ok(())
+}

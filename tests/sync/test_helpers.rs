@@ -125,6 +125,7 @@ pub fn build_scripted_context(
             ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
             volume_mount_path: String::from("/mriya"),
             route_build_caches: true,
+            create_cache_directories: true,
         },
         networking: InstanceNetworking {
             public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -200,6 +201,7 @@ pub fn base_sync_config() -> SyncConfig {
         ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
         volume_mount_path: String::from("/mriya"),
         route_build_caches: true,
+        create_cache_directories: true,
     }
 }
 

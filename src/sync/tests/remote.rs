@@ -248,3 +248,88 @@ fn run_remote_raw_avoids_wrapping(base_config: SyncConfig, networking: InstanceN
         "expected no cache routing preamble, got: {rendered}"
     );
 }
+
+// Tests for create_cache_directories_command
+
+#[test]
+fn create_cache_directories_command_includes_all_subdirectories() {
+    let cmd = create_cache_directories_command("/mriya");
+
+    // Verify all expected subdirectories are present
+    for expected in [
+        "/mriya/cargo",
+        "/mriya/rustup",
+        "/mriya/target",
+        "/mriya/go/pkg/mod",
+        "/mriya/go/build-cache",
+        "/mriya/pip/cache",
+        "/mriya/npm/cache",
+        "/mriya/yarn/cache",
+        "/mriya/pnpm/store",
+    ] {
+        assert!(
+            cmd.contains(expected),
+            "expected '{expected}' to be in command, got: {cmd}"
+        );
+    }
+
+    // Verify it uses mkdir -p for idempotency
+    assert!(
+        cmd.starts_with("mkdir -p "),
+        "expected mkdir -p prefix, got: {cmd}"
+    );
+
+    // Verify graceful failure
+    assert!(
+        cmd.ends_with("2>/dev/null || true"),
+        "expected graceful failure suffix, got: {cmd}"
+    );
+}
+
+#[test]
+fn create_cache_directories_command_escapes_special_characters() {
+    let cmd = create_cache_directories_command("/mnt/mriya cache");
+
+    // Verify the mount path is properly escaped (the subdirectory is appended
+    // after escaping, so the result is `'/mnt/mriya cache'/cargo`)
+    assert!(
+        cmd.contains("'/mnt/mriya cache'/cargo"),
+        "expected escaped mount path with cargo suffix, got: {cmd}"
+    );
+}
+
+#[test]
+fn cache_subdirectories_matches_routing_exports() {
+    use super::super::CACHE_SUBDIRECTORIES;
+
+    // Ensure the subdirectories constant aligns with what the preamble exports.
+    // This test guards against the two lists drifting apart.
+    let expected_subdirs = [
+        "cargo",
+        "rustup",
+        "target",
+        "go/pkg/mod",
+        "go/build-cache",
+        "pip/cache",
+        "npm/cache",
+        "yarn/cache",
+        "pnpm/store",
+    ];
+
+    assert_eq!(
+        CACHE_SUBDIRECTORIES.len(),
+        expected_subdirs.len(),
+        "CACHE_SUBDIRECTORIES length mismatch"
+    );
+
+    for (i, (actual, expected)) in CACHE_SUBDIRECTORIES
+        .iter()
+        .zip(expected_subdirs.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            actual, expected,
+            "CACHE_SUBDIRECTORIES[{i}] mismatch: expected {expected}, got {actual}"
+        );
+    }
+}

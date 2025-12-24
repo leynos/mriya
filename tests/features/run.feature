@@ -84,3 +84,20 @@ Feature: Remote execution via mriya run
     Then the run error is a provisioning timeout
     And the run error includes a teardown failure note
     And the instance is destroyed
+
+  Scenario: Create cache subdirectories after mounting the volume
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the mount command creates cache subdirectories
+    And the instance is destroyed
+
+  Scenario: Allow disabling cache directory creation
+    Given a ready backend and sync pipeline
+    And cache directory creation is disabled
+    And a volume ID "vol-12345" is configured
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the mount command does not create cache subdirectories
+    And the instance is destroyed

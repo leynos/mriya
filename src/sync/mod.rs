@@ -13,6 +13,7 @@ use crate::backend::InstanceNetworking;
 mod remote_command;
 mod types;
 mod util;
+pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command};
 pub use types::{
     CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
     StreamingCommandRunner, SyncDestination,
@@ -36,6 +37,10 @@ pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
         dotfile_name = ".mriya.toml",
         project_file_name = "mriya.toml"
     )
+)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "configuration struct with user-facing toggle settings that are naturally expressed as booleans"
 )]
 pub struct SyncConfig {
     /// Path to the `rsync` executable.
@@ -71,6 +76,10 @@ pub struct SyncConfig {
     /// volume when it is available.
     #[ortho_config(default = true)]
     pub route_build_caches: bool,
+    /// Whether to create cache subdirectories on the mounted volume after
+    /// mounting. Defaults to true so toolchains can write immediately.
+    #[ortho_config(default = true)]
+    pub create_cache_directories: bool,
 }
 
 /// Errors raised when loading the sync configuration from layered sources.
