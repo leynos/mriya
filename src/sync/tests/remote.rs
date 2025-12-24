@@ -251,24 +251,31 @@ fn run_remote_raw_avoids_wrapping(base_config: SyncConfig, networking: InstanceN
 
 // Tests for create_cache_directories_command
 
+/// Expected cache subdirectories for test assertions.
+///
+/// This constant is used by tests to verify cache directory creation without
+/// duplicating the list. It mirrors `CACHE_SUBDIRECTORIES` from production code.
+const EXPECTED_CACHE_SUBDIRS: &[&str] = &[
+    "cargo",
+    "rustup",
+    "target",
+    "go/pkg/mod",
+    "go/build-cache",
+    "pip/cache",
+    "npm/cache",
+    "yarn/cache",
+    "pnpm/store",
+];
+
 #[test]
 fn create_cache_directories_command_includes_all_subdirectories() {
     let cmd = create_cache_directories_command("/mriya");
 
     // Verify all expected subdirectories are present
-    for expected in [
-        "/mriya/cargo",
-        "/mriya/rustup",
-        "/mriya/target",
-        "/mriya/go/pkg/mod",
-        "/mriya/go/build-cache",
-        "/mriya/pip/cache",
-        "/mriya/npm/cache",
-        "/mriya/yarn/cache",
-        "/mriya/pnpm/store",
-    ] {
+    for subdir in EXPECTED_CACHE_SUBDIRS {
+        let expected = format!("/mriya/{subdir}");
         assert!(
-            cmd.contains(expected),
+            cmd.contains(&expected),
             "expected '{expected}' to be in command, got: {cmd}"
         );
     }
@@ -305,27 +312,15 @@ fn cache_subdirectories_matches_routing_exports() {
 
     // Ensure the subdirectories constant aligns with what the preamble exports.
     // This test guards against the two lists drifting apart.
-    let expected_subdirs = [
-        "cargo",
-        "rustup",
-        "target",
-        "go/pkg/mod",
-        "go/build-cache",
-        "pip/cache",
-        "npm/cache",
-        "yarn/cache",
-        "pnpm/store",
-    ];
-
     assert_eq!(
         CACHE_SUBDIRECTORIES.len(),
-        expected_subdirs.len(),
+        EXPECTED_CACHE_SUBDIRS.len(),
         "CACHE_SUBDIRECTORIES length mismatch"
     );
 
     for (i, (actual, expected)) in CACHE_SUBDIRECTORIES
         .iter()
-        .zip(expected_subdirs.iter())
+        .zip(EXPECTED_CACHE_SUBDIRS.iter())
         .enumerate()
     {
         assert_eq!(

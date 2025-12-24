@@ -1,7 +1,7 @@
 //! BDD step definitions for the `mriya run` workflow.
 
 use mriya::RunOrchestrator;
-use mriya::sync::{RemoteCommandOutput, Syncer};
+use mriya::sync::{CACHE_SUBDIRECTORIES, RemoteCommandOutput, Syncer};
 use rstest_bdd_macros::{given, then, when};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -412,11 +412,19 @@ fn mount_command_creates_cache_subdirectories(run_context: &RunContext) -> Resul
     // The first SSH command is the mount + mkdir cache dirs command
     let mount_command = first_ssh_raw_command(run_context)?;
 
-    // Verify the mkdir -p command is present with cache subdirectories
-    for required in ["mkdir -p", "/mriya/cargo", "/mriya/rustup", "/mriya/target"] {
-        if !mount_command.contains(required) {
+    // Verify the mkdir -p command is present
+    if !mount_command.contains("mkdir -p") {
+        return Err(StepError::Assertion(format!(
+            "expected mount command to include 'mkdir -p', got: {mount_command}"
+        )));
+    }
+
+    // Verify all cache subdirectories are present using the production constant
+    for subdir in CACHE_SUBDIRECTORIES {
+        let expected = format!("/mriya/{subdir}");
+        if !mount_command.contains(&expected) {
             return Err(StepError::Assertion(format!(
-                "expected mount command to include '{required}', got: {mount_command}"
+                "expected mount command to include '{expected}', got: {mount_command}"
             )));
         }
     }
