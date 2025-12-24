@@ -273,10 +273,11 @@ fn create_cache_directories_command_includes_all_subdirectories() {
         );
     }
 
-    // Verify it uses mkdir -p for idempotency
+    // Verify it uses sudo mkdir -p for idempotency (sudo required because
+    // the mount point is root-owned after mounting)
     assert!(
-        cmd.starts_with("mkdir -p "),
-        "expected mkdir -p prefix, got: {cmd}"
+        cmd.starts_with("sudo mkdir -p "),
+        "expected sudo mkdir -p prefix, got: {cmd}"
     );
 
     // Verify graceful failure

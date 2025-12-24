@@ -80,7 +80,9 @@ fn cache_routing_preamble(config: &SyncConfig) -> String {
 /// Builds a shell command that creates all cache subdirectories under the
 /// given mount path.
 ///
-/// The command uses `mkdir -p` to create the directory tree idempotently.
+/// The command uses `sudo mkdir -p` to create the directory tree idempotently.
+/// Sudo is required because the mount point is typically root-owned after
+/// mounting, while the SSH user may be non-root (e.g., "ubuntu").
 /// Fails silently if the directories cannot be created (the volume may be
 /// read-only or the mount may have failed).
 ///
@@ -90,7 +92,7 @@ fn cache_routing_preamble(config: &SyncConfig) -> String {
 /// use mriya::sync::create_cache_directories_command;
 ///
 /// let cmd = create_cache_directories_command("/mriya");
-/// assert!(cmd.contains("mkdir -p"));
+/// assert!(cmd.contains("sudo mkdir -p"));
 /// assert!(cmd.contains("/mriya/cargo"));
 /// ```
 #[must_use]
@@ -100,5 +102,5 @@ pub fn create_cache_directories_command(mount_path: &str) -> String {
         .iter()
         .map(|sub| format!("{escaped_mount}/{sub}"))
         .collect();
-    format!("mkdir -p {} 2>/dev/null || true", paths.join(" "))
+    format!("sudo mkdir -p {} 2>/dev/null || true", paths.join(" "))
 }
