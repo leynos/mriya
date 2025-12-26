@@ -14,7 +14,9 @@ use thiserror::Error;
 use tokio::time::sleep;
 
 use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
+use crate::sync::{
+    CommandRunner, RemoteCommandOutput, SyncError, Syncer, create_cache_directories_command,
+};
 
 const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
@@ -226,19 +228,35 @@ where
         }
     }
 
-    /// Mounts the cache volume via SSH.
+    /// Mounts the cache volume via SSH and creates cache subdirectories.
     ///
     /// The mount command is idempotent: it creates the mount point directory
     /// and attempts to mount `/dev/vdb`. The mount itself is best-effort
     /// because the command uses `|| true` for graceful degradation. Only SSH
     /// execution failures are surfaced as errors.
+    ///
+    /// When `create_cache_directories` is enabled in the sync configuration,
+    /// the cache subdirectories are created after mounting so that language
+    /// toolchains can write immediately.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
     ) -> Result<(), RunError<B::Error>> {
-        let mount_path = &self.syncer.config().volume_mount_path;
+        let config = self.syncer.config();
+        let mount_path = &config.volume_mount_path;
         let escaped_mount_path = escape(mount_path.as_str().into());
+
+        let mkdir_cache_dirs = if config.create_cache_directories {
+            format!(
+                " && if mountpoint -q {path} 2>/dev/null; then {create_dirs}; fi",
+                path = escaped_mount_path,
+                create_dirs = create_cache_directories_command(mount_path)
+            )
+        } else {
+            String::new()
+        };
+
         let mount_command = format!(
             concat!(
                 "sudo mkdir -p {path} && ",
@@ -247,7 +265,9 @@ where
             path = escaped_mount_path
         );
 
-        match self.syncer.run_remote(networking, &mount_command) {
+        let full_command = format!("{mount_command}{mkdir_cache_dirs}");
+
+        match self.syncer.run_remote_raw(networking, &full_command) {
             Ok(_) => Ok(()),
             Err(err) => {
                 let message = self.destroy_with_note(handle, &err).await;

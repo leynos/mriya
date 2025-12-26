@@ -49,6 +49,7 @@ fn run_git_aware_sync(workspace: Workspace) -> Result<Workspace, StepError> {
         ssh_identity_file: Some(String::from("~/.ssh/id_ed25519")),
         volume_mount_path: String::from("/mriya"),
         route_build_caches: true,
+        create_cache_directories: true,
     };
 
     let syncer = Syncer::new(config, LocalCopyRunner)?;

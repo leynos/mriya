@@ -2,7 +2,6 @@
 
 use super::super::*;
 use crate::backend::InstanceNetworking;
-use crate::test_helpers::EnvGuard;
 use rstest::rstest;
 use std::net::Ipv4Addr;
 
@@ -66,13 +65,20 @@ fn sync_config_validate_accepts_defaults(base_config: SyncConfig) {
         .expect("sync configuration should validate");
 }
 
-#[tokio::test]
-async fn volume_mount_path_uses_default_when_unset() {
-    // Set SSH identity to satisfy validation; volume_mount_path should still use the default.
-    let _guard = EnvGuard::set_vars(&[("MRIYA_SYNC_SSH_IDENTITY_FILE", "~/.ssh/id_ed25519")]).await;
+#[rstest]
+fn sync_config_validate_accepts_none_ssh_identity(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_identity_file: None,
+        ..base_config
+    };
+    cfg.validate()
+        .expect("None ssh_identity_file should be valid (SSH uses defaults)");
+}
 
-    let sync_config = SyncConfig::load_without_cli_args()
-        .expect("SyncConfig should load with defaults and env overrides");
+#[test]
+fn volume_mount_path_uses_default_when_unset() {
+    let sync_config =
+        SyncConfig::load_without_cli_args().expect("SyncConfig should load with defaults");
 
     assert_eq!(
         sync_config.volume_mount_path, DEFAULT_VOLUME_MOUNT_PATH,
@@ -94,24 +100,20 @@ fn sync_config_validation_rejects_invalid_field(
 }
 
 #[rstest]
-fn sync_config_validation_rejects_missing_ssh_identity(base_config: SyncConfig) {
-    assert_ssh_identity_validation_fails(base_config, None);
-}
-
-#[rstest]
 fn sync_config_validation_rejects_empty_ssh_identity(base_config: SyncConfig) {
+    assert_ssh_identity_validation_fails(base_config.clone(), Some(String::new()));
     assert_ssh_identity_validation_fails(base_config, Some(String::from("  ")));
 }
 
 #[rstest]
 fn sync_error_invalid_config_produces_actionable_message(base_config: SyncConfig) {
     let cfg = SyncConfig {
-        ssh_identity_file: None,
+        ssh_identity_file: Some(String::new()),
         ..base_config
     };
     let err = cfg
         .validate()
-        .expect_err("missing ssh_identity_file should fail");
+        .expect_err("empty ssh_identity_file should fail");
     let message = err.to_string();
     assert!(
         message.contains("MRIYA_SYNC_SSH_IDENTITY_FILE"),

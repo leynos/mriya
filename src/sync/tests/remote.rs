@@ -248,3 +248,46 @@ fn run_remote_raw_avoids_wrapping(base_config: SyncConfig, networking: InstanceN
         "expected no cache routing preamble, got: {rendered}"
     );
 }
+
+// Tests for create_cache_directories_command
+
+#[test]
+fn create_cache_directories_command_includes_all_subdirectories() {
+    use super::super::CACHE_SUBDIRECTORIES;
+
+    let cmd = create_cache_directories_command("/mriya");
+
+    // Verify all expected subdirectories are present using the production constant
+    for subdir in CACHE_SUBDIRECTORIES {
+        let expected = format!("/mriya/{subdir}");
+        assert!(
+            cmd.contains(&expected),
+            "expected '{expected}' to be in command, got: {cmd}"
+        );
+    }
+
+    // Verify it uses sudo mkdir -p for idempotency (sudo required because
+    // the mount point is root-owned after mounting)
+    assert!(
+        cmd.starts_with("sudo mkdir -p "),
+        "expected sudo mkdir -p prefix, got: {cmd}"
+    );
+
+    // Verify graceful failure
+    assert!(
+        cmd.ends_with("2>/dev/null || true"),
+        "expected graceful failure suffix, got: {cmd}"
+    );
+}
+
+#[test]
+fn create_cache_directories_command_escapes_special_characters() {
+    let cmd = create_cache_directories_command("/mnt/mriya cache");
+
+    // Verify the full path is properly escaped (each complete path is escaped,
+    // so the result is `'/mnt/mriya cache/cargo'` not `'/mnt/mriya cache'/cargo`)
+    assert!(
+        cmd.contains("'/mnt/mriya cache/cargo'"),
+        "expected properly escaped full path, got: {cmd}"
+    );
+}

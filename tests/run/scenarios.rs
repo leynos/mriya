@@ -83,3 +83,19 @@ fn scenario_cloud_init_failure(run_context: RunContext) {
 fn scenario_cloud_init_timeout(run_context: RunContext) {
     let _ = run_context;
 }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Create cache subdirectories after mounting the volume"
+)]
+fn scenario_create_cache_subdirectories(run_context: RunContext) {
+    let _ = run_context;
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Allow disabling cache directory creation"
+)]
+fn scenario_disable_cache_directory_creation(run_context: RunContext) {
+    let _ = run_context;
+}
