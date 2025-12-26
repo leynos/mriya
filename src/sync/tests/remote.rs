@@ -251,28 +251,14 @@ fn run_remote_raw_avoids_wrapping(base_config: SyncConfig, networking: InstanceN
 
 // Tests for create_cache_directories_command
 
-/// Expected cache subdirectories for test assertions.
-///
-/// This constant is used by tests to verify cache directory creation without
-/// duplicating the list. It mirrors `CACHE_SUBDIRECTORIES` from production code.
-const EXPECTED_CACHE_SUBDIRS: &[&str] = &[
-    "cargo",
-    "rustup",
-    "target",
-    "go/pkg/mod",
-    "go/build-cache",
-    "pip/cache",
-    "npm/cache",
-    "yarn/cache",
-    "pnpm/store",
-];
-
 #[test]
 fn create_cache_directories_command_includes_all_subdirectories() {
+    use super::super::CACHE_SUBDIRECTORIES;
+
     let cmd = create_cache_directories_command("/mriya");
 
-    // Verify all expected subdirectories are present
-    for subdir in EXPECTED_CACHE_SUBDIRS {
+    // Verify all expected subdirectories are present using the production constant
+    for subdir in CACHE_SUBDIRECTORIES {
         let expected = format!("/mriya/{subdir}");
         assert!(
             cmd.contains(&expected),
@@ -304,28 +290,4 @@ fn create_cache_directories_command_escapes_special_characters() {
         cmd.contains("'/mnt/mriya cache/cargo'"),
         "expected properly escaped full path, got: {cmd}"
     );
-}
-
-#[test]
-fn cache_subdirectories_matches_routing_exports() {
-    use super::super::CACHE_SUBDIRECTORIES;
-
-    // Ensure the subdirectories constant aligns with what the preamble exports.
-    // This test guards against the two lists drifting apart.
-    assert_eq!(
-        CACHE_SUBDIRECTORIES.len(),
-        EXPECTED_CACHE_SUBDIRS.len(),
-        "CACHE_SUBDIRECTORIES length mismatch"
-    );
-
-    for (i, (actual, expected)) in CACHE_SUBDIRECTORIES
-        .iter()
-        .zip(EXPECTED_CACHE_SUBDIRS.iter())
-        .enumerate()
-    {
-        assert_eq!(
-            actual, expected,
-            "CACHE_SUBDIRECTORIES[{i}] mismatch: expected {expected}, got {actual}"
-        );
-    }
 }

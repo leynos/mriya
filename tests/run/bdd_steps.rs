@@ -446,11 +446,14 @@ fn mount_command_does_not_create_cache_subdirectories(
     // The first SSH command is the mount command
     let mount_command = first_ssh_raw_command(run_context)?;
 
-    // Verify the mkdir command is NOT present for cache subdirectories
-    if mount_command.contains("/mriya/cargo") || mount_command.contains("/mriya/rustup") {
-        return Err(StepError::Assertion(format!(
-            "expected mount command to NOT create cache directories, got: {mount_command}"
-        )));
+    // Verify none of the cache subdirectories are present using the production constant
+    for subdir in CACHE_SUBDIRECTORIES {
+        let path = format!("/mriya/{subdir}");
+        if mount_command.contains(&path) {
+            return Err(StepError::Assertion(format!(
+                "expected mount command to NOT create cache directories, got: {mount_command}"
+            )));
+        }
     }
 
     Ok(())
