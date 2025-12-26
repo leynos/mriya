@@ -59,8 +59,9 @@ pub struct SyncConfig {
     #[ortho_config(default = "/dev/null".to_owned())]
     pub ssh_known_hosts_file: String,
     /// Path to the SSH private key file for remote authentication. Supports
-    /// tilde expansion (`~/.ssh/id_ed25519`). Must be provided via
-    /// configuration or environment; validation will reject empty or missing values.
+    /// tilde expansion (`~/.ssh/id_ed25519`). Optional; when not provided, SSH
+    /// falls back to default key locations (`~/.ssh/id_rsa`, `~/.ssh/id_ed25519`,
+    /// etc.). Validation rejects empty or whitespace-only values.
     pub ssh_identity_file: Option<String>,
     /// Mount path for the persistent cache volume on the remote instance.
     #[ortho_config(default = DEFAULT_VOLUME_MOUNT_PATH.to_owned())]
@@ -101,8 +102,9 @@ impl SyncConfig {
 
     fn require_optional_value(value: Option<&str>, field: &str) -> Result<(), SyncError> {
         match value {
+            None => Ok(()), // Not configured; SSH uses defaults
             Some(v) if !v.trim().is_empty() => Ok(()),
-            _ => Err(SyncError::InvalidConfig {
+            Some(_) => Err(SyncError::InvalidConfig {
                 field: field.to_owned(),
             }),
         }
