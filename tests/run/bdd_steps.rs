@@ -1,7 +1,10 @@
 //! BDD step definitions for the `mriya run` workflow.
+//!
+//! This module contains the core step definitions. Cache-related steps are
+//! in the `cache_steps` submodule.
 
 use mriya::RunOrchestrator;
-use mriya::sync::{CACHE_SUBDIRECTORIES, RemoteCommandOutput, Syncer};
+use mriya::sync::{RemoteCommandOutput, Syncer};
 use rstest_bdd_macros::{given, then, when};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -20,12 +23,6 @@ pub enum StepError {
 
 #[given("a ready backend and sync pipeline")]
 fn ready_backend(run_context: RunContext) -> RunContext {
-    run_context
-}
-
-#[given("cache routing is disabled")]
-fn cache_routing_disabled(mut run_context: RunContext) -> RunContext {
-    run_context.sync_config.route_build_caches = false;
     run_context
 }
 
@@ -258,7 +255,7 @@ fn teardown_failure_note_present(run_context: &RunContext) -> Result<(), StepErr
 
 /// Direction for SSH invocation lookup.
 #[derive(Clone, Copy)]
-enum SshLookupDirection {
+pub enum SshLookupDirection {
     /// Return the first matching SSH invocation.
     First,
     /// Return the last matching SSH invocation.
@@ -268,7 +265,7 @@ enum SshLookupDirection {
 /// Finds an SSH invocation's remote command string.
 ///
 /// Common logic for extracting the remote command from SSH invocations.
-fn find_ssh_command(
+pub fn find_ssh_command(
     run_context: &RunContext,
     direction: SshLookupDirection,
 ) -> Result<String, StepError> {
@@ -291,50 +288,8 @@ fn find_ssh_command(
     Ok(command.to_string_lossy().into_owned())
 }
 
-fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
+pub fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
     find_ssh_command(run_context, SshLookupDirection::Last)
-}
-
-#[then("the remote command routes Cargo caches to the volume")]
-fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
-    let remote_command = last_ssh_remote_command(run_context)?;
-    for required in [
-        "if mountpoint -q /mriya 2>/dev/null; then",
-        "export CARGO_HOME=/mriya/cargo",
-        "export RUSTUP_HOME=/mriya/rustup",
-        "export CARGO_TARGET_DIR=/mriya/target",
-        "export GOMODCACHE=/mriya/go/pkg/mod",
-        "export GOCACHE=/mriya/go/build-cache",
-        "export PIP_CACHE_DIR=/mriya/pip/cache",
-        "export npm_config_cache=/mriya/npm/cache",
-        "export YARN_CACHE_FOLDER=/mriya/yarn/cache",
-        "export PNPM_STORE_PATH=/mriya/pnpm/store",
-        "fi; cd",
-    ] {
-        if !remote_command.contains(required) {
-            return Err(StepError::Assertion(format!(
-                "expected remote command to include '{required}', got: {remote_command}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-#[then("the remote command does not route Cargo caches")]
-fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
-    let remote_command = last_ssh_remote_command(run_context)?;
-
-    const CARGO_CACHE_VARS: &[&str] = &["CARGO_TARGET_DIR=", "CARGO_HOME=", "RUSTUP_HOME="];
-
-    if CARGO_CACHE_VARS
-        .iter()
-        .any(|var| remote_command.contains(var))
-    {
-        return Err(StepError::Assertion(format!(
-            "expected remote command to avoid cache routing, got: {remote_command}"
-        )));
-    }
-    Ok(())
 }
 
 #[then("cloud-init readiness is checked before executing the remote command")]
@@ -395,66 +350,4 @@ fn provisioning_failure_reported(run_context: &RunContext) -> Result<(), StepErr
 #[then("teardown failure is reported")]
 fn teardown_failure_reported(run_context: &RunContext) -> Result<(), StepError> {
     assert_failure_contains(run_context, "failed to destroy instance")
-}
-
-#[given("cache directory creation is disabled")]
-fn cache_directory_creation_disabled(mut run_context: RunContext) -> RunContext {
-    run_context.sync_config.create_cache_directories = false;
-    run_context
-}
-
-fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> {
-    find_ssh_command(run_context, SshLookupDirection::First)
-}
-
-#[then("the mount command creates cache subdirectories")]
-fn mount_command_creates_cache_subdirectories(run_context: &RunContext) -> Result<(), StepError> {
-    // The first SSH command is the mount + mkdir cache dirs command
-    let mount_command = first_ssh_raw_command(run_context)?;
-
-    // Verify the mkdir -p command is present
-    if !mount_command.contains("mkdir -p") {
-        return Err(StepError::Assertion(format!(
-            "expected mount command to include 'mkdir -p', got: {mount_command}"
-        )));
-    }
-
-    // Verify all cache subdirectories are present using the production constant
-    for subdir in CACHE_SUBDIRECTORIES {
-        let expected = format!("/mriya/{subdir}");
-        if !mount_command.contains(&expected) {
-            return Err(StepError::Assertion(format!(
-                "expected mount command to include '{expected}', got: {mount_command}"
-            )));
-        }
-    }
-
-    // Verify the mkdir is gated by a mountpoint check
-    if !mount_command.contains("if mountpoint -q /mriya") {
-        return Err(StepError::Assertion(format!(
-            "expected mkdir to be gated by mountpoint check, got: {mount_command}"
-        )));
-    }
-
-    Ok(())
-}
-
-#[then("the mount command does not create cache subdirectories")]
-fn mount_command_does_not_create_cache_subdirectories(
-    run_context: &RunContext,
-) -> Result<(), StepError> {
-    // The first SSH command is the mount command
-    let mount_command = first_ssh_raw_command(run_context)?;
-
-    // Verify none of the cache subdirectories are present using the production constant
-    for subdir in CACHE_SUBDIRECTORIES {
-        let path = format!("/mriya/{subdir}");
-        if mount_command.contains(&path) {
-            return Err(StepError::Assertion(format!(
-                "expected mount command to NOT create cache directories, got: {mount_command}"
-            )));
-        }
-    }
-
-    Ok(())
 }
