@@ -82,83 +82,71 @@ jobs:
 
   build:
     needs: metadata
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - os: linux
             arch: x86_64
             target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
             ext: ''
           - os: linux
             arch: aarch64
             target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
             ext: ''
           - os: windows
             arch: x86_64
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
             ext: '.exe'
           - os: windows
             arch: aarch64
-            target: aarch64-pc-windows-gnu
+            target: aarch64-pc-windows-msvc
+            runner: windows-latest
             ext: '.exe'
           - os: macos
             arch: x86_64
             target: x86_64-apple-darwin
+            runner: ubuntu-latest
             ext: ''
           - os: macos
             arch: aarch64
             target: aarch64-apple-darwin
+            runner: ubuntu-latest
             ext: ''
           - os: freebsd
             arch: x86_64
             target: x86_64-unknown-freebsd
+            runner: ubuntu-latest
             ext: ''
           - os: freebsd
             arch: aarch64
             target: aarch64-unknown-freebsd
+            runner: ubuntu-latest
             ext: ''
           - os: openbsd
             arch: x86_64
             target: x86_64-unknown-openbsd
+            runner: ubuntu-latest
             ext: ''
           - os: openbsd
             arch: aarch64
             target: aarch64-unknown-openbsd
+            runner: ubuntu-latest
             ext: ''
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
-      - name: Cache cross binary
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cross
-          key: cross-${{ runner.os }}
-
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
       - name: Build release binary
-        run: cross +stable build --release --target ${{ matrix.target }}
+        uses: >-
+          leynos/shared-actions/.github/actions/rust-build-release@df81280dcc1d6e66134114dbc924313328b15f05
+        with:
+          target: ${{ matrix.target }}
 
-      - name: Prepare artifact
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p artifacts/${{ matrix.os }}-${{ matrix.arch }}
           bin_name="${{ needs.metadata.outputs.bin_name }}"
@@ -166,6 +154,19 @@ jobs:
             "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
           sha256sum "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" > \
             "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}.sha256"
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/${{ matrix.os }}-${{ matrix.arch }}"
+          $binName = "${{ needs.metadata.outputs.bin_name }}"
+          $src = "target/${{ matrix.target }}/release/${binName}${{ matrix.ext }}"
+          $dst = "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${binName}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          Copy-Item $src $dst
+          $hash = (Get-FileHash -Algorithm SHA256 $dst).Hash.ToLower()
+          $fileName = Split-Path -Leaf $dst
+          "$hash  $fileName" | Out-File -Encoding ascii "${dst}.sha256"
 
       - name: Prepare packaging artifact (Linux/macOS only)
         if: matrix.os == 'linux' || matrix.os == 'macos'
