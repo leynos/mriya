@@ -121,21 +121,6 @@ jobs:
             target: x86_64-unknown-freebsd
             runner: ubuntu-latest
             ext: ''
-          - os: freebsd
-            arch: aarch64
-            target: aarch64-unknown-freebsd
-            runner: ubuntu-latest
-            ext: ''
-          - os: openbsd
-            arch: x86_64
-            target: x86_64-unknown-openbsd
-            runner: ubuntu-latest
-            ext: ''
-          - os: openbsd
-            arch: aarch64
-            target: aarch64-unknown-openbsd
-            runner: ubuntu-latest
-            ext: ''
     steps:
       - uses: actions/checkout@v4
 
