@@ -109,12 +109,12 @@ jobs:
           - os: macos
             arch: x86_64
             target: x86_64-apple-darwin
-            runner: ubuntu-latest
+            runner: macos-13
             ext: ''
           - os: macos
             arch: aarch64
             target: aarch64-apple-darwin
-            runner: ubuntu-latest
+            runner: macos-14
             ext: ''
           - os: freebsd
             arch: x86_64
@@ -137,8 +137,12 @@ jobs:
           bin_name="${{ needs.metadata.outputs.bin_name }}"
           cp "target/${{ matrix.target }}/release/${bin_name}${{ matrix.ext }}" \
             "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
-          sha256sum "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" > \
-            "artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}.sha256"
+          artifact="artifacts/${{ matrix.os }}-${{ matrix.arch }}/${bin_name}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          if command -v sha256sum &> /dev/null; then
+            sha256sum "$artifact" > "${artifact}.sha256"
+          else
+            shasum -a 256 "$artifact" > "${artifact}.sha256"
+          fi
 
       - name: Prepare artifact (Windows)
         if: runner.os == 'Windows'
