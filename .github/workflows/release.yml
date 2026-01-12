@@ -129,6 +129,7 @@ jobs:
           leynos/shared-actions/.github/actions/rust-build-release@df81280dcc1d6e66134114dbc924313328b15f05
         with:
           target: ${{ matrix.target }}
+          bin-name: ${{ needs.metadata.outputs.bin_name }}
 
       - name: Prepare artifact (Unix)
         if: runner.os != 'Windows'
