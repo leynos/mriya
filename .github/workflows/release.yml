@@ -109,7 +109,7 @@ jobs:
           - os: macos
             arch: x86_64
             target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15
             ext: ''
           - os: macos
             arch: aarch64
@@ -234,7 +234,7 @@ jobs:
   macos-package-x86_64:
     needs: [metadata, build]
     if: needs.metadata.outputs.should_upload_workflow_artifacts == 'true'
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
