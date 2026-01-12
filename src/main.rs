@@ -19,6 +19,9 @@ use clap::Parser;
 use shell_escape::unix::escape;
 use thiserror::Error;
 
+mod cli;
+
+use cli::{Cli, InitCommand, RunCommand};
 use mriya::{
     ConfigStore, InitConfig, InitError, InitOrchestrator, InitRequest, InstanceRequest, RunError,
     RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig, StreamingCommandRunner,
@@ -27,56 +30,6 @@ use mriya::{
 
 #[cfg(test)]
 mod main_tests;
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "mriya",
-    about = "Teleport your workspace to a Scaleway VM and run commands remotely",
-    arg_required_else_help = true
-)]
-enum Cli {
-    #[command(name = "run", about = "Provision, sync, and run a command over SSH")]
-    Run(RunCommand),
-    #[command(name = "init", about = "Prepare a cache volume for this project")]
-    Init(InitCommand),
-}
-
-#[derive(Debug, Parser)]
-struct RunCommand {
-    /// Override the Scaleway instance type (commercial type) for this run.
-    ///
-    /// The Scaleway backend validates availability in the selected zone during
-    /// provisioning, and rejects unknown values with a provider-specific
-    /// error.
-    #[arg(long, value_name = "TYPE")]
-    instance_type: Option<String>,
-    /// Override the image label for this run.
-    ///
-    /// The Scaleway backend resolves the label to a concrete image identifier
-    /// for the selected architecture and zone, and rejects unknown labels with
-    /// a provider-specific error.
-    #[arg(long, value_name = "IMAGE")]
-    image: Option<String>,
-    /// Provide cloud-init user-data inline for this run (cloud-config YAML or script).
-    ///
-    /// This payload is passed through to the backend and applied during the
-    /// instance's first boot before the remote command is executed.
-    #[arg(long, value_name = "USER_DATA", conflicts_with = "cloud_init_file")]
-    cloud_init: Option<String>,
-    /// Provide cloud-init user-data from a local file for this run.
-    #[arg(long, value_name = "PATH", conflicts_with = "cloud_init")]
-    cloud_init_file: Option<String>,
-    /// Command to execute on the remote host (use -- to separate flags).
-    #[arg(required = true, trailing_var_arg = true)]
-    command: Vec<String>,
-}
-
-#[derive(Debug, Parser)]
-struct InitCommand {
-    /// Overwrite an existing cache volume ID in configuration.
-    #[arg(long)]
-    force: bool,
-}
 
 #[derive(Debug, Error)]
 enum CliError {

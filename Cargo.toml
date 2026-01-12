@@ -20,6 +20,10 @@ camino = "1.1"
 shell-escape = "0.1.5"
 cap-std = { version = "3.4.5", features = ["fs_utf8"] }
 
+[build-dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_mangen = "0.2.31"
+
 [dev-dependencies]
 rstest = "0.22"
 rstest-bdd = "0.2.0"
