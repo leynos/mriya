@@ -6,8 +6,8 @@
 use std::env;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
 
+use camino::Utf8PathBuf;
 use clap::CommandFactory;
 use clap_mangen::Man;
 
@@ -17,14 +17,18 @@ mod cli;
 use cli::Cli;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdout = std::io::stdout();
-    writeln!(stdout, "cargo:rerun-if-changed=build.rs")?;
-    writeln!(stdout, "cargo:rerun-if-changed=src/cli/mod.rs")?;
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/cli/mod.rs");
 
+    let out_dir_os = env::var_os("OUT_DIR")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "OUT_DIR was not set"))?;
     let out_dir =
-        PathBuf::from(env::var_os("OUT_DIR").ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "OUT_DIR was not set")
-        })?);
+        Utf8PathBuf::from_path_buf(std::path::PathBuf::from(out_dir_os)).map_err(|path| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("OUT_DIR is not valid UTF-8: {}", path.display()),
+            )
+        })?;
 
     let mut buffer = Vec::new();
     Man::new(Cli::command()).render(&mut buffer)?;
