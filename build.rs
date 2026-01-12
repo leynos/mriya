@@ -11,17 +11,15 @@ use std::path::PathBuf;
 use clap::CommandFactory;
 use clap_mangen::Man;
 
-mod cli {
-    //! Shared CLI definitions for manpage generation.
-    include!("src/cli_shared.rs");
-}
+#[path = "src/cli/mod.rs"]
+mod cli;
 
 use cli::Cli;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = std::io::stdout();
-    stdout.write_all(b"cargo:rerun-if-changed=src/cli.rs\n")?;
-    stdout.write_all(b"cargo:rerun-if-changed=src/cli_shared.rs\n")?;
+    writeln!(stdout, "cargo:rerun-if-changed=build.rs")?;
+    writeln!(stdout, "cargo:rerun-if-changed=src/cli/mod.rs")?;
 
     let out_dir =
         PathBuf::from(env::var_os("OUT_DIR").ok_or_else(|| {

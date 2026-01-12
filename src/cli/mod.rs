@@ -1,3 +1,8 @@
+//! Command-line interface definitions for the `mriya` binary.
+//!
+//! This module centralises the clap parser structures so both the main binary
+//! and the build script can reuse them when generating the manual page.
+
 use clap::Parser;
 
 /// Top-level CLI for the `mriya` binary.
@@ -8,7 +13,7 @@ use clap::Parser;
     arg_required_else_help = true
 )]
 pub(crate) enum Cli {
-    /// Provision, synchronise, and run a command over SSH.
+    /// Provision, sync, and run a command over SSH.
     #[command(name = "run", about = "Provision, sync, and run a command over SSH")]
     Run(RunCommand),
     /// Prepare a cache volume for this project.

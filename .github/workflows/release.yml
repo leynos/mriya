@@ -114,7 +114,7 @@ jobs:
           - os: macos
             arch: aarch64
             target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             ext: ''
           - os: freebsd
             arch: x86_64
@@ -231,17 +231,27 @@ jobs:
           name: ${{ env.REPO_NAME }}-packages-${{ matrix.artifact_suffix }}
           path: dist
 
-  macos-package-x86_64:
+  macos-package:
+    name: macos-package (${{ matrix.pkg_arch_suffix }})
     needs: [metadata, build]
     if: needs.metadata.outputs.should_upload_workflow_artifacts == 'true'
-    runs-on: macos-15
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            artifact_suffix: x86_64-apple-darwin
+            pkg_arch_suffix: x86_64
+          - runner: macos-15
+            artifact_suffix: aarch64-apple-darwin
+            pkg_arch_suffix: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Download packaging artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-packaging-x86_64-apple-darwin
+          name: ${{ env.REPO_NAME }}-packaging-${{ matrix.artifact_suffix }}
           path: staging
 
       - name: Build macOS installer package
@@ -261,50 +271,12 @@ jobs:
           bin_name="${{ needs.metadata.outputs.bin_name }}"
           version="${{ needs.metadata.outputs.version }}"
           mv "${{ steps.package_macos.outputs.pkg-path }}" \
-            "dist/${bin_name}-${version}-macos-x86_64.pkg"
+            "dist/${bin_name}-${version}-macos-${{ matrix.pkg_arch_suffix }}.pkg"
 
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-package-macos-x86_64
-          path: dist
-
-  macos-package-aarch64:
-    needs: [metadata, build]
-    if: needs.metadata.outputs.should_upload_workflow_artifacts == 'true'
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download packaging artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-packaging-aarch64-apple-darwin
-          path: staging
-
-      - name: Build macOS installer package
-        id: package_macos
-        uses: >-
-          leynos/shared-actions/.github/actions/macos-package@df81280dcc1d6e66134114dbc924313328b15f05
-        with:
-          name: ${{ needs.metadata.outputs.bin_name }}
-          identifier: net.df12.mriya
-          binary: staging/release/${{ needs.metadata.outputs.bin_name }}
-          license-file: LICENSE
-          version: ${{ needs.metadata.outputs.version }}
-
-      - name: Rename package with architecture suffix
-        run: |
-          mkdir -p dist
-          bin_name="${{ needs.metadata.outputs.bin_name }}"
-          version="${{ needs.metadata.outputs.version }}"
-          mv "${{ steps.package_macos.outputs.pkg-path }}" \
-            "dist/${bin_name}-${version}-macos-aarch64.pkg"
-
-      - name: Upload macOS package
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-package-macos-aarch64
+          name: ${{ env.REPO_NAME }}-package-macos-${{ matrix.pkg_arch_suffix }}
           path: dist
 
   release:
@@ -315,13 +287,12 @@ jobs:
       - metadata
       - build
       - linux-packages
-      - macos-package-x86_64
-      - macos-package-aarch64
+      - macos-package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
 
@@ -333,6 +304,7 @@ jobs:
 
       - name: Upload assets to release
         run: |
+          set -euo pipefail
           for dir in artifacts/${{ env.REPO_NAME }}-*; do
             for file in "$dir"/*; do
               if [ -f "$file" ]; then
