@@ -4,10 +4,11 @@
 //! build output directory, so we generate it using clap-mangen here.
 
 use std::env;
-use std::fs::File;
 use std::io::Write;
 
 use camino::Utf8PathBuf;
+use cap_std::ambient_authority;
+use cap_std::fs_utf8::File;
 use clap::CommandFactory;
 use clap_mangen::Man;
 
@@ -33,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
     Man::new(Cli::command()).render(&mut buffer)?;
 
-    let mut file = File::create(out_dir.join("mriya.1"))?;
+    let mut file = File::create_ambient(out_dir.join("mriya.1"), ambient_authority())?;
     file.write_all(&buffer)?;
 
     Ok(())
