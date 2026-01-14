@@ -10,6 +10,7 @@ use std::io::{self, ErrorKind};
 use camino::Utf8PathBuf;
 use cap_std::ambient_authority;
 use cap_std::fs_utf8::Dir;
+use cap_std::fs_utf8::DirEntry;
 use cap_std::fs_utf8::File;
 use clap::CommandFactory;
 use clap_mangen::Man;
@@ -45,41 +46,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cleanup_duplicate_manpages(out_dir: &Utf8PathBuf) -> io::Result<()> {
-    let current_build_dir = out_dir.parent().ok_or_else(|| {
-        io::Error::new(
-            ErrorKind::NotFound,
-            "OUT_DIR does not have a parent build directory",
-        )
-    })?;
-    let build_root = current_build_dir.parent().ok_or_else(|| {
-        io::Error::new(
-            ErrorKind::NotFound,
-            "OUT_DIR does not have a build root directory",
-        )
-    })?;
-    let current_build_name = current_build_dir.file_name().ok_or_else(|| {
-        io::Error::new(ErrorKind::NotFound, "build directory does not have a name")
-    })?;
-    let build_root_dir = Dir::open_ambient_dir(build_root, ambient_authority())?;
+    let context = BuildContext::from_out_dir(out_dir)?;
+    let build_root_dir = Dir::open_ambient_dir(&context.build_root, ambient_authority())?;
 
     for entry_result in build_root_dir.read_dir(".")? {
         let entry = entry_result?;
-        let entry_name = entry.file_name()?;
-        if !entry_name.starts_with("mriya-") || entry_name == current_build_name {
-            continue;
-        }
+        cleanup_build_entry(&context, &entry)?;
+    }
+    Ok(())
+}
 
-        let entry_dir = entry.open_dir()?;
-        let entry_out_dir = match entry_dir.open_dir("out") {
-            Ok(dir) => dir,
-            Err(err) if err.kind() == ErrorKind::NotFound => continue,
-            Err(err) => return Err(err),
-        };
+struct BuildContext {
+    build_root: Utf8PathBuf,
+    current_build_name: String,
+}
 
-        remove_duplicate_manpage(&entry_out_dir)?;
+impl BuildContext {
+    fn from_out_dir(out_dir: &Utf8PathBuf) -> io::Result<Self> {
+        let current_build_dir = out_dir.parent().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                "OUT_DIR does not have a parent build directory",
+            )
+        })?;
+        let build_root = current_build_dir.parent().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                "OUT_DIR does not have a build root directory",
+            )
+        })?;
+        let current_build_name = current_build_dir.file_name().ok_or_else(|| {
+            io::Error::new(ErrorKind::NotFound, "build directory does not have a name")
+        })?;
+
+        Ok(Self {
+            build_root: build_root.to_path_buf(),
+            current_build_name: current_build_name.to_owned(),
+        })
     }
 
+    fn is_duplicate_entry(&self, entry: &DirEntry) -> io::Result<bool> {
+        let entry_name = entry.file_name()?;
+        Ok(entry_name.starts_with("mriya-") && entry_name != self.current_build_name)
+    }
+}
+
+fn cleanup_build_entry(context: &BuildContext, entry: &DirEntry) -> io::Result<()> {
+    if !context.is_duplicate_entry(entry)? {
+        return Ok(());
+    }
+
+    let entry_dir = entry.open_dir()?;
+    if let Some(entry_out_dir) = open_optional_dir(&entry_dir, "out")? {
+        remove_duplicate_manpage(&entry_out_dir)?;
+    }
     Ok(())
+}
+
+fn open_optional_dir(dir: &Dir, path: &str) -> io::Result<Option<Dir>> {
+    match dir.open_dir(path) {
+        Ok(opened_dir) => Ok(Some(opened_dir)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 fn remove_duplicate_manpage(dir: &Dir) -> io::Result<()> {
