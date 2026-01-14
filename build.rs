@@ -7,7 +7,7 @@ use std::env;
 use std::io::Write;
 use std::io::{self, ErrorKind};
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::ambient_authority;
 use cap_std::fs_utf8::Dir;
 use cap_std::fs_utf8::DirEntry;
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn cleanup_duplicate_manpages(out_dir: &Utf8PathBuf) -> io::Result<()> {
+fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
     let context = BuildContext::from_out_dir(out_dir)?;
     let build_root_dir = Dir::open_ambient_dir(&context.build_root, ambient_authority())?;
 
@@ -62,7 +62,7 @@ struct BuildContext {
 }
 
 impl BuildContext {
-    fn from_out_dir(out_dir: &Utf8PathBuf) -> io::Result<Self> {
+    fn from_out_dir(out_dir: &Utf8Path) -> io::Result<Self> {
         let current_build_dir = out_dir.parent().ok_or_else(|| {
             io::Error::new(
                 ErrorKind::NotFound,
