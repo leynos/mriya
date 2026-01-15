@@ -46,53 +46,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
-    let context = BuildContext::from_out_dir(out_dir)?;
-    let build_root_dir = Dir::open_ambient_dir(&context.build_root, ambient_authority())?;
+    let build_paths = resolve_build_paths(&out_dir.to_path_buf())?;
+    let build_root_dir = Dir::open_ambient_dir(&build_paths.build_root, ambient_authority())?;
 
     for entry_result in build_root_dir.read_dir(".")? {
         let entry = entry_result?;
-        cleanup_build_entry(&context, &entry)?;
+        process_build_entry(&entry, &build_paths.current_build_name)?;
     }
     Ok(())
 }
 
-struct BuildContext {
+struct BuildPaths {
     build_root: Utf8PathBuf,
     current_build_name: String,
 }
 
-impl BuildContext {
-    fn from_out_dir(out_dir: &Utf8Path) -> io::Result<Self> {
-        let current_build_dir = out_dir.parent().ok_or_else(|| {
-            io::Error::new(
-                ErrorKind::NotFound,
-                "OUT_DIR does not have a parent build directory",
-            )
-        })?;
-        let build_root = current_build_dir.parent().ok_or_else(|| {
-            io::Error::new(
-                ErrorKind::NotFound,
-                "OUT_DIR does not have a build root directory",
-            )
-        })?;
-        let current_build_name = current_build_dir.file_name().ok_or_else(|| {
-            io::Error::new(ErrorKind::NotFound, "build directory does not have a name")
-        })?;
+fn resolve_build_paths(out_dir: &Utf8PathBuf) -> io::Result<BuildPaths> {
+    let current_build_dir = out_dir.parent().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::NotFound,
+            "OUT_DIR does not have a parent build directory",
+        )
+    })?;
+    let build_root = current_build_dir.parent().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::NotFound,
+            "OUT_DIR does not have a build root directory",
+        )
+    })?;
+    let current_build_name = current_build_dir.file_name().ok_or_else(|| {
+        io::Error::new(ErrorKind::NotFound, "build directory does not have a name")
+    })?;
 
-        Ok(Self {
-            build_root: build_root.to_path_buf(),
-            current_build_name: current_build_name.to_owned(),
-        })
-    }
-
-    fn is_duplicate_entry(&self, entry: &DirEntry) -> io::Result<bool> {
-        let entry_name = entry.file_name()?;
-        Ok(entry_name.starts_with("mriya-") && entry_name != self.current_build_name)
-    }
+    Ok(BuildPaths {
+        build_root: build_root.to_path_buf(),
+        current_build_name: current_build_name.to_owned(),
+    })
 }
 
-fn cleanup_build_entry(context: &BuildContext, entry: &DirEntry) -> io::Result<()> {
-    if !context.is_duplicate_entry(entry)? {
+fn process_build_entry(entry: &DirEntry, current_build_name: &str) -> io::Result<()> {
+    let entry_name = entry.file_name()?;
+    if !entry_name.starts_with("mriya-") || entry_name == current_build_name {
         return Ok(());
     }
 
