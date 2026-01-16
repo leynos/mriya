@@ -65,6 +65,18 @@ struct BuildPaths {
     current_build_name: String,
 }
 
+/// Resolves the build root directory and current build name from `OUT_DIR`.
+///
+/// Cargo sets `OUT_DIR` to a path like `target/<profile>/build/<crate>-<hash>/out`.
+/// This function extracts the parent build directory (`<crate>-<hash>`) and the
+/// build root (`target/<profile>/build`) for use in cleanup operations.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::NotFound`] if:
+/// - `out_dir` has no parent directory (missing build directory)
+/// - The build directory has no parent (missing build root)
+/// - The build directory has no file name component
 fn resolve_build_paths(out_dir: &Utf8Path) -> io::Result<BuildPaths> {
     let current_build_dir = out_dir.parent().ok_or_else(|| {
         io::Error::new(
@@ -88,6 +100,16 @@ fn resolve_build_paths(out_dir: &Utf8Path) -> io::Result<BuildPaths> {
     })
 }
 
+/// Processes a single build directory entry, removing stale manpages from other builds.
+///
+/// Skips entries that do not start with `mriya-` or match `current_build_name`.
+/// For matching entries, opens the `out` subdirectory (if present) and removes
+/// any `mriya.1` manpage file to prevent duplicates across incremental builds.
+///
+/// # Errors
+///
+/// Returns an error if directory operations fail (excluding [`io::ErrorKind::NotFound`]
+/// for missing `out` directories or manpage files, which are handled gracefully).
 fn process_build_entry(entry: &DirEntry, current_build_name: &str) -> io::Result<()> {
     let entry_name = entry.file_name()?;
     if !entry_name.starts_with("mriya-") || entry_name == current_build_name {
@@ -101,6 +123,11 @@ fn process_build_entry(entry: &DirEntry, current_build_name: &str) -> io::Result
     Ok(())
 }
 
+/// Opens a subdirectory, returning `None` if it does not exist.
+///
+/// Returns `Ok(Some(dir))` when the directory exists and can be opened,
+/// `Ok(None)` when the directory does not exist ([`io::ErrorKind::NotFound`]),
+/// or `Err` for other I/O failures (e.g., permission denied).
 fn open_optional_dir(dir: &Dir, path: &str) -> io::Result<Option<Dir>> {
     match dir.open_dir(path) {
         Ok(opened_dir) => Ok(Some(opened_dir)),
@@ -109,6 +136,10 @@ fn open_optional_dir(dir: &Dir, path: &str) -> io::Result<Option<Dir>> {
     }
 }
 
+/// Removes the `mriya.1` manpage from the given directory if it exists.
+///
+/// Succeeds silently if the file does not exist ([`io::ErrorKind::NotFound`]).
+/// Returns an error for other I/O failures (e.g., permission denied).
 fn remove_duplicate_manpage(dir: &Dir) -> io::Result<()> {
     match dir.remove_file("mriya.1") {
         Ok(()) => Ok(()),
