@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
-    let build_paths = resolve_build_paths(&out_dir.to_path_buf())?;
+    let build_paths = resolve_build_paths(out_dir)?;
     let build_root_dir = Dir::open_ambient_dir(&build_paths.build_root, ambient_authority())?;
 
     for entry_result in build_root_dir.read_dir(".")? {
@@ -56,12 +56,16 @@ fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Paths for the current build context.
+///
+/// - `build_root`: the directory where build artifacts are placed (e.g., `target/.../build`).
+/// - `current_build_name`: the identifier/name of the active build directory.
 struct BuildPaths {
     build_root: Utf8PathBuf,
     current_build_name: String,
 }
 
-fn resolve_build_paths(out_dir: &Utf8PathBuf) -> io::Result<BuildPaths> {
+fn resolve_build_paths(out_dir: &Utf8Path) -> io::Result<BuildPaths> {
     let current_build_dir = out_dir.parent().ok_or_else(|| {
         io::Error::new(
             ErrorKind::NotFound,
