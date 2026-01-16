@@ -22,7 +22,7 @@ use cli::Cli;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/cli/mod.rs");
+    println!("cargo:rerun-if-changed=src/cli");
 
     let out_dir_os = env::var_os("OUT_DIR")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "OUT_DIR was not set"))?;
@@ -58,7 +58,7 @@ fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
 
 /// Paths for the current build context.
 ///
-/// - `build_root`: the directory where build artifacts are placed (e.g., `target/.../build`).
+/// - `build_root`: the directory where build artefacts are placed (e.g., `target/.../build`).
 /// - `current_build_name`: the identifier/name of the active build directory.
 struct BuildPaths {
     build_root: Utf8PathBuf,
