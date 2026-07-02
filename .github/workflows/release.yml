@@ -200,7 +200,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download packaging artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.REPO_NAME }}-packaging-${{ matrix.target }}
           path: target/${{ matrix.target }}
@@ -249,7 +249,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download packaging artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.REPO_NAME }}-packaging-${{ matrix.artifact_suffix }}
           path: staging
@@ -297,7 +297,7 @@ jobs:
           generate_release_notes: true
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: ${{ env.REPO_NAME }}-*
