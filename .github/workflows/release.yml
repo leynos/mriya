@@ -55,7 +55,7 @@ jobs:
       should_upload_workflow_artifacts: >-
         ${{ steps.release_modes.outputs.should-upload-workflow-artifacts }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: release_modes
         name: Determine release modes
@@ -122,7 +122,7 @@ jobs:
             runner: ubuntu-latest
             ext: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build release binary
         uses: >-
@@ -197,7 +197,7 @@ jobs:
             arch: arm64
             artifact_suffix: linux-aarch64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download packaging artifact
         uses: actions/download-artifact@v8
@@ -246,7 +246,7 @@ jobs:
             pkg_arch_suffix: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download packaging artifact
         uses: actions/download-artifact@v8
@@ -290,7 +290,7 @@ jobs:
       - macos-package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: softprops/action-gh-release@v2
         with:
