@@ -79,7 +79,7 @@ for concrete, testable deliverables.
 - [ ] Provide a bake command that stops a VM, snapshots its root disk to a
   named custom image, and updates config to use that image; acceptance: the
   next run boots from the baked image without re-running cloud-init package
-  installs.
+  installation.
 
 ### 5.2. Image hygiene
 
