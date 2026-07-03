@@ -207,7 +207,7 @@ jobs:
 
       - name: Package Linux artefacts
         uses: >-
-          leynos/shared-actions/.github/actions/linux-packages@df81280dcc1d6e66134114dbc924313328b15f05
+          leynos/shared-actions/.github/actions/linux-packages@80935e57261986b39b958d7873435a50f14d592e
         with:
           project-dir: .
           package-name: ${{ needs.metadata.outputs.bin_name }}
