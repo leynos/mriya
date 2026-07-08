@@ -1,4 +1,4 @@
-.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie typecheck scaleway-test scaleway-janitor
+.PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie typecheck scaleway-test scaleway-janitor test-workflow-contracts
 
 
 TARGET ?= mriya
@@ -22,6 +22,9 @@ clean: ## Remove build artifacts
 
 test: ## Run tests with warnings treated as errors
 	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
+
+test-workflow-contracts: ## Validate the mutation-testing caller contract
+	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest tests/workflow_contracts -q
 
 scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	$(CARGO) run --bin mriya-janitor
