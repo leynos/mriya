@@ -225,6 +225,7 @@ impl VolumeBackend for ScalewayBackend {
 
 #[cfg(test)]
 mod tests {
+    //! Unit tests for Scaleway backend tagging.
     use super::ScalewayBackend;
 
     #[test]

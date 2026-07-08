@@ -12,16 +12,18 @@ use rstest_bdd::skip;
 use rstest_bdd_macros::{given, scenario, then, when};
 use tokio::runtime::Runtime;
 
-static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
-    Runtime::new()
-        .unwrap_or_else(|err| panic!("tokio runtime should start for behavioural tests: {err}"))
-});
+static RUNTIME: LazyLock<Result<Runtime, std::io::Error>> = LazyLock::new(Runtime::new);
 
 fn block_on<Fut, T>(future: Fut) -> Result<T, ScalewayBackendError>
 where
     Fut: std::future::Future<Output = Result<T, ScalewayBackendError>>,
 {
-    RUNTIME.block_on(future)
+    match RUNTIME.as_ref() {
+        Ok(runtime) => runtime.block_on(future),
+        Err(err) => Err(ScalewayBackendError::Config(format!(
+            "tokio runtime should start for behavioural tests: {err}"
+        ))),
+    }
 }
 
 fn scaleway_integration_enabled() -> bool {

@@ -143,7 +143,10 @@ pub fn workspace_result() -> Result<Workspace, SyncError> {
 
 #[fixture]
 pub fn workspace(workspace_result: Result<Workspace, SyncError>) -> Workspace {
-    workspace_result.unwrap_or_else(|err| panic!("workspace fixture should initialise: {err}"))
+    match workspace_result {
+        Ok(workspace) => workspace,
+        Err(err) => panic!("workspace fixture should initialise: {err}"),
+    }
 }
 
 #[fixture]
@@ -159,8 +162,10 @@ pub fn scripted_context_result() -> Result<ScriptedContext, SyncError> {
 pub fn scripted_context(
     scripted_context_result: Result<ScriptedContext, SyncError>,
 ) -> ScriptedContext {
-    scripted_context_result
-        .unwrap_or_else(|err| panic!("scripted context fixture should initialise: {err}"))
+    match scripted_context_result {
+        Ok(context) => context,
+        Err(err) => panic!("scripted context fixture should initialise: {err}"),
+    }
 }
 
 #[fixture]

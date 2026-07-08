@@ -56,19 +56,34 @@ enum CliError {
     Init(#[from] InitError<ScalewayBackendError>),
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Build the runtime explicitly so runtime construction errors are
+    // reported through the usual error path instead of panicking inside the
+    // `#[tokio::main]` expansion.
+    let exit_code = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(async_main()),
+        Err(err) => {
+            writeln!(io::stderr(), "failed to start async runtime: {err}").ok();
+            1
+        }
+    };
+
+    process::exit(exit_code);
+}
+
+async fn async_main() -> i32 {
     let cli = Cli::parse();
-    let exit_code = match cli {
+    match cli {
         Cli::Run(command) => exec_run(command).await,
         Cli::Init(command) => exec_init(command).await,
     }
     .unwrap_or_else(|err| {
         report_error(&err);
         1
-    });
-
-    process::exit(exit_code);
+    })
 }
 
 async fn exec_run(command: RunCommand) -> Result<i32, CliError> {

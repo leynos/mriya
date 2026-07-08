@@ -14,10 +14,7 @@ use rstest_bdd_macros::{given, scenario, then, when};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
-    Runtime::new()
-        .unwrap_or_else(|err| panic!("tokio runtime should start for integration tests: {err}"))
-});
+static RUNTIME: LazyLock<Result<Runtime, std::io::Error>> = LazyLock::new(Runtime::new);
 
 fn scaleway_integration_enabled() -> bool {
     let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
@@ -72,9 +69,10 @@ fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
 
 #[fixture]
 fn temp_source_dir() -> std::sync::Arc<TempDir> {
-    std::sync::Arc::new(
-        TempDir::new().unwrap_or_else(|err| panic!("temp dir should be created: {err}")),
-    )
+    match TempDir::new() {
+        Ok(dir) => std::sync::Arc::new(dir),
+        Err(err) => panic!("temp dir should be created: {err}"),
+    }
 }
 
 const CLOUD_INIT_JQ: &str = concat!(
@@ -119,7 +117,12 @@ fn provision_with_cloud_init_and_run(
     let orchestrator: RunOrchestrator<ScalewayBackend, ProcessCommandRunner> =
         RunOrchestrator::new(backend, sync_pipeline);
 
-    RUNTIME.block_on(async {
+    let runtime = RUNTIME.as_ref().map_err(|err| {
+        mriya::RunError::Provision(ScalewayBackendError::Provider {
+            message: format!("tokio runtime should start for integration tests: {err}"),
+        })
+    })?;
+    runtime.block_on(async {
         orchestrator
             .execute(&request, &source, command.as_str())
             .await
