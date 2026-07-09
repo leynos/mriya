@@ -23,7 +23,7 @@ WORKFLOW_PATH = (
 
 #: The leynos/shared-actions commit the caller pins. Bump the workflow
 #: and this constant together.
-PINNED_SHA = "859416a90eb3987b46a57682c5d6b8964ad3f0a6"
+PINNED_SHA = "927edd45ae77be4251a8a18ca9eb5613a2e32cbd"
 
 EXPECTED_USES = (
     "leynos/shared-actions/.github/workflows/mutation-cargo.yml@" + PINNED_SHA
