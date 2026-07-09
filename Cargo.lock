@@ -1479,11 +1479,12 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ortho_config"
-version = "0.6.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e82f7058eab712537b07c5f9e8367da9ade93c42ae08286a5272ae8e5c2435"
+checksum = "9314c7a4be184287f3f9a66fcbcec054ac215d4975152df86b7aadeae8d5e019"
 dependencies = [
  "camino",
+ "cap-std 3.4.5",
  "clap",
  "clap-dispatch",
  "directories",
@@ -1491,6 +1492,8 @@ dependencies = [
  "dunce",
  "figment",
  "figment-json5",
+ "fluent-bundle",
+ "fluent-syntax",
  "json5",
  "ortho_config_macros",
  "serde",
@@ -1498,15 +1501,17 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "toml 0.9.8",
+ "tracing",
  "uncased",
+ "unic-langid",
  "xdg",
 ]
 
 [[package]]
 name = "ortho_config_macros"
-version = "0.6.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df57a79d218bae4aa23466dc2156e8f0c2e85ceac788097839d71b38b8c0e9e5"
+checksum = "a3941ab7c592a0b93aadf12ce30e0ef3d01af87b46c8f363d8157dc33273ba83"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2881,7 +2886,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d15d90a0b5c19378952d479dc858407149d7bb45a14de0142f6c534b16fc647"
 dependencies = [
  "pin-project-lite",
+ "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
