@@ -1,0 +1,38 @@
+name: Mutation testing
+
+# Thin caller of the shared mutation-testing reusable workflow; caller
+# guide: leynos/shared-actions docs/mutation-cargo-workflow.md.
+# Scheduled runs mutate only files changed within the detection window;
+# manual dispatch runs mutate everything, fanned out across shards. To
+# test a branch, select it in the Actions "Run workflow" control.
+
+on:
+  schedule:
+    - cron: "20 10 * * *" # Daily, 10:20 UTC
+  workflow_dispatch:
+
+# Default the token to no scopes; the job opts in explicitly.
+permissions: {}
+
+# Serialize runs per ref: a dispatch during a scheduled run (or vice
+# versa) queues rather than racing. Runs are informational, so queued
+# runs wait instead of cancelling.
+concurrency:
+  group: mutation-testing-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mutation:
+    permissions:
+      contents: read
+      id-token: write # OIDC workflow-source resolution
+    uses: leynos/shared-actions/.github/workflows/mutation-cargo.yml@859416a90eb3987b46a57682c5d6b8964ad3f0a6
+    with:
+      # src/test_support.rs is test scaffolding compiled into the
+      # library unconditionally (unlike the #[cfg(test)]-gated
+      # test_helpers and tests modules, which cargo-mutants skips);
+      # its survivors are noise.
+      exclude-globs: "src/test_support.rs"
+      # Match the CI baseline (`make test` runs --all-features) so the
+      # test-backdoors feature-gated tests run against mutants.
+      extra-args: "--all-features"
