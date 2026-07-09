@@ -31,22 +31,23 @@ fn valid_config() -> ScalewayConfig {
 
 /// Helper to create a temporary cloud-init user-data file for testing.
 /// Returns the `TempDir` (must be kept alive) and the file path as a String.
-fn write_temp_cloud_init_file(filename: &str, content: &str) -> (TempDir, String) {
-    let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
+fn write_temp_cloud_init_file(filename: &str, content: &str) -> anyhow::Result<(TempDir, String)> {
+    use anyhow::Context as _;
+    let tmp = TempDir::new().context("tempdir")?;
     let path = tmp.path().join(filename);
     let tmp_root =
-        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap_or_else(|non_utf8_path| {
-            panic!("temp dir should be utf8: {}", non_utf8_path.display());
-        });
+        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).map_err(|non_utf8_path| {
+            anyhow::anyhow!("temp dir should be utf8: {}", non_utf8_path.display())
+        })?;
     Dir::open_ambient_dir(&tmp_root, ambient_authority())
-        .unwrap_or_else(|err| panic!("open temp dir: {err}"))
+        .context("open temp dir")?
         .write(filename, content)
-        .unwrap_or_else(|err| panic!("write file: {err}"));
+        .context("write file")?;
     let path_str = path
         .to_str()
-        .unwrap_or_else(|| panic!("temp path should be utf8: {}", path.display()))
+        .with_context(|| format!("temp path should be utf8: {}", path.display()))?
         .to_owned();
-    (tmp, path_str)
+    Ok((tmp, path_str))
 }
 
 #[test]
@@ -192,7 +193,8 @@ fn config_rejects_empty_cloud_init_inline() {
 
 #[test]
 fn config_reads_cloud_init_user_data_from_file() {
-    let (_tmp, path_str) = write_temp_cloud_init_file("user-data.txt", "file-user-data");
+    let (_tmp, path_str) = write_temp_cloud_init_file("user-data.txt", "file-user-data")
+        .unwrap_or_else(|err| panic!("create cloud-init file: {err}"));
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
@@ -235,7 +237,8 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
 
 #[test]
 fn config_errors_when_cloud_init_user_data_file_is_empty() {
-    let (_tmp, path_str) = write_temp_cloud_init_file("user-data-empty.txt", "   \n\t  ");
+    let (_tmp, path_str) = write_temp_cloud_init_file("user-data-empty.txt", "   \n\t  ")
+        .unwrap_or_else(|err| panic!("create cloud-init file: {err}"));
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),

@@ -65,7 +65,10 @@ pub fn run_context_result() -> Result<RunContext, RunTestError> {
 
 #[fixture]
 pub fn run_context(run_context_result: Result<RunContext, RunTestError>) -> RunContext {
-    run_context_result.unwrap_or_else(|err| panic!("run context fixture should initialise: {err}"))
+    match run_context_result {
+        Ok(context) => context,
+        Err(err) => panic!("run context fixture should initialise: {err}"),
+    }
 }
 
 pub fn build_run_context() -> Result<RunContext, RunTestError> {
@@ -89,12 +92,15 @@ pub fn build_run_context() -> Result<RunContext, RunTestError> {
 }
 
 pub fn request() -> InstanceRequest {
-    InstanceRequestBuilder::new()
+    let built = InstanceRequestBuilder::new()
         .image_label("ubuntu")
         .instance_type(DEFAULT_INSTANCE_TYPE)
         .zone("fr-par-1")
         .project_id("project")
         .architecture("x86_64")
-        .build()
-        .unwrap_or_else(|err| panic!("builder fixture should be valid: {err}"))
+        .build();
+    match built {
+        Ok(request) => request,
+        Err(err) => panic!("builder fixture should be valid: {err}"),
+    }
 }

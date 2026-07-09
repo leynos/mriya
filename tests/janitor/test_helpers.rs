@@ -27,6 +27,8 @@ pub fn janitor_context() -> JanitorContext {
 }
 
 pub fn build_config(project: &str, run_id: &str) -> JanitorConfig {
-    JanitorConfig::new(project, run_id, DEFAULT_SCW_BIN)
-        .unwrap_or_else(|err| panic!("janitor config should be valid: {err}"))
+    match JanitorConfig::new(project, run_id, DEFAULT_SCW_BIN) {
+        Ok(config) => config,
+        Err(err) => panic!("janitor config should be valid: {err}"),
+    }
 }

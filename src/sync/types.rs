@@ -138,6 +138,24 @@ fn forward_stream(
     })
 }
 
+/// Join a forwarder thread, mapping panics and stream errors to
+/// [`SyncError::Spawn`].
+///
+/// Returns an empty string when no forwarder was spawned for the stream.
+fn join_forwarder(
+    handle: Option<thread::JoinHandle<Result<String, SyncError>>>,
+    program: &str,
+    stream_name: &str,
+) -> Result<String, SyncError> {
+    match handle {
+        Some(join_handle) => join_handle.join().map_err(|_| SyncError::Spawn {
+            program: program.to_owned(),
+            message: format!("{stream_name} forwarder panicked"),
+        })?,
+        None => Ok(String::new()),
+    }
+}
+
 /// Command runner that streams subprocess stdout/stderr while capturing them.
 #[derive(Clone, Debug, Default)]
 pub struct StreamingCommandRunner;
@@ -168,21 +186,8 @@ impl CommandRunner for StreamingCommandRunner {
             message: err.to_string(),
         })?;
 
-        let stdout = match stdout_handle {
-            Some(handle) => handle.join().map_err(|_| SyncError::Spawn {
-                program: program.to_owned(),
-                message: String::from("stdout forwarder panicked"),
-            })??,
-            None => String::new(),
-        };
-
-        let stderr = match stderr_handle {
-            Some(handle) => handle.join().map_err(|_| SyncError::Spawn {
-                program: program.to_owned(),
-                message: String::from("stderr forwarder panicked"),
-            })??,
-            None => String::new(),
-        };
+        let stdout = join_forwarder(stdout_handle, program, "stdout")?;
+        let stderr = join_forwarder(stderr_handle, program, "stderr")?;
 
         Ok(CommandOutput {
             code: status.code(),

@@ -75,7 +75,7 @@ impl ScriptedVolumeBackend {
     pub fn fail_create_volume(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: fail_create_volume: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::CreateVolume);
     }
@@ -83,7 +83,7 @@ impl ScriptedVolumeBackend {
     pub fn fail_provision(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: fail_provision: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Provision);
     }
@@ -91,7 +91,7 @@ impl ScriptedVolumeBackend {
     pub fn fail_wait(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: fail_wait: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Wait);
     }
@@ -99,7 +99,7 @@ impl ScriptedVolumeBackend {
     pub fn fail_detach(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: fail_detach: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Detach);
     }
@@ -107,7 +107,7 @@ impl ScriptedVolumeBackend {
     pub fn fail_destroy(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: fail_destroy: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Destroy);
     }
@@ -115,14 +115,14 @@ impl ScriptedVolumeBackend {
     pub fn create_volume_calls(&self) -> u32 {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: create_volume_calls: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .create_volume_calls
     }
 
     pub fn destroy_calls(&self) -> u32 {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: destroy_calls: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .destroy_calls
     }
 
@@ -295,7 +295,7 @@ impl MemoryConfigStore {
         store
             .state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: with_existing: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .existing_volume_id = Some(volume_id.to_owned());
         store
     }
@@ -303,7 +303,7 @@ impl MemoryConfigStore {
     pub fn write_calls(&self) -> u32 {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("lock poisoned: write_calls: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .write_calls
     }
 

@@ -23,6 +23,7 @@ pub(crate) struct UpdateInstanceVolumesRequest {
 
 #[cfg(test)]
 mod tests {
+    //! Unit tests for volume attachment serialisation.
     use super::*;
 
     #[test]

@@ -33,14 +33,14 @@ impl ScriptedBackend {
     pub fn fail_on_destroy(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: fail_on_destroy: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .fail_on_destroy = true;
     }
 
     pub fn destroy_calls(&self) -> u32 {
         self.state
             .lock()
-            .unwrap_or_else(|err| panic!("scripted backend lock poisoned: destroy_calls: {err}"))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .destroy_calls
     }
 }
@@ -86,7 +86,7 @@ impl Backend for ScriptedBackend {
             let mut state = self
                 .state
                 .lock()
-                .unwrap_or_else(|err| panic!("scripted backend lock poisoned in destroy: {err}"));
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.destroy_calls += 1;
             if state.fail_on_destroy {
                 return Err(ScriptedBackendError::Destroy);

@@ -88,10 +88,9 @@ fn scw_lists_remaining_server(janitor_context: JanitorContext) -> JanitorContext
 
 #[when("I run the janitor sweep")]
 fn run_sweep(mut janitor_context: JanitorContext) -> JanitorContext {
-    let config = janitor_context
-        .config
-        .clone()
-        .unwrap_or_else(|| panic!("test setup requires configured janitor"));
+    let Some(config) = janitor_context.config.clone() else {
+        panic!("test setup requires configured janitor");
+    };
     let janitor = Janitor::new(config, janitor_context.runner.clone());
     janitor_context.outcome = Some(match janitor.sweep() {
         Ok(summary) => SweepOutcome::Success(summary),
