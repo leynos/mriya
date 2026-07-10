@@ -75,7 +75,7 @@ jobs:
       - id: bin_name
         name: Extract binary name from Cargo.toml
         uses: >-
-          leynos/shared-actions/.github/actions/export-cargo-metadata@927edd45ae77be4251a8a18ca9eb5613a2e32cbd
+          leynos/shared-actions/.github/actions/export-cargo-metadata@3c1fa01bcf4c26dac79975c18b74c01d577dcf95
         with:
           fields: bin-name
           export-to-env: 'false'
