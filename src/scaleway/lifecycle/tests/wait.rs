@@ -17,13 +17,21 @@ use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::Action;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
-use super::super::wait::{poll_for_public_ip, poll_until_gone};
+use super::super::wait::{PollSettings, poll_for_public_ip, poll_until_gone};
 use super::InstanceSnapshot;
 
 type FetchResult = Result<Option<InstanceSnapshot>, ScalewayBackendError>;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 const WAIT_TIMEOUT: Duration = Duration::from_millis(50);
+
+fn poll_settings(wait_timeout: Duration) -> PollSettings {
+    PollSettings {
+        ssh_port: DEFAULT_SSH_PORT,
+        poll_interval: POLL_INTERVAL,
+        wait_timeout,
+    }
+}
 
 /// Returns a fetch closure yielding the given snapshots in order, then
 /// `None` once the script is exhausted.
@@ -55,15 +63,9 @@ async fn wait_for_public_ip_returns_networking_once_running() {
             Some("192.0.2.10"),
         )),
     ]);
-    let networking = poll_for_public_ip(
-        &handle(),
-        DEFAULT_SSH_PORT,
-        POLL_INTERVAL,
-        WAIT_TIMEOUT,
-        fetch,
-    )
-    .await
-    .unwrap_or_else(|err| panic!("expected networking, got {err}"));
+    let networking = poll_for_public_ip(&handle(), poll_settings(WAIT_TIMEOUT), fetch)
+        .await
+        .unwrap_or_else(|err| panic!("expected networking, got {err}"));
     let expected_ip =
         IpAddr::from_str("192.0.2.10").unwrap_or_else(|err| panic!("ip parse: {err}"));
     assert_eq!(networking.public_ip, expected_ip);
@@ -76,14 +78,8 @@ async fn wait_for_public_ip_returns_missing_ip() {
         Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
         Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
     ]);
-    let result = poll_for_public_ip(
-        &handle(),
-        DEFAULT_SSH_PORT,
-        POLL_INTERVAL,
-        Duration::from_millis(5),
-        fetch,
-    )
-    .await;
+    let result =
+        poll_for_public_ip(&handle(), poll_settings(Duration::from_millis(5)), fetch).await;
     assert!(
         matches!(result, Err(ScalewayBackendError::MissingPublicIp { .. })),
         "unexpected wait_for_public_ip outcome: {result:?}"

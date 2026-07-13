@@ -49,14 +49,12 @@ impl ScalewayBackend {
         &self,
         handle: &InstanceHandle,
     ) -> Result<InstanceNetworking, ScalewayBackendError> {
-        poll_for_public_ip(
-            handle,
-            self.ssh_port,
-            self.poll_interval,
-            self.wait_timeout,
-            || self.fetch_instance(handle),
-        )
-        .await
+        let settings = PollSettings {
+            ssh_port: self.ssh_port,
+            poll_interval: self.poll_interval,
+            wait_timeout: self.wait_timeout,
+        };
+        poll_for_public_ip(handle, settings, || self.fetch_instance(handle)).await
     }
 
     pub(in crate::scaleway) async fn wait_for_ssh_ready(
@@ -91,6 +89,14 @@ impl ScalewayBackend {
     }
 }
 
+/// Timing and port parameters for the readiness polling loop.
+#[derive(Clone, Copy)]
+pub(super) struct PollSettings {
+    pub(super) ssh_port: u16,
+    pub(super) poll_interval: Duration,
+    pub(super) wait_timeout: Duration,
+}
+
 /// Polls `fetch` until the instance reports a running state with a parseable
 /// public IP, or the timeout elapses.
 ///
@@ -99,15 +105,18 @@ impl ScalewayBackend {
 /// instance never reached the running state.
 pub(super) async fn poll_for_public_ip<F, Fut>(
     handle: &InstanceHandle,
-    ssh_port: u16,
-    poll_interval: Duration,
-    wait_timeout: Duration,
+    settings: PollSettings,
     mut fetch: F,
 ) -> Result<InstanceNetworking, ScalewayBackendError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<Option<InstanceSnapshot>, ScalewayBackendError>>,
 {
+    let PollSettings {
+        ssh_port,
+        poll_interval,
+        wait_timeout,
+    } = settings;
     let deadline = Instant::now() + wait_timeout;
     let mut saw_running = false;
 
