@@ -38,13 +38,15 @@ impl ScalewayBackend {
         api_err: &scaleway_rs::ScalewayApiError,
         request: &InstanceRequest,
     ) -> bool {
+        // A former third clause (`etype == "invalid_arguments"` with a
+        // `commercial_type` resource) was subsumed by the first check and
+        // has been removed: whenever it held, the first clause had already
+        // classified the error.
         matches!(api_err.resource.as_deref(), Some("commercial_type"))
             || api_err
                 .resource_id
                 .as_deref()
                 .is_some_and(|id| id == request.instance_type)
-            || (api_err.etype == "invalid_arguments"
-                && matches!(api_err.resource.as_deref(), Some("commercial_type")))
     }
 
     /// Constructs a new backend from configuration.
@@ -225,8 +227,86 @@ impl VolumeBackend for ScalewayBackend {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for Scaleway backend tagging.
+    //! Unit tests for Scaleway backend tagging, error classification, and
+    //! volume validation.
+    use rstest::rstest;
+
     use super::ScalewayBackend;
+    use crate::backend::{InstanceHandle, InstanceRequest};
+    use crate::scaleway::ScalewayBackendError;
+
+    fn api_error(
+        etype: &str,
+        resource: Option<&str>,
+        resource_id: Option<&str>,
+    ) -> scaleway_rs::ScalewayApiError {
+        scaleway_rs::ScalewayApiError {
+            message: String::from("boom"),
+            resource: resource.map(str::to_owned),
+            resource_id: resource_id.map(str::to_owned),
+            etype: etype.to_owned(),
+        }
+    }
+
+    fn request_with_type(instance_type: &str) -> InstanceRequest {
+        InstanceRequest {
+            image_label: String::from("label"),
+            instance_type: instance_type.to_owned(),
+            zone: String::from("zone"),
+            project_id: String::from("proj"),
+            organisation_id: None,
+            architecture: String::from("x86_64"),
+            volume_id: None,
+            cloud_init_user_data: None,
+        }
+    }
+
+    fn handle() -> InstanceHandle {
+        InstanceHandle {
+            id: String::from("instance-1"),
+            zone: String::from("zone"),
+        }
+    }
+
+    #[rstest]
+    // Resource alone identifies the instance type, without a resource_id.
+    #[case(api_error("invalid_arguments", Some("commercial_type"), None), true)]
+    // A resource_id matching the requested type classifies even when the
+    // resource is unrelated.
+    #[case(api_error("unknown", Some("server"), Some("DEV1-S")), true)]
+    // A non-matching resource_id must not classify.
+    #[case(api_error("unknown", Some("server"), Some("GP1-XS")), false)]
+    // An unrelated error must not classify.
+    #[case(api_error("out_of_stock", None, None), false)]
+    fn is_instance_type_error_classifies(
+        #[case] api_err: scaleway_rs::ScalewayApiError,
+        #[case] expected: bool,
+    ) {
+        let request = request_with_type("DEV1-S");
+        assert_eq!(
+            ScalewayBackend::is_instance_type_error(&api_err, &request),
+            expected,
+            "unexpected classification for {api_err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_cache_volume_id_rejects_root_volume() {
+        let result = ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1", &handle());
+        assert!(
+            matches!(
+                result,
+                Err(ScalewayBackendError::VolumeAttachmentFailed { .. })
+            ),
+            "expected VolumeAttachmentFailed for identical ids, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_cache_volume_id_accepts_distinct_volume() {
+        let result = ScalewayBackend::validate_cache_volume_id("vol-1", "vol-2", &handle());
+        assert!(result.is_ok(), "expected Ok for distinct ids: {result:?}");
+    }
 
     #[test]
     fn instance_tags_omits_test_tag_when_unset() {

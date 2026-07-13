@@ -326,3 +326,6 @@ fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>)
         message
     }
 }
+
+#[cfg(test)]
+mod tests;
