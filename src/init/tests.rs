@@ -3,7 +3,7 @@
 use rstest::rstest;
 
 use super::{InitConfig, InitConfigError, format_failure_message};
-use crate::sync::RemoteCommandOutput;
+use crate::sync::{RemoteCommandOutput, SyncError};
 
 #[test]
 fn validate_rejects_zero_volume_size() {
@@ -38,4 +38,31 @@ fn format_failure_message_covers_every_arm(
         stderr: stderr.to_owned(),
     };
     assert_eq!(format_failure_message(&output), expected);
+}
+
+#[test]
+fn format_failure_display_writes_the_message() {
+    let failure = super::FormatFailure {
+        message: String::from("mkfs.ext4 exited with status 1"),
+        source: None,
+    };
+    assert_eq!(failure.to_string(), "mkfs.ext4 exited with status 1");
+}
+
+#[test]
+fn append_teardown_note_returns_message_unchanged_without_error() {
+    let note = super::append_teardown_note::<SyncError>(String::from("provision failed"), None);
+    assert_eq!(note, "provision failed");
+}
+
+#[test]
+fn append_teardown_note_appends_teardown_failure() {
+    let teardown = SyncError::InvalidConfig {
+        field: String::from("ssh_user"),
+    };
+    let note = super::append_teardown_note(String::from("provision failed"), Some(&teardown));
+    assert_eq!(
+        note,
+        format!("provision failed (teardown also failed: {teardown})")
+    );
 }
