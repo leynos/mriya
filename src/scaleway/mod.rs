@@ -290,22 +290,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn validate_cache_volume_id_rejects_root_volume() {
-        let result = ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1", &handle());
-        assert!(
-            matches!(
-                result,
-                Err(ScalewayBackendError::VolumeAttachmentFailed { .. })
-            ),
-            "expected VolumeAttachmentFailed for identical ids, got {result:?}"
+    #[rstest]
+    // Identical IDs after trimming mean the root volume is being offered
+    // as the cache volume, which must be refused.
+    #[case(" vol-1 ", "vol-1", true)]
+    #[case("vol-1", "vol-2", false)]
+    fn validate_cache_volume_id_rejects_only_the_root_volume(
+        #[case] cache_volume_id: &str,
+        #[case] root_volume_id: &str,
+        #[case] expect_rejection: bool,
+    ) {
+        let result =
+            ScalewayBackend::validate_cache_volume_id(cache_volume_id, root_volume_id, &handle());
+        let rejected = matches!(
+            result,
+            Err(ScalewayBackendError::VolumeAttachmentFailed { .. })
         );
-    }
-
-    #[test]
-    fn validate_cache_volume_id_accepts_distinct_volume() {
-        let result = ScalewayBackend::validate_cache_volume_id("vol-1", "vol-2", &handle());
-        assert!(result.is_ok(), "expected Ok for distinct ids: {result:?}");
+        assert_eq!(
+            rejected, expect_rejection,
+            "cache={cache_volume_id:?} root={root_volume_id:?}: {result:?}"
+        );
     }
 
     #[test]
