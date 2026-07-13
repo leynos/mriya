@@ -129,5 +129,20 @@ async fn power_on_if_needed_errors_when_not_allowed(backend_fixture: ScalewayBac
     );
 }
 
+#[rstest]
+#[tokio::test]
+async fn power_on_if_needed_ignores_non_poweron_actions(backend_fixture: ScalewayBackend) {
+    // A stopped instance offering only unrelated actions must be reported
+    // as not powerable; only an exact "poweron" action may trigger the
+    // power-on request.
+    let snap = snapshot("id", "stopped", [Action::from("reboot")], None);
+    let zone = Zone::from("zone");
+    let result = backend_fixture.power_on_if_needed(&zone, &snap).await;
+    assert!(
+        matches!(result, Err(ScalewayBackendError::PowerOnNotAllowed { .. })),
+        "expected PowerOnNotAllowed error, got {result:?}"
+    );
+}
+
 mod image;
 mod wait;

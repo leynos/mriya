@@ -1,0 +1,22 @@
+# cargo-mutants configuration. These pattern exclusions complement the
+# `exclude-globs: "src/test_support.rs"` input passed by
+# .github/workflows/mutation-testing.yml; cargo-mutants merges both.
+
+exclude_re = [
+    # Test-backdoor scaffolding in src/main.rs, compiled only under
+    # cfg(any(test, feature = "test-backdoors")) so the CLI behaviour
+    # tests can script the binary. No production path executes these
+    # functions, so their mutants are noise (mirrors the existing
+    # src/test_support.rs exclusion).
+    "replace enable_fake_modes",
+    "in fake_run_from_env",
+    "replace fake_run_from_env",
+    "in fake_dump_request",
+    "replace fake_dump_request",
+    "in prefail_from_env",
+    "replace prefail_from_env",
+    # Equivalent mutant: InstanceRequestBuilder::new() is defined as
+    # Self::default(), so replacing the builder body with
+    # Default::default() cannot change behaviour.
+    'replace InstanceRequest::builder -> InstanceRequestBuilder with Default::default\(\)',
+]

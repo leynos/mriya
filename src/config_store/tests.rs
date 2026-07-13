@@ -176,3 +176,40 @@ fn read_volume_id_rejects_non_table_root(
     ensure!(path == fixture.path, "error should cite the config path");
     Ok(())
 }
+
+#[rstest]
+fn current_volume_id_round_trips_written_id(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    fixture
+        .store
+        .write_volume_id("vol-123", false)
+        .context("write volume id should succeed")?;
+
+    let volume_id = fixture
+        .store
+        .current_volume_id()
+        .context("read volume id should succeed")?;
+    ensure!(
+        volume_id.as_deref() == Some("vol-123"),
+        "expected the exact written id, got {volume_id:?}"
+    );
+    Ok(())
+}
+
+#[rstest]
+fn current_volume_id_returns_none_when_config_missing(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let volume_id = fixture
+        .store
+        .current_volume_id()
+        .context("read of a missing config should succeed")?;
+    ensure!(
+        volume_id.is_none(),
+        "expected None without a config file, got {volume_id:?}"
+    );
+    Ok(())
+}
