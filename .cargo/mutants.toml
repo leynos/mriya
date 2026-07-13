@@ -8,13 +8,10 @@ exclude_re = [
     # tests can script the binary. No production path executes these
     # functions, so their mutants are noise (mirrors the existing
     # src/test_support.rs exclusion).
-    "replace enable_fake_modes",
-    "in fake_run_from_env",
-    "replace fake_run_from_env",
-    "in fake_dump_request",
-    "replace fake_dump_request",
-    "in prefail_from_env",
-    "replace prefail_from_env",
+    "enable_fake_modes",
+    "fake_run_from_env",
+    "fake_dump_request",
+    "prefail_from_env",
     # Equivalent mutant: InstanceRequestBuilder::new() is defined as
     # Self::default(), so replacing the builder body with
     # Default::default() cannot change behaviour.
