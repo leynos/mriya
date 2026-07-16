@@ -77,13 +77,19 @@ def make_variable(name: str) -> str:
 class TestPhrasePolicyChecker:
     """Exercise policy, scanning, and command boundaries."""
 
-    def test_cyclopts_metadata_matches_makefile_pin(self) -> None:
-        """Keep the PEP 723 dependency aligned with the test environment."""
+    @pytest.mark.parametrize(
+        ("make_variable_name", "dependency"),
+        [("CYCLOPTS_VERSION", "cyclopts"), ("PLUMBUM_VERSION", "plumbum")],
+    )
+    def test_metadata_matches_makefile_pin(
+        self, make_variable_name: str, dependency: str
+    ) -> None:
+        """Keep PEP 723 dependencies aligned with the test environment."""
         helper = (SCRIPTS / "typos_rollout_check.py").read_text(encoding="utf-8")
-        version = make_variable("CYCLOPTS_VERSION")
+        version = make_variable(make_variable_name)
 
-        assert f'"cyclopts=={version}"' in helper, (
-            "Cyclopts PEP 723 metadata drifted from the Makefile pin"
+        assert f'"{dependency}=={version}"' in helper, (
+            f"{dependency} PEP 723 metadata drifted from the Makefile pin"
         )
 
     def test_load_policy_combines_shared_and_local_phrases(
@@ -106,6 +112,53 @@ class TestPhrasePolicyChecker:
 
         (tmp_path / ".typos-oxendict-base.toml").unlink()
         with pytest.raises(FileNotFoundError, match=r"docs/developers-guide\.md"):
+            checker.load_policy(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("invalid_policy", "message"),
+        [
+            pytest.param(
+                (".typos-oxendict-base.toml", "phrases = []\n"),
+                "'phrases' must be a table",
+                id="shared-phrases-table",
+            ),
+            pytest.param(
+                ("typos.local.toml", "[phrases]\ncorrections = []\n"),
+                "'corrections' must be a table",
+                id="local-corrections-table",
+            ),
+            pytest.param(
+                (
+                    "typos.toml",
+                    "[files]\nextend-exclude = [1]\n[default]\nextend-ignore-re = []\n",
+                ),
+                "'extend-exclude' must be a list of strings",
+                id="generated-exclusions-list",
+            ),
+            pytest.param(
+                (
+                    ".typos-oxendict-base.toml",
+                    '[phrases.corrections]\n"bad" = 1\n',
+                ),
+                "phrase corrections must map strings to strings",
+                id="phrase-correction-values",
+            ),
+        ],
+    )
+    def test_load_policy_rejects_malformed_shapes(
+        self,
+        checker: types.ModuleType,
+        tmp_path: Path,
+        invalid_policy: tuple[str, str],
+        message: str,
+    ) -> None:
+        """Reject malformed shared, local, and generated policy values."""
+        relative, malformed = invalid_policy
+        files = policy_files()
+        files[relative] = malformed
+        write_files(tmp_path, files)
+
+        with pytest.raises(TypeError, match=message):
             checker.load_policy(tmp_path)
 
     def test_checker_preserves_boundaries_masking_and_exclusions(

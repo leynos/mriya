@@ -20,7 +20,6 @@ extend-exclude = [
     "node_modules",
     "package-lock.json",
     "pnpm-lock.yaml",
-    "scripts/tests/test_typos_rollout_hardening.py",
     "target",
     "typos.local.toml",
     "typos.toml",
@@ -47,7 +46,9 @@ extend-ignore-re = [
     "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
     "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
     "(?s)```.*?```",
+    "\\bAzure Architecture Center\\b",
     "\\bCARGO_TERM_COLOR\\b",
+    "\\bCenter \\| Microsoft Learn\\b",
     "\\borganisation_id\\b",
     "\\brust-analyzer\\b",
     "`[^`\\n]+`",
@@ -55,7 +56,6 @@ extend-ignore-re = [
 
 [default.extend-words]
 "ASO" = "ASO"
-"Center" = "Center"
 "absolutisable" = "absolutizable"
 "absolutisably" = "absolutizably"
 "absolutisation" = "absolutization"

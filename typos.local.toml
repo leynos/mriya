@@ -6,14 +6,15 @@ schema = 1
 stems = []
 
 [words]
-# Official title: Azure Architecture Center.
-accepted = ["Center"]
+accepted = []
 
 [words.corrections]
 
 [patterns]
 ignore = [
   "\\bCARGO_TERM_COLOR\\b",
+  "\\bAzure Architecture Center\\b",
+  "\\bCenter \\| Microsoft Learn\\b",
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
   "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
@@ -31,6 +32,3 @@ ignore = [
   "(?m)^    if: needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
   "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
 ]
-
-[files]
-exclude = ["scripts/tests/test_typos_rollout_hardening.py"]

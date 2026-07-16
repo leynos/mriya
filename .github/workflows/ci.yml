@@ -22,8 +22,6 @@ jobs:
         uses: leynos/shared-actions/.github/actions/setup-rust@927edd45ae77be4251a8a18ca9eb5613a2e32cbd
       - name: Format
         run: make check-fmt
-      - name: Spelling
-        run: make spelling
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25
         with:
@@ -56,6 +54,8 @@ jobs:
         with:
           python-version: '3.13'
           enable-cache: true
+      - name: Spelling
+        run: make spelling
       - name: Workflow contract tests
         run: make test-workflow-contracts
       - name: Test and Measure Coverage

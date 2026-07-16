@@ -28,6 +28,7 @@ CMD_MOX_COMMIT := f583c279a15760aba5cfd9bddf1fbbe9b1f8c429
 CMD_MOX_REPOSITORY := https://github.com/leynos/cmd-mox
 CMD_MOX_SOURCE := git+$(CMD_MOX_REPOSITORY)@$(CMD_MOX_COMMIT)
 CYCLOPTS_VERSION := 4.21.1
+PLUMBUM_VERSION := 2.0.1
 TYPING_EXTENSIONS_VERSION := 4.15.0
 SPELLING_PY_SRCS := scripts/typos_rollout_check.py \
 	scripts/tests/conftest.py scripts/tests/test_typos_rollout_check.py
@@ -38,7 +39,7 @@ SPELLING_HELPER_PYTEST := PYTHONPATH=scripts $(SPELLING_PY_ENV) \
 	COVERAGE_FILE=$(SPELLING_COVERAGE_FILE) $(UV_ENV) $(UV) run --no-project \
 	--python 3.13 --with 'cyclopts==$(CYCLOPTS_VERSION)' \
 	--with 'pathspec==1.1.1' \
-	--with 'plumbum>=1.9,<2' \
+	--with 'plumbum==$(PLUMBUM_VERSION)' \
 	--with 'cmd-mox@$(CMD_MOX_SOURCE)' \
 	--with 'typing-extensions==$(TYPING_EXTENSIONS_VERSION)' \
 	--with 'pytest==9.0.2' --with 'pytest-cov==7.0.0' python -m pytest
