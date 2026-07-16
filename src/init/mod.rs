@@ -1,4 +1,4 @@
-//! Volume initialisation orchestration for `mriya init`.
+//! Volume initialization orchestration for `mriya init`.
 
 use std::ffi::OsString;
 use std::fmt::Display;

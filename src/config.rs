@@ -28,14 +28,14 @@ pub struct ScalewayConfig {
     pub access_key: Option<String>,
     /// Secret key used for authentication. This value is required.
     pub secret_key: String,
-    /// Organisation identifier used by some Scaleway endpoints.
+    /// Organization identifier used by some Scaleway endpoints.
     pub default_organization_id: Option<String>,
     /// Project identifier used for billing and resource scoping.
     pub default_project_id: String,
     /// Preferred availability zone. Defaults to `fr-par-1`.
     #[ortho_config(default = "fr-par-1".to_owned())]
     pub default_zone: String,
-    /// Commercial type for new instances. Defaults to `DEV1-S` to minimise
+    /// Commercial type for new instances. Defaults to `DEV1-S` to minimize
     /// cost during integration tests.
     #[ortho_config(default = "DEV1-S".to_owned())]
     pub default_instance_type: String,

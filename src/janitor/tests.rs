@@ -159,7 +159,7 @@ fn sweep_surfaces_scw_command_failures() {
     Some("missing 'servers' field")
 )]
 #[case(
-    "item deserialisation error",
+    "item deserialization error",
     "{\"servers\":[{\"id\":\"srv-a\"}],\"total_count\":1}",
     None
 )]

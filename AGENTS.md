@@ -240,7 +240,7 @@ project:
 - In production code and shared fixtures, avoid `.expect()` entirely: return
   `Result` and use `?` to propagate errors instead of panicking.
 - Keep `expect_used` **strict**; do not suppress the lint.
-- Recognise that `allow-expect-in-tests = true` **doesn’t cover** helpers
+- Recognize that `allow-expect-in-tests = true` **doesn’t cover** helpers
   outside `#[cfg(test)]` or `#[test]`; avoid `expect` in such fixtures.
 - Use `anyhow`/`eyre` with `.context(...)` to **preserve backtraces** and
   provide clear, typed failure paths.
@@ -250,7 +250,14 @@ project:
 
 ## Markdown Guidance
 
-- Validate Markdown files using `make markdownlint`.
+- Validate Markdown files using `make markdownlint`. This target also enforces
+  en-GB-oxendict spelling with pinned `typos`.
+- The spelling configuration `typos.toml` is generated. Edit
+  `typos.local.toml` for narrow repository terminology, then regenerate it with
+  `make spelling-config-write`; never edit generated entries by hand.
+- Quoted APIs and identifiers retain upstream spelling. Put them in backticks
+  or fenced code blocks, which the spelling gate ignores, rather than adding
+  word-level exceptions.
 - Run `make fmt` after any documentation changes to format all Markdown
   files and fix table markup.
 - Validate Mermaid diagrams in Markdown files by running `make nixie`.

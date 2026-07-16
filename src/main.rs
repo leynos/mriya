@@ -1,6 +1,6 @@
 //! CLI entry point for Mriya.
 //!
-//! This binary provisions a short-lived Scaleway instance, synchronises the
+//! This binary provisions a short-lived Scaleway instance, synchronizes the
 //! local workspace via `rsync`, executes a user-supplied command over SSH, and
 //! tears the instance down. The `run` subcommand preserves remote exit codes
 //! locally and reports errors on stderr with meaningful exit statuses.

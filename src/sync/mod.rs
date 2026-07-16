@@ -1,4 +1,4 @@
-//! Git-aware rsync synchronisation and remote command execution applying
+//! Git-aware rsync synchronization and remote command execution applying
 //! `.gitignore` filters and wrapping SSH commands while preserving remote
 //! exit codes.
 
@@ -94,7 +94,7 @@ impl<R: CommandRunner> Syncer<R> {
     /// # Security
     ///
     /// `remote_command` is passed verbatim to the SSH client after the working
-    /// directory prefix; callers must ensure any untrusted input is sanitised
+    /// directory prefix; callers must ensure any untrusted input is sanitized
     /// before invoking this method.
     pub fn sync_and_run(
         &self,

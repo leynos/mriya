@@ -25,7 +25,7 @@ pub enum SyncDestination {
     },
     /// Local path used for behavioural tests and dry-runs.
     Local {
-        /// Destination path for the synchronised content.
+        /// Destination path for the synchronized content.
         path: Utf8PathBuf,
     },
 }

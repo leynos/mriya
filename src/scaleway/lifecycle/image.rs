@@ -10,7 +10,7 @@ use super::super::{ScalewayBackend, ScalewayBackendError};
 impl ScalewayBackend {
     #[expect(
         clippy::excessive_nesting,
-        reason = "organisation scoping requires nested builder updates before execution"
+        reason = "organization scoping requires nested builder updates before execution"
     )]
     pub(in crate::scaleway) async fn resolve_image_id(
         &self,

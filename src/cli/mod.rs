@@ -1,6 +1,6 @@
 //! Command-line interface definitions for the `mriya` binary.
 //!
-//! This module centralises the clap parser structures so both the main binary
+//! This module centralizes the clap parser structures so both the main binary
 //! and the build script can reuse them when generating the manual page.
 
 use clap::Parser;

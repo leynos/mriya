@@ -175,7 +175,7 @@ impl crate::sync::CommandRunner for ScriptedRunner {
     }
 }
 
-/// Global mutex used to serialise environment mutation in tests.
+/// Global mutex used to serialize environment mutation in tests.
 pub static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Guard that holds the env mutex and cleans up variables on drop.
@@ -203,7 +203,7 @@ impl EnvGuard {
         let mut previous = Vec::with_capacity(pairs.len());
         for (key, value) in pairs {
             let old = env::var_os(key);
-            // SAFETY: Environment mutation is serialised by `ENV_LOCK`, preventing races.
+            // SAFETY: Environment mutation is serialized by `ENV_LOCK`, preventing races.
             unsafe { env::set_var(key, value) };
             previous.push((key.to_string(), old));
         }
@@ -218,7 +218,7 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, old) in &self.previous {
-            // SAFETY: Environment mutation is serialised by holding `_guard`.
+            // SAFETY: Environment mutation is serialized by holding `_guard`.
             unsafe {
                 match old {
                     Some(val) => env::set_var(key, val),

@@ -4,3 +4,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 .memdb/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.uv-tools/
+.typos-oxendict-base.json
+.typos-oxendict-base.toml

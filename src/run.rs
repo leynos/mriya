@@ -1,7 +1,7 @@
 //! Orchestrates end-to-end remote runs over SSH.
 //!
 //! The run workflow provisions an instance via a backend, waits for SSH
-//! readiness, synchronises the local workspace, executes a remote command
+//! readiness, synchronizes the local workspace, executes a remote command
 //! using the system `ssh` client, and tears the instance down. Remote exit
 //! codes are preserved so callers observe the same status locally.
 
@@ -44,7 +44,7 @@ where
     Provisioning {
         /// Human-readable description of the failure.
         message: String,
-        /// Underlying synchronisation error.
+        /// Underlying synchronization error.
         #[source]
         source: SyncError,
     },
@@ -54,12 +54,12 @@ where
         /// Human-readable description of the failure.
         message: String,
     },
-    /// Raised when workspace synchronisation fails.
+    /// Raised when workspace synchronization fails.
     #[error("workspace sync failed: {message}")]
     Sync {
         /// Human-readable description of the failure.
         message: String,
-        /// Underlying synchronisation error.
+        /// Underlying synchronization error.
         #[source]
         source: SyncError,
     },
@@ -68,7 +68,7 @@ where
     Remote {
         /// Human-readable description of the failure.
         message: String,
-        /// Underlying synchronisation error.
+        /// Underlying synchronization error.
         #[source]
         source: SyncError,
     },
@@ -130,7 +130,7 @@ where
     /// # Errors
     ///
     /// Returns [`RunError`] when provisioning, readiness checks,
-    /// synchronisation, remote execution, or teardown fail.
+    /// synchronization, remote execution, or teardown fail.
     pub async fn execute(
         &self,
         request: &InstanceRequest,
