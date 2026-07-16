@@ -205,48 +205,48 @@ class TestPhrasePolicyChecker:
         expected = "before " + " " * 14 + "\nafter"
         assert checker._masked(text, patterns) == expected
 
-    def test_cyclopts_command_reports_location_and_exit_two(
+    @pytest.mark.parametrize(
+        ("content", "expected_code", "expected_output"),
+        [
+            pytest.param(
+                f"Prefer {PROHIBITED}.\n",
+                2,
+                f"README.md:1:8: {PROHIBITED} -> handwritten\n",
+                id="prohibited-phrase",
+            ),
+            pytest.param(
+                "Already handwritten.\n",
+                0,
+                "",
+                id="clean-prose",
+            ),
+        ],
+    )
+    def test_cyclopts_command_reports_status_and_diagnostic(
         self,
         checker: types.ModuleType,
         cmd_mox: CmdMox,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
+        content: str,
+        expected_code: int,
+        expected_output: str,
     ) -> None:
-        """Preserve the repository flag, diagnostic, and failure status."""
+        """Preserve the repository flag, gate status, and diagnostic."""
         write_files(
             tmp_path,
-            {"README.md": f"Prefer {PROHIBITED}.\n", **policy_files()},
+            {"README.md": content, **policy_files()},
         )
         expect_tracked(cmd_mox, tmp_path, "README.md")
 
         with pytest.raises(SystemExit) as exit_status:
             checker.app(["--repository", str(tmp_path)], exit_on_error=False)
 
-        assert exit_status.value.code == 2, "the command accepted a prohibited phrase"
-        assert capsys.readouterr().out == (
-            f"README.md:1:8: {PROHIBITED} -> handwritten\n"
-        ), "the diagnostic omitted its source location or correction"
-
-    def test_cyclopts_command_accepts_clean_repository(
-        self,
-        checker: types.ModuleType,
-        cmd_mox: CmdMox,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """Return success without output when tracked prose is clean."""
-        write_files(
-            tmp_path,
-            {"README.md": "Already handwritten.\n", **policy_files()},
+        assert exit_status.value.code == expected_code, (
+            "the command returned the wrong spelling-gate status"
         )
-        expect_tracked(cmd_mox, tmp_path, "README.md")
-
-        with pytest.raises(SystemExit) as exit_status:
-            checker.app(["--repository", str(tmp_path)], exit_on_error=False)
-
-        assert exit_status.value.code == 0, "the command rejected clean prose"
-        assert capsys.readouterr().out == "", (
-            "the command emitted a clean-run diagnostic"
+        assert capsys.readouterr().out == expected_output, (
+            "the command emitted the wrong diagnostic"
         )
 
     def test_non_utf8_tracked_text_is_rejected(
