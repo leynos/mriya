@@ -312,39 +312,30 @@ mod tests {
         );
     }
 
-    #[test]
-    fn instance_tags_omits_test_tag_when_unset() {
-        let tags = ScalewayBackend::instance_tags(None);
-        assert_eq!(tags, vec![String::from("mriya"), String::from("ephemeral")]);
+    #[rstest]
+    #[case(ScalewayBackend::instance_tags, "ephemeral")]
+    #[case(ScalewayBackend::volume_tags, "cache")]
+    fn tags_omit_test_tag_when_unset(
+        #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
+        #[case] base_tag: &str,
+    ) {
+        let tags = tags_fn(None);
+        assert_eq!(tags, vec![String::from("mriya"), String::from(base_tag)]);
     }
 
-    #[test]
-    fn instance_tags_adds_test_run_tag() {
-        let tags = ScalewayBackend::instance_tags(Some("run-123"));
+    #[rstest]
+    #[case(ScalewayBackend::instance_tags, "ephemeral")]
+    #[case(ScalewayBackend::volume_tags, "cache")]
+    fn tags_add_test_run_tag(
+        #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
+        #[case] base_tag: &str,
+    ) {
+        let tags = tags_fn(Some("run-123"));
         assert_eq!(
             tags,
             vec![
                 String::from("mriya"),
-                String::from("ephemeral"),
-                String::from("mriya-test-run-run-123"),
-            ]
-        );
-    }
-
-    #[test]
-    fn volume_tags_omits_test_tag_when_unset() {
-        let tags = ScalewayBackend::volume_tags(None);
-        assert_eq!(tags, vec![String::from("mriya"), String::from("cache")]);
-    }
-
-    #[test]
-    fn volume_tags_adds_test_run_tag() {
-        let tags = ScalewayBackend::volume_tags(Some("run-123"));
-        assert_eq!(
-            tags,
-            vec![
-                String::from("mriya"),
-                String::from("cache"),
+                String::from(base_tag),
                 String::from("mriya-test-run-run-123"),
             ]
         );
