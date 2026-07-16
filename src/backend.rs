@@ -20,7 +20,7 @@ pub struct InstanceRequest {
     pub zone: String,
     /// Project identifier used for billing and ownership.
     pub project_id: String,
-    /// Optional organisation identifier when the provider requires one.
+    /// Optional organization identifier when the provider requires one.
     pub organisation_id: Option<String>,
     /// CPU architecture requested for the instance.
     pub architecture: String,
@@ -123,7 +123,7 @@ impl InstanceRequestBuilder {
         self
     }
 
-    /// Sets the optional organisation identifier.
+    /// Sets the optional organization identifier.
     #[must_use]
     pub fn organisation_id(mut self, value: Option<String>) -> Self {
         self.organisation_id = value;

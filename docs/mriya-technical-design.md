@@ -63,7 +63,7 @@ This document is written for implementers. It describes:
 - the planned evolution through volume support, cloud-init provisioning,
   `mriya init` and `mriya bake-image`, and a `v1.0` with integrated SSH
   (`russh`);
-- how toolchain and build performance are optimised using persistent volumes
+- how toolchain and build performance are optimized using persistent volumes
   and (optionally) `sccache`;
 - security and failure-handling concerns around SSH keys, credentials,
   timeouts, and clean teardown.
@@ -91,7 +91,7 @@ of the MVP include:
   `rsync -az --delete --filter=":- .gitignore" <SRC> <DEST>` will **copy all
   non-ignored files and omit anything listed in
   .gitignore**([1](https://stackoverflow.com/questions/13713101/rsync-exclude-according-to-gitignore-hgignore-svnignore-like-filter-c#:~:text=%60rsync%20,DEST%3E)).
-   This approach ensures that build artifacts like `target/` or `node_modules/`
+   This approach ensures that build artefacts like `target/` or `node_modules/`
   (which are usually gitignored) are not needlessly uploaded. The `git2`
   library’s ignore functionality (e.g. `Repository::is_path_ignored`) can be
   used to double-check patterns for complex
@@ -181,7 +181,7 @@ provisioning) that will guide subsequent optimizations.
 - Device path `/dev/vdb` is used because Scaleway assigns block devices
   sequentially: root at `/dev/vda`, first additional volume at `/dev/vdb`.
 - Add `volume_mount_path` to `SyncConfig` (default `/mriya`) to allow
-  customisation of where the cache volume is mounted.
+  customization of where the cache volume is mounted.
 - Volume ID flows through the configuration layer (`ScalewayConfig`) to
   `InstanceRequest` and is processed during the create flow, before the
   instance is powered on.
@@ -521,7 +521,7 @@ common patterns while allowing custom handling of provider quirks.
 
 - **Hetzner Cloud**: likely via the unofficial `hcloud` Rust crate (Hetzner’s
   API). Hetzner’s model is similar to Scaleway (specify server type, image, SSH
-  key). We need to handle its token auth and region (Hetzner has data centers
+  key). We need to handle its token auth and region (Hetzner has data centres
   like fsn1, etc.). We’ll validate that our Backend trait covers Hetzner. One
   difference is that Hetzner might not provide an image snapshot API as easily
   (though it does allow creating images from servers).
@@ -590,7 +590,7 @@ Scaleway Ubuntu images allow root login by default; we could instead create an
 we could mount the volume to `/root/mriya` and treat that as persistent storage
 location for caches.
 
-**Use Case:** This volume will store things like the project’s build artifacts
+**Use Case:** This volume will store things like the project’s build artefacts
 and toolchains so that subsequent runs don’t start from scratch. For example,
 the first run might download Rust dependencies, NPM packages, etc., which we
 place on the volume. On the next run, since the same volume is attached, those
@@ -621,7 +621,7 @@ the API:
   For now, we can mount via an SSH command right after creation (before syncing
   files or running tests).
 
-- Permissions: If we store build artifacts under `/home` or `/root`, we must
+- Permissions: If we store build artefacts under `/home` or `/root`, we must
   ensure the user running the test can read/write there. For simplicity,
   running everything as root on the VM is easiest (root’s home could even be
   the volume if we mount it to `/root`). Security-wise that’s fine for an
@@ -707,7 +707,7 @@ This is a fairly universal concept in cloud APIs, so our abstraction handles it
 well. We just ensure to properly format or encode it as required by each API
 (some expect base64).
 
-**Rationale:** This feature is about **environment customisation**. In v0.1, we
+**Rationale:** This feature is about **environment customization**. In v0.1, we
 introduced caching, but if the base image lacks required software, users might
 spend time installing dependencies on every run. Cloud-init lets us automate
 that on boot. For example, if the tests need a database or a particular
@@ -771,7 +771,7 @@ Mriya code path.
 for a project and stores its details in config. This automates the one-time
 setup required for caching.
 
-**Behavior:** When a user runs `mriya init` in a project directory, Mriya will:
+**Behaviour:** When a user runs `mriya init` in a project directory, Mriya will:
 
 - **Create a new volume** via the cloud API (using the profile configured). For
   example, on Scaleway call the Volume API to allocate (say) a 20 GB volume in
@@ -828,7 +828,7 @@ volume:
   might be slightly slower than into local SSD, depending on cloud.
 
 - **Option B:** Mount the volume at a fixed path and use it for caches only.
-  For instance, after running tests, copy build artifacts or test results to
+  For instance, after running tests, copy build artefacts or test results to
   the volume if needed. Simpler: rely on the fact that by excluding `target/`
   (Rust) or `node_modules/` from rsync, any such directories on the remote
   won’t be overwritten or deleted (unless we use `--delete` carefully with
@@ -846,7 +846,7 @@ Given complexity, for v0.3 we might implement a simpler scheme:
   Rust, set environment variable `CARGO_HOME=/mriya/cargo` and
   `RUSTUP_HOME=/mriya/rustup` before running tests, so Rust will install
   toolchains there. Also set `CARGO_TARGET_DIR=/mriya/target` for build
-  artifacts. For Node, one could set a cache folder. We might not handle every
+  artefacts. For Node, one could set a cache folder. We might not handle every
   language, but Rust is a primary target as Mriya is written in Rust and likely
   aimed at Rust projects.
 
@@ -1156,14 +1156,14 @@ robust for everyday use, so we want minimal points of failure:
 **Validation:** We will thoroughly test:
 
 - Killing Mriya mid-run (simulate Ctrl+C) and check that the instance is gone
-  afterward.
+  afterwards.
 
 - Network failures (maybe simulate by blocking network) to see if our timeouts
   kick in properly and we clean up.
 
 - Using the integrated SSH on various platforms.
 
-- Host key behavior: the first time connecting should work (likely by
+- Host key behaviour: the first time connecting should work (likely by
   trusting), and if we immediately reuse the same IP for a new VM with a
   different key, what do we do? (This scenario is rare, but if it happens, our
   known_hosts logic should catch it and either warn or require user
@@ -1307,10 +1307,10 @@ toolchains on each run. For example:
   though that’s complex and not typically done. Instead, we rely on baked
   images for system-level deps.
 
-**Build Artifacts Caching:** Aside from toolchains, the actual build artifacts
+**Build Artefacts Caching:** Aside from toolchains, the actual build artefacts
 can be cached:
 
-- In Rust projects, the `target/` directory contains compiled artifacts. We
+- In Rust projects, the `target/` directory contains compiled artefacts. We
   intentionally *do not* sync `target/` from local (it’s in .gitignore). On the
   first run, `cargo test` will produce a `target/` on the VM. If that is on the
   ephemeral disk, it disappears when VM is destroyed. But if we have our
@@ -1414,7 +1414,7 @@ also be ~30s on first run, but on later runs perhaps <10s.
 **Outcome:** Combining persistent volumes and caching tools means that
 ephemeral VMs behave more like persistent agents in terms of speed: after an
 initial setup, each new VM picks up where the last left off in terms of
-environment state. This fulfills the promise of ephemeral isolation **without**
+environment state. This fulfils the promise of ephemeral isolation **without**
 incurring the full cost of starting from zero every time. Our design
 essentially **layers caching (volume, sccache) and imaging** to approach the
 performance of a long-lived machine while still being disposable.

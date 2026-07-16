@@ -1,7 +1,7 @@
 //! Sync module test suite.
 //!
 //! Aggregates BDD scenarios, configuration validation tests, and test
-//! utilities for the rsync synchronisation layer.
+//! utilities for the rsync synchronization layer.
 
 mod bdd_steps;
 mod config_validation;

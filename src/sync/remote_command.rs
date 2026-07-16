@@ -2,7 +2,7 @@
 //!
 //! The sync module needs to run remote commands in a predictable working
 //! directory and, when a persistent cache volume is mounted, route build caches
-//! into that volume. This module centralises the string-building logic so the
+//! into that volume. This module centralizes the string-building logic so the
 //! top-level sync module remains focused on orchestration.
 
 use shell_escape::unix::escape;

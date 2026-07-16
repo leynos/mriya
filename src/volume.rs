@@ -13,7 +13,7 @@ pub struct VolumeRequest {
     pub zone: String,
     /// Project identifier used for billing and ownership.
     pub project_id: String,
-    /// Optional organisation identifier when the provider requires one.
+    /// Optional organization identifier when the provider requires one.
     pub organisation_id: Option<String>,
 }
 
@@ -35,7 +35,7 @@ impl VolumeRequest {
         }
     }
 
-    /// Sets the optional organisation identifier.
+    /// Sets the optional organization identifier.
     #[must_use]
     pub fn organisation_id(mut self, value: Option<String>) -> Self {
         self.organisation_id = value.map(|id| id.trim().to_owned());

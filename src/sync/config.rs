@@ -1,4 +1,4 @@
-//! Synchronisation configuration structures and validation.
+//! Synchronization configuration structures and validation.
 //!
 //! This module defines [`SyncConfig`] for SSH and rsync settings, along with
 //! associated error types. Configuration is loaded via `ortho-config` which
@@ -19,7 +19,7 @@ pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
 /// Default mount path for the persistent cache volume.
 pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
 
-/// Synchronisation and SSH settings loaded via `ortho-config`.
+/// Synchronization and SSH settings loaded via `ortho-config`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
 #[ortho_config(
     prefix = "MRIYA_SYNC",
@@ -147,7 +147,7 @@ impl SyncConfig {
     }
 }
 
-/// Errors surfaced while performing synchronisation or remote execution.
+/// Errors surfaced while performing synchronization or remote execution.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum SyncError {
     /// Raised when configuration is missing required values. The error message
@@ -161,7 +161,7 @@ pub enum SyncError {
     /// Raised when the source directory does not exist.
     #[error("sync source directory missing: {path}")]
     MissingSource {
-        /// Path that was expected to be synchronised.
+        /// Path that was expected to be synchronized.
         path: Utf8PathBuf,
     },
     /// Raised when a command cannot be spawned.

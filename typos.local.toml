@@ -1,0 +1,34 @@
+# Repository-specific identifiers, quotations and deliberate fixtures.
+
+schema = 1
+
+[oxford]
+stems = []
+
+[words]
+accepted = []
+
+[words.corrections]
+
+[patterns]
+ignore = [
+  "\\bCARGO_TERM_COLOR\\b",
+  "\\bAzure Architecture Center\\b",
+  "\\bCenter \\| Microsoft Learn\\b",
+  "\\borganisation_id\\b",
+  "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
+  "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
+  "(?m)^            artifact_suffix: aarch64-apple-darwin$",
+  "(?m)^            artifact_suffix: linux-aarch64$",
+  "(?m)^            artifact_suffix: linux-x86_64$",
+  "(?m)^            artifact_suffix: x86_64-apple-darwin$",
+  "(?m)^          path: artifacts$",
+  "(?m)^          name: \\$\\{\\{ env\\.REPO_NAME \\}\\}-packages-\\$\\{\\{ matrix\\.artifact_suffix \\}\\}$",
+  "(?m)^          name: \\$\\{\\{ env\\.REPO_NAME \\}\\}-packaging-\\$\\{\\{ matrix\\.artifact_suffix \\}\\}$",
+  "(?m)^          needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
+  "(?m)^        \"cached artifact\",$",
+  "(?m)^        \\$\\{\\{ steps\\.release_modes\\.outputs\\.should-upload-workflow-artifacts \\}\\}$",
+  "(?m)^      should_upload_workflow_artifacts: >-$",
+  "(?m)^    if: needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
+  "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
+]

@@ -1,7 +1,7 @@
 //! Cloud-init user-data resolution utilities.
 //!
 //! Cloud-init user-data can be provided either inline (for example `#cloud-config`)
-//! or via a file path. This module centralises the branching and file loading
+//! or via a file path. This module centralizes the branching and file loading
 //! logic so CLI and configuration paths stay consistent over time.
 
 use camino::Utf8Path;

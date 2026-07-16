@@ -54,6 +54,8 @@ jobs:
         with:
           python-version: '3.13'
           enable-cache: true
+      - name: Spelling
+        run: make spelling
       - name: Workflow contract tests
         run: make test-workflow-contracts
       - name: Test and Measure Coverage

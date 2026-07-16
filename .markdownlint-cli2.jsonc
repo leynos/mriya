@@ -10,5 +10,11 @@
     },
     "MD029": { "style": "ordered" }
   },
-  "ignores": ["**/.venv/**", ".node_modules/**", "**/node_modules/**", "**/target/**"]
+  "ignores": [
+    "**/.uv-cache/**",
+    "**/.venv/**",
+    ".node_modules/**",
+    "**/node_modules/**",
+    "**/target/**"
+  ]
 }

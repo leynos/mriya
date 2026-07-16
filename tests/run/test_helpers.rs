@@ -67,7 +67,7 @@ pub fn run_context_result() -> Result<RunContext, RunTestError> {
 pub fn run_context(run_context_result: Result<RunContext, RunTestError>) -> RunContext {
     match run_context_result {
         Ok(context) => context,
-        Err(err) => panic!("run context fixture should initialise: {err}"),
+        Err(err) => panic!("run context fixture should initialize: {err}"),
     }
 }
 

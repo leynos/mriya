@@ -37,7 +37,7 @@ pub enum InitRequestError {
     SizeOverflow,
 }
 
-/// Errors raised while initialising a cache volume.
+/// Errors raised while initializing a cache volume.
 #[derive(Debug, Error)]
 pub enum InitError<BackendError>
 where

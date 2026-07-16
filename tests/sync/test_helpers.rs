@@ -1,7 +1,7 @@
 //! Test helpers for sync module behavioural tests.
 //!
 //! Provides workspace setup, temporary directory management, and fixture
-//! utilities for testing the rsync synchronisation layer.
+//! utilities for testing the rsync synchronization layer.
 
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use std::net::{IpAddr, Ipv4Addr};
@@ -145,7 +145,7 @@ pub fn workspace_result() -> Result<Workspace, SyncError> {
 pub fn workspace(workspace_result: Result<Workspace, SyncError>) -> Workspace {
     match workspace_result {
         Ok(workspace) => workspace,
-        Err(err) => panic!("workspace fixture should initialise: {err}"),
+        Err(err) => panic!("workspace fixture should initialize: {err}"),
     }
 }
 
@@ -164,7 +164,7 @@ pub fn scripted_context(
 ) -> ScriptedContext {
     match scripted_context_result {
         Ok(context) => context,
-        Err(err) => panic!("scripted context fixture should initialise: {err}"),
+        Err(err) => panic!("scripted context fixture should initialize: {err}"),
     }
 }
 
