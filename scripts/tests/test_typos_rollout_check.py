@@ -8,6 +8,7 @@ compatibility. Run it from the repository root with
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import importlib
 from pathlib import Path
 import re
@@ -26,12 +27,35 @@ PROHIBITED = "hand" + "-written"
 TITLE_PROHIBITED = "Hand" + "-written"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CommandCase:
+    """Describe one spelling CLI input and its expected process result."""
+
+    content: str
+    expected_code: int
+    expected_output: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CommandContext:
+    """Bundle the checker module with its command-mocking boundary."""
+
+    checker: types.ModuleType
+    cmd_mox: CmdMox
+
+
 @pytest.fixture
 def checker(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """Import the standalone checker through its runtime module path."""
     monkeypatch.syspath_prepend(str(SCRIPTS))
     importlib.invalidate_caches()
     return importlib.import_module("typos_rollout_check")
+
+
+@pytest.fixture
+def command_context(checker: types.ModuleType, cmd_mox: CmdMox) -> CommandContext:
+    """Provide the focused dependencies used by spelling CLI cases."""
+    return CommandContext(checker=checker, cmd_mox=cmd_mox)
 
 
 def write_files(path: Path, files: dict[str, str]) -> None:
@@ -206,46 +230,49 @@ class TestPhrasePolicyChecker:
         assert checker._masked(text, patterns) == expected
 
     @pytest.mark.parametrize(
-        ("content", "expected_code", "expected_output"),
+        "case",
         [
             pytest.param(
-                f"Prefer {PROHIBITED}.\n",
-                2,
-                f"README.md:1:8: {PROHIBITED} -> handwritten\n",
+                CommandCase(
+                    content=f"Prefer {PROHIBITED}.\n",
+                    expected_code=2,
+                    expected_output=(f"README.md:1:8: {PROHIBITED} -> handwritten\n"),
+                ),
                 id="prohibited-phrase",
             ),
             pytest.param(
-                "Already handwritten.\n",
-                0,
-                "",
+                CommandCase(
+                    content="Already handwritten.\n",
+                    expected_code=0,
+                    expected_output="",
+                ),
                 id="clean-prose",
             ),
         ],
     )
     def test_cyclopts_command_reports_status_and_diagnostic(
         self,
-        checker: types.ModuleType,
-        cmd_mox: CmdMox,
+        command_context: CommandContext,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
-        content: str,
-        expected_code: int,
-        expected_output: str,
+        case: CommandCase,
     ) -> None:
         """Preserve the repository flag, gate status, and diagnostic."""
         write_files(
             tmp_path,
-            {"README.md": content, **policy_files()},
+            {"README.md": case.content, **policy_files()},
         )
-        expect_tracked(cmd_mox, tmp_path, "README.md")
+        expect_tracked(command_context.cmd_mox, tmp_path, "README.md")
 
         with pytest.raises(SystemExit) as exit_status:
-            checker.app(["--repository", str(tmp_path)], exit_on_error=False)
+            command_context.checker.app(
+                ["--repository", str(tmp_path)], exit_on_error=False
+            )
 
-        assert exit_status.value.code == expected_code, (
+        assert exit_status.value.code == case.expected_code, (
             "the command returned the wrong spelling-gate status"
         )
-        assert capsys.readouterr().out == expected_output, (
+        assert capsys.readouterr().out == case.expected_output, (
             "the command emitted the wrong diagnostic"
         )
 
