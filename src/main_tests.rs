@@ -115,7 +115,7 @@ async fn dispatch_uses_hook_result() {
 #[test]
 fn parse_override_trims_and_accepts_nonempty_values() {
     let parsed = parse_override("--instance-type", "  DEV1-M  ")
-        .unwrap_or_else(|err| panic!("expected override to parse: {err}"));
+        .expect("non-empty instance type override should parse");
     assert_eq!(parsed, "DEV1-M");
 }
 
@@ -153,8 +153,7 @@ fn apply_instance_overrides_updates_request() {
         command: vec![String::from("echo"), String::from("ok")],
     };
 
-    apply_instance_overrides(&mut request, &args)
-        .unwrap_or_else(|err| panic!("expected overrides to apply: {err}"));
+    apply_instance_overrides(&mut request, &args).expect("valid instance overrides should apply");
 
     assert_eq!(request.instance_type, "DEV1-M");
     assert_eq!(request.image_label, "ubuntu-22-04");

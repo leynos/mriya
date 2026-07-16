@@ -115,10 +115,10 @@ async fn wait_for_public_ip_returns_missing_ip() {
 async fn wait_for_ssh_ready_succeeds_when_port_listens() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .unwrap_or_else(|err| panic!("bind listener: {err}"));
+        .expect("test TCP listener should bind to a loopback port");
     let addr = listener
         .local_addr()
-        .unwrap_or_else(|err| panic!("listener addr: {err}"));
+        .expect("test TCP listener should expose its local address");
     tokio::spawn(async move { if let Ok((_stream, _addr)) = listener.accept().await {} });
 
     let backend = ScalewayBackend {
@@ -141,17 +141,17 @@ async fn wait_for_ssh_ready_succeeds_when_port_listens() {
     backend
         .wait_for_ssh_ready(&handle, &networking)
         .await
-        .unwrap_or_else(|err| panic!("ssh should be reachable: {err}"));
+        .expect("SSH readiness check should succeed while the test port listens");
 }
 
 #[tokio::test]
 async fn wait_for_ssh_ready_times_out_when_port_closed() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .unwrap_or_else(|err| panic!("bind listener: {err}"));
+        .expect("test TCP listener should bind before simulating a closed port");
     let addr = listener
         .local_addr()
-        .unwrap_or_else(|err| panic!("listener addr: {err}"));
+        .expect("test TCP listener should expose its address before closing");
     drop(listener);
 
     let backend = ScalewayBackend {
@@ -168,8 +168,7 @@ async fn wait_for_ssh_ready_times_out_when_port_closed() {
         zone: String::from("zone"),
     };
     let networking = InstanceNetworking {
-        public_ip: IpAddr::from_str("127.0.0.1")
-            .unwrap_or_else(|err| panic!("loopback ip parse: {err}")),
+        public_ip: IpAddr::from_str("127.0.0.1").expect("loopback address literal should parse"),
         ssh_port: addr.port(),
     };
     let err = backend
