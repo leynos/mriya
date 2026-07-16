@@ -143,10 +143,10 @@ fn config_as_request_produces_valid_request() {
     let cfg = valid_config();
     let request = cfg
         .as_request()
-        .unwrap_or_else(|err| panic!("valid config yields request: {err}"));
+        .expect("valid configuration should produce an instance request");
     request
         .validate()
-        .unwrap_or_else(|err| panic!("request from config validates: {err}"));
+        .expect("request produced from valid configuration should validate");
     assert_eq!(request.image_label, cfg.default_image);
     assert_eq!(request.instance_type, cfg.default_instance_type);
     assert_eq!(request.zone, cfg.default_zone);
@@ -194,7 +194,7 @@ fn config_rejects_empty_cloud_init_inline() {
 #[test]
 fn config_reads_cloud_init_user_data_from_file() {
     let (_tmp, path_str) = write_temp_cloud_init_file("user-data.txt", "file-user-data")
-        .unwrap_or_else(|err| panic!("create cloud-init file: {err}"));
+        .expect("cloud-init fixture file should be created");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
@@ -203,7 +203,7 @@ fn config_reads_cloud_init_user_data_from_file() {
 
     let request = cfg
         .as_request()
-        .unwrap_or_else(|err| panic!("as_request should succeed: {err}"));
+        .expect("configuration with a cloud-init fixture should produce a request");
     assert_eq!(
         request.cloud_init_user_data,
         Some(String::from("file-user-data"))
@@ -212,11 +212,12 @@ fn config_reads_cloud_init_user_data_from_file() {
 
 #[test]
 fn config_errors_when_cloud_init_user_data_file_missing() {
-    let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
+    let tmp = TempDir::new()
+        .expect("temporary directory for the missing cloud-init fixture should be created");
     let missing_path = tmp.path().join("does-not-exist.txt");
     let missing_path_str = missing_path
         .to_str()
-        .unwrap_or_else(|| panic!("temp path should be utf8: {}", missing_path.display()))
+        .expect("temporary missing-file path should be valid UTF-8")
         .to_owned();
 
     let cfg = ScalewayConfig {
@@ -238,7 +239,7 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
 #[test]
 fn config_errors_when_cloud_init_user_data_file_is_empty() {
     let (_tmp, path_str) = write_temp_cloud_init_file("user-data-empty.txt", "   \n\t  ")
-        .unwrap_or_else(|err| panic!("create cloud-init file: {err}"));
+        .expect("empty cloud-init fixture file should be created");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
@@ -261,18 +262,18 @@ fn config_errors_when_cloud_init_user_data_file_is_empty() {
 
 #[tokio::test]
 async fn config_expands_tilde_for_cloud_init_user_data_file() {
-    let tmp = TempDir::new().unwrap_or_else(|err| panic!("tempdir: {err}"));
+    let tmp = TempDir::new().expect("temporary home directory should be created");
     let home = tmp.path().to_string_lossy().to_string();
     let _guard = mriya::test_support::EnvGuard::set_vars(&[("HOME", home.as_str())]).await;
 
     let tmp_root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
-        .unwrap_or_else(|path| panic!("temp home dir should be utf8: {}", path.display()));
+        .expect("temporary home directory path should be valid UTF-8");
     let fs = Dir::open_ambient_dir(&tmp_root, ambient_authority())
-        .unwrap_or_else(|err| panic!("open temp home dir: {err}"));
+        .expect("temporary home directory should open");
     fs.create_dir_all("cloud-init")
-        .unwrap_or_else(|err| panic!("create cloud-init dir: {err}"));
+        .expect("cloud-init fixture directory should be created");
     fs.write("cloud-init/user-data.txt", "tilde-user-data")
-        .unwrap_or_else(|err| panic!("write tilde user-data file: {err}"));
+        .expect("tilde-expanded cloud-init fixture should be written");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(String::from("~/cloud-init/user-data.txt")),
@@ -281,7 +282,7 @@ async fn config_expands_tilde_for_cloud_init_user_data_file() {
 
     let request = cfg
         .as_request()
-        .unwrap_or_else(|err| panic!("as_request should succeed: {err}"));
+        .expect("configuration with a tilde-expanded cloud-init file should produce a request");
 
     assert_eq!(
         request.cloud_init_user_data,

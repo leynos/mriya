@@ -1,4 +1,6 @@
 target/
 **/*.rs.bk
 __pycache__/
+*.py[cod]
+*$py.class
 .memdb/
