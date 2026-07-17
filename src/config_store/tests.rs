@@ -177,6 +177,7 @@ fn read_volume_id_rejects_non_table_root(
     Ok(())
 }
 
+// Kills the `current_volume_id` and `path_exists` survivors tracked in #55.
 #[rstest]
 fn current_volume_id_round_trips_written_id(
     config_fixture: anyhow::Result<ConfigFixture>,

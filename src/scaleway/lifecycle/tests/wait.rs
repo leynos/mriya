@@ -2,7 +2,8 @@
 //!
 //! The polling loops are exercised directly through the production
 //! `poll_for_public_ip` and `poll_until_gone` helpers with scripted fetch
-//! closures, so mutations to the loop bodies are observable.
+//! closures, so mutations to the loop bodies are observable. Kills the
+//! wait-loop survivors tracked in #58.
 
 use std::collections::VecDeque;
 use std::future::{Ready, ready};

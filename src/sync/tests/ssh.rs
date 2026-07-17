@@ -70,6 +70,7 @@ fn rsync_remote_shell_includes_identity_flag(base_config: SyncConfig) {
     );
 }
 
+// Kills the `common_ssh_options` survivors tracked in #59.
 fn ssh_option_strings(cfg: SyncConfig) -> Vec<String> {
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
