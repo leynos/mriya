@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@927edd45ae77be4251a8a18ca9eb5613a2e32cbd
+        uses: leynos/shared-actions/.github/actions/setup-rust@dae5d4205c5b3b9f5ad37fddfc8d87276f7ea874
       - name: Format
         run: make check-fmt
       - name: Markdown lint
