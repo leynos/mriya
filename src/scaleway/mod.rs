@@ -229,6 +229,9 @@ impl VolumeBackend for ScalewayBackend {
 mod tests {
     //! Unit tests for Scaleway backend tagging, error classification, and
     //! volume validation.
+    //!
+    //! Kills the error-classification and cache-volume validation survivors
+    //! tracked in #57.
     use rstest::rstest;
 
     use super::ScalewayBackend;

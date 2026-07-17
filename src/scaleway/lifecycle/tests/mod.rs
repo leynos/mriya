@@ -129,6 +129,7 @@ async fn power_on_if_needed_errors_when_not_allowed(backend_fixture: ScalewayBac
     );
 }
 
+// Kills the `power_on_if_needed` equality-mutant survivor tracked in #58.
 #[rstest]
 #[tokio::test]
 async fn power_on_if_needed_ignores_non_poweron_actions(backend_fixture: ScalewayBackend) {

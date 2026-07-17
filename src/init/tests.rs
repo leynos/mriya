@@ -1,4 +1,7 @@
 //! Unit tests for init configuration validation and mkfs failure messages.
+//!
+//! Kills the init validation and mkfs failure-message survivors tracked in
+//! #56.
 
 use rstest::rstest;
 
