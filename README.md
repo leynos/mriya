@@ -1,5 +1,8 @@
 # Mriya
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
+https://deepwiki.com/leynos/mriya)
+
 **Teleport your builds to the cloud and back.**
 
 Mriya is a command-line tool that offloads heavyweight builds and test suites
