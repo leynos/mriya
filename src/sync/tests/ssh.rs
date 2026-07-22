@@ -69,3 +69,67 @@ fn rsync_remote_shell_includes_identity_flag(base_config: SyncConfig) {
         "remote shell should include key path: {rsh_arg}"
     );
 }
+
+// Kills the `common_ssh_options` survivors tracked in #59.
+fn ssh_option_strings(cfg: SyncConfig) -> Vec<String> {
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(cfg, runner).expect("config should validate");
+    syncer
+        .common_ssh_options(22)
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[rstest]
+#[case(false, true)]
+#[case(true, false)]
+fn common_ssh_options_toggles_strict_host_key_checking(
+    base_config: SyncConfig,
+    #[case] strict: bool,
+    #[case] expect_flag: bool,
+) {
+    let cfg = SyncConfig {
+        ssh_strict_host_key_checking: strict,
+        ..base_config
+    };
+    let args = ssh_option_strings(cfg);
+    assert_eq!(
+        args.contains(&String::from("StrictHostKeyChecking=no")),
+        expect_flag,
+        "strict={strict} produced unexpected options: {args:?}"
+    );
+}
+
+#[rstest]
+fn common_ssh_options_includes_known_hosts_file_when_set(base_config: SyncConfig) {
+    let cfg = SyncConfig {
+        ssh_known_hosts_file: String::from("/dev/null"),
+        ..base_config
+    };
+    let args = ssh_option_strings(cfg);
+    assert!(
+        args.contains(&String::from("UserKnownHostsFile=/dev/null")),
+        "expected known-hosts option: {args:?}"
+    );
+}
+
+#[rstest]
+#[case("")]
+#[case("   ")]
+fn common_ssh_options_omits_blank_known_hosts_file(
+    base_config: SyncConfig,
+    #[case] known_hosts: &str,
+) {
+    let cfg = SyncConfig {
+        ssh_known_hosts_file: String::from(known_hosts),
+        ..base_config
+    };
+    let args = ssh_option_strings(cfg);
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with("UserKnownHostsFile=")),
+        "blank known-hosts path must not emit an option: {args:?}"
+    );
+}

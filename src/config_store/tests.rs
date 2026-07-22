@@ -176,3 +176,68 @@ fn read_volume_id_rejects_non_table_root(
     ensure!(path == fixture.path, "error should cite the config path");
     Ok(())
 }
+
+// Kills the `current_volume_id` and `path_exists` survivors tracked in #55.
+#[rstest]
+fn current_volume_id_round_trips_written_id(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    fixture
+        .store
+        .write_volume_id("vol-123", false)
+        .context("write volume id should succeed")?;
+
+    let volume_id = fixture
+        .store
+        .current_volume_id()
+        .context("read volume id should succeed")?;
+    ensure!(
+        volume_id.as_deref() == Some("vol-123"),
+        "expected the exact written id, got {volume_id:?}"
+    );
+    Ok(())
+}
+
+#[rstest]
+fn current_volume_id_returns_none_when_config_missing(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let volume_id = fixture
+        .store
+        .current_volume_id()
+        .context("read of a missing config should succeed")?;
+    ensure!(
+        volume_id.is_none(),
+        "expected None without a config file, got {volume_id:?}"
+    );
+    Ok(())
+}
+
+#[rstest]
+fn path_exists_reports_non_directory_parent(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    // Seed a regular file, then probe a path that uses it as a parent
+    // directory: opening it fails with NotADirectory, which must surface
+    // as an Io error rather than being swallowed as "does not exist".
+    fixture
+        .store
+        .write_volume_id("vol-123", true)
+        .context("seed config should succeed")?;
+    let nested = fixture.path.join("mriya.toml");
+
+    let Err(err) = path_exists(&nested) else {
+        bail!("probe through a file should fail");
+    };
+    let ConfigStoreError::Io { path, .. } = err else {
+        bail!("expected io error, got {err:?}");
+    };
+    ensure!(
+        path == fixture.path,
+        "error should cite the non-directory parent"
+    );
+    Ok(())
+}

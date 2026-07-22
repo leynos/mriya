@@ -38,13 +38,15 @@ impl ScalewayBackend {
         api_err: &scaleway_rs::ScalewayApiError,
         request: &InstanceRequest,
     ) -> bool {
+        // A former third clause (`etype == "invalid_arguments"` with a
+        // `commercial_type` resource) was subsumed by the first check and
+        // has been removed: whenever it held, the first clause had already
+        // classified the error.
         matches!(api_err.resource.as_deref(), Some("commercial_type"))
             || api_err
                 .resource_id
                 .as_deref()
                 .is_some_and(|id| id == request.instance_type)
-            || (api_err.etype == "invalid_arguments"
-                && matches!(api_err.resource.as_deref(), Some("commercial_type")))
     }
 
     /// Constructs a new backend from configuration.
@@ -225,42 +227,118 @@ impl VolumeBackend for ScalewayBackend {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for Scaleway backend tagging.
-    use super::ScalewayBackend;
+    //! Unit tests for Scaleway backend tagging, error classification, and
+    //! volume validation.
+    //!
+    //! Kills the error-classification and cache-volume validation survivors
+    //! tracked in #57.
+    use rstest::rstest;
 
-    #[test]
-    fn instance_tags_omits_test_tag_when_unset() {
-        let tags = ScalewayBackend::instance_tags(None);
-        assert_eq!(tags, vec![String::from("mriya"), String::from("ephemeral")]);
+    use super::ScalewayBackend;
+    use crate::backend::{InstanceHandle, InstanceRequest};
+    use crate::scaleway::ScalewayBackendError;
+
+    fn api_error(
+        etype: &str,
+        resource: Option<&str>,
+        resource_id: Option<&str>,
+    ) -> scaleway_rs::ScalewayApiError {
+        scaleway_rs::ScalewayApiError {
+            message: String::from("boom"),
+            resource: resource.map(str::to_owned),
+            resource_id: resource_id.map(str::to_owned),
+            etype: etype.to_owned(),
+        }
     }
 
-    #[test]
-    fn instance_tags_adds_test_run_tag() {
-        let tags = ScalewayBackend::instance_tags(Some("run-123"));
+    fn request_with_type(instance_type: &str) -> InstanceRequest {
+        InstanceRequest {
+            image_label: String::from("label"),
+            instance_type: instance_type.to_owned(),
+            zone: String::from("zone"),
+            project_id: String::from("proj"),
+            organisation_id: None,
+            architecture: String::from("x86_64"),
+            volume_id: None,
+            cloud_init_user_data: None,
+        }
+    }
+
+    fn handle() -> InstanceHandle {
+        InstanceHandle {
+            id: String::from("instance-1"),
+            zone: String::from("zone"),
+        }
+    }
+
+    #[rstest]
+    // Resource alone identifies the instance type, without a resource_id.
+    #[case(api_error("invalid_arguments", Some("commercial_type"), None), true)]
+    // A resource_id matching the requested type classifies even when the
+    // resource is unrelated.
+    #[case(api_error("unknown", Some("server"), Some("DEV1-S")), true)]
+    // A non-matching resource_id must not classify.
+    #[case(api_error("unknown", Some("server"), Some("GP1-XS")), false)]
+    // An unrelated error must not classify.
+    #[case(api_error("out_of_stock", None, None), false)]
+    fn is_instance_type_error_classifies(
+        #[case] api_err: scaleway_rs::ScalewayApiError,
+        #[case] expected: bool,
+    ) {
+        let request = request_with_type("DEV1-S");
         assert_eq!(
-            tags,
-            vec![
-                String::from("mriya"),
-                String::from("ephemeral"),
-                String::from("mriya-test-run-run-123"),
-            ]
+            ScalewayBackend::is_instance_type_error(&api_err, &request),
+            expected,
+            "unexpected classification for {api_err:?}"
         );
     }
 
-    #[test]
-    fn volume_tags_omits_test_tag_when_unset() {
-        let tags = ScalewayBackend::volume_tags(None);
-        assert_eq!(tags, vec![String::from("mriya"), String::from("cache")]);
+    #[rstest]
+    // Identical IDs after trimming mean the root volume is being offered
+    // as the cache volume, which must be refused.
+    #[case(" vol-1 ", "vol-1", true)]
+    #[case("vol-1", "vol-2", false)]
+    fn validate_cache_volume_id_rejects_only_the_root_volume(
+        #[case] cache_volume_id: &str,
+        #[case] root_volume_id: &str,
+        #[case] expect_rejection: bool,
+    ) {
+        let result =
+            ScalewayBackend::validate_cache_volume_id(cache_volume_id, root_volume_id, &handle());
+        let rejected = matches!(
+            result,
+            Err(ScalewayBackendError::VolumeAttachmentFailed { .. })
+        );
+        assert_eq!(
+            rejected, expect_rejection,
+            "cache={cache_volume_id:?} root={root_volume_id:?}: {result:?}"
+        );
     }
 
-    #[test]
-    fn volume_tags_adds_test_run_tag() {
-        let tags = ScalewayBackend::volume_tags(Some("run-123"));
+    #[rstest]
+    #[case(ScalewayBackend::instance_tags, "ephemeral")]
+    #[case(ScalewayBackend::volume_tags, "cache")]
+    fn tags_omit_test_tag_when_unset(
+        #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
+        #[case] base_tag: &str,
+    ) {
+        let tags = tags_fn(None);
+        assert_eq!(tags, vec![String::from("mriya"), String::from(base_tag)]);
+    }
+
+    #[rstest]
+    #[case(ScalewayBackend::instance_tags, "ephemeral")]
+    #[case(ScalewayBackend::volume_tags, "cache")]
+    fn tags_add_test_run_tag(
+        #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
+        #[case] base_tag: &str,
+    ) {
+        let tags = tags_fn(Some("run-123"));
         assert_eq!(
             tags,
             vec![
                 String::from("mriya"),
-                String::from("cache"),
+                String::from(base_tag),
                 String::from("mriya-test-run-run-123"),
             ]
         );
