@@ -30,7 +30,7 @@ cap-std = { version = "4.0.2", features = ["fs_utf8"] }
 anyhow = "1.0"
 rstest = "0.22"
 rstest-bdd = "0.2.0"
-rstest-bdd-macros = "0.2.0"
+rstest-bdd-macros = "0.5.0"
 assert_cmd = "2.0"
 tempfile = "3.14"
 escargot = "0.5.13"
