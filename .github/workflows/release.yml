@@ -68,7 +68,7 @@ jobs:
       - id: ensure_version
         name: Read package version from Cargo.toml
         uses: >-
-          leynos/shared-actions/.github/actions/ensure-cargo-version@18bed1ca49a6de3d8882bd72635a32ae3f023d57
+          leynos/shared-actions/.github/actions/ensure-cargo-version@4d696e72fff6db49f34302ccf119ba978f1032c9
         with:
           check-tag: ${{ fromJSON(steps.release_modes.outputs.should-publish) }}
 
