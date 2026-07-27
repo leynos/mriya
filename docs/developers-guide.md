@@ -18,7 +18,7 @@ or `make spelling-config` to check them without changing tracked files. The
 repository's phrase helper remains on Python 3.13, follows the scripting
 standards in this repository, and scans all eligible tracked text. Its test
 environment supplies `typing-extensions` explicitly at the version pinned by
-the Makefile's `TYPING_EXTENSIONS_VERSION` because the pinned `cmd-mox` revision
-imports `typing_extensions.Self` without declaring that compatibility
+the Makefile's `TYPING_EXTENSIONS_VERSION` because the pinned `cmd-mox`
+revision imports `typing_extensions.Self` without declaring that compatibility
 dependency. This test-only package does not belong in the helper's runtime
 metadata or the project dependency lock.

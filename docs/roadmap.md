@@ -52,25 +52,24 @@ for concrete, testable deliverables.
 ### 3.2. Cloud-init provisioning
 
 - [x] Accept inline or file-based cloud-init user data, pass it through the
-  backend, and wait for SSH readiness; acceptance: provisioning script
-  installs declared packages before the test command starts, verified by an
-  integration run that uses a cloud-config to install a package and then
-  executes it.
+  backend, and wait for SSH readiness; acceptance: provisioning script installs
+  declared packages before the test command starts, verified by an integration
+  run that uses a cloud-config to install a package and then executes it.
 
 ## 4. `mriya init` for cache volume preparation
 
 ### 4.1. Volume lifecycle automation
 
 - [x] Implement `mriya init` to create a provider volume in the configured
-  zone, format it (ext4), and detach it cleanly; acceptance: the new volume
-  ID is written to `mriya.toml` and can be attached on the next `mriya run`.
+  zone, format it (ext4), and detach it cleanly; acceptance: the new volume ID
+  is written to `mriya.toml` and can be attached on the next `mriya run`.
 
 ### 4.2. Mount conventions
 
 - [x] Establish a default mount point (for example `/mriya` or `/home`) and
   set symlinks or environment overrides so language toolchains and build
-  outputs land on the volume; acceptance: after `mriya init`, caches survive
-  VM teardown and are discovered automatically on subsequent runs.
+  outputs land on the volume; acceptance: after `mriya init`, caches survive VM
+  teardown and are discovered automatically on subsequent runs.
 
 ## 5. `mriya bake-image`
 
@@ -84,8 +83,8 @@ for concrete, testable deliverables.
 ### 5.2. Image hygiene
 
 - [ ] Apply a naming scheme and retention policy guidance for baked images,
-  and surface warnings for stale images; acceptance: documentation plus a
-  CLI prompt describing storage implications when baking.
+  and surface warnings for stale images; acceptance: documentation plus a CLI
+  prompt describing storage implications when baking.
 
 ## 6. Integrated SSH and robustness
 
@@ -99,14 +98,14 @@ for concrete, testable deliverables.
 
 - [ ] Add configurable timeouts for VM creation, SSH readiness, and remote
   command execution, plus SIGINT/SIGTERM handling that aborts the remote job
-  and destroys the VM; acceptance: manual Ctrl+C leaves no orphaned
-  instances or volumes.
+  and destroys the VM; acceptance: manual Ctrl+C leaves no orphaned instances
+  or volumes.
 
 ### 6.3. Progress visibility
 
 - [ ] Emit structured progress logs for create, sync, run, and teardown, and
-  present actionable errors; acceptance: smoke test shows phase-labelled
-  logs and a clear message for a forced SSH authentication failure.
+  present actionable errors; acceptance: smoke test shows phase-labelled logs
+  and a clear message for a forced SSH authentication failure.
 
 ## 7. Multi-cloud rollout
 
@@ -126,5 +125,5 @@ for concrete, testable deliverables.
 
 - [ ] Implement `AwsBackend` using the official SDK with AMI, key pair,
   security group, subnet selection, EBS volume attachment, and cloud-init;
-  acceptance: end-to-end run on AWS returns remote exit codes, reuses the
-  cache volume, and enforces resource cleanup on failure.
+  acceptance: end-to-end run on AWS returns remote exit codes, reuses the cache
+  volume, and enforces resource cleanup on failure.
