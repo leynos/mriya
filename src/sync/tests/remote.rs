@@ -27,7 +27,7 @@ fn run_remote_with_fake_output(
 ) -> Result<(ScriptedRunner, RemoteCommandOutput), SyncError> {
     let runner = ScriptedRunner::new();
     script(&runner);
-    let syncer = Syncer::new(cfg, runner.clone()).expect("config should validate");
+    let syncer = Syncer::new(cfg, runner.clone())?;
     let output = syncer.run_remote(networking, "echo ok")?;
     Ok((runner, output))
 }

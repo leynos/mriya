@@ -11,6 +11,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use rstest::{fixture, rstest};
 use scaleway_rs::ScalewayApi;
 
 use crate::backend::{InstanceHandle, InstanceNetworking};
@@ -41,6 +42,7 @@ fn scripted_fetch(snapshots: Vec<Option<InstanceSnapshot>>) -> impl FnMut() -> R
     move || ready(Ok(queue.pop_front().unwrap_or(None)))
 }
 
+#[fixture]
 fn handle() -> InstanceHandle {
     InstanceHandle {
         id: "id".to_owned(),
@@ -48,8 +50,9 @@ fn handle() -> InstanceHandle {
     }
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_for_public_ip_returns_networking_once_running() {
+async fn wait_for_public_ip_returns_networking_once_running(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![
         Some(super::snapshot(
             "id",
@@ -64,7 +67,7 @@ async fn wait_for_public_ip_returns_networking_once_running() {
             Some("192.0.2.10"),
         )),
     ]);
-    let networking = poll_for_public_ip(&handle(), poll_settings(WAIT_TIMEOUT), fetch)
+    let networking = poll_for_public_ip(&handle, poll_settings(WAIT_TIMEOUT), fetch)
         .await
         .unwrap_or_else(|err| panic!("expected networking, got {err}"));
     let expected_ip =
@@ -73,43 +76,46 @@ async fn wait_for_public_ip_returns_networking_once_running() {
     assert_eq!(networking.ssh_port, DEFAULT_SSH_PORT);
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_for_public_ip_returns_missing_ip() {
+async fn wait_for_public_ip_returns_missing_ip(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![
         Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
         Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
     ]);
-    let result =
-        poll_for_public_ip(&handle(), poll_settings(Duration::from_millis(5)), fetch).await;
+    let result = poll_for_public_ip(&handle, poll_settings(Duration::from_millis(5)), fetch).await;
     assert!(
         matches!(result, Err(ScalewayBackendError::MissingPublicIp { .. })),
         "unexpected wait_for_public_ip outcome: {result:?}"
     );
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_until_gone_returns_ok_when_instance_absent() {
+async fn wait_until_gone_returns_ok_when_instance_absent(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![None]);
-    let result = poll_until_gone(&handle(), POLL_INTERVAL, WAIT_TIMEOUT, fetch).await;
+    let result = poll_until_gone(&handle, POLL_INTERVAL, WAIT_TIMEOUT, fetch).await;
     assert!(
         result.is_ok(),
         "expected Ok for absent instance: {result:?}"
     );
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_until_gone_times_out_on_residual() {
+async fn wait_until_gone_times_out_on_residual(handle: InstanceHandle) {
     let snapshot = super::snapshot("id", "running", Vec::<Action>::new(), None);
     let fetch = move || ready(Ok(Some(snapshot.clone())));
-    let result = poll_until_gone(&handle(), POLL_INTERVAL, Duration::from_millis(2), fetch).await;
+    let result = poll_until_gone(&handle, POLL_INTERVAL, Duration::from_millis(2), fetch).await;
     assert!(matches!(
         result,
         Err(ScalewayBackendError::ResidualResource { .. })
     ));
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_for_ssh_ready_succeeds_when_port_listens() {
+async fn wait_for_ssh_ready_succeeds_when_port_listens(handle: InstanceHandle) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|err| panic!("bind listener: {err}"));
@@ -132,13 +138,14 @@ async fn wait_for_ssh_ready_succeeds_when_port_listens() {
         ssh_port: addr.port(),
     };
     backend
-        .wait_for_ssh_ready(&handle(), &networking)
+        .wait_for_ssh_ready(&handle, &networking)
         .await
         .unwrap_or_else(|err| panic!("ssh should be reachable: {err}"));
 }
 
+#[rstest]
 #[tokio::test]
-async fn wait_for_ssh_ready_times_out_when_port_closed() {
+async fn wait_for_ssh_ready_times_out_when_port_closed(handle: InstanceHandle) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|err| panic!("bind listener: {err}"));
@@ -162,7 +169,7 @@ async fn wait_for_ssh_ready_times_out_when_port_closed() {
         ssh_port: addr.port(),
     };
     let err = backend
-        .wait_for_ssh_ready(&handle(), &networking)
+        .wait_for_ssh_ready(&handle, &networking)
         .await
         .expect_err("expected timeout");
     assert!(matches!(err, ScalewayBackendError::Timeout { .. }));
