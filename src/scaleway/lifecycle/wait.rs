@@ -103,6 +103,30 @@ pub(super) struct PollSettings {
 /// Returns [`ScalewayBackendError::MissingPublicIp`] when a running instance
 /// never exposed an address, and [`ScalewayBackendError::Timeout`] when the
 /// instance never reached the running state.
+///
+/// # Examples
+///
+/// The example is marked `ignore` because the helper is crate-internal and so
+/// is unreachable from a doctest; the equivalent assertions run as unit tests
+/// in `super::tests::wait`.
+///
+/// ```ignore
+/// let mut script = VecDeque::from(vec![
+///     snapshot("id", "starting", [], None),
+///     snapshot("id", "running", [], Some("192.0.2.10")),
+/// ]);
+/// let settings = PollSettings {
+///     ssh_port: 22,
+///     poll_interval: Duration::from_millis(1),
+///     wait_timeout: Duration::from_millis(50),
+/// };
+/// let networking = poll_for_public_ip(&handle, settings, || {
+///     ready(Ok(script.pop_front()))
+/// })
+/// .await?;
+/// assert_eq!(networking.public_ip, IpAddr::from_str("192.0.2.10")?);
+/// assert_eq!(networking.ssh_port, 22);
+/// ```
 pub(super) async fn poll_for_public_ip<F, Fut>(
     handle: &InstanceHandle,
     settings: PollSettings,
@@ -162,6 +186,35 @@ where
 /// Polls `fetch` until the instance is no longer listed, or the timeout
 /// elapses, in which case [`ScalewayBackendError::ResidualResource`] is
 /// returned.
+///
+/// # Examples
+///
+/// As with [`poll_for_public_ip`], the example is `ignore`d because the helper
+/// is crate-internal; the executed equivalents live in `super::tests::wait`.
+///
+/// ```ignore
+/// // The instance is already absent, so the first fetch settles the loop.
+/// poll_until_gone(
+///     &handle,
+///     Duration::from_millis(1),
+///     Duration::from_millis(50),
+///     || ready(Ok(None)),
+/// )
+/// .await?;
+///
+/// // A snapshot that never disappears exhausts the timeout instead.
+/// let residual = poll_until_gone(
+///     &handle,
+///     Duration::from_millis(1),
+///     Duration::from_millis(2),
+///     || ready(Ok(Some(snapshot("id", "running", [], None)))),
+/// )
+/// .await;
+/// assert!(matches!(
+///     residual,
+///     Err(ScalewayBackendError::ResidualResource { .. })
+/// ));
+/// ```
 pub(super) async fn poll_until_gone<F, Fut>(
     handle: &InstanceHandle,
     poll_interval: Duration,

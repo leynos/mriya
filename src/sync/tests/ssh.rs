@@ -70,15 +70,19 @@ fn rsync_remote_shell_includes_identity_flag(base_config: SyncConfig) {
     );
 }
 
-// Kills the `common_ssh_options` survivors tracked in #59.
-fn ssh_option_strings(cfg: SyncConfig) -> Vec<String> {
+/// Builds the SSH option strings a `Syncer` emits for the given configuration.
+///
+/// Kills the `common_ssh_options` survivors tracked in #59. Configuration
+/// validation is fallible, so the arrangement propagates rather than panics;
+/// only the test body unwraps.
+fn ssh_option_strings(cfg: SyncConfig) -> Result<Vec<String>, SyncError> {
     let runner = ScriptedRunner::new();
-    let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    syncer
+    let syncer = Syncer::new(cfg, runner)?;
+    Ok(syncer
         .common_ssh_options(22)
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
-        .collect()
+        .collect())
 }
 
 #[rstest]
@@ -93,7 +97,7 @@ fn common_ssh_options_toggles_strict_host_key_checking(
         ssh_strict_host_key_checking: strict,
         ..base_config
     };
-    let args = ssh_option_strings(cfg);
+    let args = ssh_option_strings(cfg).expect("config should validate");
     assert_eq!(
         args.contains(&String::from("StrictHostKeyChecking=no")),
         expect_flag,
@@ -107,7 +111,7 @@ fn common_ssh_options_includes_known_hosts_file_when_set(base_config: SyncConfig
         ssh_known_hosts_file: String::from("/dev/null"),
         ..base_config
     };
-    let args = ssh_option_strings(cfg);
+    let args = ssh_option_strings(cfg).expect("config should validate");
     assert!(
         args.contains(&String::from("UserKnownHostsFile=/dev/null")),
         "expected known-hosts option: {args:?}"
@@ -125,7 +129,7 @@ fn common_ssh_options_omits_blank_known_hosts_file(
         ssh_known_hosts_file: String::from(known_hosts),
         ..base_config
     };
-    let args = ssh_option_strings(cfg);
+    let args = ssh_option_strings(cfg).expect("config should validate");
     assert!(
         !args
             .iter()
