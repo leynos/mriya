@@ -30,6 +30,11 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
+    "-fuse-ld=mold",
+    "mold linker",
+    "Cranelift \\+ mold",
+    "Cranelift and mold",
+    "`mold`",
     "(?m)^            artifact_suffix: aarch64-apple-darwin$",
     "(?m)^            artifact_suffix: linux-aarch64$",
     "(?m)^            artifact_suffix: linux-x86_64$",
@@ -1499,7 +1504,6 @@ extend-ignore-re = [
 "modularizers" = "modularizers"
 "modularizes" = "modularizes"
 "modularizing" = "modularizing"
-"mold" = "mold"
 "monetisable" = "monetizable"
 "monetisably" = "monetizably"
 "monetisation" = "monetization"
