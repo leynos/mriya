@@ -59,7 +59,10 @@ mod tests {
     #[test]
     fn volume_size_bytes_converts_gb() {
         let bytes = volume_size_bytes(2).expect("size bytes");
-        assert_eq!(bytes, 2 * BYTES_PER_GB);
+        // Assert the literal value: comparing against `2 * BYTES_PER_GB`
+        // mutates together with the constant under test, making the
+        // assertion tautological. Kills the survivor tracked in #56.
+        assert_eq!(bytes, 2_147_483_648);
     }
 
     #[rstest]
