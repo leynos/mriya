@@ -14,3 +14,9 @@ htmlcov/
 .uv-tools/
 .typos-oxendict-base.json
 .typos-oxendict-base.toml
+.vtcode/
+.claude/
+.grepai/
+*.swp
+*.swo
+*~
