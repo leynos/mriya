@@ -30,11 +30,6 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
-    "-fuse-ld=mold",
-    "mold linker",
-    "Cranelift \\+ mold",
-    "Cranelift and mold",
-    "`mold`",
     "(?m)^            artifact_suffix: aarch64-apple-darwin$",
     "(?m)^            artifact_suffix: linux-aarch64$",
     "(?m)^            artifact_suffix: linux-x86_64$",
@@ -51,12 +46,17 @@ extend-ignore-re = [
     "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
     "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
     "(?s)```.*?```",
+    "-fuse-ld=mold",
+    "Cranelift \\+ mold",
+    "Cranelift and mold",
     "\\bAzure Architecture Center\\b",
     "\\bCARGO_TERM_COLOR\\b",
     "\\bCenter \\| Microsoft Learn\\b",
     "\\borganisation_id\\b",
     "\\brust-analyzer\\b",
     "`[^`\\n]+`",
+    "`mold`",
+    "mold linker",
 ]
 
 [default.extend-words]
