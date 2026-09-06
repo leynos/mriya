@@ -5,31 +5,32 @@ use rstest::rstest;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 
-/// Helper to run a shell script via `StreamingCommandRunner` and assert expected output.
-fn assert_streaming_runner_output(
-    script: &str,
-    expected_code: Option<i32>,
-    expected_stdout: &str,
-    expected_stderr: &str,
-) {
-    let runner = StreamingCommandRunner;
-    let output = runner
-        .run("sh", &[OsString::from("-c"), OsString::from(script)])
-        .expect("command should execute successfully");
+/// Run a shell script via `StreamingCommandRunner` and assert its output.
+///
+/// A macro rather than a function so a failure points at the calling test,
+/// and so running the command, which can fail, is unwrapped in the test body
+/// where a failure is the verdict.
+macro_rules! assert_streaming_runner_output {
+    ($script:expr, $expected_code:expr, $expected_stdout:expr, $expected_stderr:expr $(,)?) => {{
+        let runner = StreamingCommandRunner;
+        let output = runner
+            .run("sh", &[OsString::from("-c"), OsString::from($script)])
+            .expect("command should execute successfully");
 
-    assert_eq!(output.code, expected_code);
-    assert_eq!(output.stdout, expected_stdout);
-    assert_eq!(output.stderr, expected_stderr);
+        assert_eq!(output.code, $expected_code);
+        assert_eq!(output.stdout, $expected_stdout);
+        assert_eq!(output.stderr, $expected_stderr);
+    }};
 }
 
 #[rstest]
 fn streaming_runner_captures_output() {
-    assert_streaming_runner_output("printf out && printf err 1>&2", Some(0), "out", "err");
+    assert_streaming_runner_output!("printf out && printf err 1>&2", Some(0), "out", "err");
 }
 
 #[rstest]
 fn streaming_runner_captures_output_on_failure() {
-    assert_streaming_runner_output(
+    assert_streaming_runner_output!(
         "printf out && printf err 1>&2; exit 42",
         Some(42),
         "out",
