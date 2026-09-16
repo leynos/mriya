@@ -46,9 +46,9 @@ extend-ignore-re = [
     "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
     "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
     "(?s)```.*?```",
-    "\\bAzure Architecture Center\\b",
+    "Azure\\s+Architecture\\s+Center\\s*\\|\\s*Microsoft\\s+Learn\\b",
+    "GitHub\\s+Flavored\\s+Markdown\\b(?:\\s\\(GFM\\))?",
     "\\bCARGO_TERM_COLOR\\b",
-    "\\bCenter \\| Microsoft Learn\\b",
     "\\borganisation_id\\b",
     "\\brust-analyzer\\b",
     "`[^`\\n]+`",
@@ -778,6 +778,10 @@ extend-ignore-re = [
 "equalizers" = "equalizers"
 "equalizes" = "equalizes"
 "equalizing" = "equalizing"
+"exercize" = "exercise"
+"exercized" = "exercised"
+"exercizes" = "exercises"
+"exercizing" = "exercising"
 "externalisable" = "externalizable"
 "externalisably" = "externalizably"
 "externalisation" = "externalization"
@@ -1721,6 +1725,7 @@ extend-ignore-re = [
 "organizers" = "organizers"
 "organizes" = "organizes"
 "organizing" = "organizing"
+"otherwize" = "otherwise"
 "oxendict" = "oxendict"
 "oxidisable" = "oxidizable"
 "oxidisably" = "oxidizably"
@@ -2042,6 +2047,10 @@ extend-ignore-re = [
 "quantizers" = "quantizers"
 "quantizes" = "quantizes"
 "quantizing" = "quantizing"
+"raize" = "raise"
+"raized" = "raised"
+"raizes" = "raises"
+"raizing" = "raising"
 "randomisable" = "randomizable"
 "randomisably" = "randomizably"
 "randomisation" = "randomization"

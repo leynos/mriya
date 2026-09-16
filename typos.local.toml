@@ -13,8 +13,8 @@ accepted = []
 [patterns]
 ignore = [
   "\\bCARGO_TERM_COLOR\\b",
-  "\\bAzure Architecture Center\\b",
-  "\\bCenter \\| Microsoft Learn\\b",
+  # Inline code spans are masked; the shared dictionary does not mask them yet.
+  '`[^`\n]+`',
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
   "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
