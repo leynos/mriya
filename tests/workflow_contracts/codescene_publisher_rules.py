@@ -43,21 +43,19 @@ UPLOAD_GUARD: typ.Final[frozenset[str]] = frozenset(
 READ_ONLY: typ.Final[dict[str, str]] = {"contents": "read"}
 CHECKOUT_ACTION: typ.Final[str] = "actions/checkout"
 
-#: Retired with CV-005 everywhere, not only on pull-request lanes: the
-#: uploader rejects `installer-checksum` outright, and the variable and its
-#: refresher workflow pinned an installer script the uploader no longer runs.
 #: The publisher answers these events and no others.
 PUBLISHER_EVENTS: typ.Final[frozenset[str]] = frozenset({"push", "workflow_dispatch"})
 
 #: The publisher's concurrency group, exactly. Keyed on the ref alone: with
-#: one group per ref, runs never overlap, and the survivor of any replacement
-#: is the newest trigger, whose commit is the newest main when it fired, so
-#: triggered runs (push and dispatch) upload in commit order. Adding the event
-#: would let an earlier dispatch finish after a newer push and upload older
-#: coverage last. A manual re-run of an older run keeps its commit; that is an
-#: operator action, republishing that commit until the next push supersedes it.
+#: one group per ref, runs never overlap and a newer trigger replaces any run
+#: still pending. Adding the event would give a push and a dispatch separate
+#: groups, so their uploads could overlap. GitHub does not promise to start
+#: runs in trigger order, so no commit order is claimed.
 PUBLISHER_GROUP: typ.Final[str] = "${{ github.workflow }}-${{ github.ref }}"
 
+#: Retired with CV-005 everywhere, not only on pull-request lanes: the
+#: uploader rejects `installer-checksum` outright, and the variable and its
+#: refresher workflow pinned an installer script the uploader no longer runs.
 RETIRED: typ.Final[tuple[str, ...]] = (
     "installer-checksum",
     "codescene_cli_sha256",

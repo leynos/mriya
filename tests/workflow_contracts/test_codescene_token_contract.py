@@ -18,11 +18,12 @@ from codescene_contract_support import (
     CREDENTIAL_REFERENCE,
     LANE,
     Documents,
+    assert_clean,
     assert_reports,
-    coverage_step,
     find_publisher,
     first_job,
     job_steps,
+    lane_jobs,
 )
 from codescene_coverage_rules import coverage_violations
 from codescene_publisher_rules import publisher_violations
@@ -150,13 +151,28 @@ def test_upload_reads_what_coverage_wrote(
     assert_reports(coverage_violations, documents, expected)
 
 
-def test_pull_request_lane_cannot_upload_the_report(documents: Documents) -> None:
-    """`publish-artefact: 'false'` is moot if another step uploads the report."""
-    report = typ.cast("dict[str, object]", coverage_step(documents[LANE])["with"])
+@pytest.mark.parametrize("path", ["lcov.info", ".", "*.info", "./"])
+def test_pull_request_lane_cannot_upload_the_report(
+    documents: Documents, path: str
+) -> None:
+    """`publish-artefact: 'false'` is moot if another step uploads the report.
+
+    A directory or a glob uploads it as surely as its name.
+    """
     job_steps(documents[LANE]).append(
-        {
-            "uses": "actions/upload-artifact@v4",
-            "with": {"name": "coverage", "path": report["output-path"]},
-        }
+        {"uses": "actions/upload-artifact@v4", "with": {"name": "c", "path": path}}
     )
     assert_reports(coverage_violations, documents, "must not upload the coverage")
+
+
+def test_artefacts_from_jobs_without_coverage_are_allowed(
+    documents: Documents,
+) -> None:
+    """A job that generates no coverage has no report to upload."""
+    lane_jobs(documents)["other"] = {
+        "runs-on": "ubuntu-latest",
+        "steps": [
+            {"uses": "actions/upload-artifact@v4", "with": {"name": "c", "path": "."}}
+        ],
+    }
+    assert_clean(coverage_violations, documents)

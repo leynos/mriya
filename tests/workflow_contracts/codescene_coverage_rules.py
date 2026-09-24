@@ -70,9 +70,10 @@ def _pull_request_lane(
         for scope in (step, holding_job(name, document, step))
         if continues_on_error(scope)
     ]
-    # Any condition can only switch the ratchet off. A lane that also answers
-    # a push is refused separately, as a second baseline writer.
-    if "if" in step:
+    # Any condition, on the step or its job, can only switch the ratchet off.
+    # A lane that also answers a push is refused separately, as a second
+    # baseline writer.
+    if any("if" in scope for scope in (step, holding_job(name, document, step))):
         found.append(f"{name} coverage must run unconditionally")
     if inputs.get("with-ratchet") != "true":
         found.append(f"{name} coverage must set with-ratchet 'true'")
@@ -151,22 +152,32 @@ def coverage_violations(documents: dict[str, Document]) -> list[str]:
         found.append("no pull-request lane generates coverage for the ratchet")
     for name, document, step in lanes:
         found += _pull_request_lane(name, document, step, trunk)
-    found += _artefact_uploads(documents, _with(trunk, "output-path"))
+    found += _artefact_uploads(documents)
     return found + _baseline_writers(documents) + _push_writers(documents, publisher)
 
 
-def _artefact_uploads(documents: dict[str, Document], report: object) -> list[str]:
-    """Report a pull-request step that uploads the coverage report as an artefact.
+def _artefact_uploads(documents: dict[str, Document]) -> list[str]:
+    """Report an artefact upload in a pull-request job that generates coverage.
 
-    `publish-artefact: 'false'` keeps the shared action from uploading it; a
-    separate `upload-artifact` step would publish it anyway.
+    `publish-artefact: 'false'` keeps the shared action from uploading the
+    report, but any other `upload-artifact` step in the same job could publish
+    it anyway, by name, glob or directory, so every such step is refused. A
+    job that generates no coverage has no report to upload, because jobs share
+    no workspace.
     """
     return [
         f"{name} must not upload the coverage report as an artefact"
         for name, document in pull_request_closure(documents).items()
         for step in steps(name, document)
-        if calls(step, ARTEFACT_ACTION) and str(report) in str(_with(step, "path"))
+        if calls(step, ARTEFACT_ACTION)
+        and _generates_coverage(holding_job(name, document, step))
     ]
+
+
+def _generates_coverage(job: dict[str, object]) -> bool:
+    """Return whether any step of one job calls the shared coverage action."""
+    held = typ.cast("list[object]", job.get("steps", []))
+    return any(isinstance(step, dict) and calls(step, COVERAGE_ACTION) for step in held)
 
 
 def _push_writers(documents: dict[str, Document], publisher: str) -> list[str]:
@@ -227,8 +238,10 @@ def contract_invocations(documents: dict[str, Document]) -> list[str]:
     """Report a pull-request lane that no longer runs this contract.
 
     A contract CI never runs protects nothing. The step must hold the command
-    alone and carry no condition, since `false && make test-workflow-contracts`
-    and `if: false` both keep the text while running nothing.
+    alone, and neither it nor its job may carry a condition or continue on
+    error, since `false && make test-workflow-contracts` and `if: false` both keep
+    the text while running nothing. Nor may any scope choose the shell:
+    `shell: 'true {0}'` keeps the command and runs only `true`.
 
     Parameters
     ----------
@@ -246,9 +259,27 @@ def contract_invocations(documents: dict[str, Document]) -> list[str]:
         for name, document in pull_request_closure(documents).items()
         for step in steps(name, document)
         if " ".join(str(step.get("run", "")).split()) == CONTRACT_COMMAND
-        and "if" not in step
-        and not continues_on_error(step)
+        and _runs_as_written(document, holding_job(name, document, step), step)
     ]
     if runs:
         return []
     return [f"no pull-request step runs `{CONTRACT_COMMAND}` unconditionally"]
+
+
+def _runs_as_written(document: Document, job: dict[str, object], step: Step) -> bool:
+    """Return whether a step runs its command unconditionally in the default shell.
+
+    A condition or `continue-on-error` on the step or its job skips the
+    command or turns its failure green, and a `shell` on the step or a
+    `defaults.run.shell` on the job or workflow replaces the interpreter.
+    """
+    skippable = any("if" in scope or continues_on_error(scope) for scope in (job, step))
+    reshelled = "shell" in step or any(map(_default_shell, (job, document)))
+    return not (skippable or reshelled)
+
+
+def _default_shell(scope: dict[str, object] | Document) -> bool:
+    """Return whether a job or workflow sets `defaults.run.shell`."""
+    defaults = scope.get("defaults")
+    run = defaults.get("run") if isinstance(defaults, dict) else None
+    return isinstance(run, dict) and "shell" in run

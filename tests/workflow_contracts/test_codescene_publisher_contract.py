@@ -265,6 +265,12 @@ def test_pull_request_coverage_cannot_be_switched_off(
     assert_reports(coverage_violations, documents, "must run unconditionally")
 
 
+def test_pull_request_coverage_job_runs_unconditionally(documents: Documents) -> None:
+    """A job-level `if: false` skips the ratchet with the step intact."""
+    first_job(documents[LANE])["if"] = "false"
+    assert_reports(coverage_violations, documents, "must run unconditionally")
+
+
 def test_repository_selection_is_pinned(documents: Documents) -> None:
     """Both lanes changing their selection together would pass parity alone."""
     publisher, _ = find_publisher(documents)
@@ -286,6 +292,7 @@ def test_pull_request_lane_cannot_answer_a_push(documents: Documents) -> None:
         {"run": "false && make test-workflow-contracts"},
         {"if": "false"},
         {"continue-on-error": True},
+        {"shell": "true {0}"},
     ],
 )
 def test_pull_request_lane_runs_the_contract(
@@ -298,6 +305,24 @@ def test_pull_request_lane_runs_the_contract(
         if s.get("run") == "make test-workflow-contracts"
     )
     step.update(change)
+    assert_reports(contract_invocations, documents, "workflow-contracts")
+
+
+@pytest.mark.parametrize(
+    ("scope", "change"),
+    [
+        ("job", {"if": "false"}),
+        ("job", {"continue-on-error": True}),
+        ("job", {"defaults": {"run": {"shell": "true {0}"}}}),
+        ("workflow", {"defaults": {"run": {"shell": "true {0}"}}}),
+    ],
+)
+def test_contract_step_scopes_cannot_skip_it(
+    documents: Documents, scope: str, change: dict[str, object]
+) -> None:
+    """A job or workflow can skip the contract, or swap its shell, step intact."""
+    target = first_job(documents[LANE]) if scope == "job" else documents[LANE]
+    target.update(change)
     assert_reports(contract_invocations, documents, "workflow-contracts")
 
 

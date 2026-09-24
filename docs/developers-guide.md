@@ -37,9 +37,10 @@ a composite action that would pass a step's environment on to its nested steps.
 A check step writes whether the secret is set, the upload runs only when it is
 and only for `refs/heads/main`, and the token reaches the uploader solely as its
 `access-token` input. Runs share one concurrency group per ref and are never
-cancelled, so triggered runs (a push or a dispatch) upload in commit order. A
-manual re-run of an older run is an operator action: it republishes that
-commit's coverage and baseline until the next push supersedes it.
+cancelled, so they never overlap, and a newer trigger replaces any run still
+pending. GitHub does not promise to start runs in trigger order, so no commit
+order is promised. A manual re-run keeps its `run_id`, so it republishes that
+commit's coverage but replaces no baseline unless the original run saved none.
 
 Two gaps are known and accepted. Merges made by the Dependabot automerge
 workflow with `GITHUB_TOKEN` fire no push, so they reach the publisher only
