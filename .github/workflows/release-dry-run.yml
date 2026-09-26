@@ -11,4 +11,7 @@ jobs:
     with:
       dry-run: true
       publish: false
-    secrets: inherit
+    # No `secrets: inherit`: this runs for every pull request, and the release
+    # workflow reads only GITHUB_TOKEN, which a called workflow receives
+    # without being passed anything. Forwarding every secret would put
+    # CS_ACCESS_TOKEN in reach of a pull request (CV-005).
