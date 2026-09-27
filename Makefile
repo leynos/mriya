@@ -23,6 +23,11 @@ NIXIE ?= nixie
 WHITAKER ?= whitaker
 UV ?= uv
 UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
+RUFF_VERSION ?= 0.15.12
+# The CV-005 CodeScene coverage contract, which `test-workflow-contracts`
+# also formats and lints.
+CV005_CONTRACTS = $(wildcard tests/workflow_contracts/*codescene*.py) \
+	tests/workflow_contracts/conftest.py
 TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.1
 TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
 	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
@@ -39,7 +44,11 @@ clean: ## Remove build artefacts
 test: ## Run tests with warnings treated as errors
 	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
 
-test-workflow-contracts: ## Validate the mutation-testing caller contract
+test-workflow-contracts: ## Validate the mutation-testing and CV-005 coverage contracts
+	$(UV_ENV) $(UV) tool run ruff@$(RUFF_VERSION) format --isolated \
+		--target-version py313 --check $(CV005_CONTRACTS)
+	$(UV_ENV) $(UV) tool run ruff@$(RUFF_VERSION) check --isolated \
+		--target-version py313 $(CV005_CONTRACTS)
 	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest tests/workflow_contracts -q
 
 scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)

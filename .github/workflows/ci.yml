@@ -62,6 +62,10 @@ jobs:
         run: make spelling
       - name: Workflow contract tests
         run: make test-workflow-contracts
+      # Coverage here serves the local ratchet and nothing else: the report is
+      # not archived and CodeScene is never called. coverage-main.yml writes
+      # the baseline this compares against and owns the CodeScene upload, so
+      # the selection below must match that workflow's field for field.
       - name: Test and Measure Coverage
         uses: leynos/shared-actions/.github/actions/generate-coverage@22c1a57865e42ba7e2ca4f88ae49fa6f81f58013
         with:
@@ -69,14 +73,4 @@ jobs:
           format: lcov
           use-cargo-nextest: 'false'
           with-ratchet: 'true'
-      - name: Check coverage against CodeScene gates
-        env:
-          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-        if: env.CS_ACCESS_TOKEN != '' && github.event_name == 'pull_request'
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@22c1a57865e42ba7e2ca4f88ae49fa6f81f58013
-        with:
-          format: lcov
-          mode: check
-          project-url: https://api.codescene.io/v2/projects/74420
-          access-token: ${{ env.CS_ACCESS_TOKEN }}
-          installer-checksum: ${{ vars.CODESCENE_CLI_SHA256 }}
+          publish-artefact: 'false'
