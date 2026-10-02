@@ -15,7 +15,7 @@
 [build]
 rustflags = ["-Zthreads=8"]
 
-# mold ships for Linux only, so the linker flag lives in a Linux-only table.
+# `mold` ships for Linux only, so the linker flag lives in a Linux-only table.
 # macOS and Windows fall through to `[build] rustflags` above and keep their
 # platform linker.
 [target.'cfg(target_os = "linux")']
