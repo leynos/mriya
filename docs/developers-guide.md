@@ -66,3 +66,25 @@ CodeScene on a pull request's behalf. For the same reason the release dry run,
 which runs for every pull request, calls the release workflow without
 `secrets: inherit`: the release workflow reads only `GITHUB_TOKEN`, which a
 called workflow receives anyway.
+
+## The build standard
+
+Development, test, lint and typecheck builds use the parallel `rustc` frontend (`-Zthreads=8`) and, on Linux, the `mold` linker (`-Clink-arg=-fuse-ld=mold`). These are defaults
+in `.cargo/config.toml`, which Cargo discovers on its own, so a bare
+`cargo build` gets them. `mold` ships for Linux only, so the linker flag lives in
+a Linux-only table and macOS and Windows keep their platform linker. Cargo
+selects one `rustflags` source rather than merging them, so every source
+repeats the same flags apart from the linker.
+
+An assigned `RUSTFLAGS` replaces the configuration's flags, so the
+Makefile recipes that set it compose the standard's flags onto any inherited value
+(CI's `setup-rust` exports one). Two builds are deliberately excluded: coverage
+assigns `RUSTFLAGS` without the fast flags, because a measurement should not
+depend on them, and release builds keep the platform linker.
+
+### Cranelift
+
+Exception: Cranelift is not the development-profile backend. The full suite
+was measured under it on the pinned `nightly-2025-11-26` on 2026-10-02, and these
+tests fail there while passing under LLVM: `scenario_provision_and_destroy`, `scenario_reject_unknown_image`, `scenario_reject_unknown_type` and `scenario_cloud_init_install_jq`. Re-measure the
+whole suite on the next toolchain bump, and adopt the backend when it passes.
