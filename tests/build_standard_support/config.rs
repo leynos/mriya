@@ -130,6 +130,12 @@ impl Flags {
         self.0.iter().any(|candidate| candidate == flag)
     }
 
+    /// Returns whether the list denies warnings, in either spelling.
+    pub fn denies_warnings(&self) -> bool {
+        self.0.iter().any(|word| word == "-Dwarnings")
+            || self.0.windows(2).any(|pair| pair == ["-D", "warnings"])
+    }
+
     /// Returns whether the list names the frontend flag.
     pub fn names_threads(&self) -> bool {
         self.names(THREADS_FLAG)
