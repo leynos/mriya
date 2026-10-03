@@ -64,15 +64,15 @@ test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutat
 	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
 
 scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
-	$(CARGO) run --bin mriya-janitor
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
 
 scaleway-test: ## Run Scaleway integration tests with janitor sweep
 	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)
 	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
 	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
 	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
-	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
-	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor ; \
+	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
+	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor ; \
 	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) test --test scaleway_backend --test scaleway_cloud_init -- --test-threads=1
 
 typecheck: ## Typecheck the workspace
