@@ -34,6 +34,8 @@ USES_RE = re.compile(
 #: The exact caller configuration: exclude the unconditionally compiled
 #: test scaffolding and mirror the CI baseline's --all-features.
 EXPECTED_WITH = {
+    # .cargo/config.toml links with mold on Linux; the reusable workflow installs it.
+    "install-mold": "true",
     "exclude-globs": "src/test_support.rs",
     "extra-args": "--all-features",
 }
