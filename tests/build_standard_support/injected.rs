@@ -37,6 +37,54 @@ fn dropping_make(_target: &str, _host: Host) -> Result<String, String> {
     canned(format_args!("RUSTFLAGS=\"-D warnings\" cargo test\n"))
 }
 
+/// A fake runner whose test command assigns nothing, so the warning policy never reaches it.
+fn bare_test_make(_target: &str, _host: Host) -> Result<String, String> {
+    canned(format_args!("cargo test\n"))
+}
+
+/// A fake runner whose lint commands assign nothing beside a command that does.
+fn bare_lint_make(_target: &str, host: Host) -> Result<String, String> {
+    let linker = if host.takes_linker_flag() {
+        " -Clink-arg=-fuse-ld=mold"
+    } else {
+        ""
+    };
+    canned(format_args!(
+        "RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test\ncargo clippy --all-targets\nwhitaker --all\n"
+    ))
+}
+
+/// A fake runner with commands that run no compiled code under test, beside one that assigns.
+fn exempt_commands_make(_target: &str, host: Host) -> Result<String, String> {
+    let linker = if host.takes_linker_flag() {
+        " -Clink-arg=-fuse-ld=mold"
+    } else {
+        ""
+    };
+    canned(format_args!(
+        "RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test\ncargo fmt --all --check\ncargo metadata --format-version 1\nRUSTDOCFLAGS=\"-D warnings\" cargo doc\n"
+    ))
+}
+
+/// A fake runner whose held-out target runs an inspection command beside an assigning build.
+fn held_out_inspecting_make(_target: &str, _host: Host) -> Result<String, String> {
+    canned(format_args!(
+        "cargo metadata --format-version 1 --locked\nRUSTFLAGS=\"-D warnings\" cargo build --release\n"
+    ))
+}
+
+/// A fake runner whose chained recipe leaves its second command bare beside a probe that assigns.
+fn chained_bare_make(_target: &str, host: Host) -> Result<String, String> {
+    let linker = if host.takes_linker_flag() {
+        " -Clink-arg=-fuse-ld=mold"
+    } else {
+        ""
+    };
+    canned(format_args!(
+        "if RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo nextest --version; then cargo nextest run; else echo \"falling back to cargo test\"; RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test; fi\n"
+    ))
+}
+
 /// A fake runner whose held-out command assigns `RUSTFLAGS` without a standard flag.
 fn held_out_assigning_make(_target: &str, _host: Host) -> Result<String, String> {
     canned(format_args!(
@@ -89,6 +137,29 @@ fn the_policy_checks_run_against_an_injected_runner() -> Result<(), String> {
         development_problems(undefined_make, Host::Linux, pin).is_err(),
         "a runner error was swallowed",
     )?;
+    let (bare_test, _) = development_problems(bare_test_make, Host::Linux, pin)?;
+    ensure(
+        !bare_test.is_empty(),
+        "a test command that assigns no RUSTFLAGS passed",
+    )?;
+    let (bare_lint, _) = development_problems(bare_lint_make, Host::Linux, pin)?;
+    ensure(
+        !bare_lint.is_empty(),
+        "lint commands that assign no RUSTFLAGS passed",
+    )?;
+    let (chained, _) = development_problems(chained_bare_make, Host::Linux, pin)?;
+    ensure(
+        !chained.is_empty()
+            && chained
+                .iter()
+                .all(|problem| problem.contains("nextest run")),
+        &format!("a bare command chained beside an assigning probe raised {chained:?}"),
+    )?;
+    let (exempt, exempt_read) = development_problems(exempt_commands_make, Host::Linux, pin)?;
+    ensure(
+        exempt.is_empty() && exempt_read > 0,
+        &format!("a formatter, probe or doc build raised {exempt:?}"),
+    )?;
     // A synthetic held-out target runs the check in every repository, including one that defines none.
     ensure(
         held_out_problems_for(undefined_make, &["synthetic"]).is_err(),
@@ -98,6 +169,11 @@ fn the_policy_checks_run_against_an_injected_runner() -> Result<(), String> {
     ensure(
         clean.is_empty() && read == 1,
         &format!("an assigning held-out command raised {clean:?}"),
+    )?;
+    let (inspecting, _) = held_out_problems_for(held_out_inspecting_make, &["synthetic"])?;
+    ensure(
+        inspecting.is_empty(),
+        &format!("an inspection command in a held-out target raised {inspecting:?}"),
     )?;
     let (unassigned, _) = held_out_problems_for(held_out_unassigned_make, &["synthetic"])?;
     ensure(
