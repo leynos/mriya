@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use super::{
     config::{Pin, THREADS_FLAG},
     development::{Tools, development_problems_expecting},
-    make::{Host, Target},
+    make::{Host, MakeRunner, Target},
 };
 
 /// Renders canned `make -n` text for a fake runner through a fallible writer, so
@@ -184,38 +184,23 @@ fn a_development_command_without_an_assignment_is_refused_and_an_exempt_one_is_n
     )
 }
 
-/// Scenario: development recipes that run a metadata probe and nothing that builds, tests or lints.
+/// Scenario: development recipes whose only command is a metadata probe, or an assigned version probe.
 ///
 /// Invariant: each development target must run a tool of its own, so a target that only probes is
-/// refused instead of hiding behind the assignments another target supplies.
+/// refused instead of hiding behind the assignments another target supplies, and an assignment is no
+/// tool: a probe that carries `RUSTFLAGS` does not stand in for the build, test or lint command.
 #[test]
 fn a_development_target_that_runs_no_tool_is_refused() -> Result<(), String> {
-    let (problems, read) =
-        development_problems_expecting(probe_only_make, Host::Linux, Pin::Nightly, &[])?;
-    ensure(read == 0, "a probe was read as an assignment")?;
-    ensure(
-        problems
-            .iter()
-            .any(|problem| problem.contains("runs no build, test or lint command")),
-        "a target that only probes passed",
-    )
-}
-
-/// Scenario: development recipes whose only command is an assigned version probe.
-///
-/// Invariant: an assignment is not a tool, so a probe that carries `RUSTFLAGS` does not stand in for
-/// the build, test or lint command a target must run.
-#[test]
-fn an_assigned_version_probe_is_no_build_tool() -> Result<(), String> {
-    let (problems, read) =
-        development_problems_expecting(assigned_probe_make, Host::Linux, Pin::Nightly, &[])?;
-    ensure(read > 0, "the probe's assignment was not read")?;
-    ensure(
-        problems
-            .iter()
-            .any(|problem| problem.contains("runs no build, test or lint command")),
-        "an assigned probe passed as a tool",
-    )
+    for runner in [probe_only_make as MakeRunner, assigned_probe_make] {
+        let (problems, _) = development_problems_expecting(runner, Host::Linux, Pin::Nightly, &[])?;
+        ensure(
+            problems
+                .iter()
+                .any(|problem| problem.contains("runs no build, test or lint command")),
+            "a target that only probes passed",
+        )?;
+    }
+    Ok(())
 }
 
 /// Scenario: a record of the tools each target runs, against recipes that keep or drop one.
