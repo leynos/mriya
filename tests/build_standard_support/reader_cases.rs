@@ -23,13 +23,13 @@ use super::{
         linker_install_problems,
     },
     config::{Flags, Pin, Problems, THREADS_FLAG, config_problems},
-    make::{Assignment, Host, assigned_rustflags, commands_from, test_policy_problems},
+    make::{Assignment, assigned_rustflags, commands_from},
 };
 
 /// Text handed to a case, wrapped so that a case reads as data and the test
 /// signatures name what they take rather than passing bare strings around.
 #[derive(Clone, Copy)]
-struct Fixture(&'static str);
+pub(super) struct Fixture(pub(super) &'static str);
 
 /// The workflow reader a case runs.
 #[derive(Clone, Copy)]
@@ -236,63 +236,6 @@ fn a_continued_command_is_one_command() -> Result<(), String> {
     } else {
         Err(format!("read wrongly: {joined:?}"))
     }
-}
-
-/// One command of the `test` target in a case: its text and the flags its `RUSTFLAGS` assigns.
-#[derive(Clone, Copy)]
-struct Cmd(&'static str, &'static [&'static str]);
-
-/// Scenario: the `test` target's commands, with and without the warning policy, beside a version probe
-/// and a build that never carried it.
-///
-/// Invariant: `make test` must run tests, and every command that runs them must keep `-D warnings`; a
-/// probe or a build is not held to it, and a probe keeping the policy cannot stand in for a test command
-/// that dropped it; another target is not held to it.
-#[rstest]
-#[case::test_keeps_the_policy(Fixture("test"), &[Cmd("cargo nextest run", &["-D", "warnings", THREADS_FLAG])], 0)]
-#[case::test_spelled_joined(Fixture("test"), &[Cmd("cargo test", &["-Dwarnings", THREADS_FLAG])], 0)]
-#[case::test_drops_the_policy(Fixture("test"), &[Cmd("cargo nextest run", &[THREADS_FLAG])], 1)]
-#[case::test_denies_nothing_useful(Fixture("test"), &[Cmd("cargo test", &["-A", "warnings", THREADS_FLAG])], 1)]
-#[case::a_probe_may_omit_it_beside_the_run(
-    Fixture("test"),
-    &[Cmd("cargo nextest --version", &[THREADS_FLAG]), Cmd("cargo nextest run", &["-D", "warnings", THREADS_FLAG])],
-    0
-)]
-#[case::a_probe_cannot_stand_in_for_the_run(
-    Fixture("test"),
-    &[Cmd("cargo nextest --version", &["-D", "warnings", THREADS_FLAG]), Cmd("cargo nextest run", &[THREADS_FLAG])],
-    1
-)]
-#[case::the_doctest_line_is_a_test_command_too(
-    Fixture("test"),
-    &[Cmd("cargo nextest run", &["-D", "warnings"]), Cmd("cargo test --doc", &[THREADS_FLAG])],
-    1
-)]
-#[case::a_prerequisite_build_may_omit_it(
-    Fixture("test"),
-    &[Cmd("cargo build --bin tool", &[THREADS_FLAG]), Cmd("cargo test", &["-D", "warnings"])],
-    0
-)]
-#[case::a_toolchain_override_is_skipped(Fixture("test"), &[Cmd("cargo +nightly test", &[THREADS_FLAG])], 1)]
-#[case::build_may_omit_the_policy(Fixture("build"), &[Cmd("cargo build", &[THREADS_FLAG])], 0)]
-#[case::test_runs_no_test_command(Fixture("test"), &[Cmd("cargo build", &["-D", "warnings"])], 1)]
-#[case::test_assigns_no_command(Fixture("test"), &[], 1)]
-fn the_test_target_keeps_the_warning_policy(
-    #[case] target: Fixture,
-    #[case] commands: &[Cmd],
-    #[case] expected: usize,
-) {
-    let assigned: Vec<(String, Assignment)> = commands
-        .iter()
-        .map(|Cmd(text, words)| {
-            (
-                (*text).to_owned(),
-                Assignment::Flags(Flags::from_words(words.iter().copied()), true),
-            )
-        })
-        .collect();
-    let found = test_policy_problems(target.0, Host::Darwin, &assigned).len();
-    assert_eq!(found, expected, "target {}: {assigned:?}", target.0);
 }
 
 /// Scenario: coverage steps that deny warnings, assign an empty policy, or assign a

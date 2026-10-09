@@ -25,17 +25,22 @@ pub fn compiles(command: &str) -> bool {
     }
     let cargo_subcommand = words
         .iter()
-        .position(|word| word.rsplit('/').next() == Some("cargo"))
+        .position(|word| names_program(word, "cargo"))
         .and_then(|at| words.get(at + 1..))
         .and_then(|rest| {
             rest.iter()
                 .find(|word| !word.starts_with('+') && !word.starts_with('-'))
         })
         .is_some_and(|sub| !INSPECTION_SUBCOMMANDS.contains(sub));
-    cargo_subcommand
-        || words
-            .iter()
-            .any(|word| word.rsplit('/').next() == Some("whitaker"))
+    cargo_subcommand || words.iter().any(|word| names_program(word, "whitaker"))
+}
+
+/// Returns whether a word names a program: its final path component, with or without `.exe`, matches
+/// (`cargo`, `/usr/bin/cargo`, `C:\\tools\\cargo.exe`).
+pub fn names_program(word: &str, program: &str) -> bool {
+    word.rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|name| name == program || name.strip_suffix(".exe") == Some(program))
 }
 
 /// Splits one logical line of `make -n` output into the shell commands it runs: at `;`, `&&`,
