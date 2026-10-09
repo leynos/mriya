@@ -7,6 +7,7 @@ TARGET ?= mriya
 CARGO ?= cargo
 BUILD_JOBS ?=
 RUST_FLAGS ?= -D warnings
+RUSTDOC_FLAGS ?= -D warnings
 CARGO_FLAGS ?= --all-targets --all-features
 CLIPPY_FLAGS ?= $(CARGO_FLAGS) -- $(RUST_FLAGS)
 TEST_FLAGS ?= $(CARGO_FLAGS)
@@ -38,6 +39,15 @@ TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
 	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
 	typos-config-builder
 
+# The development build standard (concordat rule `rust-build-defaults`):
+# the parallel rustc frontend and, on Linux, the mold linker. An assigned
+# RUSTFLAGS replaces every `rustflags` table in .cargo/config.toml, so each
+# recipe that sets it composes these onto any inherited value (CI's
+# setup-rust exports one), except coverage, which stays on LLVM and the
+# platform linker.
+BUILD_HOST_OS := $(shell uname -s)
+STANDARD_RUSTFLAGS := -Zthreads=8$(if $(filter Linux,$(BUILD_HOST_OS)), -Clink-arg=-fuse-ld=mold)
+
 build: target/debug/$(TARGET) ## Build debug binary
 release: target/release/$(TARGET) ## Build release binary
 
@@ -47,34 +57,34 @@ clean: ## Remove build artefacts
 	$(CARGO) clean
 
 test: ## Run tests with warnings treated as errors
-	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
 
 test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutation-testing contract
 	$(CV005_CONTRACTS) check --repository .
 	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
 
 scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
-	$(CARGO) run --bin mriya-janitor
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
 
 scaleway-test: ## Run Scaleway integration tests with janitor sweep
 	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)
 	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
 	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
 	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
-	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
-	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) run --bin mriya-janitor ; \
-	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" $(CARGO) test --test scaleway_backend --test scaleway_cloud_init -- --test-threads=1
+	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
+	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor ; \
+	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) test --test scaleway_backend --test scaleway_cloud_init -- --test-threads=1
 
 typecheck: ## Typecheck the workspace
-	RUSTFLAGS="$(RUST_FLAGS)" $(CARGO) check $(CARGO_FLAGS) $(BUILD_JOBS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) check $(CARGO_FLAGS) $(BUILD_JOBS)
 
 target/%/$(TARGET): ## Build binary in debug or release mode
-	$(CARGO) build $(BUILD_JOBS) $(if $(findstring release,$(@)),--release) --bin $(TARGET)
+	$(if $(findstring release,$(@)),RUSTFLAGS="$${RUSTFLAGS-}",RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)") $(CARGO) build $(BUILD_JOBS) $(if $(findstring release,$(@)),--release) --bin $(TARGET)
 
 lint: ## Run Clippy and the Whitaker Dylint suite with warnings denied
-	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) doc --no-deps
-	$(CARGO) clippy $(CLIPPY_FLAGS)
-	RUSTFLAGS="$(RUST_FLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
+	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) doc --no-deps
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) clippy $(CLIPPY_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
 
 fmt: ## Format Rust and Markdown sources
 	$(CARGO) fmt --all

@@ -12,6 +12,8 @@ accepted = []
 
 [patterns]
 ignore = [
+  # `mold` is the linker's name, not a misspelling of `mould`.
+  "\\bmold\\b",
   "\\bCARGO_TERM_COLOR\\b",
   # Inline code spans are masked; the shared dictionary does not mask them yet.
   '`[^`\n]+`',
