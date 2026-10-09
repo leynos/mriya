@@ -257,7 +257,7 @@ jobs:
       - name: Build macOS installer package
         id: package_macos
         uses: >-
-          leynos/shared-actions/.github/actions/macos-package@22c1a57865e42ba7e2ca4f88ae49fa6f81f58013
+          leynos/shared-actions/.github/actions/macos-package@2f47859bcf82ae8b5bc10b457683fbd589ca2e41
         with:
           name: ${{ needs.metadata.outputs.bin_name }}
           identifier: net.df12.mriya
