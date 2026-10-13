@@ -1,9 +1,7 @@
 //! Shared fixtures for cloud-init behavioural tests.
 
 use std::process::Output;
-use std::sync::LazyLock;
 
-use escargot::CargoBuild;
 use rstest::fixture;
 use tempfile::TempDir;
 
@@ -46,32 +44,18 @@ pub struct CliContext {
     pub tmp_dir: Option<std::sync::Arc<TempDir>>,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test setup requires panic on build failure"
-)]
-static MRIYA_BIN: LazyLock<escargot::CargoRun> = LazyLock::new(|| {
-    CargoBuild::new()
-        .bin("mriya")
-        .features("test-backdoors")
-        .run()
-        .expect("failed to build mriya with test-backdoors feature")
-});
-
-pub fn mriya_cmd() -> assert_cmd::Command {
-    MRIYA_BIN.command().into()
-}
-
 impl CliContext {
-    pub fn base_command(&self) -> assert_cmd::Command {
-        let mut cmd = mriya_cmd();
+    pub fn base_command(
+        &self,
+    ) -> Result<assert_cmd::Command, &'static crate::test_binary::BuildError> {
+        let mut cmd = crate::test_binary::mriya_cmd()?;
         cmd.env("MRIYA_FAKE_RUN_ENABLE", "1");
         cmd.env("MRIYA_FAKE_RUN_MODE", "dump-request");
         cmd.env("SCW_SECRET_KEY", DUMMY_SECRET_KEY);
         cmd.env("SCW_DEFAULT_PROJECT_ID", DUMMY_PROJECT_ID);
         cmd.env("SCW_DEFAULT_INSTANCE_TYPE", &self.default_instance_type);
         cmd.env("SCW_DEFAULT_IMAGE", &self.default_image);
-        cmd
+        Ok(cmd)
     }
 }
 

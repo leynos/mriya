@@ -102,6 +102,18 @@ workflow edit fails there. The decision is recorded in
 direct `cargo test` needs GNU make on the `PATH`. It fails when `make` is
 missing instead of skipping, so a missing tool cannot read as a pass.
 
+### CLI integration-test builds
+
+CLI behavioural tests share `tests/common/test_binary.rs`. It invokes Cargo from
+`CARGO_MANIFEST_DIR`, enables `test-backdoors` explicitly, and selects the
+executable from Cargo's `compiler-artifact` JSON. Running from the manifest
+root preserves the configured target directory and inherited Cargo settings.
+
+The helper uses `std::process::Command::output()` to drain stdout and stderr
+concurrently. A nested build can fill stderr while its caller waits for stdout,
+blocking compilation. Build errors retain both streams so compiler diagnostics
+remain available when a build fails.
+
 ### Cranelift
 
 Exception: Cranelift is not the development-profile backend. The full suite was

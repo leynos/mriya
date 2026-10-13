@@ -67,7 +67,9 @@ fn fake_dumping_enabled(cli_context: CliContext) -> CliContext {
 
 #[when("I run mriya without instance overrides")]
 fn run_without_overrides(mut cli_context: CliContext) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
+    let mut cmd = cli_context
+        .base_command()
+        .map_err(|err| StepError::Execution(err.to_string()))?;
     cmd.args(["run", "--", "echo", "ok"]);
     let output = cmd
         .output()
@@ -83,7 +85,9 @@ fn run_with_overrides(
     instance_type: InstanceType,
     image: ImageLabel,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
+    let mut cmd = cli_context
+        .base_command()
+        .map_err(|err| StepError::Execution(err.to_string()))?;
     cmd.args([
         "run",
         "--instance-type",

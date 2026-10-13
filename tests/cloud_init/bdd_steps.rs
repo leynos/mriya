@@ -71,7 +71,9 @@ fn execute_run_command(
     additional_args: &[&str],
     tmp_dir: Option<TempDir>,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
+    let mut cmd = cli_context
+        .base_command()
+        .map_err(|err| StepError::Execution(err.to_string()))?;
     cmd.arg("run");
     cmd.args(additional_args);
     cmd.args(["--", "echo", "ok"]);
