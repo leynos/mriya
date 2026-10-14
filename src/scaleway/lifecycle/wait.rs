@@ -7,10 +7,10 @@
 use std::future::Future;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::net::TcpStream;
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, sleep, timeout};
 
 use crate::backend::{InstanceHandle, InstanceNetworking};
 use crate::scaleway::types::Action;
@@ -25,15 +25,9 @@ impl ScalewayBackend {
         &self,
         handle: &InstanceHandle,
     ) -> Result<Option<InstanceSnapshot>, ScalewayBackendError> {
-        let mut servers = self
-            .api
-            .list_instances(&handle.zone)
-            .servers(&handle.id)
-            .per_page(1)
-            .run_async()
-            .await?;
+        let instance = self.list_instance(handle).await?;
 
-        Ok(servers.pop().map(|server| InstanceSnapshot {
+        Ok(instance.map(|server| InstanceSnapshot {
             id: server.id.into(),
             state: server.state.into(),
             allowed_actions: server

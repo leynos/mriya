@@ -26,6 +26,7 @@ pub use error::ScalewayBackendError;
 #[derive(Clone)]
 pub struct ScalewayBackend {
     api: ScalewayApi,
+    instance_api_base: String,
     config: ScalewayConfig,
     test_run_id: Option<String>,
     ssh_port: u16,
@@ -73,6 +74,7 @@ impl ScalewayBackend {
         config.validate()?;
         Ok(Self {
             api: ScalewayApi::new(&config.secret_key),
+            instance_api_base: lifecycle::SCALEWAY_INSTANCE_API_BASE.to_owned(),
             config,
             test_run_id,
             ssh_port: DEFAULT_SSH_PORT,
@@ -200,9 +202,7 @@ impl Backend for ScalewayBackend {
 
     fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
         Box::pin(async move {
-            self.api
-                .delete_instance_async(&handle.zone, &handle.id)
-                .await?;
+            self.delete_instance(&handle).await?;
             self.wait_until_gone(&handle).await
         })
     }
@@ -316,24 +316,30 @@ mod tests {
     }
 
     #[rstest]
-    #[case(ScalewayBackend::instance_tags, "ephemeral")]
-    #[case(ScalewayBackend::volume_tags, "cache")]
-    fn tags_omit_test_tag_when_unset(
+    #[case(ScalewayBackend::instance_tags, "ephemeral", None)]
+    #[case(ScalewayBackend::volume_tags, "cache", None)]
+    #[case(ScalewayBackend::instance_tags, "ephemeral", Some("   "))]
+    #[case(ScalewayBackend::volume_tags, "cache", Some("\t\n"))]
+    fn tags_omit_test_tag_when_absent_or_blank(
         #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
         #[case] base_tag: &str,
+        #[case] test_run_id: Option<&str>,
     ) {
-        let tags = tags_fn(None);
+        let tags = tags_fn(test_run_id);
         assert_eq!(tags, vec![String::from("mriya"), String::from(base_tag)]);
     }
 
     #[rstest]
-    #[case(ScalewayBackend::instance_tags, "ephemeral")]
-    #[case(ScalewayBackend::volume_tags, "cache")]
+    #[case(ScalewayBackend::instance_tags, "ephemeral", "run-123")]
+    #[case(ScalewayBackend::volume_tags, "cache", "run-123")]
+    #[case(ScalewayBackend::instance_tags, "ephemeral", "  run-123  ")]
+    #[case(ScalewayBackend::volume_tags, "cache", "\t run-123\n")]
     fn tags_add_test_run_tag(
         #[case] tags_fn: fn(Option<&str>) -> Vec<String>,
         #[case] base_tag: &str,
+        #[case] test_run_id: &str,
     ) {
-        let tags = tags_fn(Some("run-123"));
+        let tags = tags_fn(Some(test_run_id));
         assert_eq!(
             tags,
             vec![

@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use scaleway_rs::ScalewayApi;
 
 use crate::backend::{InstanceHandle, InstanceNetworking};
@@ -20,7 +20,7 @@ use crate::scaleway::types::Action;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
 use super::super::wait::{PollSettings, poll_for_public_ip, poll_until_gone};
-use super::InstanceSnapshot;
+use super::{InstanceSnapshot, handle};
 
 type FetchResult = Result<Option<InstanceSnapshot>, ScalewayBackendError>;
 
@@ -42,16 +42,8 @@ fn scripted_fetch(snapshots: Vec<Option<InstanceSnapshot>>) -> impl FnMut() -> R
     move || ready(Ok(queue.pop_front().unwrap_or(None)))
 }
 
-#[fixture]
-fn handle() -> InstanceHandle {
-    InstanceHandle {
-        id: "id".to_owned(),
-        zone: "zone".to_owned(),
-    }
-}
-
 #[rstest]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wait_for_public_ip_returns_networking_once_running(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![
         Some(super::snapshot(
@@ -69,15 +61,14 @@ async fn wait_for_public_ip_returns_networking_once_running(handle: InstanceHand
     ]);
     let networking = poll_for_public_ip(&handle, poll_settings(WAIT_TIMEOUT), fetch)
         .await
-        .unwrap_or_else(|err| panic!("expected networking, got {err}"));
-    let expected_ip =
-        IpAddr::from_str("192.0.2.10").unwrap_or_else(|err| panic!("ip parse: {err}"));
+        .expect("running snapshot should expose networking");
+    let expected_ip = IpAddr::from_str("192.0.2.10").expect("test address should parse");
     assert_eq!(networking.public_ip, expected_ip);
     assert_eq!(networking.ssh_port, DEFAULT_SSH_PORT);
 }
 
 #[rstest]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wait_for_public_ip_returns_missing_ip(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![
         Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
@@ -91,7 +82,29 @@ async fn wait_for_public_ip_returns_missing_ip(handle: InstanceHandle) {
 }
 
 #[rstest]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
+async fn wait_for_public_ip_times_out_when_never_running(handle: InstanceHandle) {
+    let fetch = scripted_fetch(vec![
+        None,
+        Some(super::snapshot(
+            "id",
+            "starting",
+            Vec::<Action>::new(),
+            None,
+        )),
+    ]);
+    let started = tokio::time::Instant::now();
+    let result = poll_for_public_ip(&handle, poll_settings(Duration::from_millis(5)), fetch).await;
+    assert!(
+        matches!(result, Err(ScalewayBackendError::Timeout { ref action, ref instance_id })
+            if action == "wait_for_ready" && instance_id == "id"),
+        "unexpected readiness outcome: {result:?}"
+    );
+    assert!(started.elapsed() >= Duration::from_millis(5));
+}
+
+#[rstest]
+#[tokio::test(start_paused = true)]
 async fn wait_until_gone_returns_ok_when_instance_absent(handle: InstanceHandle) {
     let fetch = scripted_fetch(vec![None]);
     let result = poll_until_gone(&handle, POLL_INTERVAL, WAIT_TIMEOUT, fetch).await;
@@ -102,7 +115,7 @@ async fn wait_until_gone_returns_ok_when_instance_absent(handle: InstanceHandle)
 }
 
 #[rstest]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wait_until_gone_times_out_on_residual(handle: InstanceHandle) {
     let snapshot = super::snapshot("id", "running", Vec::<Action>::new(), None);
     let fetch = move || ready(Ok(Some(snapshot.clone())));
@@ -126,6 +139,7 @@ async fn wait_for_ssh_ready_succeeds_when_port_listens(handle: InstanceHandle) {
 
     let backend = ScalewayBackend {
         api: ScalewayApi::new("dummy"),
+        instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
         config: super::dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
@@ -156,6 +170,7 @@ async fn wait_for_ssh_ready_times_out_when_port_closed(handle: InstanceHandle) {
 
     let backend = ScalewayBackend {
         api: ScalewayApi::new("dummy"),
+        instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
         config: super::dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
