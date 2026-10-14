@@ -137,7 +137,7 @@ mod tests {
 
     use super::{BuildError, build_binary_with_command, executable_from_cargo_messages};
 
-    fn artifact_message(name: &str, kind: &[&str], executable: &str) -> String {
+    fn artefact_message(name: &str, kind: &[&str], executable: &str) -> String {
         serde_json::json!({
             "reason": "compiler-artifact",
             "target": { "name": name, "kind": kind },
@@ -153,10 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn build_drains_large_stderr_before_selecting_the_binary_artifact() {
-        let artifact = artifact_message("mriya", &["bin"], "/not-built/mriya");
+    fn build_drains_large_stderr_before_selecting_the_binary_artefact() {
+        let artefact = artefact_message("mriya", &["bin"], "/not-built/mriya");
         let script =
-            format!("head -c 131072 /dev/zero | tr '\\000' x >&2\nprintf '%s\\n' '{artifact}'\n");
+            format!("head -c 131072 /dev/zero | tr '\\000' x >&2\nprintf '%s\\n' '{artefact}'\n");
         let (sender, receiver) = mpsc::channel();
         let worker = thread::spawn(move || {
             let mut command = shell_command(&script);
@@ -200,11 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn artifact_selection_ignores_other_targets_and_non_binary_targets() {
+    fn artefact_selection_ignores_other_targets_and_non_binary_targets() {
         let messages = [
-            artifact_message("other", &["bin"], "/not-built/other"),
-            artifact_message("mriya", &["example"], "/not-built/example"),
-            artifact_message("mriya", &["bin"], "/not-built/mriya"),
+            artefact_message("other", &["bin"], "/not-built/other"),
+            artefact_message("mriya", &["example"], "/not-built/example"),
+            artefact_message("mriya", &["bin"], "/not-built/mriya"),
         ]
         .join("\n");
 
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_selection_rejects_output_without_a_matching_binary() {
+    fn artefact_selection_rejects_output_without_a_matching_binary() {
         let output = r#"{"reason":"compiler-message"}"#;
 
         assert!(matches!(
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_selection_rejects_malformed_json() {
+    fn artefact_selection_rejects_malformed_json() {
         assert!(matches!(
             executable_from_cargo_messages("{not-json}"),
             Err(BuildError::InvalidJson(_))
@@ -233,10 +233,10 @@ mod tests {
     }
 
     #[test]
-    fn artifact_selection_rejects_malformed_json_after_a_matching_artifact() {
+    fn artefact_selection_rejects_malformed_json_after_a_matching_artefact() {
         let output = format!(
             "{}\n{{not-json}}",
-            artifact_message("mriya", &["bin"], "/not-built/mriya")
+            artefact_message("mriya", &["bin"], "/not-built/mriya")
         );
 
         assert!(matches!(

@@ -12,6 +12,8 @@ accepted = []
 
 [patterns]
 ignore = [
+  # Cargo JSON uses this exact external protocol identifier.
+  '"compiler-artifact"',
   # `mold` is the linker's name, not a misspelling of `mould`.
   "\\bmold\\b",
   "\\bCARGO_TERM_COLOR\\b",

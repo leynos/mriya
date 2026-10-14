@@ -30,6 +30,7 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
+    "\"compiler-artifact\"",
     "(?m)^            artifact_suffix: aarch64-apple-darwin$",
     "(?m)^            artifact_suffix: linux-aarch64$",
     "(?m)^            artifact_suffix: linux-x86_64$",
