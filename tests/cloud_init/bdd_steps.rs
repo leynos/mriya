@@ -66,12 +66,27 @@ fn extract_value(stdout: &str, key: &OutputKey) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Runs the compiled CLI in fake request-dump mode and stores its output in
+/// the returned context.
+///
+/// `additional_args` are placed before the fixed `-- echo ok` payload. When a
+/// cloud-init file is supplied, `tmp_dir` is retained in the returned context
+/// so the file remains available until that context is dropped. Command
+/// construction and process-spawn failures become `StepError::Execution`.
+///
+/// # Example
+///
+/// A file-backed step passes `--cloud-init-file` in `additional_args` and the
+/// directory that owns the file; the resulting context contains the captured
+/// status, stdout, and stderr.
 fn execute_run_command(
     mut cli_context: CliContext,
     additional_args: &[&str],
     tmp_dir: Option<TempDir>,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context.base_command();
+    let mut cmd = cli_context
+        .base_command()
+        .map_err(|err| StepError::Execution(err.to_string()))?;
     cmd.arg("run");
     cmd.args(additional_args);
     cmd.args(["--", "echo", "ok"]);

@@ -1,39 +1,19 @@
 //! Behavioural tests for the `mriya run` CLI.
 //!
-//! These tests use `escargot` to build the binary with the `test-backdoors`
-//! feature enabled, which allows fake run modes to be activated via
-//! environment variables.
+//! The shared binary helper enables fake run modes through the
+//! `test-backdoors` feature.
 
-use std::sync::LazyLock;
-
-use escargot::CargoBuild;
 use predicates::str::contains;
 
-/// Lazily builds the binary once with the test-backdoors feature enabled.
-///
-/// # Panics
-///
-/// Panics if the binary fails to build (e.g., due to compilation errors).
-#[expect(
-    clippy::expect_used,
-    reason = "test setup requires panic on build failure"
-)]
-static MRIYA_BIN: LazyLock<escargot::CargoRun> = LazyLock::new(|| {
-    CargoBuild::new()
-        .bin("mriya")
-        .features("test-backdoors")
-        .run()
-        .expect("failed to build mriya with test-backdoors feature")
-});
+#[path = "common/test_binary.rs"]
+mod test_binary;
 
-/// Creates a new command for the mriya binary with the test-backdoors feature.
-fn mriya_cmd() -> assert_cmd::Command {
-    MRIYA_BIN.command().into()
-}
-
+/// Checks that `mriya run` preserves its subprocess exit code and both output
+/// streams when the remote command returns status 7.
 #[test]
-fn cli_run_propagates_exit_code_and_streams_output() {
-    let mut cmd = mriya_cmd();
+fn cli_run_propagates_exit_code_and_streams_output() -> Result<(), &'static test_binary::BuildError>
+{
+    let mut cmd = test_binary::mriya_cmd()?;
     cmd.env("MRIYA_FAKE_RUN_ENABLE", "1");
     cmd.env("MRIYA_FAKE_RUN_MODE", "exit-7");
     cmd.args(["run", "--", "echo", "ok"]);
@@ -42,11 +22,14 @@ fn cli_run_propagates_exit_code_and_streams_output() {
         .code(7)
         .stdout(contains("fake-stdout"))
         .stderr(contains("fake-stderr"));
+    Ok(())
 }
 
+/// Checks the fallback boundary when a remote command ends without an exit
+/// status: the CLI exits non-zero and reports the missing status.
 #[test]
-fn cli_run_reports_missing_exit_code() {
-    let mut cmd = mriya_cmd();
+fn cli_run_reports_missing_exit_code() -> Result<(), &'static test_binary::BuildError> {
+    let mut cmd = test_binary::mriya_cmd()?;
     cmd.env("MRIYA_FAKE_RUN_ENABLE", "1");
     cmd.env("MRIYA_FAKE_RUN_MODE", "missing-exit");
     cmd.args(["run", "--", "echo", "ok"]);
@@ -55,4 +38,5 @@ fn cli_run_reports_missing_exit_code() {
         .failure()
         .code(1)
         .stderr(contains("remote command terminated without an exit status"));
+    Ok(())
 }
