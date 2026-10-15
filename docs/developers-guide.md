@@ -71,14 +71,17 @@ called workflow receives anyway.
 
 ## Scaleway lifecycle tests
 
-The readiness and teardown polling loops use `tokio::time::Instant` with Tokio
-sleeps. Pure polling unit and property tests pause runtime time, so timeout and
-polling behaviour can be exercised without waiting for wall-clock delays. The
-property tests generate histories of up to 16 observations and compare the
-loop's first terminal outcome with a small model. Histories cover instance
-states, both IPv4 and IPv6 addresses, invalid or missing addresses, absence,
-provider errors, and different observation orderings. This is sampled coverage,
-not a formal proof.
+The production `poll_for_public_ip` and `poll_until_gone` loops use
+`tokio::time::Instant` with Tokio sleeps. Their `wait_for_public_ip` and
+`wait_until_gone` wrappers provide settings and an instance-fetch closure; the
+readiness wrapper groups its SSH port, poll interval, and timeout in
+`PollSettings`. Unit and property tests pause runtime time using Tokio's
+`test-util` feature, enabled on the Tokio dev-dependency, so timeout and
+polling behaviour can be exercised without wall-clock delays. Property tests
+generate histories of up to 16 observations and compare the loop's first
+terminal outcome with a small model. Histories cover instance states, both IPv4
+and IPv6 addresses, invalid or missing addresses, absence, provider errors, and
+different observation orderings. This is sampled coverage, not a formal proof.
 
 The private `instance_api_base` field defaults to Scaleway's official Instance
 API. Tests replace it with a loopback HTTP script; it is used only for snapshot

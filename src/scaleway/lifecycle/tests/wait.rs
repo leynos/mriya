@@ -137,7 +137,7 @@ async fn wait_until_gone_times_out_on_residual(handle: InstanceHandle) {
 #[rstest]
 #[case::listening(true)]
 #[case::closed(false)]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wait_for_ssh_ready_matches_listener_state(
     handle: InstanceHandle,
     #[case] port_listens: bool,
@@ -169,6 +169,7 @@ async fn wait_for_ssh_ready_matches_listener_state(
         public_ip: addr.ip(),
         ssh_port: addr.port(),
     };
+    let started = tokio::time::Instant::now();
     let result = backend.wait_for_ssh_ready(&handle, &networking).await;
 
     if port_listens {
@@ -190,6 +191,7 @@ async fn wait_for_ssh_ready_matches_listener_state(
             addr
         );
     } else {
+        assert!(started.elapsed() >= backend.wait_timeout);
         assert!(
             matches!(
                 &result,
