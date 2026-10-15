@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 mod create;
+mod http;
 mod image;
 mod volume_attach;
 mod volume_create;
@@ -13,7 +14,7 @@ mod wait;
 use crate::scaleway::types::{Action, InstanceId, InstanceState};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-const SCALEWAY_INSTANCE_API_BASE: &str = "https://api.scaleway.com/instance/v1";
+pub(super) const SCALEWAY_INSTANCE_API_BASE: &str = "https://api.scaleway.com/instance/v1";
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()

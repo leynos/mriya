@@ -35,6 +35,10 @@ struct CreateServerResponse {
 }
 
 impl ScalewayBackend {
+    /// Powers on a stopped instance only when `poweron` is an allowed action.
+    ///
+    /// For example, a running snapshot succeeds without a request, while a
+    /// stopped snapshot offering only `reboot` returns `PowerOnNotAllowed`.
     pub(in crate::scaleway) async fn power_on_if_needed(
         &self,
         zone: &Zone,
@@ -49,9 +53,7 @@ impl ScalewayBackend {
             .iter()
             .any(|action| action.as_str() == "poweron")
         {
-            self.api
-                .perform_instance_action_async(zone.as_str(), snapshot.id.as_str(), "poweron")
-                .await?;
+            self.power_on_instance(zone, snapshot.id.as_str()).await?;
             return Ok(());
         }
 

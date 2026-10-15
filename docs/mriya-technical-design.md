@@ -229,12 +229,12 @@ provisioning) that will guide subsequent optimizations.
 - Execute remote commands from the configured `remote_path` so callers do not
   need to prefix `cd` manually.
 
-### Implementation status (November 2025)
+### Implementation status (October 2026)
 
-- **Backend crate choice:** The MVP backend uses `scaleway-rs` (async, rustls
-  TLS) rather than the experimental `scaleway_sdk` because it already exposes
-  builders for instance creation, listing, and lifecycle actions needed for the
-  create → wait → destroy loop.
+- **Backend API boundary:** The backend retains `scaleway-rs` for image searches
+  and the instance lookup needed to recover the root volume during detachment.
+  Direct HTTP handles instance creation, volume creation and attachment
+  updates, and lifecycle snapshot listing, power-on, and deletion.
 - **Configuration:** Credentials and defaults are layered via `ortho-config`
   with the `SCW_*` prefix. The loader honours defaults (zone `fr-par-1`, type
   `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges
@@ -242,12 +242,26 @@ provisioning) that will guide subsequent optimizations.
   fail fast during validation.
 - **Lifecycle contract:** Creation resolves the freshest image ID matching the
   requested label and architecture in the target zone, then requests a public
-  routed IP so SSH is reachable. Readiness polling runs every 5 seconds with a
-  5-minute cap and requires both a public IPv4 and the `running` state.
+  routed IP so SSH is reachable. Readiness polling runs every 5 seconds, using
+  a 5-minute polling deadline, and requires a `running` state with a parseable
+  public IP.
 - **Teardown verification:** Destruction calls the Instances API delete
   endpoint then polls until the server disappears, failing the integration test
   if any residual resource remains. Integration coverage provisions the
   smallest shape (`DEV1-S`) to keep cost and blast radius low.
+
+### Scaleway HTTP boundary decision (15 October 2026)
+
+Snapshot listing, power-on, and deletion use the shared HTTP client through
+`src/scaleway/lifecycle/http.rs`; the client is defined in
+`src/scaleway/lifecycle/mod.rs`. The private `instance_api_base` defaults to
+Scaleway's official Instance API and lets tests substitute a loopback server.
+Each request has a 30-second request timeout, not a hard lifecycle timeout;
+`wait_timeout` remains the polling-loop deadline. The readiness wrapper groups
+its settings in `PollSettings`, and the production `poll_for_public_ip` and
+`poll_until_gone` loops receive an instance-fetch closure. HTTP failures map to
+the existing `ScalewayBackendError::Provider` variant; no public error variants
+changed.
 
 ## Backend Abstraction Design
 
@@ -333,18 +347,23 @@ classDiagram
     }
 
     class ScalewayBackend {
-        +ScalewayApi api
-        +ScalewayConfig config
-        +u16 ssh_port
-        +Duration poll_interval
-        +Duration wait_timeout
+        -ScalewayApi api
+        -String instance_api_base
+        -ScalewayConfig config
+        -Option~String~ test_run_id
+        -u16 ssh_port
+        -Duration poll_interval
+        -Duration wait_timeout
         +new(config ScalewayConfig) Result~ScalewayBackend, ScalewayBackendError~
         +default_request() Result~InstanceRequest, ScalewayBackendError~
-        +resolve_image_id(request InstanceRequest) Result~String, ScalewayBackendError~
-        +power_on_if_needed(zone String, instance InstanceSnapshot) Result~(), ScalewayBackendError~
-        +fetch_instance(handle InstanceHandle) Result~Option~InstanceSnapshot~, ScalewayBackendError~
-        +wait_for_public_ip(handle InstanceHandle) Result~InstanceNetworking, ScalewayBackendError~
-        +wait_until_gone(handle InstanceHandle) Result~(), ScalewayBackendError~
+        -resolve_image_id(request InstanceRequest) Result~String, ScalewayBackendError~
+        -list_instance(handle InstanceHandle) Result~Option~ScalewayInstance~, ScalewayBackendError~
+        -power_on_if_needed(zone Zone, instance InstanceSnapshot) Result~(), ScalewayBackendError~
+        -power_on_instance(zone Zone, instance_id String) Result~(), ScalewayBackendError~
+        -fetch_instance(handle InstanceHandle) Result~Option~InstanceSnapshot~, ScalewayBackendError~
+        -wait_for_public_ip(handle InstanceHandle) Result~InstanceNetworking, ScalewayBackendError~
+        -wait_until_gone(handle InstanceHandle) Result~(), ScalewayBackendError~
+        -delete_instance(handle InstanceHandle) Result~(), ScalewayBackendError~
     }
 
     class ScalewayBackendError {
@@ -363,6 +382,10 @@ classDiagram
         <<external>>
     }
 
+    class ReqwestClient {
+        <<external>>
+    }
+
     class ScalewayInstance {
         <<external>>
     }
@@ -374,7 +397,8 @@ classDiagram
     ScalewayConfig --> InstanceRequest : builds
     ScalewayConfig --> ConfigError : uses
     ScalewayBackend --> ScalewayConfig : holds
-    ScalewayBackend --> ScalewayApi : uses
+    ScalewayBackend --> ScalewayApi : SDK image and volume lookup
+    ScalewayBackend --> ReqwestClient : shared direct HTTP client
     ScalewayBackend ..> ScalewayBackendError : returns
     ScalewayBackend ..> InstanceRequest : consumes
     ScalewayBackend ..> InstanceHandle : returns

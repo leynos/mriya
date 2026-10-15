@@ -69,6 +69,37 @@ which runs for every pull request, calls the release workflow without
 `secrets: inherit`: the release workflow reads only `GITHUB_TOKEN`, which a
 called workflow receives anyway.
 
+## Scaleway lifecycle tests
+
+The production `poll_for_public_ip` and `poll_until_gone` loops use
+`tokio::time::Instant` with Tokio sleeps. Their `wait_for_public_ip` and
+`wait_until_gone` wrappers provide settings and an instance-fetch closure; the
+readiness wrapper groups its SSH port, poll interval, and timeout in
+`PollSettings`. Unit and property tests pause runtime time using Tokio's
+`test-util` feature, enabled on the Tokio dev-dependency, so timeout and
+polling behaviour can be exercised without wall-clock delays. Property tests
+generate histories of up to 16 observations and compare the loop's first
+terminal outcome with a small model. Histories cover instance states, both IPv4
+and IPv6 addresses, invalid or missing addresses, absence, provider errors, and
+different observation orderings. This is sampled coverage, not a formal proof.
+
+The private `instance_api_base` field defaults to Scaleway's official Instance
+API. Tests replace it with a loopback HTTP script; it is used only for snapshot
+`GET` requests, instance `DELETE` requests, and power-on `POST` requests. Those
+tests exercise the backend's `wait_for_ready` and `destroy` paths, including
+the SDK's full server response type, authentication header, query parameters,
+pagination, and provider error handling. A loopback SSH listener covers
+readiness through the SSH check. The shared HTTP client applies a 30-second
+per-request timeout to these calls. The base URL is an internal test seam, not
+a user configuration option.
+
+Mutation exclusions in `.cargo/mutants.toml` remain limited to test-backdoor
+scaffolding and the equivalent instance-request builder mutant. Scoped mutation
+counts recorded before these lifecycle tests are historical results; rerun
+mutation testing against the current candidate before using counts as evidence.
+The loopback tests exercise the network-boundary survivors reported by the
+earlier run.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend

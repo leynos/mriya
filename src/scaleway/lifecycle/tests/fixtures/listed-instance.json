@@ -1,0 +1,87 @@
+{
+  "servers": [
+    {
+      "name": "",
+      "organization": "",
+      "project": "",
+      "commercial_type": "",
+      "hostname": "",
+      "mac_address": "",
+      "boot_type": "",
+      "state_detail": "",
+      "arch": "",
+      "zone": "",
+      "id": "id",
+      "state": "running",
+      "allowed_actions": [
+        "reboot"
+      ],
+      "tags": [],
+      "creation_date": null,
+      "modification_date": null,
+      "dynamic_ip_required": true,
+      "routed_ip_enabled": true,
+      "enable_ipv6": false,
+      "image": {
+        "id": "",
+        "name": "",
+        "arch": "",
+        "creation_date": "",
+        "modification_date": "",
+        "organization": "",
+        "state": "",
+        "project": "",
+        "zone": "",
+        "from_server": null,
+        "public": false,
+        "tags": [],
+        "root_volume": {
+          "id": "root",
+          "name": "",
+          "size": 0,
+          "volume_type": ""
+        },
+        "default_bootscript": null,
+        "extra_volumes": {}
+      },
+      "protected": false,
+      "private_ip": null,
+      "public_ip": {
+        "id": "ip",
+        "address": "127.0.0.1",
+        "gateway": null,
+        "netmask": "255.255.255.0",
+        "family": "inet",
+        "dynamic": true,
+        "provisioning_mode": "dhcp",
+        "tags": [],
+        "state": "attached"
+      },
+      "public_ips": [],
+      "location": null,
+      "ipv6": null,
+      "bootscript": {
+        "bootcmdargs": "",
+        "dtb": "",
+        "id": "",
+        "initrd": "",
+        "kernel": "",
+        "organization": "",
+        "project": "",
+        "title": "",
+        "zone": "",
+        "default": false,
+        "public": false,
+        "arch": null
+      },
+      "volumes": {},
+      "security_group": {
+        "id": "",
+        "name": ""
+      },
+      "maintenances": [],
+      "placement_group": null,
+      "private_nics": []
+    }
+  ]
+}

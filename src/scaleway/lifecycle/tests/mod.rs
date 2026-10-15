@@ -8,7 +8,7 @@ use scaleway_rs::{ScalewayApi, ScalewayImage};
 
 use super::InstanceSnapshot;
 use crate::ScalewayConfig;
-use crate::backend::InstanceRequest;
+use crate::backend::{InstanceHandle, InstanceRequest};
 use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
@@ -93,10 +93,13 @@ fn base_request() -> InstanceRequest {
     }
 }
 
+/// Uses short poll settings and a loopback API base to keep lifecycle tests
+/// local.
 #[fixture]
 fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
+        instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
         config: dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
@@ -117,17 +120,38 @@ async fn power_on_if_needed_returns_ok_for_running(backend_fixture: ScalewayBack
     );
 }
 
+// Exact poweron matching kills the equality-mutant survivor tracked in #58.
+/// Rejects stopped snapshots unless `poweron` is an allowed action.
 #[rstest]
+#[case::no_actions(Vec::<Action>::new())]
+#[case::unrelated_action(vec![Action::from("reboot")])]
 #[tokio::test]
-async fn power_on_if_needed_errors_when_not_allowed(backend_fixture: ScalewayBackend) {
-    let snap = snapshot("id", "stopped", Vec::<Action>::new(), None);
-    let zone = Zone::from("zone");
-    let result = backend_fixture.power_on_if_needed(&zone, &snap).await;
+async fn power_on_if_needed_errors_when_not_allowed(
+    backend_fixture: ScalewayBackend,
+    #[case] allowed: Vec<Action>,
+) {
+    let snap = snapshot("id", "stopped", allowed, None);
+    let result = backend_fixture
+        .power_on_if_needed(&Zone::from("zone"), &snap)
+        .await;
     assert!(
         matches!(result, Err(ScalewayBackendError::PowerOnNotAllowed { .. })),
         "expected PowerOnNotAllowed error, got {result:?}"
     );
 }
 
+/// Supplies the stable instance identity shared by lifecycle test cases.
+#[fixture]
+fn handle() -> InstanceHandle {
+    InstanceHandle {
+        id: String::from("id"),
+        zone: String::from("zone"),
+    }
+}
+
 mod image;
 mod wait;
+
+mod http_stub;
+mod network;
+mod properties;

@@ -1,161 +1,163 @@
 //! Tests for Scaleway readiness and teardown wait loops.
+//!
+//! The polling loops are exercised directly through the production
+//! `poll_for_public_ip` and `poll_until_gone` helpers with scripted fetch
+//! closures, so mutations to the loop bodies are observable. Kills the
+//! wait-loop survivors tracked in #58.
 
 use std::collections::VecDeque;
+use std::future::{Ready, ready};
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use rstest::rstest;
 use scaleway_rs::ScalewayApi;
-use tokio::time::sleep;
 
 use crate::backend::{InstanceHandle, InstanceNetworking};
 use crate::scaleway::DEFAULT_SSH_PORT;
 use crate::scaleway::types::Action;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
-use super::InstanceSnapshot;
+use super::super::wait::{PollSettings, poll_for_public_ip, poll_until_gone};
+use super::{InstanceSnapshot, handle};
 
-/// Minimal backend double to test wait loops without real API calls.
-struct FakeBackend {
-    snapshots: VecDeque<Option<InstanceSnapshot>>,
-    poll_interval: Duration,
-    wait_timeout: Duration,
-    ssh_port: u16,
-}
+type FetchResult = Result<Option<InstanceSnapshot>, ScalewayBackendError>;
 
-impl FakeBackend {
-    async fn wait_for_public_ip(
-        &mut self,
-        handle: &InstanceHandle,
-    ) -> Result<InstanceNetworking, ScalewayBackendError> {
-        let deadline = Instant::now() + self.wait_timeout;
-        let mut saw_running = false;
+const POLL_INTERVAL: Duration = Duration::from_millis(1);
+const WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
-        while Instant::now() <= deadline {
-            let server_opt = self.snapshots.pop_front().unwrap_or(None);
-            let Some(server) = server_opt else {
-                sleep(self.poll_interval).await;
-                continue;
-            };
-
-            if server.state.as_str() != "running" {
-                sleep(self.poll_interval).await;
-                continue;
-            }
-
-            saw_running = true;
-
-            if let Some(address) = server
-                .public_ip
-                .as_ref()
-                .and_then(|ip| IpAddr::from_str(ip).ok())
-            {
-                return Ok(InstanceNetworking {
-                    public_ip: address,
-                    ssh_port: self.ssh_port,
-                });
-            }
-
-            sleep(self.poll_interval).await;
-        }
-
-        if saw_running {
-            return Err(ScalewayBackendError::MissingPublicIp {
-                instance_id: handle.id.clone(),
-            });
-        }
-
-        Err(ScalewayBackendError::Timeout {
-            action: "wait_for_ready".to_owned(),
-            instance_id: handle.id.clone(),
-        })
-    }
-
-    async fn wait_until_gone(
-        &mut self,
-        handle: &InstanceHandle,
-    ) -> Result<(), ScalewayBackendError> {
-        let deadline = Instant::now() + self.wait_timeout;
-        while Instant::now() <= deadline {
-            let next = self.snapshots.pop_front().unwrap_or(None);
-            if next.is_none() {
-                return Ok(());
-            }
-            sleep(self.poll_interval).await;
-        }
-        Err(ScalewayBackendError::ResidualResource {
-            instance_id: handle.id.clone(),
-        })
-    }
-}
-
-#[tokio::test]
-async fn wait_for_public_ip_returns_missing_ip() {
-    let mut fake = FakeBackend {
-        snapshots: VecDeque::from(vec![
-            Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
-            Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
-        ]),
-        poll_interval: Duration::from_millis(1),
-        wait_timeout: Duration::from_millis(5),
+/// Uses short polling intervals with a caller-selected test deadline.
+fn poll_settings(wait_timeout: Duration) -> PollSettings {
+    PollSettings {
         ssh_port: DEFAULT_SSH_PORT,
-    };
-    let handle = InstanceHandle {
-        id: "id".to_owned(),
-        zone: "zone".to_owned(),
-    };
-    let result = fake.wait_for_public_ip(&handle).await;
+        poll_interval: POLL_INTERVAL,
+        wait_timeout,
+    }
+}
+
+/// Returns a fetch closure yielding the given snapshots in order, then
+/// `None` once the script is exhausted.
+fn scripted_fetch(snapshots: Vec<Option<InstanceSnapshot>>) -> impl FnMut() -> Ready<FetchResult> {
+    let mut queue = VecDeque::from(snapshots);
+    move || ready(Ok(queue.pop_front().unwrap_or(None)))
+}
+
+/// Skips an earlier `starting` snapshot and returns networking once running.
+#[rstest]
+#[tokio::test(start_paused = true)]
+async fn wait_for_public_ip_returns_networking_once_running(handle: InstanceHandle) {
+    let fetch = scripted_fetch(vec![
+        Some(super::snapshot(
+            "id",
+            "starting",
+            Vec::<Action>::new(),
+            None,
+        )),
+        Some(super::snapshot(
+            "id",
+            "running",
+            Vec::<Action>::new(),
+            Some("192.0.2.10"),
+        )),
+    ]);
+    let networking = poll_for_public_ip(&handle, poll_settings(WAIT_TIMEOUT), fetch)
+        .await
+        .expect("running snapshot should expose networking");
+    let expected_ip = IpAddr::from_str("192.0.2.10").expect("test address should parse");
+    assert_eq!(networking.public_ip, expected_ip);
+    assert_eq!(networking.ssh_port, DEFAULT_SSH_PORT);
+}
+
+/// Distinguishes a running instance without an address from a readiness
+/// timeout.
+#[rstest]
+#[tokio::test(start_paused = true)]
+async fn wait_for_public_ip_returns_missing_ip(handle: InstanceHandle) {
+    let fetch = scripted_fetch(vec![
+        Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
+        Some(super::snapshot("id", "running", Vec::<Action>::new(), None)),
+    ]);
+    let result = poll_for_public_ip(&handle, poll_settings(Duration::from_millis(5)), fetch).await;
     assert!(
         matches!(result, Err(ScalewayBackendError::MissingPublicIp { .. })),
         "unexpected wait_for_public_ip outcome: {result:?}"
     );
 }
 
-#[tokio::test]
-async fn wait_for_ssh_ready_succeeds_when_port_listens() {
+/// Confirms absent and starting snapshots exhaust the configured deadline.
+#[rstest]
+#[tokio::test(start_paused = true)]
+async fn wait_for_public_ip_times_out_when_never_running(handle: InstanceHandle) {
+    let fetch = scripted_fetch(vec![
+        None,
+        Some(super::snapshot(
+            "id",
+            "starting",
+            Vec::<Action>::new(),
+            None,
+        )),
+    ]);
+    let started = tokio::time::Instant::now();
+    let result = poll_for_public_ip(&handle, poll_settings(Duration::from_millis(5)), fetch).await;
+    assert!(
+        matches!(result, Err(ScalewayBackendError::Timeout { ref action, ref instance_id })
+            if action == "wait_for_ready" && instance_id == "id"),
+        "unexpected readiness outcome: {result:?}"
+    );
+    assert!(started.elapsed() >= Duration::from_millis(5));
+}
+
+/// Treats an absent provider snapshot as successful teardown.
+#[rstest]
+#[tokio::test(start_paused = true)]
+async fn wait_until_gone_returns_ok_when_instance_absent(handle: InstanceHandle) {
+    let fetch = scripted_fetch(vec![None]);
+    let result = poll_until_gone(&handle, POLL_INTERVAL, WAIT_TIMEOUT, fetch).await;
+    assert!(
+        result.is_ok(),
+        "expected Ok for absent instance: {result:?}"
+    );
+}
+
+/// Reports a residual resource when the instance remains listed until timeout.
+#[rstest]
+#[tokio::test(start_paused = true)]
+async fn wait_until_gone_times_out_on_residual(handle: InstanceHandle) {
+    let snapshot = super::snapshot("id", "running", Vec::<Action>::new(), None);
+    let fetch = move || ready(Ok(Some(snapshot.clone())));
+    let result = poll_until_gone(&handle, POLL_INTERVAL, Duration::from_millis(2), fetch).await;
+    assert!(matches!(
+        result,
+        Err(ScalewayBackendError::ResidualResource { .. })
+    ));
+}
+
+/// Covers successful and timed-out SSH probes against loopback listener states.
+#[rstest]
+#[case::listening(true)]
+#[case::closed(false)]
+#[tokio::test(start_paused = true)]
+async fn wait_for_ssh_ready_matches_listener_state(
+    handle: InstanceHandle,
+    #[case] port_listens: bool,
+) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test TCP listener should bind to a loopback port");
     let addr = listener
         .local_addr()
         .expect("test TCP listener should expose its local address");
-    tokio::spawn(async move { if let Ok((_stream, _addr)) = listener.accept().await {} });
+    let accept_task = if port_listens {
+        Some(tokio::spawn(async move { listener.accept().await }))
+    } else {
+        drop(listener);
+        None
+    };
 
     let backend = ScalewayBackend {
         api: ScalewayApi::new("dummy"),
-        config: super::dummy_config(),
-        test_run_id: None,
-        ssh_port: DEFAULT_SSH_PORT,
-        poll_interval: Duration::from_millis(1),
-        wait_timeout: Duration::from_millis(200),
-    };
-
-    let handle = InstanceHandle {
-        id: String::from("id"),
-        zone: String::from("zone"),
-    };
-    let networking = InstanceNetworking {
-        public_ip: addr.ip(),
-        ssh_port: addr.port(),
-    };
-    backend
-        .wait_for_ssh_ready(&handle, &networking)
-        .await
-        .expect("SSH readiness check should succeed while the test port listens");
-}
-
-#[tokio::test]
-async fn wait_for_ssh_ready_times_out_when_port_closed() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("test TCP listener should bind before simulating a closed port");
-    let addr = listener
-        .local_addr()
-        .expect("test TCP listener should expose its address before closing");
-    drop(listener);
-
-    let backend = ScalewayBackend {
-        api: ScalewayApi::new("dummy"),
+        instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
         config: super::dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
@@ -163,41 +165,41 @@ async fn wait_for_ssh_ready_times_out_when_port_closed() {
         wait_timeout: Duration::from_millis(50),
     };
 
-    let handle = InstanceHandle {
-        id: String::from("id"),
-        zone: String::from("zone"),
-    };
     let networking = InstanceNetworking {
-        public_ip: IpAddr::from_str("127.0.0.1").expect("loopback address literal should parse"),
+        public_ip: addr.ip(),
         ssh_port: addr.port(),
     };
-    let err = backend
-        .wait_for_ssh_ready(&handle, &networking)
-        .await
-        .expect_err("expected timeout");
-    assert!(matches!(err, ScalewayBackendError::Timeout { .. }));
-}
+    let started = tokio::time::Instant::now();
+    let result = backend.wait_for_ssh_ready(&handle, &networking).await;
 
-#[tokio::test]
-async fn wait_until_gone_times_out_on_residual() {
-    let mut fake = FakeBackend {
-        snapshots: VecDeque::from(vec![Some(super::snapshot(
-            "id",
-            "running",
-            Vec::<Action>::new(),
-            None,
-        ))]),
-        poll_interval: Duration::from_millis(1),
-        wait_timeout: Duration::from_millis(2),
-        ssh_port: DEFAULT_SSH_PORT,
-    };
-    let handle = InstanceHandle {
-        id: "id".to_owned(),
-        zone: "zone".to_owned(),
-    };
-    let result = fake.wait_until_gone(&handle).await;
-    assert!(matches!(
-        result,
-        Err(ScalewayBackendError::ResidualResource { .. })
-    ));
+    if port_listens {
+        assert!(
+            matches!(&result, Ok(())),
+            "expected success while the loopback port listens: {result:?}"
+        );
+        let listener_task = accept_task.expect("listening case should retain its accept task");
+        let accepted = tokio::time::timeout(Duration::from_millis(100), listener_task)
+            .await
+            .expect("listener should accept within the bounded test deadline")
+            .expect("listener task should not panic")
+            .expect("readiness probe should connect to the listening port");
+        let (accepted_stream, _peer_address) = accepted;
+        assert_eq!(
+            accepted_stream
+                .local_addr()
+                .expect("accepted stream should expose its local address"),
+            addr
+        );
+    } else {
+        assert!(started.elapsed() >= backend.wait_timeout);
+        assert!(
+            matches!(
+                &result,
+                Err(ScalewayBackendError::Timeout { action, instance_id })
+                    if action == "wait_for_ssh_ready" && instance_id == &handle.id
+            ),
+            "expected the SSH readiness timeout for {}: {result:?}",
+            handle.id
+        );
+    }
 }
