@@ -114,6 +114,14 @@ concurrently. A nested build can fill stderr while its caller waits for stdout,
 blocking compilation. Build errors retain both streams so compiler diagnostics
 remain available when a build fails.
 
+Property coverage uses `proptest` for 256 generated Cargo message histories of
+0–31 records, varying matching fields, distractors, repeated matches, and
+missing executable paths. An independent record-oriented oracle selects the
+last executable on a matching record and retains an earlier path when a later
+match has no executable. A spawn regression also uses a guaranteed-missing
+absolute executable and checks for `Spawn(NotFound)`. These generated cases are
+sampled coverage, not a formal proof.
+
 ### Cranelift
 
 Exception: Cranelift is not the development-profile backend. The full suite was

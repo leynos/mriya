@@ -41,6 +41,13 @@ struct TestBinary {
 }
 
 impl TestBinary {
+    /// Creates a fresh command for one CLI assertion sequence.
+    ///
+    /// Each caller receives its own argument builder while sharing the cached
+    /// executable selected for this test process.
+    ///
+    /// For example, two calls give separate empty argument lists that invoke
+    /// the same executable.
     fn command(&self) -> assert_cmd::Command {
         assert_cmd::Command::new(&self.executable)
     }
@@ -61,11 +68,28 @@ pub(crate) fn mriya_cmd() -> Result<assert_cmd::Command, &'static BuildError> {
     MRIYA_BIN.as_ref().map(TestBinary::command)
 }
 
+/// Builds the test binary using the Cargo executable and environment inherited
+/// by the integration-test process.
+///
+/// Cargo's configured target directory and shared cache remain in effect, so
+/// the reported executable is the one Cargo actually produced for this build.
+///
+/// For example, the first `mriya_cmd()` call initializes the cached binary;
+/// later calls reuse its executable path.
 fn build_test_binary() -> Result<TestBinary, BuildError> {
     let mut command = Command::new(env!("CARGO"));
     build_binary_with_command(&mut command)
 }
 
+/// Adds the CLI-test build request to a command and captures its completed
+/// process output.
+///
+/// `Command::output` drains stdout and stderr together, avoiding a pipe-capacity
+/// deadlock when Cargo emits a large diagnostic stream. Spawn and build errors
+/// remain distinct for callers and tests.
+///
+/// For example, a missing program returns `Spawn`, while a process that exits
+/// unsuccessfully returns `CargoFailed` with both streams retained.
 fn build_binary_with_command(command: &mut Command) -> Result<TestBinary, BuildError> {
     let output = command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -83,6 +107,13 @@ fn build_binary_with_command(command: &mut Command) -> Result<TestBinary, BuildE
     binary_from_output(&output)
 }
 
+/// Converts Cargo's completed build output into the executable it reported.
+///
+/// Failed builds retain both captured streams for diagnosis; successful stdout
+/// must be UTF-8 containing Cargo JSON messages.
+///
+/// For example, a successful output with a matching binary record yields its
+/// reported path; a non-zero status yields `CargoFailed` with captured output.
 fn binary_from_output(output: &Output) -> Result<TestBinary, BuildError> {
     if !output.status.success() {
         return Err(BuildError::CargoFailed {
@@ -97,6 +128,14 @@ fn binary_from_output(output: &Output) -> Result<TestBinary, BuildError> {
     Ok(TestBinary { executable })
 }
 
+/// Selects the last reported executable from matching Cargo artefact records.
+///
+/// The external reason value is Cargo's exact `"compiler-artifact"` string.
+/// Every nonempty line is parsed, so malformed later messages remain errors;
+/// matching records without an executable leave the last reported one intact.
+///
+/// For example, if two matching artefacts provide paths, the later path wins;
+/// a later matching record without a path leaves that selection unchanged.
 fn executable_from_cargo_messages(stdout: &str) -> Result<Utf8PathBuf, BuildError> {
     let mut executable = None;
     for line in stdout.lines().filter(|line| !line.is_empty()) {
@@ -109,6 +148,10 @@ fn executable_from_cargo_messages(stdout: &str) -> Result<Utf8PathBuf, BuildErro
     executable.ok_or(BuildError::MissingExecutable)
 }
 
+/// Recognizes a Cargo `"compiler-artifact"` record for the `mriya` binary target.
+///
+/// For example, reason `"compiler-artifact"`, target `"mriya"`, and kind
+/// `"bin"` match, while an `"example"` kind does not.
 fn is_mriya_binary(message: &CargoMessage) -> bool {
     message.reason == "compiler-artifact"
         && message.target.as_ref().is_some_and(|target| {
@@ -137,6 +180,7 @@ mod tests {
 
     use super::{BuildError, build_binary_with_command, executable_from_cargo_messages};
 
+    /// Creates one valid JSON artefact line using Cargo's exact protocol reason.
     fn artefact_message(name: &str, kind: &[&str], executable: &str) -> String {
         serde_json::json!({
             "reason": "compiler-artifact",
@@ -146,6 +190,7 @@ mod tests {
         .to_string()
     }
 
+    /// Starts a shell script for process-boundary tests without invoking Cargo.
     fn shell_command(script: &str) -> Command {
         let mut command = Command::new("sh");
         command.args(["-c", script]);
@@ -254,4 +299,30 @@ mod tests {
             Err(BuildError::InvalidUtf8(_))
         ));
     }
+
+    #[test]
+    fn missing_absolute_executable_preserves_the_spawn_error() {
+        let temp_directory = tempfile::tempdir().expect("temporary directory should be created");
+        let directory = camino::Utf8Path::from_path(temp_directory.path())
+            .expect("temporary directory path should be UTF-8");
+        let executable = directory.join("missing-cargo");
+        assert!(executable.is_absolute());
+        assert!(
+            !executable.exists(),
+            "fresh temporary directory should not contain the executable"
+        );
+
+        let mut command = Command::new(&executable);
+        let error = build_binary_with_command(&mut command)
+            .expect_err("missing executable should fail before the build starts");
+
+        assert!(matches!(
+            error,
+            BuildError::Spawn(source) if source.kind() == std::io::ErrorKind::NotFound
+        ));
+    }
 }
+
+#[cfg(test)]
+#[path = "test_binary_properties.rs"]
+mod properties;

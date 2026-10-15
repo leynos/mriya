@@ -45,6 +45,20 @@ pub struct CliContext {
 }
 
 impl CliContext {
+    /// Creates a command for the lazily compiled, feature-enabled test binary.
+    /// The executable is reused across scenarios while each call returns a
+    /// fresh command.
+    ///
+    /// The command selects fake request-dump mode and applies this context's
+    /// fixture defaults plus dummy Scaleway credentials. Other environment
+    /// variables remain inherited from the test process. If Cargo exits with a
+    /// failure, `BuildError` retains its status, stdout, and stderr; launch and
+    /// artefact-selection failures are also returned as `BuildError`.
+    ///
+    /// # Example
+    ///
+    /// Add `run` options to the returned command, then inspect the captured
+    /// request dump to verify how cloud-init input was represented.
     pub fn base_command(
         &self,
     ) -> Result<assert_cmd::Command, &'static crate::test_binary::BuildError> {
