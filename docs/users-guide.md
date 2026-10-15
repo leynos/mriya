@@ -238,6 +238,12 @@ volume_size_gb = 50
 - Destroys the instance and polls until the API no longer lists it, failing if
   any residual resource remains.
 
+Each API request to list instances, power an instance on, or delete it has a
+30-second timeout. If a request times out, Mriya reports a provider error;
+check connectivity to the Scaleway API and the instance's actual state before
+retrying, as the request may have reached Scaleway even though its response did
+not arrive.
+
 ## Running the integration check
 
 The behavioural suite provisions a real DEV1-S instance to prove create → wait

@@ -178,6 +178,7 @@ fn read_volume_id_rejects_non_table_root(
 }
 
 // Kills the `current_volume_id` and `path_exists` survivors tracked in #55.
+/// Confirms a persisted volume ID is read back exactly by the production store.
 #[rstest]
 fn current_volume_id_round_trips_written_id(
     config_fixture: anyhow::Result<ConfigFixture>,
@@ -199,6 +200,7 @@ fn current_volume_id_round_trips_written_id(
     Ok(())
 }
 
+/// Confirms a missing config remains a successful `None` result.
 #[rstest]
 fn current_volume_id_returns_none_when_config_missing(
     config_fixture: anyhow::Result<ConfigFixture>,
@@ -215,6 +217,7 @@ fn current_volume_id_returns_none_when_config_missing(
     Ok(())
 }
 
+/// Checks that probing through a regular-file parent preserves the I/O error.
 #[rstest]
 fn path_exists_reports_non_directory_parent(
     config_fixture: anyhow::Result<ConfigFixture>,

@@ -12,6 +12,7 @@ use crate::backend::{Backend, InstanceHandle};
 use crate::scaleway::types::{Action, Zone};
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
+/// Represents a successful provider response with no listed instances.
 fn empty_list() -> Reply {
     Reply {
         status: 200,
@@ -19,6 +20,7 @@ fn empty_list() -> Reply {
     }
 }
 
+/// Loads the complete server response fixture expected by the Scaleway SDK.
 fn listed_instance() -> Reply {
     Reply {
         status: 200,
@@ -26,6 +28,7 @@ fn listed_instance() -> Reply {
     }
 }
 
+/// Represents a structured provider denial for error-preservation checks.
 fn provider_error() -> Reply {
     Reply {
         status: 403,
@@ -33,6 +36,7 @@ fn provider_error() -> Reply {
     }
 }
 
+/// Parses a captured request target so tests can inspect its path and query.
 fn request_url(request: &str) -> Result<reqwest::Url> {
     let path = request
         .split_whitespace()
@@ -41,6 +45,8 @@ fn request_url(request: &str) -> Result<reqwest::Url> {
     reqwest::Url::parse(&format!("http://localhost{path}")).context("invalid request URL")
 }
 
+/// Checks snapshot mapping and paginated GET request details through the SDK
+/// DTO.
 #[rstest]
 #[tokio::test]
 async fn fetch_instance_maps_the_provider_snapshot(
@@ -81,6 +87,8 @@ async fn fetch_instance_maps_the_provider_snapshot(
     Ok(())
 }
 
+/// Exercises readiness through provider polling and a listening loopback SSH
+/// port.
 #[rstest]
 #[tokio::test]
 async fn wait_for_ready_fetches_and_checks_ssh(
@@ -102,6 +110,8 @@ async fn wait_for_ready_fetches_and_checks_ssh(
     Ok(())
 }
 
+/// Checks DELETE followed by polling for absence or a residual-resource
+/// timeout.
 #[rstest]
 #[case::gone(false)]
 #[case::residual(true)]
@@ -152,6 +162,7 @@ async fn destroy_deletes_then_waits_for_disappearance(
     Ok(())
 }
 
+/// Ensures structured provider errors remain visible to lifecycle callers.
 #[rstest]
 #[tokio::test]
 async fn fetch_instance_preserves_provider_errors(
@@ -169,6 +180,7 @@ async fn fetch_instance_preserves_provider_errors(
     Ok(())
 }
 
+/// Checks that the power-on wrapper sends the expected action request locally.
 #[rstest]
 #[tokio::test]
 async fn power_on_uses_the_stubbed_action_endpoint(

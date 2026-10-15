@@ -21,6 +21,10 @@ use super::InstanceSnapshot;
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl ScalewayBackend {
+    /// Maps the selected provider instance into the snapshot used by lifecycle
+    /// polling, preserving absence and provider errors.
+    /// For example, no match returns `Ok(None)` and lookup failures remain
+    /// provider errors.
     pub(in crate::scaleway) async fn fetch_instance(
         &self,
         handle: &InstanceHandle,
@@ -39,6 +43,10 @@ impl ScalewayBackend {
         }))
     }
 
+    /// Polls the provider until the instance is running with a public IP.
+    ///
+    /// For example, a running snapshot with an invalid or missing address
+    /// yields `MissingPublicIp` after the configured wait period.
     pub(in crate::scaleway) async fn wait_for_public_ip(
         &self,
         handle: &InstanceHandle,
@@ -72,6 +80,11 @@ impl ScalewayBackend {
         })
     }
 
+    /// Polls the provider after deletion until the instance is no longer
+    /// listed.
+    ///
+    /// For example, an empty provider result returns `Ok(())`; a resource that
+    /// remains listed through the deadline returns `ResidualResource`.
     pub(in crate::scaleway) async fn wait_until_gone(
         &self,
         handle: &InstanceHandle,

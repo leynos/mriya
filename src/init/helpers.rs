@@ -56,6 +56,8 @@ mod tests {
         assert_eq!(name, "mriya-fancy-project-cache");
     }
 
+    /// Guards the exact byte conversion so the expected value cannot mutate
+    /// together with the conversion constant.
     #[test]
     fn volume_size_bytes_converts_gb() {
         let bytes = volume_size_bytes(2).expect("size bytes");

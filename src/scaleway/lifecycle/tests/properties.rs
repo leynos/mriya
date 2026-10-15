@@ -35,6 +35,8 @@ enum Outcome {
     Unexpected(String),
 }
 
+/// Generates at most 16 ordered observations, including absence, errors, and
+/// snapshots with valid, missing, or invalid addresses.
 fn observations() -> impl Strategy<Value = Vec<Observation>> {
     let address_strategy = prop::option::of(prop_oneof![
         any::<[u8; 4]>().prop_map(|bytes| Ipv4Addr::from(bytes).to_string()),
@@ -56,6 +58,7 @@ fn observations() -> impl Strategy<Value = Vec<Observation>> {
     )
 }
 
+/// Converts one generated observation into the fetch result seen by a poller.
 fn fetch_result(
     observation: Observation,
 ) -> Result<Option<super::InstanceSnapshot>, ScalewayBackendError> {
@@ -73,6 +76,8 @@ fn fetch_result(
     }
 }
 
+/// Models the first fetch error or running snapshot with a valid IP; otherwise
+/// running without one yields `MissingIp`, and no running state yields timeout.
 fn readiness_model(script: &[Observation], port: u16) -> Outcome {
     let terminal = script.iter().find_map(|observation| match observation {
         Observation::Error => Some(Outcome::Provider(String::from("scripted failure"))),
@@ -102,6 +107,8 @@ fn readiness_model(script: &[Observation], port: u16) -> Outcome {
     })
 }
 
+/// Models the first absence or provider error; a history with neither remains
+/// residual through the polling deadline.
 fn teardown_model(script: &[Observation]) -> Outcome {
     script
         .iter()
@@ -113,6 +120,8 @@ fn teardown_model(script: &[Observation]) -> Outcome {
         .unwrap_or_else(|| Outcome::Residual(String::from("id")))
 }
 
+/// Normalizes lifecycle errors so poller results can be compared with the
+/// model.
 fn error_outcome(error: ScalewayBackendError) -> Outcome {
     match error {
         ScalewayBackendError::MissingPublicIp { instance_id } => Outcome::MissingIp(instance_id),
@@ -126,6 +135,7 @@ fn error_outcome(error: ScalewayBackendError) -> Outcome {
     }
 }
 
+/// Converts readiness success or failure into the model's outcome shape.
 fn ready_outcome(result: Result<InstanceNetworking, ScalewayBackendError>) -> Outcome {
     match result {
         Ok(networking) => Outcome::Ready(networking.public_ip, networking.ssh_port),
@@ -133,6 +143,7 @@ fn ready_outcome(result: Result<InstanceNetworking, ScalewayBackendError>) -> Ou
     }
 }
 
+/// Converts teardown success or failure into the model's outcome shape.
 fn gone_outcome(result: Result<(), ScalewayBackendError>) -> Outcome {
     match result {
         Ok(()) => Outcome::Gone,
@@ -141,6 +152,8 @@ fn gone_outcome(result: Result<(), ScalewayBackendError>) -> Outcome {
 }
 
 proptest! {
+    /// Checks readiness against an independent first-terminal rule over
+    /// generated histories; bounded samples cover orderings but are not proof.
     #[test]
     fn readiness_matches_first_terminal_observation(script in observations(), port in any::<u16>()) {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -162,6 +175,8 @@ proptest! {
         prop_assert_eq!(ready_outcome(actual), expected);
     }
 
+    /// Checks teardown's first absence-or-error result against an independent
+    /// model across bounded generated histories.
     #[test]
     fn teardown_matches_first_absence_or_error(script in observations()) {
         let runtime = tokio::runtime::Builder::new_current_thread()

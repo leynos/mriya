@@ -85,6 +85,7 @@ fn ssh_option_strings(cfg: SyncConfig) -> Result<Vec<String>, SyncError> {
         .collect())
 }
 
+/// Emits the opt-out flag only when strict host-key checking is disabled.
 #[rstest]
 #[case(false, true)]
 #[case(true, false)]
@@ -105,6 +106,7 @@ fn common_ssh_options_toggles_strict_host_key_checking(
     );
 }
 
+/// Preserves a configured known-hosts path in the generated SSH options.
 #[rstest]
 fn common_ssh_options_includes_known_hosts_file_when_set(base_config: SyncConfig) {
     let cfg = SyncConfig {
@@ -118,6 +120,7 @@ fn common_ssh_options_includes_known_hosts_file_when_set(base_config: SyncConfig
     );
 }
 
+/// Omits the known-hosts option when its configured path is blank.
 #[rstest]
 #[case("")]
 #[case("   ")]

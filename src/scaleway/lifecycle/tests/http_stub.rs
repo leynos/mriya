@@ -62,6 +62,8 @@ impl StubApi {
     }
 }
 
+/// Reads one complete HTTP request, rejecting premature close and oversized
+/// input.
 async fn read_request(stream: &mut TcpStream) -> Result<String> {
     let mut buffer = Vec::new();
     loop {

@@ -93,6 +93,8 @@ fn base_request() -> InstanceRequest {
     }
 }
 
+/// Uses short poll settings and a loopback API base to keep lifecycle tests
+/// local.
 #[fixture]
 fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
@@ -119,6 +121,7 @@ async fn power_on_if_needed_returns_ok_for_running(backend_fixture: ScalewayBack
 }
 
 // Exact poweron matching kills the equality-mutant survivor tracked in #58.
+/// Rejects stopped snapshots unless `poweron` is an allowed action.
 #[rstest]
 #[case::no_actions(Vec::<Action>::new())]
 #[case::unrelated_action(vec![Action::from("reboot")])]
@@ -137,6 +140,7 @@ async fn power_on_if_needed_errors_when_not_allowed(
     );
 }
 
+/// Supplies the stable instance identity shared by lifecycle test cases.
 #[fixture]
 fn handle() -> InstanceHandle {
     InstanceHandle {

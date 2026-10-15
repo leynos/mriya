@@ -16,6 +16,10 @@ struct ListInstancesResponse {
     servers: Vec<ScalewayInstance>,
 }
 
+/// Adds request context when a transport or response-body operation fails.
+///
+/// For example, a connection timeout becomes a provider error prefixed
+/// `Request:`.
 fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
     ScalewayBackendError::Provider {
         message: format!("Request: {error}"),
@@ -27,7 +31,10 @@ fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
 /// For example, a 403 `{"type":"denied","message":"no access"}` response
 /// becomes a provider error with the message `Api: denied - no access`.
 async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
+    // Retain the per-request budget if the shared client fell back to an
+    // unconfigured client after its builder failed.
     let response = request
+        .timeout(super::HTTP_TIMEOUT)
         .send()
         .await
         .map_err(|error| request_error(&error))?;
@@ -119,5 +126,64 @@ impl ScalewayBackend {
         )
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Exercises HTTP request budgets against a local server that withholds responses.
+
+    use std::time::Duration;
+
+    use tokio::net::TcpListener;
+
+    use super::super::HTTP_TIMEOUT;
+    use super::checked_response;
+    use crate::scaleway::ScalewayBackendError;
+
+    /// Ensures an accepted request returns at its deadline if no response
+    /// arrives.
+    #[tokio::test]
+    async fn checked_response_applies_deadline_without_response() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind to a loopback port");
+        let address = listener
+            .local_addr()
+            .expect("test listener should expose its local address");
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("test client should build without a total timeout");
+        let mut request_task = tokio::spawn(async move {
+            checked_response(client.get(format!("http://{address}/"))).await
+        });
+
+        let (server_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .expect("request should reach the local listener before the real deadline")
+            .expect("listener should accept the request");
+        tokio::time::pause();
+        tokio::time::advance(HTTP_TIMEOUT + Duration::from_secs(1)).await;
+
+        let request_result =
+            match tokio::time::timeout(Duration::from_secs(1), &mut request_task).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => panic!("request task should not panic: {error}"),
+                Err(_) => {
+                    request_task.abort();
+                    drop(request_task.await);
+                    panic!("request should return after its configured deadline");
+                }
+            };
+        assert!(
+            matches!(
+                &request_result,
+                Err(ScalewayBackendError::Provider { message })
+                    if message.starts_with("Request:")
+            ),
+            "expected a request provider error after the deadline: {request_result:?}"
+        );
+        drop(server_stream);
     }
 }
