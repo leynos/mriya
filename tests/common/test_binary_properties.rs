@@ -96,6 +96,9 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
+    /// Compares 256 generated histories of 0–31 records with an independent
+    /// oracle; a matching record without an executable preserves the last
+    /// earlier matching executable. These samples are not a formal proof.
     #[test]
     fn parser_matches_the_last_executable_record_oracle(
         messages in proptest::collection::vec(generated_message_strategy(), 0..32)

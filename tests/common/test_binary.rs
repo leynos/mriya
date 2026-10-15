@@ -197,6 +197,8 @@ mod tests {
         command
     }
 
+    /// Emits stderr beyond pipe capacity before a valid artefact record and
+    /// checks the build helper completes within a bounded wait.
     #[test]
     fn build_drains_large_stderr_before_selecting_the_binary_artefact() {
         let artefact = artefact_message("mriya", &["bin"], "/not-built/mriya");
@@ -223,6 +225,8 @@ mod tests {
         );
     }
 
+    /// Checks that a non-zero Cargo status and both diagnostic streams survive
+    /// conversion to `BuildError::CargoFailed`.
     #[test]
     fn cargo_failure_preserves_status_and_both_output_streams() {
         let mut command =
@@ -244,6 +248,8 @@ mod tests {
         assert!(error.to_string().contains("stderr marker"));
     }
 
+    /// Checks that unrelated targets and non-binary `mriya` artefacts are
+    /// ignored when selecting the compiled CLI executable.
     #[test]
     fn artefact_selection_ignores_other_targets_and_non_binary_targets() {
         let messages = [
@@ -259,6 +265,8 @@ mod tests {
         ));
     }
 
+    /// Checks the failure boundary when Cargo succeeds without a matching
+    /// `mriya` binary record.
     #[test]
     fn artefact_selection_rejects_output_without_a_matching_binary() {
         let output = r#"{"reason":"compiler-message"}"#;
@@ -269,6 +277,7 @@ mod tests {
         ));
     }
 
+    /// Checks that malformed Cargo JSON is reported as `InvalidJson`.
     #[test]
     fn artefact_selection_rejects_malformed_json() {
         assert!(matches!(
@@ -277,6 +286,8 @@ mod tests {
         ));
     }
 
+    /// Checks that a malformed later record still fails even after a matching
+    /// executable record has appeared.
     #[test]
     fn artefact_selection_rejects_malformed_json_after_a_matching_artefact() {
         let output = format!(
@@ -290,6 +301,8 @@ mod tests {
         ));
     }
 
+    /// Checks that non-UTF-8 successful build output fails before JSON
+    /// artefact selection.
     #[test]
     fn successful_build_rejects_non_utf8_json_output() {
         let mut command = shell_command(r"printf '\377'");
@@ -300,6 +313,8 @@ mod tests {
         ));
     }
 
+    /// Uses a missing absolute executable path to check that process-start
+    /// failures remain `Spawn(NotFound)` rather than becoming build failures.
     #[test]
     fn missing_absolute_executable_preserves_the_spawn_error() {
         let temp_directory = tempfile::tempdir().expect("temporary directory should be created");
