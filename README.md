@@ -53,6 +53,8 @@ For configuration, credentials, and detailed usage:
 - [User guide](docs/users-guide.md) – Credentials, sync behaviour, and backend
   guarantees.
 - [Roadmap](docs/roadmap.md) – Phased development plan.
+- [Backend RFCs](docs/rfcs/README.md) – Proposed Boat, Hetzner Cloud, and
+  Ubicloud backends, with shared lifecycle and cost contracts.
 
 ## Requirements
 

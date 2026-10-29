@@ -109,6 +109,10 @@ for concrete, testable deliverables.
 
 ## 7. Multi-cloud rollout
 
+The [backend RFCs](rfcs/README.md) propose contracts for Boat, Hetzner Cloud,
+and Ubicloud. They define shared prerequisites and provider acceptance gates;
+their presence does not mark a backend implemented or schedule its delivery.
+
 ### 7.1. Hetzner Cloud
 
 - [ ] Implement `HetznerBackend` with server create/wait/destroy, volume
