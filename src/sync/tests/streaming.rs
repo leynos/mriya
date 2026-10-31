@@ -46,8 +46,8 @@ fn streaming_runner_propagates_non_zero_exit_code() {
         .expect("command should execute successfully");
 
     assert_eq!(output.code, Some(7));
-    assert!(output.stdout.is_empty());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, "");
+    assert_eq!(output.stderr, "");
 }
 
 #[rstest]
@@ -58,8 +58,8 @@ fn streaming_runner_handles_no_output() {
         .expect("command should execute successfully");
 
     assert_eq!(output.code, Some(0));
-    assert!(output.stdout.is_empty());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, "");
+    assert_eq!(output.stderr, "");
 }
 
 #[rstest]
