@@ -290,9 +290,7 @@ static RUN_COMMAND_HOOK: Mutex<Option<Box<RunHook>>> = Mutex::const_new(None);
 
 #[cfg(any(test, feature = "test-backdoors"))]
 fn enable_fake_modes() -> bool {
-    env::var("MRIYA_FAKE_RUN_ENABLE")
-        .map(|val| val == "1")
-        .unwrap_or(false)
+    env::var("MRIYA_FAKE_RUN_ENABLE").is_ok_and(|val| val == "1")
 }
 
 #[cfg(any(test, feature = "test-backdoors"))]
