@@ -1,0 +1,21 @@
+# cargo-nextest configuration.
+#
+# Policy: no blanket retries; an intermittent failure is a defect to diagnose.
+
+[profile.default]
+# Warn after 60 s and terminate a test that has run for five warning periods
+# (300 s). This governs every test no override matches.
+slow-timeout = { period = "60s", terminate-after = 5 }
+# The whole run, strictly above the largest per-test allowance (600 s, below).
+global-timeout = "30m"
+
+[test-groups.nested-cargo-builds]
+# Tests that start a child cargo or rustc contend for the package-cache lock
+# and for build parallelism, and a cold build looks like a hang. One at a time,
+# each is bounded by its own allowance.
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(=cli_run) | binary(=cli_smoke) | binary(=cloud_init_behaviour) | binary(=instance_overrides_behaviour)'
+test-group = "nested-cargo-builds"
+slow-timeout = { period = "60s", terminate-after = 10 }
