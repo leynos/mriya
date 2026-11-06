@@ -133,6 +133,26 @@ workflow edit fails there. The decision is recorded in
 direct `cargo test` needs GNU make on the `PATH`. It fails when `make` is
 missing instead of skipping, so a missing tool cannot read as a pass.
 
+The Whitaker half of `make lint` is the third exclusion. Whitaker builds on its
+installer-managed toolchain, which must not inherit the development flags, so
+its command assigns `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`),
+never expands the caller's value, and names neither `-Zthreads=8` nor the
+`mold` flag. The contract holds a direct Whitaker command to that rule instead
+of to the standard's.
+
+### The development footprint
+
+The Concordat `rust-dev-build-footprint` rule keeps default development builds
+small. `Cargo.toml` sets `incremental = false` and `debug = 0` in
+`[profile.dev]`, which the test profile inherits, and `.cargo/config.toml` sets
+`[unstable] embed-metadata = false`, the native Cargo setting for dated
+nightlies from 2026-07-31; read the pin from `rust-toolchain.toml`, because
+stable Cargo ignores the table. The trade-off is that a debugger sees no
+source-level debug information or line tables in a default development build
+and every rebuild recompiles whole crates. To debug, run with
+`CARGO_PROFILE_DEV_DEBUG=true`; to rebuild incrementally, set
+`CARGO_INCREMENTAL=1`.
+
 ### CLI integration-test builds
 
 CLI behavioural tests share `tests/common/test_binary.rs`. It invokes Cargo from

@@ -37,6 +37,10 @@ tempfile = "3.14"
 predicates = "3.1.0"
 proptest = "1.11"
 
+[profile.dev]
+incremental = false
+debug = 0
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 

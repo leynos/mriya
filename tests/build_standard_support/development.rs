@@ -67,6 +67,32 @@ fn bare_problem(target: Target<'_>, host: Host, command: &str) -> String {
     )
 }
 
+/// Returns the complaint about a direct Whitaker command, if any. Its installer-managed toolchain
+/// must not inherit the repository's development flags, so it is held to the opposite of the
+/// standard: it assigns the warning policy alone, inherits none of the caller's flags (an unset or
+/// inherited `RUSTFLAGS` leaves Cargo reading the configuration's), and names neither the frontend
+/// flag nor the linker flag.
+fn whitaker_problem(target: Target<'_>, host: Host, assignment: &Assignment) -> Option<String> {
+    let on = host.make_value();
+    let (flags, inherits) = match assignment {
+        Assignment::Flags(flags, inherits) => (flags, *inherits),
+        Assignment::Bare(command) => return Some(bare_problem(target, host, command)),
+        Assignment::Unassigned => return None,
+    };
+    if inherits {
+        return Some(format!(
+            "`make {target}` on {on} lets Whitaker inherit the caller's RUSTFLAGS"
+        ));
+    }
+    if flags.names_threads() || flags.names_linker() {
+        return Some(format!(
+            "`make {target}` on {on} gives Whitaker the development flags: {flags:?}"
+        ));
+    }
+    (!flags.denies_warnings())
+        .then(|| format!("`make {target}` on {on} runs Whitaker without -D warnings"))
+}
+
 /// Returns the complaint about one development command, if any: an assigned
 /// `RUSTFLAGS` keeps the caller's own flags and restates the frontend flag on a
 /// nightly pin, and mold on Linux.
@@ -242,11 +268,13 @@ pub fn development_problems_expecting(
             .filter(|command| matches!(command.assignment, Assignment::Flags(..)))
             .count();
         problems.extend(target_tool_problems(target, host, &commands, expected));
-        problems.extend(
-            commands
-                .iter()
-                .filter_map(|command| development_problem(target, host, pin, &command.assignment)),
-        );
+        problems.extend(commands.iter().filter_map(|command| {
+            if tool_key(&command.text).as_deref() == Some("whitaker") {
+                whitaker_problem(target, host, &command.assignment)
+            } else {
+                development_problem(target, host, pin, &command.assignment)
+            }
+        }));
         problems.extend(test_policy_problems(target, host, &commands));
     }
     Ok((problems, read))
