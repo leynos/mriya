@@ -138,8 +138,8 @@ installer-managed toolchain, which must not inherit the development flags, so
 its command assigns `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`),
 never expands the caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with
 `env -u` (Cargo reads it in preference to `RUSTFLAGS`), and names neither
-`-Zthreads=8` nor the `mold` flag. The contract holds a direct Whitaker command
-to that rule instead of to the standard's.
+`-Zthreads=8` nor the `mold` flag. The contract exempts a direct Whitaker
+command from the standard's flags; the Concordat rule checks its isolation.
 
 ### The development footprint
 
