@@ -180,5 +180,10 @@ Exception: Cranelift is not the development-profile backend. The full suite was
 measured under it on the pinned `nightly-2025-11-26` on 2026-10-02, and these
 tests fail there while passing under LLVM: `scenario_provision_and_destroy`,
 `scenario_reject_unknown_image`, `scenario_reject_unknown_type` and
-`scenario_cloud_init_install_jq`. Re-measure the whole suite on the next
-toolchain bump, and adopt the backend when it passes.
+`scenario_cloud_init_install_jq`. Re-measured on `nightly-2026-11-05` on
+2026-11-06 with `CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift make test`:
+`scenario_provision_and_destroy`, `scenario_reject_unknown_image` and
+`scenario_reject_unknown_type` still fail (Cargo stops at the first failing
+test binary, `scaleway_backend`, so `scenario_cloud_init_install_jq` was not
+reached). Re-measure the whole suite on the next toolchain bump, and adopt the
+backend when it passes.
