@@ -67,7 +67,7 @@ jobs:
         with:
           output-path: lcov.info
           format: lcov
-          use-cargo-nextest: 'false'
+          use-cargo-nextest: 'true'
           with-ratchet: 'true'
       # Actions evaluates the expression before the shell runs, so this writes
       # `available=true` or `available=false` and binds the token nowhere. A

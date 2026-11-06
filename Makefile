@@ -57,7 +57,8 @@ clean: ## Remove build artefacts
 	$(CARGO) clean
 
 test: ## Run tests with warnings treated as errors
-	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) test $(TEST_FLAGS) $(BUILD_JOBS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run $(TEST_FLAGS) $(BUILD_JOBS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) test --doc --all-features $(BUILD_JOBS)
 
 test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutation-testing contract
 	$(CV005_CONTRACTS) check --repository .
