@@ -1,7 +1,9 @@
 //! The development half of the Makefile reader: the commands `make -n` prints for each development
 //! target, judged against a toolchain pin and a host. Each command must assign `RUSTFLAGS` with the
 //! standard flags and keep the caller's own, the commands that run tests must keep `-D warnings`, and
-//! each target must run the tools the contract recorded for it.
+//! each target must run the tools the contract recorded for it. A direct Whitaker command is the
+//! exception: it runs on an installer-managed toolchain and takes none of the standard's flags, so it
+//! is exempt here and the Concordat rule checks its isolation.
 
 use super::{
     config::{Pin, Problems},
