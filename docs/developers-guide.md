@@ -166,6 +166,22 @@ concurrently. A nested build can fill stderr while its caller waits for stdout,
 blocking compilation. Build errors retain both streams so compiler diagnostics
 remain available when a build fails.
 
+### Test runner policy
+
+`make test` and the CI coverage step run the tests under `cargo-nextest`, and
+`.config/nextest.toml` sets the policy (install the runner with
+`cargo binstall cargo-nextest`):
+
+- A test is warned after 60 s and terminated after five warning periods
+  (300 s); the whole run is bounded at 30 minutes.
+- The `cli_run`, `cli_smoke`, `cloud_init_behaviour` and
+  `instance_overrides_behaviour` binaries start a child Cargo, which contends
+  for the package-cache lock and for build parallelism, so they run one at a
+  time in the `nested-cargo-builds` group. Each gets ten warning periods (600
+  s), because a cold build looks like a hang.
+- Documentation tests are outside nextest's limits: `make test` runs them
+  separately with `cargo test --doc`, and the coverage action does the same.
+
 Property coverage uses `proptest` for 256 generated Cargo message histories of
 0–31 records, varying matching fields, distractors, repeated matches, and
 missing executable paths. An independent record-oriented oracle selects the

@@ -62,6 +62,6 @@ jobs:
         with:
           output-path: lcov.info
           format: lcov
-          use-cargo-nextest: 'false'
+          use-cargo-nextest: 'true'
           with-ratchet: 'true'
           publish-artefact: 'false'

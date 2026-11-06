@@ -136,10 +136,13 @@ project:
   - `make test` executes:
 
     ```sh
-    cargo test --workspace
+    cargo nextest run --all-targets --all-features
+    cargo test --doc --all-features
     ```
 
-    running the full workspace test suite. Use `make fmt`
+    running the full workspace test suite under cargo-nextest, so the
+    serial group and timeouts in `.config/nextest.toml` apply (install it with
+    `cargo binstall cargo-nextest`). Use `make fmt`
     (`cargo fmt --workspace`) to apply formatting fixes reported by the
     formatter check.
 - Clippy warnings MUST be disallowed.

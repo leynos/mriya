@@ -5,5 +5,5 @@ repository = "leynos/mriya"
 [selection]
 output-path = "lcov.info"
 format = "lcov"
-use-cargo-nextest = "false"
+use-cargo-nextest = "true"
 with-ratchet = "true"
