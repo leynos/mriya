@@ -101,17 +101,23 @@ macro_rules! whitaker_make {
 // Whitaker assigns the warning policy alone: isolated, so it passes.
 whitaker_make!(
     isolated_whitaker_make,
+    "env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS=\"-D warnings\" whitaker --all"
+);
+
+// Whitaker assigns the warning policy but leaves the caller's encoded flags, which Cargo prefers.
+whitaker_make!(
+    encoded_whitaker_make,
     "RUSTFLAGS=\"-D warnings\" whitaker --all"
 );
 
 // Whitaker carries the development flags, inherits the caller's flags, or assigns nothing.
 whitaker_make!(
     contaminated_whitaker_make,
-    "RUSTFLAGS=\"-D warnings -Zthreads=8\" whitaker --all"
+    "env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS=\"-D warnings -Zthreads=8\" whitaker --all"
 );
 whitaker_make!(
     inheriting_whitaker_make,
-    "RUSTFLAGS=\"${RUSTFLAGS:+$RUSTFLAGS }-D warnings\" whitaker --all"
+    "env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS=\"${RUSTFLAGS:+$RUSTFLAGS }-D warnings\" whitaker --all"
 );
 whitaker_make!(bare_whitaker_make, "whitaker --all");
 
@@ -315,7 +321,14 @@ fn a_direct_whitaker_command_must_stay_isolated_from_the_development_flags() -> 
             "development flags",
         ),
         (inheriting_whitaker_make, "inherit the caller's RUSTFLAGS"),
-        (bare_whitaker_make, "without assigning RUSTFLAGS"),
+        (
+            bare_whitaker_make,
+            "inherit the caller's CARGO_ENCODED_RUSTFLAGS",
+        ),
+        (
+            encoded_whitaker_make,
+            "inherit the caller's CARGO_ENCODED_RUSTFLAGS",
+        ),
     ] {
         let (problems, _) = development_problems_expecting(runner, Host::Linux, pin, &[])?;
         ensure(

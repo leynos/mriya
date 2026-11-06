@@ -63,9 +63,10 @@ the workflows, so a flag lost through a recipe or workflow edit fails there.
 
 Whitaker is an exception to the flag standard above. It runs on its
 installer-managed toolchain, which cannot take the repository's frontend or
-linker flag, so its command assigns the warning policy alone and never expands
-the caller's `RUSTFLAGS`. Every other recipe still restates the standard flags.
-The development build footprint joins the standard: `[profile.dev]` sets
+linker flag, so its command assigns the warning policy alone, never expands the
+caller's `RUSTFLAGS`, and clears `CARGO_ENCODED_RUSTFLAGS`, which Cargo reads
+in preference to it. Every other recipe still restates the standard flags. The
+development build footprint joins the standard: `[profile.dev]` sets
 `incremental = false` and `debug = 0`, and `.cargo/config.toml` sets
 `[unstable] embed-metadata = false`. Debugging needs
 `CARGO_PROFILE_DEV_DEBUG=true`.

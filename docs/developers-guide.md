@@ -136,9 +136,10 @@ missing instead of skipping, so a missing tool cannot read as a pass.
 The Whitaker half of `make lint` is the third exclusion. Whitaker builds on its
 installer-managed toolchain, which must not inherit the development flags, so
 its command assigns `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`),
-never expands the caller's value, and names neither `-Zthreads=8` nor the
-`mold` flag. The contract holds a direct Whitaker command to that rule instead
-of to the standard's.
+never expands the caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with
+`env -u` (Cargo reads it in preference to `RUSTFLAGS`), and names neither
+`-Zthreads=8` nor the `mold` flag. The contract holds a direct Whitaker command
+to that rule instead of to the standard's.
 
 ### The development footprint
 
