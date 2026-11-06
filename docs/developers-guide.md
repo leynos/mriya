@@ -133,6 +133,27 @@ workflow edit fails there. The decision is recorded in
 direct `cargo test` needs GNU make on the `PATH`. It fails when `make` is
 missing instead of skipping, so a missing tool cannot read as a pass.
 
+The Whitaker half of `make lint` is the third exclusion. Whitaker builds on its
+installer-managed toolchain, which must not inherit the development flags, so
+its command assigns `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`),
+never expands the caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with
+`env -u` (Cargo reads it in preference to `RUSTFLAGS`), and names neither
+`-Zthreads=8` nor the `mold` flag. The contract exempts a direct Whitaker
+command from the standard's flags; the Concordat rule checks its isolation.
+
+### The development footprint
+
+The Concordat `rust-dev-build-footprint` rule keeps default development builds
+small. `Cargo.toml` sets `incremental = false` and `debug = 0` in
+`[profile.dev]`, which the test profile inherits, and `.cargo/config.toml` sets
+`[unstable] embed-metadata = false`, the native Cargo setting for dated
+nightlies from 2026-07-31; read the pin from `rust-toolchain.toml`, because
+stable Cargo ignores the table. The trade-off is that a debugger sees no
+source-level debug information or line tables in a default development build
+and every rebuild recompiles whole crates. To debug, run with
+`CARGO_PROFILE_DEV_DEBUG=true`; to rebuild incrementally, set
+`CARGO_INCREMENTAL=1`.
+
 ### CLI integration-test builds
 
 CLI behavioural tests share `tests/common/test_binary.rs`. It invokes Cargo from
@@ -159,5 +180,10 @@ Exception: Cranelift is not the development-profile backend. The full suite was
 measured under it on the pinned `nightly-2025-11-26` on 2026-10-02, and these
 tests fail there while passing under LLVM: `scenario_provision_and_destroy`,
 `scenario_reject_unknown_image`, `scenario_reject_unknown_type` and
-`scenario_cloud_init_install_jq`. Re-measure the whole suite on the next
-toolchain bump, and adopt the backend when it passes.
+`scenario_cloud_init_install_jq`. Re-measured on `nightly-2026-10-30` (the pin)
+on 2026-11-06 with `CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift make test`:
+`scenario_provision_and_destroy`, `scenario_reject_unknown_image` and
+`scenario_reject_unknown_type` still fail (Cargo stops at the first failing
+test binary, `scaleway_backend`, so `scenario_cloud_init_install_jq` was not
+reached). Re-measure the whole suite on the next toolchain bump, and adopt the
+backend when it passes.

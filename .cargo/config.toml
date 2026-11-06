@@ -20,3 +20,9 @@ rustflags = ["-Zthreads=8"]
 # platform linker.
 [target.'cfg(target_os = "linux")']
 rustflags = ["-Zthreads=8", "-Clink-arg=-fuse-ld=mold"]
+
+# The development footprint rule (concordat `rust-dev-build-footprint`):
+# dependencies are built without embedded metadata. The key is the native
+# Cargo setting for nightlies from 2026-07-31; stable Cargo ignores `[unstable]`.
+[unstable]
+embed-metadata = false
