@@ -105,6 +105,11 @@ pub(crate) fn validate_payload(payload: &str) -> Result<(), CloudInitError> {
     Ok(())
 }
 
+/// Reads a UTF-8 file through ambient filesystem authority.
+///
+/// Absolute paths are split into parent directory and file name so the
+/// file is read relative to an opened directory; relative paths are read
+/// from the current directory. Errors are returned as text.
 fn read_to_string_ambient(path: &str) -> Result<String, String> {
     let path_buf = Utf8Path::new(path);
 
