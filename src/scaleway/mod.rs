@@ -16,8 +16,11 @@ use types::{Action, Zone};
 
 use crate::janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX};
 
+/// Port assumed for SSH readiness probes and the returned networking details.
 const DEFAULT_SSH_PORT: u16 = 22;
+/// Pause between provider polls and SSH connection attempts.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Overall budget for each readiness or teardown wait (five minutes).
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub use error::ScalewayBackendError;
@@ -25,12 +28,23 @@ pub use error::ScalewayBackendError;
 /// Backend that provisions instances through the Scaleway Instances API.
 #[derive(Clone)]
 pub struct ScalewayBackend {
+    /// SDK client used for image lookups; instance, volume, and user-data calls
+    /// bypass it and use direct HTTP requests.
     api: ScalewayApi,
+    /// Base URL for the Instances API calls made by direct HTTP request.
+    /// Overridable within the crate so tests can target a loopback server.
     instance_api_base: String,
+    /// Validated configuration; supplies the secret key and default request
+    /// values.
     config: ScalewayConfig,
+    /// Identifier added as a tag to created resources so a test run can find
+    /// and clean up its own leftovers.
     test_run_id: Option<String>,
+    /// Port reported in networking details and probed for SSH readiness.
     ssh_port: u16,
+    /// Delay between polls while waiting for readiness or deletion.
     poll_interval: Duration,
+    /// Deadline applied to each wait before a timeout error is returned.
     wait_timeout: Duration,
 }
 
@@ -112,6 +126,11 @@ impl ScalewayBackend {
         self.config.as_request().map_err(ScalewayBackendError::from)
     }
 
+    /// Rejects a cache volume that is the instance's root volume.
+    ///
+    /// IDs are compared after trimming whitespace. Attaching the root volume
+    /// again as the cache volume would corrupt the volume map, so the request
+    /// fails with `VolumeAttachmentFailed` instead.
     fn validate_cache_volume_id(
         cache_volume_id: &str,
         root_volume_id: &str,
@@ -128,6 +147,10 @@ impl ScalewayBackend {
         Ok(())
     }
 
+    /// Appends the test-run tag to `base_tags` when `test_run_id` is non-blank.
+    ///
+    /// For example, `Some(" abc ")` adds `TEST_RUN_TAG_PREFIX` followed by
+    /// `abc`, while `None` or whitespace leaves the tags unchanged.
     fn build_tags(base_tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
         let mut tags = base_tags;
         let Some(id) = test_run_id else {
@@ -141,6 +164,8 @@ impl ScalewayBackend {
         tags
     }
 
+    /// Tags applied to created instances: `mriya`, `ephemeral`, and the
+    /// optional test-run tag.
     fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("ephemeral")],
@@ -148,6 +173,8 @@ impl ScalewayBackend {
         )
     }
 
+    /// Tags applied to created cache volumes: `mriya`, `cache`, and the
+    /// optional test-run tag.
     fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("cache")],

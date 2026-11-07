@@ -18,6 +18,7 @@ use crate::scaleway::types::Action;
 use super::super::{ScalewayBackend, ScalewayBackendError};
 use super::InstanceSnapshot;
 
+/// Limit for a single TCP connection attempt when probing SSH readiness.
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl ScalewayBackend {
@@ -59,6 +60,15 @@ impl ScalewayBackend {
         poll_for_public_ip(handle, settings, || self.fetch_instance(handle)).await
     }
 
+    /// Probes the instance's SSH port until a TCP connection succeeds.
+    ///
+    /// This checks only that the port accepts connections, not that SSH
+    /// authentication works.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Timeout` if no connection succeeds before the backend's wait
+    /// deadline.
     pub(in crate::scaleway) async fn wait_for_ssh_ready(
         &self,
         handle: &InstanceHandle,
@@ -99,8 +109,11 @@ impl ScalewayBackend {
 /// Timing and port parameters for the readiness polling loop.
 #[derive(Clone, Copy)]
 pub(super) struct PollSettings {
+    /// SSH port reported in the returned networking details.
     pub(super) ssh_port: u16,
+    /// Delay between provider polls.
     pub(super) poll_interval: Duration,
+    /// Total time allowed before the poll gives up.
     pub(super) wait_timeout: Duration,
 }
 
