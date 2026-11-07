@@ -17,8 +17,8 @@ set -euo pipefail
 BUILD_TOOLS_REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
 # Overridable so a test can point the scripts at fixtures.
-MOLD_VERSION_FILE="${MOLD_VERSION_FILE:-$BUILD_TOOLS_REPO_ROOT/tools/mold/VERSION}"
-MOLD_SHA256SUMS_FILE="${MOLD_SHA256SUMS_FILE:-$BUILD_TOOLS_REPO_ROOT/tools/mold/SHA256SUMS}"
+LINKER_VERSION_FILE="${LINKER_VERSION_FILE:-$BUILD_TOOLS_REPO_ROOT/tools/mold/VERSION}"
+LINKER_SHA256SUMS_FILE="${LINKER_SHA256SUMS_FILE:-$BUILD_TOOLS_REPO_ROOT/tools/mold/SHA256SUMS}"
 RUST_TOOLCHAIN_FILE="${RUST_TOOLCHAIN_FILE:-$BUILD_TOOLS_REPO_ROOT/rust-toolchain.toml}"
 
 # `-fuse-ld=mold` resolves `ld.mold` by PATH order, and the Makefile puts this
@@ -32,7 +32,7 @@ fail() {
   exit 1
 }
 
-# Whether the host links with mold at all; it ships for Linux only.
+# Whether the host links with the mold linker at all; it ships for Linux only.
 is_linux() { [ "$(uname -s)" = 'Linux' ]; }
 
 # Read a one-line pin. A missing, blank or multi-line file aborts rather than
@@ -46,7 +46,7 @@ read_pin() {
   printf '%s' "$value"
 }
 
-mold_version() { read_pin "$MOLD_VERSION_FILE"; }
+linker_version() { read_pin "$LINKER_VERSION_FILE"; }
 
 # The channel `rust-toolchain.toml` pins; the same toolchain every gate uses.
 pinned_toolchain() {
@@ -57,19 +57,19 @@ pinned_toolchain() {
   printf '%s' "$value"
 }
 
-# The version of whichever mold PATH resolves, or non-zero when it cannot run.
+# The version of whichever mold linker PATH resolves, or non-zero when it cannot run.
 # `mold --version` prints e.g. "mold 2.41.0 (compatible with GNU ld)".
-installed_mold_version() {
+installed_linker_version() {
   local output
   output=$(mold --version 2>/dev/null) || return 1
   printf '%s' "$output" | awk 'NR == 1 { print $2 }'
 }
 
-# mold publishes per-architecture tarballs; map `uname -m` onto their names.
-mold_arch() {
+# The mold linker publishes per-architecture tarballs; map `uname -m` onto their names.
+linker_arch() {
   case "$(uname -m)" in
     x86_64 | amd64) printf 'x86_64' ;;
     aarch64 | arm64) printf 'aarch64' ;;
-    *) fail "no pinned mold release for architecture $(uname -m)" ;;
+    *) fail "no pinned mold linker release for architecture $(uname -m)" ;;
   esac
 }

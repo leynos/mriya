@@ -1,6 +1,6 @@
 //! The installer half of the build-tools contract. `scripts/install-build-tools.sh` runs in a sandbox
 //! whose release server is a local directory and whose `rustup` only logs its arguments, so a case can
-//! publish a mold archive, tamper with its checksum, or leave a pinned mold already on `PATH`, and then
+//! publish a mold linker archive, tamper with its checksum, or leave a pinned mold linker already on `PATH`, and then
 //! read exactly what the installer unpacked and which toolchain and components it asked for.
 
 use std::process::Output;
@@ -110,8 +110,8 @@ pub fn run_installer(sandbox: &Sandbox) -> Result<Output, String> {
     sandbox
         .command("bash")?
         .arg("scripts/install-build-tools.sh")
-        .env("MOLD_RELEASE_BASE_URL", format!("file://{root}/release"))
-        .env("MOLD_SHA256SUMS_FILE", format!("{root}/SHA256SUMS"))
+        .env("LINKER_RELEASE_BASE_URL", format!("file://{root}/release"))
+        .env("LINKER_SHA256SUMS_FILE", format!("{root}/SHA256SUMS"))
         .output()
         .map_err(|error| format!("running the installer: {error}"))
 }
@@ -130,6 +130,6 @@ pub fn rustup_calls(sandbox: &Sandbox) -> Result<Option<String>, String> {
 /// # Errors
 ///
 /// Returns the reason when the file exists but cannot be read.
-pub fn installed_mold(sandbox: &Sandbox) -> Result<bool, String> {
+pub fn installed_linker(sandbox: &Sandbox) -> Result<bool, String> {
     Ok(sandbox.read("prefix/bin/mold")?.is_some())
 }

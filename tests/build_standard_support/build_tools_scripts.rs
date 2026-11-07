@@ -7,8 +7,8 @@ use std::process::Output;
 
 use super::sandbox::{CARGO_LOG, Sandbox};
 
-/// The mold release the repository pins, and the toolchain the preflight looks for.
-const PINNED_MOLD: &str = "2.41.0";
+/// The mold linker release the repository pins, and the toolchain the preflight looks for.
+const PINNED_LINKER: &str = "2.41.0";
 const PINNED_TOOLCHAIN: &str = "nightly-2026-11-06";
 /// Host utilities the scripts and `make` itself use; the sandbox links these and nothing else.
 const UTILITIES: &[&str] = &[
@@ -19,7 +19,7 @@ const UTILITIES: &[&str] = &[
 #[derive(Clone, Copy)]
 pub struct Toolset {
     /// The version `mold --version` reports, or `None` for no `mold` on `PATH`.
-    pub mold: Option<&'static str>,
+    pub linker: Option<&'static str>,
     /// Whether `cc` can link with `-fuse-ld=mold`; `None` leaves out `cc` altogether.
     pub cc_links: Option<bool>,
     /// Whether `rustup` lists the pinned toolchain.
@@ -29,7 +29,7 @@ pub struct Toolset {
 impl Toolset {
     /// Everything present, at the pins.
     pub const COMPLETE: Self = Self {
-        mold: Some(PINNED_MOLD),
+        linker: Some(PINNED_LINKER),
         cc_links: Some(true),
         has_toolchain: true,
     };
@@ -44,7 +44,7 @@ impl Toolset {
 pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
     let sandbox = Sandbox::new()?;
     sandbox.link_tools(UTILITIES)?;
-    if let Some(version) = toolset.mold {
+    if let Some(version) = toolset.linker {
         sandbox.write_tool(
             "mold",
             &format!("echo 'mold {version} (compatible with GNU ld)'"),

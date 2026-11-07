@@ -12,29 +12,29 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/build-tools-common.sh
 . "$script_dir/build-tools-common.sh"
 
-# mold must be on PATH at exactly the pinned version. A drifted version fails
+# The mold linker must be on PATH at exactly the pinned version. A drifted version fails
 # rather than warns: an advisory pin is not a pin.
-check_mold() {
+check_linker() {
   local pinned=$1 installed resolved
   if ! resolved=$(command -v mold 2>/dev/null); then
-    note "mold not found on PATH (pinned $pinned)"
+    note "mold linker not found on PATH (pinned $pinned)"
     note 'install it with: make install-build-tools'
     return 1
   fi
-  if ! installed=$(installed_mold_version) || [ -z "$installed" ]; then
-    note "mold at $resolved is on PATH but cannot report its version"
+  if ! installed=$(installed_linker_version) || [ -z "$installed" ]; then
+    note "mold linker at $resolved is on PATH but cannot report its version"
     note 'reinstall it with: make install-build-tools'
     return 1
   fi
   if [ "$installed" != "$pinned" ]; then
-    note "mold $installed at $resolved does not match the pin $pinned"
+    note "mold linker $installed at $resolved does not match the pin $pinned"
     note 'install the pinned release with: make install-build-tools'
     return 1
   fi
-  note "mold $installed at $resolved"
+  note "mold linker $installed at $resolved"
 }
 
-# rustc reaches mold through `cc -fuse-ld=mold`, so the C compiler driver must
+# rustc reaches the mold linker through `cc -fuse-ld=mold`, so the C compiler driver must
 # accept the flag (GCC 12.1 or newer, or clang). Linking a trivial program is
 # the only reliable way to ask; a version check would guess.
 check_linker_driver() {
@@ -49,7 +49,7 @@ check_linker_driver() {
     cc -x c - -fuse-ld=mold -o "$scratch/probe" >"$scratch/log" 2>&1 || status=1
   if [ "$status" -ne 0 ]; then
     note 'cc cannot link with -fuse-ld=mold, which the build standard passes'
-    note 'use GCC 12.1 or newer, or clang, and make sure mold is installed'
+    note 'use GCC 12.1 or newer, or clang, and make sure the mold linker is installed'
     sed 's/^/build-tools:   /' "$scratch/log" >&2
   else
     note 'cc links with -fuse-ld=mold'
@@ -76,17 +76,17 @@ check_toolchain() {
 }
 
 main() {
-  local status=0 mold_pin toolchain_pin
+  local status=0 linker_pin toolchain_pin
   # Assign first: `fail` exits, but inside `$(...)` that kills only the
   # subshell, so passing the substitution straight in would carry on with an
   # empty pin. An assignment propagates the status.
-  mold_pin=$(mold_version) || return 1
+  linker_pin=$(linker_version) || return 1
   toolchain_pin=$(pinned_toolchain) || return 1
   if is_linux; then
-    check_mold "$mold_pin" || status=1
+    check_linker "$linker_pin" || status=1
     check_linker_driver || status=1
   else
-    note "mold is Linux-only; $(uname -s) keeps its platform linker"
+    note "the mold linker is Linux-only; $(uname -s) keeps its platform linker"
   fi
   check_toolchain "$toolchain_pin" || status=1
   [ "$status" -eq 0 ] || note 'build tools check failed; see the messages above'
