@@ -41,3 +41,38 @@ pub fn real_make(target: Target<'_>, host: Host) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
+/// Runs the real `make -n -B` with `CARGO=probe-cargo`, so the printed commands show whether every
+/// Cargo invocation takes its executable from `$(CARGO)` and where the preflight sits among them.
+///
+/// # Parameters
+///
+/// - `target`: the Makefile target to print the commands of.
+/// - `host`: the host `make` is told it runs on, through `BUILD_HOST_OS`.
+///
+/// # Returns
+///
+/// The commands `make -n -B` printed for the target.
+///
+/// # Errors
+///
+/// Returns the reason when `make` cannot run or the target is not defined.
+pub fn probe_make(target: Target<'_>, host: Host) -> Result<String, String> {
+    let name = target.name();
+    let output = Command::new("make")
+        .args([
+            "-n",
+            "-B",
+            "CARGO=probe-cargo",
+            &format!("BUILD_HOST_OS={}", host.make_value()),
+            name,
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .map_err(|error| format!("running make: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("`make -n {name}` failed: {stderr}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
