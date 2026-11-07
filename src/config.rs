@@ -56,13 +56,18 @@ pub struct ScalewayConfig {
 
 /// Metadata for a configuration field, used to generate actionable error messages.
 struct FieldMetadata {
+    /// Phrase naming the setting in the error message.
     description: &'static str,
+    /// Environment variable the message tells the user to set.
     env_var: &'static str,
+    /// TOML key the message tells the user to add.
     toml_key: &'static str,
+    /// Section name quoted in the message, in `[section]` form.
     section: &'static str,
 }
 
 impl FieldMetadata {
+    /// Bundles the four strings that make up a missing-field message.
     const fn new(
         description: &'static str,
         env_var: &'static str,
@@ -79,6 +84,8 @@ impl FieldMetadata {
 }
 
 impl ScalewayConfig {
+    /// Fails with `MissingField`, using `metadata` for the message, when `value`
+    /// is empty or only whitespace.
     fn require_field(value: &str, metadata: &FieldMetadata) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
             return Err(ConfigError::MissingField(format!(
@@ -132,6 +139,8 @@ impl ScalewayConfig {
             .map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
+    /// Resolves the inline and file settings into user-data, rewording each
+    /// failure in terms of the `SCW_` variables and configuration keys.
     fn resolve_cloud_init_user_data(&self) -> Result<Option<String>, ConfigError> {
         resolve_cloud_init_user_data(
             self.cloud_init_user_data.as_deref(),
@@ -172,6 +181,10 @@ impl ScalewayConfig {
         Ok(())
     }
 
+    /// Checks the secret key, project ID, image, instance type, zone, and
+    /// architecture are non-blank, reporting the first that is not.
+    ///
+    /// The optional settings are not checked here.
     fn validate_required_fields(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
