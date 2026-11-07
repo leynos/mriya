@@ -73,8 +73,8 @@ environment is now explicit and injectable.
 ### 4. Writing isolated unit tests
 
 Tests can use `MockEnv`, a `mockall`-generated mock, to simulate any
-environmental condition without touching the actual process environment. Set
-an expectation on the accessor the code under test calls (`string` here).
+environmental condition without touching the actual process environment. Set an
+expectation on the accessor the code under test calls (`string` here).
 
 ```rust,no_run
 #[cfg(test)]
@@ -206,8 +206,8 @@ ______________________________________________________________________
   `impl Env` or `impl Clock`.
 - **`Mock*` for Tests:** Use `MockEnv` and `MockClock` in unit tests for
   isolated, deterministic control.
-- **`Real*` for Production:** Use `DefaultEnv` and the default clock in the application
-  to interact with the actual system.
+- **`Default*` for Production:** Use `DefaultEnv` and the default clock in the
+  application to interact with the actual system.
 - **`DefaultEnv` is read-only:** `Env` exposes no setters, so it cannot change
   the process environment. Tests that genuinely need the live process
   environment (for example, code that reads `HOME` through a seam-less
