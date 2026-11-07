@@ -19,6 +19,9 @@ ignore = [
   # `install-mold`, and the `-fuse-ld=mold` linker
   # argument, and the one `contains("mold")` test probe.
   '`mold`',
+  # The vendored uv_gate.py lists uv's short flags (-U, -P, -n) as the string
+  # "UPn"; the file is byte-for-byte canonical, so exempt that one line.
+  '(?m)^FORBIDDEN_SHORT = "UPn"$',
   '\bmold\s+linker\b',
   '\binstall-mold\b',
   '-fuse-ld=mold\b',

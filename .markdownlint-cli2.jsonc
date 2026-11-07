@@ -12,14 +12,12 @@
     "MD029": { "style": "ordered" }
   },
   "ignores": [
-    "**/.uv-cache/**",
     "**/.venv/**",
     ".node_modules/**",
     "**/node_modules/**",
     "**/target/**",
     ".vtcode/**",
     ".terraform/**",
-    ".uv-cache/**",
     "memories/**",
     "CRUSH.md",
     "**/dist/**"

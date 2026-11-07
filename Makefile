@@ -23,20 +23,28 @@ MDTABLEFIX_SELECT = --git --include-untracked
 MDTABLEFIX_RULES = --wrap --renumber --breaks --ellipsis --fences
 NIXIE ?= nixie
 WHITAKER ?= whitaker
+# Every uv route goes through the vendored helper, which runs uv from a
+# cleaned environment and the global cache, offline first. The one exception
+# is `spelling`: see TYPOS_CONFIG_BUILDER below.
+UV_GATE ?= python3 scripts/uv_gate.py
 UV ?= uv
-UV_ENV = UV_CACHE_DIR=.uv-cache UV_TOOL_DIR=.uv-tools
 RUFF_VERSION ?= 0.15.12
 # The CV-005 CodeScene contracts live in shared-actions and run from a full
 # commit, so a fix is a pin bump. `.github/cv005.toml` holds this repository's
 # only parameters.
 CV005_CONTRACTS_REF ?= 3754876bc4e94dc65c83af3def37828934f8f65e
-CV005_CONTRACTS = $(UV_ENV) $(UV) tool run --python 3.13 \
+CV005_CONTRACTS = $(UV_GATE) tool --python 3.13 \
 	--from 'git+https://github.com/leynos/shared-actions@$(CV005_CONTRACTS_REF)\#subdirectory=packages/cv005-contracts' \
-	cv005-contracts
+	-- cv005-contracts
 # The pytest contracts that stay: the mutation-testing caller workflow.
 WORKFLOW_CONTRACT_TESTS = tests/workflow_contracts
+PYTEST_VERSION ?= 9.2.0
+PYYAML_VERSION ?= 6.0.3
+# The builder runs directly at a release tag, not through $(UV_GATE): the
+# spelling-config-baseline rule requires that shape, and the helper refuses a
+# Git spec that is not a full commit (the uv-gate-baseline release-tag exception).
 TYPOS_CONFIG_BUILDER_VERSION ?= v0.1.3
-TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
+TYPOS_CONFIG_BUILDER = $(UV) tool run --python 3.14 --from \
 	"git+https://github.com/leynos/typos-config-builder.git@$(TYPOS_CONFIG_BUILDER_VERSION)" \
 	typos-config-builder
 
@@ -91,7 +99,8 @@ test: check-build-tools ## Run tests with warnings treated as errors
 
 test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutation-testing contract
 	$(CV005_CONTRACTS) check --repository .
-	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
+	$(UV_GATE) tool --python 3.13 --from 'pytest==$(PYTEST_VERSION)' --with 'pyyaml==$(PYYAML_VERSION)' \
+		-- pytest $(WORKFLOW_CONTRACT_TESTS) -q
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
@@ -124,7 +133,7 @@ INTERROGATE_TARGETS ?= tests
 # Level 2 prints a MISSED row per undocumented definition, which the
 # `interrogate` target fails on: the rounded percentage alone can pass a lone gap.
 INTERROGATE_FLAGS ?= -vv --fail-under 100
-INTERROGATE ?= $(UV_ENV) $(UV) tool run --python 3.13 --from 'interrogate==$(INTERROGATE_VERSION)' interrogate
+INTERROGATE ?= $(UV_GATE) tool --python 3.13 --from 'interrogate==$(INTERROGATE_VERSION)' -- interrogate
 
 # Interrogate rounds its percentage to one decimal, so `--fail-under 100` alone
 # can pass a lone gap in a large repository; fail on any MISSED row as well.
