@@ -23,11 +23,15 @@ pub(super) fn fake_outcome(args: &RunCommand, env: &impl Env) -> Option<Result<i
     fake_run_from_env(args, env).or_else(|| prefail_from_env(env).map(Err))
 }
 
+/// Reports whether `MRIYA_FAKE_RUN_ENABLE` is exactly `1`, the master switch
+/// for every fake mode.
 fn enable_fake_modes(env: &impl Env) -> bool {
     env.string("MRIYA_FAKE_RUN_ENABLE")
         .is_some_and(|val| val == "1")
 }
 
+/// Selects a fake run from `MRIYA_FAKE_RUN_MODE`: `exit-0`, `exit-7`,
+/// `dump-request`, or `missing-exit`. Unknown or unset values yield `None`.
 fn fake_run_from_env(args: &RunCommand, env: &impl Env) -> Option<Result<i32, CliError>> {
     let mode = env.string("MRIYA_FAKE_RUN_MODE")?;
     match mode.as_str() {
@@ -51,6 +55,10 @@ fn fake_run_from_env(args: &RunCommand, env: &impl Env) -> Option<Result<i32, Cl
     }
 }
 
+/// Prints the request the real path would build, for tests that check
+/// overrides and cloud-init handling.
+///
+/// It builds the backend, so valid Scaleway configuration is still needed.
 fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
     let (_backend, request) = build_backend_and_request(args)?;
 
@@ -71,6 +79,8 @@ fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// Selects an early failure from `MRIYA_FAKE_RUN_PREFAIL`: `config`, `sync`,
+/// `backend`, or `run`. Unknown or unset values yield `None`.
 fn prefail_from_env(env: &impl Env) -> Option<CliError> {
     let mode = env.string("MRIYA_FAKE_RUN_PREFAIL")?;
     match mode.as_str() {
