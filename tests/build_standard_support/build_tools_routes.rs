@@ -1,7 +1,7 @@
-//! The routing half of the build-tools contract: which Make routes reach the preflight, in what order,
-//! and which stay clear of it. It reads what `make -n -B <target> CARGO=probe-cargo` prints, so a Cargo
-//! command that hard-codes `cargo` instead of `$(CARGO)` shows up, and a prerequisite that went missing
-//! shows up as a preflight that is absent or comes after the first Cargo command.
+//! The routing half of the build-tools contract: which Make routes reach the preflight, in what
+//! order, and which stay clear of it. It reads what `make -n -B <target> CARGO=probe-cargo` prints,
+//! so a Cargo command that hard-codes `cargo` instead of `$(CARGO)` shows up, and a prerequisite
+//! that went missing shows up as a preflight that is absent or comes after the first Cargo command.
 
 use super::{
     config::Problems,
@@ -14,8 +14,8 @@ const PROBE: &str = "probe-cargo";
 /// The command the preflight prerequisite runs.
 const PREFLIGHT: &str = "scripts/check-build-tools.sh";
 
-/// Routes that compile under the standard's linker and so must pass the preflight before Cargo runs.
-/// The list is this repository's own: a route that stops being defined fails the contract.
+/// Routes that compile under the standard's linker and so must pass the preflight before Cargo
+/// runs. The list is this repository's own: a route that stops being defined fails the contract.
 pub const PREFLIGHT_ROUTES: &[&str] = &[
     "build",
     "test",
@@ -88,14 +88,10 @@ fn commands(stdout: &str) -> Vec<String> {
 }
 
 /// Returns whether a command is the preflight itself.
-fn is_preflight(command: &str) -> bool {
-    executable(command).as_deref() == Some(PREFLIGHT)
-}
+fn is_preflight(command: &str) -> bool { executable(command).as_deref() == Some(PREFLIGHT) }
 
 /// Returns whether a command runs the substituted Cargo.
-fn runs_probe(command: &str) -> bool {
-    executable(command).as_deref() == Some(PROBE)
-}
+fn runs_probe(command: &str) -> bool { executable(command).as_deref() == Some(PROBE) }
 
 /// Returns whether any word of the output names a real `cargo` once the probe is taken out, which
 /// means some invocation ignored `$(CARGO)`, including one inside a quoted `trap` or `-c` string.
@@ -108,9 +104,9 @@ fn names_unsubstituted_cargo(stdout: &str) -> bool {
 
 /// Returns the complaints about one route, judged from the commands `make -n` printed for it.
 ///
-/// A route that must pass the preflight needs the preflight to be printed, and before the first Cargo
-/// command. Every route needs at least one Cargo command, so the check cannot read nothing and pass, and
-/// none may hard-code `cargo`.
+/// A route that must pass the preflight needs the preflight to be printed, and before the first
+/// Cargo command. Every route needs at least one Cargo command, so the check cannot read nothing
+/// and pass, and none may hard-code `cargo`.
 pub fn route_problems(target: &str, stdout: &str, needs_preflight: bool) -> Problems {
     let printed = commands(stdout);
     let preflight_at = printed.iter().position(|command| is_preflight(command));
@@ -131,7 +127,8 @@ pub fn route_problems(target: &str, stdout: &str, needs_preflight: bool) -> Prob
             "`make {target}` never reaches the {PREFLIGHT} preflight"
         )),
         (true, Some(preflight), Some(cargo)) if cargo < preflight => problems.push(format!(
-            "`make {target}` runs {PROBE} (command {cargo}) before the preflight (command {preflight})"
+            "`make {target}` runs {PROBE} (command {cargo}) before the preflight (command \
+             {preflight})"
         )),
         (false, Some(_), _) => problems.push(format!(
             "`make {target}` reaches the {PREFLIGHT} preflight, which this route must not require"
@@ -141,8 +138,8 @@ pub fn route_problems(target: &str, stdout: &str, needs_preflight: bool) -> Prob
     problems
 }
 
-/// Returns the complaints about every preflight route and every excluded route, on one host, and how
-/// many routes it read. Each route's own text is fetched through `runner`.
+/// Returns the complaints about every preflight route and every excluded route, on one host, and
+/// how many routes it read. Each route's own text is fetched through `runner`.
 ///
 /// # Errors
 ///

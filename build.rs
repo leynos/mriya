@@ -3,15 +3,16 @@
 //! The packaging pipeline expects the man page to be available from the
 //! build output directory, so we generate it using clap-mangen here.
 
-use std::env::VarError;
-use std::io::Write;
-use std::io::{self, ErrorKind};
+use std::{
+    env::VarError,
+    io::{self, ErrorKind, Write},
+};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::ambient_authority;
-use cap_std::fs_utf8::Dir;
-use cap_std::fs_utf8::DirEntry;
-use cap_std::fs_utf8::File;
+use cap_std::{
+    ambient_authority,
+    fs_utf8::{Dir, DirEntry, File},
+};
 use clap::CommandFactory;
 use clap_mangen::Man;
 use mockable::{DefaultEnv, Env};

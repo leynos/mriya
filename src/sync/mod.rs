@@ -15,12 +15,20 @@ mod util;
 
 pub use camino::Utf8PathBuf;
 pub use config::{
-    DEFAULT_REMOTE_PATH, DEFAULT_VOLUME_MOUNT_PATH, SyncConfig, SyncConfigLoadError, SyncError,
+    DEFAULT_REMOTE_PATH,
+    DEFAULT_VOLUME_MOUNT_PATH,
+    SyncConfig,
+    SyncConfigLoadError,
+    SyncError,
 };
 pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command};
 pub use types::{
-    CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
-    StreamingCommandRunner, SyncDestination,
+    CommandOutput,
+    CommandRunner,
+    ProcessCommandRunner,
+    RemoteCommandOutput,
+    StreamingCommandRunner,
+    SyncDestination,
 };
 pub use util::{expand_tilde, expand_tilde_with_env};
 
@@ -58,9 +66,7 @@ impl<R: CommandRunner> Syncer<R> {
 
     /// Returns a reference to the underlying configuration.
     #[must_use]
-    pub const fn config(&self) -> &SyncConfig {
-        &self.config
-    }
+    pub const fn config(&self) -> &SyncConfig { &self.config }
 
     /// Runs git-aware rsync from `source` to the chosen destination.
     ///

@@ -70,9 +70,7 @@ fn none_of(problems: &Problems) -> Result<(), String> {
 /// whose workflows do not set up Rust through `setup-rust` lists none, and the
 /// check then reads nothing; a listed workflow must have a step to read.
 #[test]
-fn every_setup_rust_step_installs_linker() -> Result<(), String> {
-    none_of(&workflow_problems())
-}
+fn every_setup_rust_step_installs_linker() -> Result<(), String> { none_of(&workflow_problems()) }
 
 #[test]
 fn every_rustflags_source_is_consistent_with_the_pin() -> Result<(), String> {

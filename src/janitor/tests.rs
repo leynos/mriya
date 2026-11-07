@@ -1,8 +1,9 @@
 //! Unit tests for the janitor module.
 
+use rstest::rstest;
+
 use super::*;
 use crate::test_support::{ScriptedRunner, json_servers, json_volumes};
-use rstest::rstest;
 
 #[rstest]
 fn janitor_config_builds_test_run_tag() {

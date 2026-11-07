@@ -4,17 +4,22 @@
 //! `bdd_steps` and fixtures from `test_helpers`. Fallible fixtures are passed
 //! to the steps as `Result` values so setup failures surface as step errors.
 
-use super::test_helpers::{ScriptedContextResult, WorkspaceResult};
-use super::test_helpers::{error, output, scripted_context_result, workspace_result};
 use rstest_bdd_macros::scenario;
+
+use super::test_helpers::{
+    ScriptedContextResult,
+    WorkspaceResult,
+    error,
+    output,
+    scripted_context_result,
+    workspace_result,
+};
 
 #[scenario(
     path = "tests/features/sync.feature",
     name = "Preserve gitignored caches on the remote"
 )]
-fn scenario_preserve_caches(workspace_result: WorkspaceResult) {
-    drop(workspace_result);
-}
+fn scenario_preserve_caches(workspace_result: WorkspaceResult) { drop(workspace_result); }
 
 #[scenario(
     path = "tests/features/sync.feature",

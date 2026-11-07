@@ -3,10 +3,16 @@
 use mriya::sync::CACHE_SUBDIRECTORIES;
 use rstest_bdd_macros::{given, then};
 
-use super::bdd_steps::{
-    SshLookupDirection, StepError, context, find_ssh_command, last_ssh_remote_command,
+use super::{
+    bdd_steps::{
+        SshLookupDirection,
+        StepError,
+        context,
+        find_ssh_command,
+        last_ssh_remote_command,
+    },
+    test_helpers::{RunContext, RunContextResult},
 };
-use super::test_helpers::{RunContext, RunContextResult};
 
 #[given("cache routing is disabled")]
 fn cache_routing_disabled(
@@ -126,7 +132,8 @@ fn mount_command_does_not_create_cache_subdirectories(
         let path = format!("/mriya/{subdir}");
         if mount_command.contains(&path) {
             return Err(StepError::Assertion(format!(
-                "expected mount command to NOT create cache directory '{path}', got: {mount_command}"
+                "expected mount command to NOT create cache directory '{path}', got: \
+                 {mount_command}"
             )));
         }
     }

@@ -1,9 +1,11 @@
 //! Core sync types and command runner abstraction.
 
-use std::ffi::OsString;
-use std::io::{BufReader, Read, Write};
-use std::process::{Command, Stdio};
-use std::thread;
+use std::{
+    ffi::OsString,
+    io::{BufReader, Read, Write},
+    process::{Command, Stdio},
+    thread,
+};
 
 use camino::Utf8PathBuf;
 
@@ -56,9 +58,7 @@ pub struct CommandOutput {
 impl CommandOutput {
     /// Returns `true` when the exit code equals zero.
     #[must_use]
-    pub const fn is_success(&self) -> bool {
-        matches!(self.code, Some(0))
-    }
+    pub const fn is_success(&self) -> bool { matches!(self.code, Some(0)) }
 }
 
 /// Abstraction over command execution to support fakes in tests.

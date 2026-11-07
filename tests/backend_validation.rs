@@ -3,9 +3,8 @@
 #[path = "common/test_constants.rs"]
 mod test_constants;
 
-use test_constants::DEFAULT_INSTANCE_TYPE;
-
 use mriya::{InstanceRequest, backend::BackendError};
+use test_constants::DEFAULT_INSTANCE_TYPE;
 
 #[test]
 fn validate_rejects_empty_fields() {

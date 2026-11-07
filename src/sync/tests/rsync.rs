@@ -1,11 +1,10 @@
 //! Tests for rsync argument construction and sync behaviour.
 
-use super::super::*;
-use crate::test_support::ScriptedRunner;
 use rstest::rstest;
 use tempfile::TempDir;
 
-use super::fixtures::base_config;
+use super::{super::*, fixtures::base_config};
+use crate::test_support::ScriptedRunner;
 
 #[rstest]
 fn build_rsync_args_remote_includes_gitignore_filter(base_config: SyncConfig) {

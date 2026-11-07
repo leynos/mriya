@@ -19,9 +19,7 @@ use mockable::{DefaultEnv, Env};
 /// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
 /// ```
 #[must_use]
-pub fn expand_tilde(path: &str) -> String {
-    expand_tilde_with_env(path, &DefaultEnv)
-}
+pub fn expand_tilde(path: &str) -> String { expand_tilde_with_env(path, &DefaultEnv) }
 
 /// Expands a leading `~/` prefix using `HOME` as reported by `env`.
 ///
@@ -33,7 +31,8 @@ pub fn expand_tilde(path: &str) -> String {
 /// ```
 /// # use mriya::sync::expand_tilde_with_env;
 /// let mut env = mockable::MockEnv::new();
-/// env.expect_string().returning(|_| Some(String::from("/home/me")));
+/// env.expect_string()
+///     .returning(|_| Some(String::from("/home/me")));
 /// assert_eq!(
 ///     expand_tilde_with_env("~/.ssh/id_ed25519", &env),
 ///     "/home/me/.ssh/id_ed25519"
