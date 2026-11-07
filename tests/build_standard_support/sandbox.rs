@@ -10,6 +10,7 @@ use cap_std::{
     fs::{Permissions, PermissionsExt},
     fs_utf8::Dir,
 };
+use mockable::{DefaultEnv, Env};
 use tempfile::TempDir;
 
 /// Where the sandbox keeps tools and installed files, relative to its root.
@@ -150,7 +151,7 @@ pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> Result<bool, Stri
 /// read for a reason other than absence.
 fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
     let program = name.as_ref();
-    let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
+    let path = DefaultEnv.string("PATH").ok_or("PATH is not set")?;
     let directories =
         std::env::split_paths(&path).filter_map(|entry| Utf8PathBuf::try_from(entry).ok());
     for directory in directories {
