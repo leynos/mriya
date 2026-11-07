@@ -13,24 +13,40 @@ use crate::scaleway::types::Zone;
 use super::super::{ScalewayBackend, ScalewayBackendError};
 use super::InstanceSnapshot;
 
+/// JSON body for the create-server call.
+///
+/// This mirrors what the code currently sends, including `stopped` and
+/// `cloud_init`; see issue #176 for the provider's response to those keys.
 #[derive(Serialize)]
 struct CreateServerRequest {
+    /// Generated instance name, `mriya-` followed by a random UUID.
     name: String,
+    /// Instance type to provision, such as `DEV1-S`.
     commercial_type: String,
+    /// Identifier of the image to boot from.
     image: String,
+    /// Project that will own the instance.
     project: String,
+    /// Requests a routed IP address for the instance.
     routed_ip_enabled: bool,
+    /// Requests that a dynamic public IP address be allocated.
     dynamic_ip_required: bool,
+    /// Tags for identifying and cleaning up mriya-created instances.
     tags: Vec<String>,
+    /// Requests that the instance be created without being started.
     stopped: bool,
+    /// Optional cloud-init user-data, omitted from the body when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     cloud_init: Option<String>,
+    /// Optional organization identifier, omitted from the body when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     organization: Option<String>,
 }
 
+/// Wrapper for the server object returned by a successful create call.
 #[derive(Deserialize)]
 struct CreateServerResponse {
+    /// The created instance as reported by the provider.
     server: scaleway_rs::ScalewayInstance,
 }
 

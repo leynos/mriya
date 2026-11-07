@@ -6,28 +6,41 @@ use crate::volume::{VolumeHandle, VolumeRequest};
 
 use super::super::{ScalewayBackend, ScalewayBackendError};
 
+/// Volume type requested for cache volumes (Scaleway Block Storage SSD).
 const VOLUME_TYPE_BLOCK: &str = "b_ssd";
 
+/// JSON body for the create-volume call.
 #[derive(Serialize)]
 struct CreateVolumeRequest {
+    /// Volume name as supplied by the caller.
     name: String,
+    /// Volume size in bytes, taken from `VolumeRequest::size_bytes`.
     size: u64,
+    /// Provider volume type; always `VOLUME_TYPE_BLOCK` here.
     volume_type: String,
+    /// Project that will own the volume.
     project: String,
+    /// Optional organization identifier, omitted from the body when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     organization: Option<String>,
+    /// Tags for identifying cache volumes; omitted from the body when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
 }
 
+/// Wrapper for the volume object returned by a successful create call.
 #[derive(Deserialize)]
 struct CreateVolumeResponse {
+    /// The created volume as reported by the provider.
     volume: ScalewayVolume,
 }
 
+/// The subset of the provider's volume object that mriya reads.
 #[derive(Deserialize)]
 struct ScalewayVolume {
+    /// Provider identifier of the volume.
     id: String,
+    /// Zone in which the provider placed the volume.
     zone: String,
 }
 

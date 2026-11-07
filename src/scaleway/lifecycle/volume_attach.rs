@@ -7,13 +7,17 @@ use crate::backend::InstanceHandle;
 use super::super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
 use super::super::{ScalewayBackend, ScalewayBackendError};
 
+/// Direction of a volume PATCH, used to choose the matching error variant.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum VolumePatchAction {
+    /// The PATCH adds a volume; failures map to `VolumeAttachmentFailed`.
     Attach,
+    /// The PATCH removes a volume; failures map to `VolumeDetachFailed`.
     Detach,
 }
 
 impl VolumePatchAction {
+    /// Builds the error variant matching this action from the failure details.
     const fn into_error(
         self,
         volume_id: String,
@@ -35,13 +39,18 @@ impl VolumePatchAction {
     }
 }
 
+/// Identifies the volume and direction of a PATCH so a failure can be
+/// reported as an attach or detach error.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct VolumePatchContext<'a> {
+    /// Identifier of the volume being attached or detached.
     volume_id: &'a str,
+    /// Whether the PATCH attaches or detaches the volume.
     action: VolumePatchAction,
 }
 
 impl<'a> VolumePatchContext<'a> {
+    /// Context for attaching `volume_id`.
     pub(super) const fn attach(volume_id: &'a str) -> Self {
         Self {
             volume_id,
@@ -49,6 +58,7 @@ impl<'a> VolumePatchContext<'a> {
         }
     }
 
+    /// Context for detaching `volume_id`.
     pub(super) const fn detach(volume_id: &'a str) -> Self {
         Self {
             volume_id,
