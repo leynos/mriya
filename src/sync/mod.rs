@@ -22,7 +22,7 @@ pub use types::{
     CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
     StreamingCommandRunner, SyncDestination,
 };
-pub use util::expand_tilde;
+pub use util::{expand_tilde, expand_tilde_with_env};
 
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]
