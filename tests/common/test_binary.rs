@@ -77,9 +77,28 @@ pub(crate) fn mriya_cmd() -> Result<assert_cmd::Command, &'static BuildError> {
 /// For example, the first `mriya_cmd()` call initializes the cached binary;
 /// later calls reuse its executable path.
 fn build_test_binary() -> Result<TestBinary, BuildError> {
-    let mut command = Command::new(env!("CARGO"));
-    build_binary_with_command(&mut command)
+    // The dependencies are fetched before the tests start, so this build needs
+    // no network and must not wait on the index. The command is built and run
+    // in one chain so the offline setting is visible where cargo starts.
+    let output = Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("CARGO_NET_OFFLINE", "true")
+        .args(BUILD_ARGS)
+        .output()
+        .map_err(BuildError::Spawn)?;
+
+    binary_from_output(&output)
 }
+
+/// The arguments of the CLI-test build request.
+const BUILD_ARGS: [&str; 6] = [
+    "build",
+    "--bin",
+    "mriya",
+    "--features",
+    "test-backdoors",
+    "--message-format=json-render-diagnostics",
+];
 
 /// Adds the CLI-test build request to a command and captures its completed
 /// process output.
@@ -93,14 +112,10 @@ fn build_test_binary() -> Result<TestBinary, BuildError> {
 fn build_binary_with_command(command: &mut Command) -> Result<TestBinary, BuildError> {
     let output = command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args([
-            "build",
-            "--bin",
-            "mriya",
-            "--features",
-            "test-backdoors",
-            "--message-format=json-render-diagnostics",
-        ])
+        // The dependencies are fetched before the tests start, so this build
+        // needs no network and must not wait on the index.
+        .env("CARGO_NET_OFFLINE", "true")
+        .args(BUILD_ARGS)
         .output()
         .map_err(BuildError::Spawn)?;
 

@@ -57,6 +57,7 @@ clean: ## Remove build artefacts
 	$(CARGO) clean
 
 test: ## Run tests with warnings treated as errors
+	$(CARGO) fetch --locked
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run $(TEST_FLAGS) $(BUILD_JOBS)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) test --doc --all-features $(BUILD_JOBS)
 

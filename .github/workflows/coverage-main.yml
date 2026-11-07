@@ -57,6 +57,9 @@ jobs:
           expect-cache: any
       # The selection is the baseline every pull request's ratchet is measured
       # against, so ci.yml's must match it field for field.
+      - name: Fetch dependencies
+        # Tests start their own cargo offline; fetch once so none resolves cold.
+        run: cargo fetch --locked
       - name: Generate coverage
         env:
           # One of the two exclusions from the build standard: a coverage build is a
