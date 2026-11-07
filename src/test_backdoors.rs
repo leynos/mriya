@@ -4,26 +4,40 @@
 //! helpers let the binary short-circuit provisioning so tests can observe exit
 //! codes, streamed output, and request construction without cloud access.
 
-use std::env;
 use std::io::{self, Write};
 
+use mockable::Env;
 use mriya::{RunError, ScalewayBackendError};
 
 use super::{CliError, RunCommand, build_backend_and_request};
-/// Reports whether the CLI should consult the fake run modes.
+
+/// Returns the outcome of a fake run when the environment selects one.
+///
+/// Yields `None` unless `MRIYA_FAKE_RUN_ENABLE` is `1` and either a fake run
+/// mode or a pre-failure mode is selected, so callers fall through to the real
+/// provisioning path.
+pub(super) fn fake_outcome(args: &RunCommand, env: &impl Env) -> Option<Result<i32, CliError>> {
+    if !enable_fake_modes(env) {
+        return None;
+    }
+    fake_run_from_env(args, env).or_else(|| prefail_from_env(env).map(Err))
+}
+
+/// Reports whether the injected environment selects a fake run.
 ///
 /// The mode variables are read only when this returns true, so an ordinary run
 /// cannot be diverted by a stray `MRIYA_FAKE_*` variable in the environment.
-pub(super) fn enable_fake_modes() -> bool {
-    env::var("MRIYA_FAKE_RUN_ENABLE").is_ok_and(|val| val == "1")
+fn enable_fake_modes(env: &impl Env) -> bool {
+    env.string("MRIYA_FAKE_RUN_ENABLE")
+        .is_some_and(|val| val == "1")
 }
 
-/// Runs the fake mode named by `MRIYA_FAKE_RUN_MODE`, if one is set.
+/// Runs the fake mode `env` names in `MRIYA_FAKE_RUN_MODE`, if it names one.
 ///
 /// Returns `None` when no mode is selected, so the caller falls through to a
 /// real provisioning run; `Some` short-circuits with the simulated exit status.
-pub(super) fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
-    let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
+fn fake_run_from_env(args: &RunCommand, env: &impl Env) -> Option<Result<i32, CliError>> {
+    let mode = env.string("MRIYA_FAKE_RUN_MODE")?;
     match mode.as_str() {
         "exit-0" => {
             writeln!(io::stdout(), "fake-stdout").ok();
@@ -65,14 +79,14 @@ fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// Fails the run before provisioning, in the stage named by
+/// Fails the run before provisioning, in the stage `env` names in
 /// `MRIYA_FAKE_RUN_PREFAIL`.
 ///
 /// Returning the real `CliError` for the named stage is what lets the CLI
 /// behaviour tests assert the exit code and message of an early failure
 /// without needing cloud access or a sync target.
-pub(super) fn prefail_from_env() -> Option<CliError> {
-    let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
+fn prefail_from_env(env: &impl Env) -> Option<CliError> {
+    let mode = env.string("MRIYA_FAKE_RUN_PREFAIL")?;
     match mode.as_str() {
         "config" => Some(CliError::Config(String::from("fake"))),
         "sync" => Some(CliError::Sync(String::from("fake"))),
@@ -83,3 +97,4 @@ pub(super) fn prefail_from_env() -> Option<CliError> {
         _ => None,
     }
 }
+// weave: run 'weave explain src/test_backdoors.rs' for per-hunk detail, 'weave check' to verify your resolution

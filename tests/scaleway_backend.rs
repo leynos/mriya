@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::LazyLock;
 
+use mockable::{DefaultEnv, Env};
 use mriya::{
     Backend, InstanceHandle, InstanceNetworking, InstanceRequest, ScalewayBackend,
     ScalewayBackendError, ScalewayConfig,
@@ -27,7 +28,9 @@ where
 }
 
 fn scaleway_integration_enabled() -> bool {
-    let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
+    let enabled = DefaultEnv
+        .raw("MRIYA_RUN_SCALEWAY_TESTS")
+        .unwrap_or_default();
     matches!(
         enabled.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes"
@@ -40,8 +43,8 @@ fn scaleway_config() -> Option<ScalewayConfig> {
         return None;
     }
 
-    let secret = std::env::var("SCW_SECRET_KEY").ok()?;
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").ok()?;
+    let secret = DefaultEnv.raw("SCW_SECRET_KEY").ok()?;
+    let project = DefaultEnv.raw("SCW_DEFAULT_PROJECT_ID").ok()?;
     if secret.trim().is_empty() || project.trim().is_empty() {
         return None;
     }
