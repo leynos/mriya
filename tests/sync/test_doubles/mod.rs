@@ -4,14 +4,15 @@
 //! and `LocalCopyRunner`, which simulates rsync behaviour on the local
 //! filesystem. `LocalCopyRunner` assumes `rsync_bin == "rsync"` and that the
 //! final two arguments are UTF-8 source and destination paths; this coupling is
-//! acceptable for test purposes.
+//! acceptable for test purposes. It honours `--delete` and the `.gitignore`
+//! filter only when the arguments contain them.
 
 use std::ffi::OsString;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use mriya::sync::{CommandOutput, CommandRunner, SyncError};
 
-use super::rsync_simulator::simulate_rsync;
+use super::rsync_simulator::{RsyncFlags, simulate_rsync};
 
 mod shared_scripted_runner;
 pub use shared_scripted_runner::ScriptedRunner;
@@ -56,7 +57,11 @@ impl CommandRunner for LocalCopyRunner {
         }
 
         let (source, destination) = Self::parse_paths(args)?;
-        simulate_rsync(Utf8Path::new(&source), Utf8Path::new(&destination))?;
+        simulate_rsync(
+            Utf8Path::new(&source),
+            Utf8Path::new(&destination),
+            RsyncFlags::from_args(args),
+        )?;
 
         Ok(CommandOutput {
             code: Some(0),
