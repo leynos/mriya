@@ -151,7 +151,9 @@ pub enum JanitorError {
 /// Deletes test-run-tagged Scaleway resources by shelling out to `scw`.
 #[derive(Clone, Debug)]
 pub struct Janitor<R: CommandRunner> {
+    /// Project, test-run tag, and `scw` binary to use.
     config: JanitorConfig,
+    /// Executes the `scw` commands; replaceable so tests can script outputs.
     runner: R,
 }
 
@@ -193,6 +195,10 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
+    /// Lists items with `list` and deletes each with `delete`, returning how many
+    /// were found.
+    ///
+    /// The first failure aborts the sweep, leaving later items undeleted.
     fn delete_tagged<T>(
         &self,
         tag: &str,
@@ -206,14 +212,20 @@ impl<R: CommandRunner> Janitor<R> {
         Ok(items.len())
     }
 
+    /// Deletes every server carrying `tag`.
     fn delete_tagged_servers(&self, tag: &str) -> Result<usize, JanitorError> {
         self.delete_tagged(tag, Self::list_tagged_servers, Self::delete_server)
     }
 
+    /// Deletes every volume carrying `tag`.
     fn delete_tagged_volumes(&self, tag: &str) -> Result<usize, JanitorError> {
         self.delete_tagged(tag, Self::list_tagged_volumes, Self::delete_volume)
     }
 
+    /// Re-lists tagged servers and volumes and fails with `NotClean` if any
+    /// remain.
+    ///
+    /// The message names up to five of each as `id@zone`.
     fn ensure_no_remaining(&self, tag: &str) -> Result<(), JanitorError> {
         const MAX_ITEMS_TO_SHOW: usize = 5;
 
@@ -248,10 +260,12 @@ impl<R: CommandRunner> Janitor<R> {
         Err(JanitorError::NotClean { message })
     }
 
+    /// Reports whether `tags` contains `tag` exactly.
     fn has_tag(tags: &[String], tag: &str) -> bool {
         tags.iter().any(|existing| existing == tag)
     }
 
+    /// Lists all servers in the project, keeping those carrying `tag`.
     fn list_tagged_servers(&self, tag: &str) -> Result<Vec<ScwServer>, JanitorError> {
         Ok(self
             .list_servers()?
@@ -260,6 +274,7 @@ impl<R: CommandRunner> Janitor<R> {
             .collect())
     }
 
+    /// Lists all volumes in the project, keeping those carrying `tag`.
     fn list_tagged_volumes(&self, tag: &str) -> Result<Vec<ScwVolume>, JanitorError> {
         Ok(self
             .list_volumes()?

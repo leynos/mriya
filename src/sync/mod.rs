@@ -27,7 +27,9 @@ pub use util::{expand_tilde, expand_tilde_with_env};
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]
 pub struct Syncer<R: CommandRunner> {
+    /// Validated settings for `rsync` and `ssh`.
     config: SyncConfig,
+    /// Executes `rsync` and `ssh`; replaceable so tests can script outputs.
     runner: R,
 }
 
@@ -154,6 +156,9 @@ impl<R: CommandRunner> Syncer<R> {
         self.execute_ssh(networking, remote_command)
     }
 
+    /// Runs `command` on the instance over `ssh` and returns its output.
+    ///
+    /// The exit code is `None` when the process was terminated by a signal.
     fn execute_ssh(
         &self,
         networking: &InstanceNetworking,
@@ -169,6 +174,15 @@ impl<R: CommandRunner> Syncer<R> {
         })
     }
 
+    /// Builds the `rsync` arguments for a mirror of `source` into `destination`.
+    ///
+    /// The transfer uses archive mode with compression, deletes remote files
+    /// absent locally, honours per-directory `.gitignore` rules, and skips
+    /// `.git/`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MissingSource` when `source` is not a directory.
     fn build_rsync_args(
         &self,
         source: &Utf8Path,
@@ -210,6 +224,8 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(args)
     }
 
+    /// Builds the `ssh` arguments to run `remote_command` as the configured
+    /// user on the instance.
     fn build_ssh_args(
         &self,
         networking: &InstanceNetworking,
@@ -224,6 +240,9 @@ impl<R: CommandRunner> Syncer<R> {
         args
     }
 
+    /// Builds the `ssh` options shared by direct SSH calls and the `rsync`
+    /// remote shell: port, optional identity file, batch mode, host-key
+    /// checking, and known-hosts file.
     fn common_ssh_options(&self, port: u16) -> Vec<OsString> {
         let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
 
@@ -254,6 +273,7 @@ impl<R: CommandRunner> Syncer<R> {
         args
     }
 
+    /// Renders the `ssh` command line that `rsync` uses as its remote shell.
     fn build_remote_shell(&self, port: u16) -> String {
         let opts = self
             .common_ssh_options(port)
@@ -264,6 +284,8 @@ impl<R: CommandRunner> Syncer<R> {
         format!("{} {}", self.config.ssh_bin, opts)
     }
 
+    /// Wraps `remote_command` with the working directory change and the
+    /// optional cache routing preamble.
     fn build_remote_command(&self, remote_command: &str) -> String {
         remote_command::build_remote_command(&self.config, remote_command)
     }

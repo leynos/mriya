@@ -41,6 +41,10 @@ pub(crate) fn build_remote_command(config: &SyncConfig, remote_command: &str) ->
     }
 }
 
+/// Builds a shell prefix that exports build cache locations under the
+/// volume mount path, but only when the path is a mount point at run time.
+///
+/// Returns an empty string when cache routing is disabled.
 fn cache_routing_preamble(config: &SyncConfig) -> String {
     if !config.route_build_caches {
         return String::new();

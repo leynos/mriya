@@ -48,6 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Removes `mriya.1` from the `out` directories of other `mriya-*` build
+/// directories, so only the current build's manpage remains.
+///
+/// See `resolve_build_paths` for how the build directories are located.
 fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
     let build_paths = resolve_build_paths(out_dir)?;
     let build_root_dir = Dir::open_ambient_dir(&build_paths.build_root, ambient_authority())?;
@@ -64,7 +68,9 @@ fn cleanup_duplicate_manpages(out_dir: &Utf8Path) -> io::Result<()> {
 /// - `build_root`: the directory where build artefacts are placed (e.g., `target/.../build`).
 /// - `current_build_name`: the identifier/name of the active build directory.
 struct BuildPaths {
+    /// Directory containing one subdirectory per build of each crate.
     build_root: Utf8PathBuf,
+    /// Name of this build's own subdirectory, which cleanup must not touch.
     current_build_name: String,
 }
 
