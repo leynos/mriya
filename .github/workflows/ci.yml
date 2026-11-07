@@ -52,6 +52,9 @@ jobs:
       # not archived and CodeScene is never called. coverage-main.yml writes
       # the baseline this compares against and owns the CodeScene upload, so
       # the selection below must match that workflow's field for field.
+      - name: Fetch dependencies
+        # Tests start their own cargo offline; fetch once so none resolves cold.
+        run: cargo fetch --locked
       - name: Test and Measure Coverage
         env:
           # One of the two exclusions from the build standard: a coverage build is a

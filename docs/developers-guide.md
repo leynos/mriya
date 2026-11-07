@@ -22,6 +22,23 @@ The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
 environment. Bump that variable to adopt a newer release.
 
+## Fetching dependencies before tests
+
+The CLI tests build the `mriya` binary with their own `cargo`. Cargo resolves
+dependencies while it holds the package-cache lock in `$CARGO_HOME`, so a nested
+`cargo` that resolves cold can wait on another repository's build for many
+minutes. The fix is to fetch once, before any test starts, and to run the
+nested build offline:
+
+- `make test` runs `cargo fetch --locked` first. A failed fetch stops the run.
+- `ci.yml` and `coverage-main.yml` run `cargo fetch --locked` as an
+  unconditional step before the coverage step, with no `|| true`.
+- The test binary build sets `CARGO_NET_OFFLINE=true`. Prepare a direct or
+  offline run with `cargo fetch --locked` first; a crate the fetch missed then
+  fails at once instead of waiting.
+
+The estate lint rule `nested-cargo-offline-tests` checks all three.
+
 ## Coverage ownership
 
 The trunk owns both persistent coverage outputs. On a push to `main`,
