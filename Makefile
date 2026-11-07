@@ -8,7 +8,7 @@ TARGET ?= mriya
 CARGO ?= cargo
 BUILD_JOBS ?=
 RUST_FLAGS ?= -D warnings
-RUSTDOC_FLAGS ?= -D warnings
+RUSTDOC_FLAGS ?= --cfg docsrs -D warnings
 # `--workspace` matters: with a root package, Cargo otherwise selects only
 # that package and the `crates/` members escape every gate.
 CARGO_FLAGS ?= --workspace --all-targets --all-features
