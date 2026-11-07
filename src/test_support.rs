@@ -7,15 +7,21 @@ use std::ffi::OsString;
 /// Used to drive deterministic command outcomes without spawning processes.
 #[derive(Clone, Debug, Default)]
 pub struct ScriptedRunner {
+    /// Queued outputs, handed out oldest first.
     responses:
         std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<crate::sync::CommandOutput>>>,
+    /// Every call made through the runner, in order.
     invocations: std::rc::Rc<std::cell::RefCell<Vec<CommandInvocation>>>,
+    /// Error to return from the next call to the named program, if any.
     next_error: std::rc::Rc<std::cell::RefCell<Option<ScopedError>>>,
 }
 
+/// An error armed for a specific program.
 #[derive(Clone, Debug)]
 struct ScopedError {
+    /// Program whose call should fail.
     program: String,
+    /// Error returned for that call.
     error: crate::sync::SyncError,
 }
 
@@ -171,6 +177,10 @@ impl crate::sync::CommandRunner for ScriptedRunner {
     }
 }
 
+/// Renders `(id, zone, tags)` triples as comma-separated JSON objects.
+///
+/// Values are inserted without JSON escaping, so they must not contain
+/// quotes or backslashes.
 fn json_tagged_resources(items: &[(&str, &str, &[&str])]) -> String {
     items
         .iter()
