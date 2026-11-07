@@ -6,4 +6,7 @@ mod test_constants;
 #[path = "common/test_binary.rs"]
 mod test_binary;
 
+#[path = "common/cli_support.rs"]
+mod cli_support;
+
 mod cloud_init;
