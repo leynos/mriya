@@ -9,6 +9,9 @@ use super::{Janitor, JanitorError, ResourceType, ScwServer, ScwVolume};
 use crate::sync::{CommandOutput, CommandRunner};
 
 impl<R: CommandRunner> Janitor<R> {
+    /// Runs `scw` with `args`, failing when it exits unsuccessfully.
+    ///
+    /// The failure's `stderr` is prefixed with the resource name for context.
     fn run_scw(
         &self,
         args: &[&str],
@@ -32,10 +35,16 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
+    /// Runs `scw` and returns its standard output, which the caller parses as
+    /// JSON.
     fn run_scw_json(&self, args: &[&str], resource: ResourceType) -> Result<String, JanitorError> {
         self.run_scw(args, resource).map(|out| out.stdout)
     }
 
+    /// Parses `scw` list output into items of type `T`.
+    ///
+    /// Both a bare JSON array and an object wrapping the array under the
+    /// resource's name are accepted.
     fn parse_scw_list<T>(stdout: &str, resource: ResourceType) -> Result<Vec<T>, JanitorError>
     where
         T: serde::de::DeserializeOwned,
@@ -74,6 +83,11 @@ impl<R: CommandRunner> Janitor<R> {
         Self::parse_scw_list(&stdout, resource)
     }
 
+    /// Returns the array of items from either list output shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Parse` for anything other than an array or object.
     fn unwrap_scw_list_items(payload: Value, resource_name: &str) -> Result<Value, JanitorError> {
         match payload {
             Value::Array(items) => Ok(Value::Array(items)),
@@ -85,6 +99,11 @@ impl<R: CommandRunner> Janitor<R> {
         }
     }
 
+    /// Takes the array stored under `resource_name` from a wrapper object.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Parse` when the field is missing.
     fn extract_scw_list_field(
         mut map: serde_json::Map<String, Value>,
         resource_name: &str,
@@ -96,10 +115,15 @@ impl<R: CommandRunner> Janitor<R> {
             })
     }
 
+    /// Lists servers in the project across all zones.
     pub(super) fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
         self.list_scw_resources(&["instance", "server"], ResourceType::Servers)
     }
 
+    /// Deletes a server, releasing its IP and force-shutting it down, and waits
+    /// for completion.
+    ///
+    /// Attached volumes are kept (`with-volumes=none`) and handled separately.
     pub(super) fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
         let zone_arg = format!("zone={}", server.zone);
         let args = [
@@ -116,10 +140,12 @@ impl<R: CommandRunner> Janitor<R> {
         self.run_scw(&args, ResourceType::Servers)
     }
 
+    /// Lists Block Storage volumes in the project across all zones.
     pub(super) fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
         self.list_scw_resources(&["block", "volume"], ResourceType::Volumes)
     }
 
+    /// Deletes a Block Storage volume in its own zone.
     pub(super) fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
         let zone_arg = format!("zone={}", volume.zone);
         let args = [
