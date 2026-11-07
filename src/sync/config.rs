@@ -100,6 +100,8 @@ impl SyncConfig {
         Ok(())
     }
 
+    /// Accepts an absent value, but rejects a present one that is blank, so a
+    /// blank override cannot silently replace a default.
     fn require_optional_value(value: Option<&str>, field: &str) -> Result<(), SyncError> {
         match value {
             None => Ok(()), // Not configured; SSH uses defaults
@@ -142,6 +144,7 @@ impl SyncConfig {
         }
     }
 
+    /// Rejects `value` when it is empty or only whitespace.
     fn require_value(value: &str, field: &str) -> Result<(), SyncError> {
         Self::require_optional_value(Some(value), field)
     }

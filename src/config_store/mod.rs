@@ -9,12 +9,19 @@ use thiserror::Error;
 
 use ortho_config::toml;
 
+/// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
+/// Environment variable that overrides the configuration file location.
 const CONFIG_ENV_VAR: &str = "MRIYA_CONFIG_PATH";
+/// File name searched for in the user and system configuration directories.
 const CONFIG_FILE_NAME: &str = "mriya.toml";
+/// Hidden file name searched for in the home directory.
 const DOTFILE_NAME: &str = ".mriya.toml";
+/// File name searched for in the project (working) directory.
 const PROJECT_FILE_NAME: &str = "mriya.toml";
+/// TOML table that holds the volume setting that this store reads and writes.
 const SCALEWAY_SECTION: &str = "scaleway";
+/// Key within the table that records the cache volume ID.
 const VOLUME_KEY: &str = "default_volume_id";
 
 /// Errors raised while updating the configuration file.
@@ -83,6 +90,7 @@ pub trait ConfigWriter {
 /// Updates `mriya.toml` using `OrthoConfig`'s discovery search order.
 #[derive(Clone, Debug)]
 pub struct ConfigStore {
+    /// Supplies the ordered candidate paths for the configuration file.
     discovery: ConfigDiscovery,
 }
 
@@ -106,6 +114,13 @@ impl ConfigStore {
         Self { discovery }
     }
 
+    /// Picks the first discovered candidate that exists, or the last candidate
+    /// (marked as not existing) when none do.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCandidates` when discovery yields nothing, or `Io` when an
+    /// existence check fails.
     fn resolve_target(&self) -> Result<ConfigTarget, ConfigStoreError> {
         let candidates = self.discovery.utf8_candidates();
         for candidate in &candidates {
@@ -172,12 +187,24 @@ impl ConfigWriter for ConfigStore {
     }
 }
 
+/// The configuration file chosen for a read or write.
 #[derive(Clone, Debug)]
 struct ConfigTarget {
+    /// Location of the file, whether or not it exists yet.
     path: Utf8PathBuf,
+    /// Whether the file was found on disk; a missing file is treated as empty
+    /// and created on write.
     exists: bool,
 }
 
+/// Splits `path` into its directory (`.` when there is none) and file name.
+///
+/// Capability-based filesystem access opens the directory first and then
+/// refers to the file by name.
+///
+/// # Errors
+///
+/// Returns `InvalidStructure` when `path` has no file name.
 fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreError> {
     let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
     let file_name = path
@@ -189,6 +216,8 @@ fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreEr
     Ok((parent, file_name))
 }
 
+/// Reports whether `path` exists, treating a missing parent directory as
+/// absence rather than an error.
 fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
     let (parent, file_name) = split_config_path(path)?;
 
@@ -207,6 +236,7 @@ fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
     }
 }
 
+/// Reads the whole configuration file as text.
 fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
     let (parent, file_name) = split_config_path(path)?;
 
@@ -223,6 +253,8 @@ fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
         })
 }
 
+/// Parses `contents` as TOML, treating blank content as an empty table so a
+/// new file can be created from scratch.
 fn parse_toml(path: &Utf8Path, contents: &str) -> Result<toml::Value, ConfigStoreError> {
     if contents.trim().is_empty() {
         return Ok(toml::Value::Table(toml::value::Table::new()));
@@ -234,6 +266,14 @@ fn parse_toml(path: &Utf8Path, contents: &str) -> Result<toml::Value, ConfigStor
     })
 }
 
+/// Extracts `scaleway.default_volume_id`, trimmed, from the parsed document.
+///
+/// Returns `None` when the section or key is absent.
+///
+/// # Errors
+///
+/// Returns `InvalidStructure` when the root or section is not a table or
+/// the key is not a string.
 fn read_volume_id(
     path: &Utf8Path,
     value: &toml::Value,
@@ -266,6 +306,12 @@ fn read_volume_id(
     })
 }
 
+/// Sets `scaleway.default_volume_id` (trimmed) in `value`, creating the
+/// section when needed and leaving other keys alone.
+///
+/// # Errors
+///
+/// Returns `InvalidStructure` when the root or section is not a table.
 fn write_volume_id_value(
     path: &Utf8Path,
     value: &mut toml::Value,
@@ -297,6 +343,10 @@ fn write_volume_id_value(
     Ok(())
 }
 
+/// Renders `value` and writes it over the file, creating parent directories.
+///
+/// The whole document is re-rendered, so comments and formatting in an
+/// existing file are not preserved. The write is not atomic.
 fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreError> {
     let (parent, file_name) = split_config_path(path)?;
     Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
