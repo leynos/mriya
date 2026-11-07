@@ -1,6 +1,6 @@
 //! The installer half of the build-tools contract. `scripts/install-build-tools.sh` runs in a
 //! sandbox whose release server is a local directory and whose `rustup` only logs its arguments, so
-//! a case can publish a mold linker archive, tamper with its checksum, or leave a pinned mold
+//! a case can publish a `mold` linker archive, tamper with its checksum, or leave a pinned `mold`
 //! linker already on `PATH`, and then read exactly what the installer unpacked and which toolchain
 //! and components it asked for.
 
