@@ -21,6 +21,7 @@ use super::make::{Assignment, commands_from};
 #[case::version_probe("cargo nextest --version\n", Assignment::Unassigned)]
 #[case::formatter("cargo fmt --all --check\n", Assignment::Unassigned)]
 #[case::metadata("cargo metadata --format-version 1\n", Assignment::Unassigned)]
+#[case::fetch("cargo fetch --locked\n", Assignment::Unassigned)]
 #[case::documentation(
     "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace\n",
     Assignment::Unassigned
