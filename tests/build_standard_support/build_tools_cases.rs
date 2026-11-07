@@ -13,6 +13,7 @@ use super::{
     installer::{Digest, installed_linker, published, run_installer, rustup_calls},
     make::Host,
     process::probe_make,
+    sandbox::{Sandbox, is_tool},
 };
 
 /// Scenario: the evaluated Make invocation for every route, on a Linux and a macOS host.
@@ -265,5 +266,46 @@ fn the_toolchain_file_lists_language_server_beside_rustfmt_and_clippy() -> Resul
         Ok(())
     } else {
         Err("the nightly pin moved".to_owned())
+    }
+}
+
+/// Scenario: a tool directory whose entries are real files and symlinks of every shape a host has.
+///
+/// Invariant: a tool is found through an absolute link that escapes its directory (as a multicall
+/// coreutils install does), through a `../` link, and through a chain of links; a dangling link, a
+/// loop, and a link to a directory are not tools. The sandbox's capability handle refuses the first
+/// three, which is why the lookup reads links itself.
+#[rstest]
+#[case::regular_file("regular", true)]
+#[case::absolute_escaping_link("absolute", true)]
+#[case::relative_escaping_link("relative", true)]
+#[case::chained_links("chain", true)]
+#[case::dangling_link("dangling", false)]
+#[case::link_loop("loop", false)]
+#[case::link_to_a_directory("directory", false)]
+fn a_tool_is_found_through_any_symlink_that_reaches_a_file(
+    #[case] name: &str,
+    #[case] expected: bool,
+) -> Result<(), String> {
+    let outside = Sandbox::new()?;
+    outside.write_file("real", b"#!/bin/sh\n")?;
+    outside.make_dir("subdir")?;
+    let tools = Sandbox::new()?;
+    tools.write_file("bin/regular", b"x")?;
+    let real = outside.root().join("real");
+    tools.link("bin/absolute", real.as_str())?;
+    // Climb from `<root>/bin` to `/` however deep the temporary directory is, then descend.
+    let climb = "../".repeat(tools.root().components().count());
+    let hop = format!("{climb}{}", real.as_str().trim_start_matches('/'));
+    tools.link("bin/relative", &hop)?;
+    tools.link("bin/chain", "absolute")?;
+    tools.link("bin/dangling", "../nowhere")?;
+    tools.link("bin/loop", "loop")?;
+    tools.link("bin/directory", outside.root().join("subdir").as_str())?;
+    let found = is_tool(&tools.root().join("bin"), name);
+    if found == expected {
+        Ok(())
+    } else {
+        Err(format!("is_tool({name}) was {found}, expected {expected}"))
     }
 }

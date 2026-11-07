@@ -25,6 +25,50 @@ pub struct Sandbox {
     dir: Dir,
 }
 
+/// How many symlinks a lookup follows before it calls the chain a loop.
+const MAX_LINK_DEPTH: usize = 16;
+
+/// Returns whether `directory/name` is, or links through any chain of symlinks to, a regular file.
+///
+/// A capability directory refuses to follow a symlink whose target lies outside it, and a host's
+/// tools are exactly that: `/usr/bin/env` may be a link into a multicall binary elsewhere, or into
+/// `/etc/alternatives`. So each link is read, not followed, and its target is checked in the target's
+/// own parent directory. A dangling link, a loop, or a link to a directory is not a tool.
+///
+/// ```text
+/// is_tool(d, "env") -> true   when d/env -> /usr/lib/cargo/bin/coreutils/env, a regular file
+/// is_tool(d, "gone") -> false when d/gone -> ../nowhere
+/// ```
+pub fn is_tool(directory: &Utf8Path, name: &str) -> bool {
+    let mut current = directory.join(name);
+    for _ in 0..MAX_LINK_DEPTH {
+        let (Some(parent), Some(file)) = (current.parent(), current.file_name()) else {
+            return false;
+        };
+        let Ok(opened) = Dir::open_ambient_dir(parent, ambient_authority()) else {
+            return false;
+        };
+        let Ok(metadata) = opened.symlink_metadata(file) else {
+            return false;
+        };
+        if metadata.is_file() {
+            return true;
+        }
+        if !metadata.is_symlink() {
+            return false;
+        }
+        let Ok(target) = opened.read_link_contents(file) else {
+            return false;
+        };
+        current = if target.is_absolute() {
+            target
+        } else {
+            parent.join(target)
+        };
+    }
+    false
+}
+
 /// Looks a program up on the host's `PATH`.
 ///
 /// # Errors
@@ -32,20 +76,11 @@ pub struct Sandbox {
 /// Returns the reason when the program is on no `PATH` directory.
 pub fn find_on_path(name: &str) -> Result<Utf8PathBuf, String> {
     let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
-    for entry in std::env::split_paths(&path) {
-        let Ok(directory) = Utf8PathBuf::try_from(entry) else {
-            continue;
-        };
-        let Ok(opened) = Dir::open_ambient_dir(&directory, ambient_authority()) else {
-            continue;
-        };
-        if opened.is_file(name) {
-            return Ok(directory.join(name));
-        }
-    }
-    Err(format!(
-        "`{name}` is not on PATH, so the sandbox cannot link it"
-    ))
+    std::env::split_paths(&path)
+        .filter_map(|entry| Utf8PathBuf::try_from(entry).ok())
+        .find(|directory| is_tool(directory, name))
+        .map(|directory| directory.join(name))
+        .ok_or_else(|| format!("`{name}` is not on PATH, so the sandbox cannot link it"))
 }
 
 impl Sandbox {
@@ -121,6 +156,17 @@ impl Sandbox {
         self.dir
             .create_dir_all(relative)
             .map_err(|error| format!("creating {relative}: {error}"))
+    }
+
+    /// Creates a symlink whose contents are `target`, verbatim, at `relative` under the root.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the link cannot be made.
+    pub fn link(&self, relative: &str, target: &str) -> Result<(), String> {
+        self.dir
+            .symlink_contents(target, relative)
+            .map_err(|error| format!("linking {relative}: {error}"))
     }
 
     /// Writes a plain file under the sandbox's root.
