@@ -45,6 +45,7 @@ extend-ignore-re = [
     "(?m)^    if: needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
     "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
     "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
+    "(?m)^FORBIDDEN_SHORT = \"UPn\"$",
     "(?m)^LINKER_NAME = \"mold\"\\r?$",
     "(?m)^const CARGO_KIND: &str = \"artifact\";\\r?$",
     "(?m)^const LINKER_NAME: &str = \"mold\";\\r?$",
