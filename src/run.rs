@@ -18,7 +18,9 @@ use crate::sync::{
     CommandRunner, RemoteCommandOutput, SyncError, Syncer, create_cache_directories_command,
 };
 
+/// Delay between checks for the cloud-init completion marker.
 const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Total time to wait for cloud-init to finish (ten minutes).
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Errors surfaced while performing a remote run.
@@ -80,9 +82,13 @@ where
 /// Executes the remote run flow using the provided backend and syncer.
 #[derive(Debug)]
 pub struct RunOrchestrator<B, R: CommandRunner> {
+    /// Backend that creates, waits for, and destroys the instance.
     backend: B,
+    /// Syncer used for workspace transfer and remote command execution.
     syncer: Syncer<R>,
+    /// Delay between cloud-init completion checks.
     cloud_init_poll_interval: Duration,
+    /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
     cloud_init_wait_timeout: Duration,
 }
 
@@ -166,6 +172,10 @@ where
         Ok(output)
     }
 
+    /// Waits for the backend to report SSH readiness, destroying the instance
+    /// if that fails.
+    ///
+    /// The teardown outcome is appended to the error message.
     async fn wait_for_ready_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -182,6 +192,7 @@ where
         }
     }
 
+    /// Mounts the cache volume only when the request attached one.
     async fn mount_volume_if_needed(
         &self,
         handle: &InstanceHandle,
@@ -194,6 +205,7 @@ where
         Ok(())
     }
 
+    /// Syncs the workspace to `dest`, destroying the instance if that fails.
     async fn sync_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -210,6 +222,10 @@ where
         Ok(())
     }
 
+    /// Runs `remote_command`, destroying the instance only if it could not be
+    /// started.
+    ///
+    /// A non-zero exit code from the command is a successful result here.
     async fn run_remote_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -279,6 +295,10 @@ where
         }
     }
 
+    /// Polls for cloud-init's `boot-finished` marker until it appears or the
+    /// timeout elapses.
+    ///
+    /// A failure to run the check, or a timeout, destroys the instance.
     async fn wait_for_cloud_init(
         &self,
         handle: &InstanceHandle,
@@ -317,12 +337,16 @@ where
         })
     }
 
+    /// Destroys the instance and returns `err` as text, with a note appended
+    /// when the teardown also fails.
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }
 
+/// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
+/// is present, and otherwise returns `message` unchanged.
 fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
     if let Some(teardown) = teardown_error {
         format!("{message} (teardown also failed: {teardown})")
