@@ -35,8 +35,8 @@ const MAX_LINK_DEPTH: usize = 16;
 ///
 /// A capability directory refuses to follow a symlink whose target lies outside it, and a host's
 /// tools are exactly that: `/usr/bin/env` may be a link into a multicall binary elsewhere, or into
-/// `/etc/alternatives`. So each link is read, not followed, and its target is checked in the target's
-/// own parent directory. A dangling link, a loop, or a link to a directory is not a tool.
+/// `/etc/alternatives`. So each link is read, not followed, and its target is checked in the
+/// target's own parent directory. A dangling link, a loop, or a link to a directory is not a tool.
 ///
 /// ```text
 /// is_tool(d, "env") -> true   when d/env -> /usr/lib/cargo/bin/coreutils/env, a regular file
