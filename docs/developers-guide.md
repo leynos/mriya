@@ -234,6 +234,45 @@ mutation testing against the current candidate before using counts as evidence.
 The loopback tests exercise the network-boundary survivors reported by the
 earlier run.
 
+## Lint baseline
+
+The authoritative lint configuration lives in two files; this section does not
+copy their inventory.
+
+- `Cargo.toml` holds the `[workspace.lints.clippy]`, `[workspace.lints.rust]`
+  and `[workspace.lints.rustdoc]` tables.
+- `clippy.toml` holds the complexity thresholds (cognitive complexity 9, at
+  most 4 arguments, 70 lines per function, nesting depth 4), the
+  `allow-expect-in-tests` setting and the `disallowed-methods` list.
+
+Every member opts in with `[lints] workspace = true`, and a new crate must do
+the same; do not add a local `[lints]` table, which Cargo rejects alongside
+`workspace = true`. Check the effect with `make lint`, which builds the
+documentation under `--cfg docsrs -D warnings`, runs Clippy over every target,
+and then runs the Whitaker suite.
+
+The baseline is the Concordat canon at commit `e728ce2`
+(`platform-standards/canon/lint/rust/`), with no local extensions beyond the
+`mriya-test-macros` fixture helper described above. `unsafe_code` is `forbid`,
+so no member may contain `unsafe` and it cannot be re-allowed.
+
+Fix findings at the source. The only sanctioned suppressions are the
+`#[mriya_test_macros::allow_fixture_expansion_lints]` attribute on fixtures and
+`#[expect(..., reason = "...")]` for macro-expansion artefacts or a documented
+reasoned exception. Never add a bare `#[allow]`.
+
+Environment access is injected, not read directly: `clippy.toml` disallows
+`std::env::var`, `set_var` and the related functions. Take an environment
+reader through the `mockable` crate and use a stub environment in tests.
+
+One blind spot to know about: Clippy does not report `missing_assert_message`
+inside recognized test code, so an assertion without a message in a test passes
+`make lint`. Write messages anyway.
+
+The toolchain in `rust-toolchain.toml` supplies the `rustfmt`, `clippy` and
+`rust-analyzer` components. The Whitaker suite runs on its own pinned nightly
+and is installed separately from the project toolchain.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend
