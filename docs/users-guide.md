@@ -266,15 +266,20 @@ alive at a time.
 
 ## Building from source
 
-The repository's Cargo defaults and the Makefile development targets
-(`make test`, `make lint`, `make typecheck` and the debug build) use the
-parallel `rustc` frontend (`-Zthreads=8`) and, on Linux, the `mold` linker. On
-Linux, install `mold` and `clang` before building, because the configuration
-names them and a build without them fails at link time. A release build
-(`make release`) and the coverage build use neither: they assign their own
-`RUSTFLAGS`, which displaces the configuration's flags, so a shipped artefact
-keeps the platform linker. To build with the platform linker directly, assign
-an empty `RUSTFLAGS`:
+Building needs `rustup`, which installs the nightly toolchain that
+`rust-toolchain.toml` pins, and a C compiler for linking. The repository's
+Cargo defaults and the Makefile development targets (`make build`, `make test`,
+`make lint` and `make typecheck`) also use the `mold` linker on Linux, so a
+Linux development build needs `mold` and a compiler that accepts
+`-fuse-ld=mold`: GCC 12.1 or newer, or clang. `make install-build-tools`
+installs the pinned `mold` and toolchain, and `make check-build-tools` reports
+what is missing; a development target stops with that report instead of falling
+back to another linker.
+
+A release build (`make release`) needs neither `mold` nor the preflight. It
+assigns its own `RUSTFLAGS`, which displaces the configuration's flags, so a
+shipped artefact keeps the platform linker. To build with the platform linker
+directly, assign an empty `RUSTFLAGS`:
 
 ```bash
 RUSTFLAGS="" cargo build --release

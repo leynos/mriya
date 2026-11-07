@@ -21,9 +21,12 @@ the spelling. Where one does, add an exact pattern to `typos.local.toml` for
 that name, never a blanket word or a mask over all inline code. The current
 exemptions are the Cargo JSON message kind `compiler-artifact` and the `mold`
 linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
-`setup-rust`, and the `-fuse-ld=mold` argument. Test each new exemption in both
-directions: the exact name passes and the same misspelling in ordinary prose
-fails.
+`setup-rust`, and the `-fuse-ld=mold` argument. The build-tools scripts and
+contracts add its command line and output (`command -v mold`, `mold --version`,
+its version banner), release archive names (`mold-2.41.0-x86_64-linux.tar.gz`),
+the `bin/mold` and `ld.mold` paths, and the exact quoted tool name `"mold"`.
+Test each new exemption in both directions: the exact name passes and the same
+misspelling in ordinary prose fails.
 
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
@@ -128,42 +131,112 @@ earlier run.
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend
 (`-Zthreads=8`) and, on Linux, the `mold` linker (`-Clink-arg=-fuse-ld=mold`).
-These are defaults in `.cargo/config.toml`, which Cargo discovers on its own,
-so a bare `cargo build` gets them. `mold` ships for Linux only, so the linker
-flag lives in a Linux-only table and macOS and Windows keep their platform
-linker. Cargo selects one `rustflags` source rather than merging them, so every
-source repeats the same flags apart from the linker.
+Four mechanisms deliver and protect that standard. They are separate, and a
+change to one does not stand in for the others.
 
-An assigned `RUSTFLAGS` replaces the configuration's flags, so the Makefile
-recipes that set it compose the standard's flags onto any inherited value (CI's
-`setup-rust` exports one). Two builds are deliberately excluded: coverage
-assigns `RUSTFLAGS` without the fast flags, because a measurement should not
-depend on them, and the release recipe and workflow keep the platform linker,
-because they assign `RUSTFLAGS` (even an empty value displaces the
-configuration). Cargo has no per-profile `rustflags`, so a direct
-`cargo build --release` takes the configuration's flags unless `RUSTFLAGS` is
-assigned too.
+### Bare Cargo
 
-On Linux, install `mold` before building: the configuration names it, so a
-build without it fails at link time. CI installs it through `setup-rust`'s
-`install-mold` input. `tests/build_standard_contract.rs` holds the standard. It
-reads the configuration sources, the commands `make -n` prints for each
-development target on a Linux host and a macOS host (each keeping the caller's
-own `RUSTFLAGS`) and for the release target (the coverage exclusion is checked
-in the workflow steps) on a Linux host, and the `setup-rust` steps of the CI
-workflows (each must pass `install-mold`), so a flag lost through a recipe or
-workflow edit fails there. The decision is recorded in
-[ADR 001](adr-001-rust-build-standard.md). The contract runs `make -n`, so a
-direct `cargo test` needs GNU make on the `PATH`. It fails when `make` is
-missing instead of skipping, so a missing tool cannot read as a pass.
+`.cargo/config.toml` carries the flags, and Cargo discovers it on its own, so a
+bare `cargo build` gets them with no Make involved. `mold` ships for Linux
+only, so the linker flag lives in a Linux-only table and macOS and Windows keep
+their platform linker. Cargo selects one `rustflags` source rather than merging
+them, so every source repeats the same flags apart from the linker. A direct
+`cargo build --release` takes the configuration's flags too, because Cargo has
+no per-profile `rustflags`; assign `RUSTFLAGS` to leave them (even an empty
+value displaces the configuration).
 
-The Whitaker half of `make lint` is the third exclusion. Whitaker builds on its
-installer-managed toolchain, which must not inherit the development flags, so
-its command assigns `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`),
-never expands the caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with
-`env -u` (Cargo reads it in preference to `RUSTFLAGS`), and names neither
-`-Zthreads=8` nor the `mold` flag. The contract exempts a direct Whitaker
-command from the standard's flags; the Concordat rule checks its isolation.
+### Make's restatement
+
+An assigned `RUSTFLAGS` replaces the configuration's flags, so each Makefile
+recipe that compiles composes the standard's flags (`STANDARD_RUSTFLAGS`) and
+the warning policy onto any inherited value (CI's `setup-rust` exports one). A
+recipe that assigned only `-D warnings` would pass while quietly using the
+platform linker and the single-threaded frontend, which is why
+`tests/build_standard_contract.rs` reads what `make -n` prints for every
+development target on a Linux and a macOS host. Every Cargo command uses
+`$(CARGO)`, so the executable stays injectable; the contract evaluates the
+recipes with `CARGO=probe-cargo` to prove it.
+
+### Explicit non-development routes
+
+Three builds are deliberately off the standard, each by assigning `RUSTFLAGS`
+without the fast flags:
+
+- Coverage. The `generate-coverage` steps in `ci.yml` and `coverage-main.yml`
+  set `RUSTFLAGS: -D warnings`, because a measurement should not depend on the
+  fast flags.
+- Release. `make release` assigns the caller's `RUSTFLAGS` and nothing else.
+  In `release.yml` the `rust-build-release` step passes
+  `rustflags: '-D warnings'`. That input is exported as `RUSTFLAGS` before the
+  action's toolchain setup, so the exclusion is written down at the step
+  instead of resting on the nested `setup-rust` default.
+  `tests/workflow_contracts/release_flags_test.py` holds it.
+- Whitaker. The Whitaker half of `make lint` runs on its installer-managed
+  toolchain, which must not inherit the development flags. Its command assigns
+  `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`), never expands the
+  caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with `env -u` (Cargo reads
+  it in preference to `RUSTFLAGS`), and names neither `-Zthreads=8` nor the
+  `mold` flag. The Concordat rule checks its isolation.
+
+### Installed tooling and the preflight
+
+On Linux the configuration names `mold`, and rustc reaches it through
+`cc -fuse-ld=mold`. A build without it fails at link time, deep inside Cargo. So
+`build`, `test`, `lint`, `typecheck`, `scaleway-test`, and `scaleway-janitor`
+depend on `check-build-tools`, which runs `scripts/check-build-tools.sh` before
+any compilation. It checks, and reports every gap in one pass:
+
+- `mold` is on `PATH` at the version pinned in `tools/mold/VERSION`;
+- `cc` links a trivial program with `-fuse-ld=mold` (GCC 12.1 or newer, or
+  clang; `clang` itself is not required);
+- the toolchain pinned in `rust-toolchain.toml` is installed.
+
+A missing tool stops the route with an installation hint. There is no fallback
+to another linker. `release` has no preflight, because it needs none of these
+tools.
+
+`make install-build-tools` provides them: it downloads the pinned `mold`
+release, verifies it against `tools/mold/SHA256SUMS`, unpacks it under
+`$(BUILD_TOOLS_PREFIX)` (default `~/.local`), and installs the pinned nightly
+with the components `rust-toolchain.toml` lists (`rustfmt`, `clippy`, and
+`rust-analyzer`). A `mold` already on `PATH` at the pinned version is left
+alone. The Makefile puts `$(BUILD_TOOLS_PREFIX)/bin` first on `PATH`, so the
+pinned release outranks a distribution one for every recipe; a bare `cargo`
+outside Make needs the same directory on `PATH`. These are shell scripts, not
+the Python of `docs/scripting-standards.md`, because the preflight must run
+before anything else is installed.
+
+Installed tooling need not be active in every job. The coverage build never
+links with `mold`, but the suite it runs starts Cargo, so every Linux job that
+runs the suite runs `make install-build-tools` in its own step, with no `if:`
+and no `continue-on-error`, before the suite. CI installs `mold` through
+`setup-rust` as well; the installer sees the pinned version and does not
+download it again.
+
+### The contracts
+
+- `tests/build_standard_contract.rs` reads the configuration sources and
+  the commands `make -n` prints for each development target on a Linux and a
+  macOS host (each keeping the caller's own `RUSTFLAGS`) and for the release
+  target, plus the `setup-rust` steps of the workflows. It also evaluates every
+  route with `CARGO=probe-cargo`: the preflight must be printed before the
+  first Cargo command of each development route and absent from `release`, and
+  no command may hard-code `cargo`.
+- The same crate runs the preflight and installer scripts in a sandbox `PATH`
+  (`build_standard_support/sandbox.rs`) holding exactly the tools a case
+  chooses, and runs the real Make routes there with a fake Cargo, to prove that
+  a missing `mold` stops every development route before Cargo starts and that a
+  complete toolset reaches it.
+- `tests/workflow_contracts/suite_lane_install_test.py` derives the Linux jobs
+  that run the suite (through the coverage action, `cargo nextest run`, or a
+  Make goal that reaches it) and requires the installer, unconditionally,
+  before the suite. An empty reading is refused.
+- `tests/workflow_contracts/release_flags_test.py` holds the release step's
+  explicit `rustflags`.
+
+The contract runs `make -n`, so a direct `cargo test` needs GNU make on the
+`PATH`; it fails when `make` is missing instead of skipping. The decision is
+recorded in [ADR 001](adr-001-rust-build-standard.md).
 
 ### The development footprint
 
@@ -216,14 +289,47 @@ sampled coverage, not a formal proof.
 
 ### Cranelift
 
-Exception: Cranelift is not the development-profile backend. The full suite was
-measured under it on the pinned `nightly-2025-11-26` on 2026-10-02, and these
-tests fail there while passing under LLVM: `scenario_provision_and_destroy`,
-`scenario_reject_unknown_image`, `scenario_reject_unknown_type` and
-`scenario_cloud_init_install_jq`. Re-measured on `nightly-2026-10-30` (the pin)
-on 2026-11-06 with `CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift make test`:
+Cranelift is not the development backend. This is an exception to the estate
+default, and it needs maintainer approval; until that is recorded here, treat
+it as proposed, not granted.
+
+Scope: a dev-profile build with `-Zcodegen-backend=cranelift` on
+`nightly-2026-11-06` (the pin), measured on 2026-11-07 on x86-64 Linux with the
+standard's `-Zthreads=8` and `mold` flags. Other platforms are unmeasured. The
+failure is in unwinding: a panic compiled by Cranelift does not find its
+handler, so `catch_unwind`, `resume_unwind`, `Drop` on unwind, and a panic on a
+spawned thread fail, and the last aborts the process with
+`failed to initiate panic, error 5`. `#[should_panic]` still passes, because
+libtest's outermost handler catches the panic, so a probe limited to it reads
+as a pass. A dependency-free probe crate shows the same failures without `mold`
+and without `-Zthreads=8`, so the backend alone causes them.
+
+Four tests fail, all through `rstest_bdd::skip!`, which unwinds:
 `scenario_provision_and_destroy`, `scenario_reject_unknown_image` and
-`scenario_reject_unknown_type` still fail (Cargo stops at the first failing
-test binary, `scaleway_backend`, so `scenario_cloud_init_install_jq` was not
-reached). Re-measure the whole suite on the next toolchain bump, and adopt the
-backend when it passes.
+`scenario_reject_unknown_type` in `tests/scaleway_backend.rs`, and
+`scenario_cloud_init_install_jq` in `tests/scaleway_cloud_init.rs`. With the
+command below, 369 of the 373 tests nextest ran passed when this was measured,
+and the four failures were exactly these. `make test` stops there, so the
+doctests run apart (`cargo test --doc --all-features` passed under Cranelift in
+the earlier measurement). The tests rely on unwinding, and that reliance stays.
+
+Reproduce it on the pin. Cargo needs `CARGO_UNSTABLE_CODEGEN_BACKEND=true` to
+accept the profile setting (without it Cargo stops with
+``feature `codegen-backend` is required``), the toolchain needs the
+`rustc-codegen-cranelift-preview` component, and `--no-fail-fast` reaches all
+four failures, because without it nextest stops at the first failing test
+binary:
+
+```bash
+CARGO_UNSTABLE_CODEGEN_BACKEND=true \
+CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift \
+make test TEST_FLAGS="--all-targets --all-features --no-fail-fast"
+```
+
+Recheck the exception when `rstest-bdd` moves to 0.6: that migration may change
+`skip!`, and whether the four tests still fail then is a question to measure,
+not a conclusion to carry over. Re-measure on every toolchain bump too, and
+adopt the backend when the whole suite passes. Adopting a backend also means
+checking the exclusion routes: the backend is a profile setting, which assigning
+`RUSTFLAGS` need not deselect, so verify the actual `rustc` invocation of the
+coverage and release builds.
