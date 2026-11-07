@@ -8,6 +8,15 @@ use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 use super::super::{ScalewayBackend, ScalewayBackendError};
 
 impl ScalewayBackend {
+    /// Resolves the image to boot from, preferring the project's own images.
+    ///
+    /// Public images are queried only when the project-scoped lookup is empty.
+    /// With an empty project identifier the project lookup is skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImageNotFound` when no matching available image exists, or a
+    /// provider error when a lookup fails.
     #[expect(
         clippy::excessive_nesting,
         reason = "organization scoping requires nested builder updates before execution"
@@ -47,6 +56,11 @@ impl ScalewayBackend {
         .await
     }
 
+    /// Resolves an image identifier from two injected fetchers.
+    ///
+    /// `project_fetch` runs first; `public_fetch` runs only if it returned no
+    /// images. Injecting the fetchers lets tests exercise the fallback order
+    /// without calling the provider.
     pub(in crate::scaleway) async fn resolve_image_id_with<FutA, FutB, FetchA, FetchB>(
         &self,
         request: &InstanceRequest,
@@ -70,6 +84,11 @@ impl ScalewayBackend {
         Self::select_image_from_sources(project_images, public_images, request)
     }
 
+    /// Picks the candidate with the latest `creation_date`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImageNotFound` when `candidates` is empty.
     pub(in crate::scaleway) fn select_image_id(
         mut candidates: Vec<ScalewayImage>,
         request: &InstanceRequest,
@@ -92,6 +111,10 @@ impl ScalewayBackend {
         Ok(selected.id)
     }
 
+    /// Filters then selects from the project images, or from the public images
+    /// when there are no project images.
+    ///
+    /// The public list is never merged with a non-empty project list.
     pub(in crate::scaleway) fn select_image_from_sources(
         project_images: Vec<ScalewayImage>,
         public_images: Vec<ScalewayImage>,
@@ -108,6 +131,8 @@ impl ScalewayBackend {
         Self::select_image_id(candidates, request)
     }
 
+    /// Keeps images whose architecture matches the request and whose state is
+    /// `available`.
     pub(in crate::scaleway) fn filter_images(
         images: Vec<ScalewayImage>,
         request: &InstanceRequest,
