@@ -14,9 +14,16 @@ binary, and enforces the shared phrase corrections `typos` cannot express.
 Because `typos.toml` is rewritten on every run, never edit its entries by hand
 and never check it for drift in continuous integration. Add narrow
 repository-specific terminology, identifiers, and deliberate fixtures to
-`typos.local.toml`; the shared dictionary carries everything else. Quoted APIs
-and identifiers retain upstream spelling when put in backticks or fenced code
-blocks, which the gate ignores, so they need no word-level exception.
+`typos.local.toml`; the shared dictionary carries everything else. The shared
+base masks fenced code blocks, but not inline code: backticks do not exempt a
+word, so spell identifiers in en-GB-oxendict unless an external system fixes
+the spelling. Where one does, add an exact pattern to `typos.local.toml` for
+that name, never a blanket word or a mask over all inline code. The current
+exemptions are the Cargo JSON message kind `compiler-artifact` and the `mold`
+linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
+`setup-rust`, and the `-fuse-ld=mold` argument. Test each new exemption in both
+directions: the exact name passes and the same misspelling in ordinary prose
+fails.
 
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14

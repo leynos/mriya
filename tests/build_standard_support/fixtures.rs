@@ -6,7 +6,7 @@ pub const NIGHTLY: &str = "[toolchain]\nchannel = \"nightly-2026-05-28\"\n";
 /// A toolchain file pinning a stable channel.
 pub const STABLE: &str = "[toolchain]\nchannel = \"1.94.0\"\n";
 /// A compliant nightly configuration: the frontend flag in every source and
-/// mold in the Linux table alone.
+/// `mold` in the Linux table alone.
 pub const NIGHTLY_OK: &str = concat!(
     "[build]\nrustflags = [\"-Zthreads=8\"]\n",
     "[target.'cfg(target_os = \"linux\")']\n",
@@ -18,7 +18,7 @@ pub const NIGHTLY_SPELLED_APART: &str = concat!(
     "[target.'cfg(target_os = \"linux\")']\n",
     "rustflags = [\"-Zthreads=8\", \"-C\", \"link-arg=-fuse-ld=mold\"]\n"
 );
-/// A compliant stable configuration: mold alone, in the Linux table.
+/// A compliant stable configuration: `mold` alone, in the Linux table.
 pub const STABLE_OK: &str = concat!(
     "[target.'cfg(target_os = \"linux\")']\n",
     "rustflags = [\"-Clink-arg=-fuse-ld=mold\"]\n"
@@ -30,13 +30,13 @@ pub const BUILD_LOSES_THREADS: &str = concat!(
     "[target.'cfg(target_os = \"linux\")']\n",
     "rustflags = [\"-Zthreads=8\", \"-Clink-arg=-fuse-ld=mold\"]\n"
 );
-/// A nightly configuration whose Linux table lost mold.
+/// A nightly configuration whose Linux table lost `mold`.
 pub const LINUX_LOSES_LINKER: &str = concat!(
     "[build]\nrustflags = [\"-Zthreads=8\"]\n",
     "[target.'cfg(target_os = \"linux\")']\n",
     "rustflags = [\"-Zthreads=8\"]\n"
 );
-/// A nightly configuration that names mold in `[build]`, beyond Linux.
+/// A nightly configuration that names `mold` in `[build]`, beyond Linux.
 pub const LINKER_IN_BUILD: &str = concat!(
     "[build]\nrustflags = [\"-Zthreads=8\", \"-Clink-arg=-fuse-ld=mold\"]\n",
     "[target.'cfg(target_os = \"linux\")']\n",
@@ -67,7 +67,7 @@ pub const SIBLING_KEY_OK: &str = concat!(
     "rustflags = [\"-Zthreads=8\", \"-Clink-arg=-fuse-ld=mold\"]\n"
 );
 /// A nightly configuration whose Linux table names one triple, not every Linux
-/// target: mold would reach x86-64 alone.
+/// target: `mold` would reach x86-64 alone.
 pub const TRIPLE_ONLY: &str = concat!(
     "[build]\nrustflags = [\"-Zthreads=8\"]\n",
     "[target.x86_64-unknown-linux-gnu]\nlinker = \"clang\"\n",
@@ -130,7 +130,7 @@ pub const COVERAGE_WITH_THREADS: &str = concat!(
     "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
     "        env:\n          RUSTFLAGS: -D warnings -Zthreads=8\n"
 );
-/// A coverage step that takes mold.
+/// A coverage step that takes `mold`.
 pub const COVERAGE_WITH_LINKER: &str = concat!(
     "    steps:\n      - name: Cover\n",
     "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
@@ -167,7 +167,7 @@ pub const COVERAGE_COMMENTED_POLICY: &str = concat!(
 /// A coverage step that denies warnings and carries an inline comment about the standard flags.
 pub const COVERAGE_DENYING_WITH_COMMENT: &str = concat!(
     "steps:\n  - name: coverage\n    uses: org/generate-coverage@abc\n",
-    "    env:\n      RUSTFLAGS: -D warnings # not -Zthreads=8, not mold\n"
+    "    env:\n      RUSTFLAGS: -D warnings # not -Zthreads=8, not `mold`\n"
 );
 /// A toolchain file whose second channel is not quoted, beside a valid one.
 pub const UNQUOTED_BESIDE_VALID: &str = "[toolchain]\nchannel = \"stable\"\nchannel = nightly\n";

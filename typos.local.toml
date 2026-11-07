@@ -12,13 +12,18 @@ accepted = []
 
 [patterns]
 ignore = [
-  # Cargo JSON uses this exact external protocol identifier.
-  '"compiler-artifact"',
-  # `mold` is the linker's name, not a misspelling of `mould`.
-  "\\bmold\\b",
+  # Cargo JSON uses this exact external protocol identifier, quoted or in a code span.
+  '\bcompiler-artifact\b',
+  # `mold` is the linker's name, not a misspelling of `mould`. Exempt only the
+  # backticked name, the "mold linker" phrase, the `setup-rust` input
+  # `install-mold`, and the `-fuse-ld=mold` linker
+  # argument, and the one `contains("mold")` test probe.
+  '`mold`',
+  '\bmold\s+linker\b',
+  '\binstall-mold\b',
+  '-fuse-ld=mold\b',
+  '\.contains\("mold"\)',
   "\\bCARGO_TERM_COLOR\\b",
-  # Inline code spans are masked; the shared dictionary does not mask them yet.
-  '`[^`\n]+`',
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
   "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",

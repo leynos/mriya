@@ -71,7 +71,7 @@ fn bare_problem(target: Target<'_>, host: Host, command: &str) -> String {
 
 /// Returns the complaint about one development command, if any: an assigned
 /// `RUSTFLAGS` keeps the caller's own flags and restates the frontend flag on a
-/// nightly pin, and mold on Linux.
+/// nightly pin, and `mold` on Linux.
 pub fn development_problem(
     target: Target<'_>,
     host: Host,

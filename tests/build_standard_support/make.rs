@@ -27,7 +27,7 @@ impl Host {
         }
     }
 
-    /// Returns whether the host takes mold, which ships for Linux alone.
+    /// Returns whether the host takes `mold`, which ships for Linux alone.
     pub const fn takes_linker_flag(self) -> bool {
         matches!(self, Self::Linux)
     }

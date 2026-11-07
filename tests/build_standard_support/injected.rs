@@ -19,7 +19,7 @@ pub(super) fn canned(text: std::fmt::Arguments) -> Result<String, String> {
     Ok(out)
 }
 
-/// Returns the linker flag the standard adds on a host: mold on Linux, nothing elsewhere.
+/// Returns the linker flag the standard adds on a host: `mold` on Linux, nothing elsewhere.
 pub(super) const fn linker_flag(host: Host) -> &'static str {
     if host.takes_linker_flag() {
         " -Clink-arg=-fuse-ld=mold"
