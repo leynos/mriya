@@ -63,7 +63,7 @@ fn draws(config: Fixture, pin: Pin, expected: usize) -> Result<(), String> {
 /// Scenario: configurations of each shape, read on a nightly and a stable pin.
 ///
 /// Invariant: a compliant nightly file passes, and each way of losing the
-/// frontend flag, losing mold, naming mold beyond Linux, or letting a source
+/// frontend flag, losing `mold`, naming `mold` beyond Linux, or letting a source
 /// drift is reported; a stable pin refuses the frontend flag it cannot take.
 #[rstest]
 #[case::compliant_nightly(Fixture(NIGHTLY_OK), Pin::Nightly, 0)]
