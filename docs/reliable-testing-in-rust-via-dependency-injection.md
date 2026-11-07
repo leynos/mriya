@@ -28,11 +28,16 @@ ______________________________________________________________________
 
 ### 1. Add `mockable`
 
-First, add the crate to development dependencies in `Cargo.toml`.
+Add the crate as a regular dependency (it supplies `Env` and `DefaultEnv`) and
+enable the `mock` feature for tests only, so `MockEnv` never reaches release
+builds. The examples below were checked against `mockable` 3.0.0.
 
 ```toml
+[dependencies]
+mockable = { version = "3.0.0", default-features = false }
+
 [dev-dependencies]
-mockable = { version = "0.1.4", default-features = false, features = ["clock", "mock"] }
+mockable = { version = "3.0.0", default-features = false, features = ["mock"] }
 ```
 
 ### 2. The untestable code (before)
@@ -58,10 +63,7 @@ The function is refactored to accept a generic type that implements the
 use mockable::Env;
 
 pub fn get_api_key(env: &impl Env) -> Option<String> {
-    match env.var("API_KEY") {
-        Ok(key) if !key.is_empty() => Some(key),
-        _ => None,
-    }
+    env.string("API_KEY").filter(|key| !key.is_empty())
 }
 ```
 
@@ -70,33 +72,37 @@ environment is now explicit and injectable.
 
 ### 4. Writing isolated unit tests
 
-Tests can use `MockEnv`, an in-memory mock, to simulate any environmental
-condition without touching the actual process environment.
+Tests can use `MockEnv`, a `mockall`-generated mock, to simulate any
+environmental condition without touching the actual process environment. Set
+an expectation on the accessor the code under test calls (`string` here).
 
 ```rust,no_run
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockable::{MockEnv, Env};
+    use mockable::MockEnv;
+
+    fn env_with(value: Option<&'static str>) -> MockEnv {
+        let mut env = MockEnv::new();
+        env.expect_string()
+            .returning(move |_| value.map(str::to_owned));
+        env
+    }
 
     #[test]
     fn test_get_api_key_present() {
-        let mut env = MockEnv::new();
-        env.set_var("API_KEY", "secret123");
+        let env = env_with(Some("secret123"));
         assert_eq!(get_api_key(&env), Some("secret123".to_string()));
     }
 
     #[test]
     fn test_get_api_key_missing() {
-        let env = MockEnv::new();
-        assert_eq!(get_api_key(&env), None);
+        assert_eq!(get_api_key(&env_with(None)), None);
     }
 
     #[test]
     fn test_get_api_key_present_but_empty() {
-        let mut env = MockEnv::new();
-        env.set_var("API_KEY", "");
-        assert_eq!(get_api_key(&env), None);
+        assert_eq!(get_api_key(&env_with(Some(""))), None);
     }
 }
 ```
@@ -106,14 +112,14 @@ due to external state.
 
 ### 5. Usage in production code
 
-In production code, inject the "real" implementation, `RealEnv`, which calls
-the actual `std::env` functions.
+In production code, inject the default implementation, `DefaultEnv`, which
+calls the actual `std::env` functions.
 
 ```rust,no_run
-use mockable::RealEnv;
+use mockable::DefaultEnv;
 
 fn main() {
-    let env = RealEnv::new();
+    let env = DefaultEnv;
     if let Some(api_key) = get_api_key(&env) {
         println!("API Key found!");
     } else {
@@ -200,9 +206,12 @@ ______________________________________________________________________
   `impl Env` or `impl Clock`.
 - **`Mock*` for Tests:** Use `MockEnv` and `MockClock` in unit tests for
   isolated, deterministic control.
-- **`Real*` for Production:** Use `RealEnv` and `RealClock` in the application
+- **`Real*` for Production:** Use `DefaultEnv` and the default clock in the application
   to interact with the actual system.
-- **`RealEnv` is NOT a Scope Guard:** `RealEnv` directly mutates the global
-  process environment without automatic cleanup. For integration tests that
-  require modifying the live environment, consider a crate such as `temp_env`.
-  For unit tests, `MockEnv` is preferable.
+- **`DefaultEnv` is read-only:** `Env` exposes no setters, so it cannot change
+  the process environment. Tests that genuinely need the live process
+  environment (for example, code that reads `HOME` through a seam-less
+  dependency) should use scoped `temp_env::with_var` closures, never direct
+  `set_var`. For unit tests, `MockEnv` is preferable.
+- **Clock section:** the `Clock` examples above describe the older 0.1.x API
+  and have not been re-verified against 3.x, where `Clock` exposes `utc()`.
