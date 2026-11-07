@@ -130,6 +130,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
           bin-name: ${{ needs.metadata.outputs.bin_name }}
+          # The release leaves the development build standard. `.cargo/config.toml`
+          # names the parallel frontend and, on Linux, `mold`, and Cargo reads one
+          # `rustflags` source: an assigned RUSTFLAGS displaces every table in
+          # that file. The action exports this value as RUSTFLAGS before its
+          # toolchain setup, so a shipped artefact keeps the platform linker and
+          # the single-threaded frontend. Left empty, the same exclusion would
+          # depend on the nested setup-rust's `-D warnings` default; the value
+          # states it here and
+          # tests/workflow_contracts/release_flags_test.py holds it.
+          rustflags: '-D warnings'
 
       - name: Prepare artefact (Unix)
         if: runner.os != 'Windows'
