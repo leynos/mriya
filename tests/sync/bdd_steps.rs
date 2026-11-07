@@ -7,10 +7,17 @@ use mriya::sync::{SyncConfig, SyncDestination, SyncError, Syncer};
 use rstest_bdd_macros::{given, then, when};
 
 use super::test_doubles::LocalCopyRunner;
-use super::test_helpers::{ScriptedContext, StepError, Workspace};
+use super::test_helpers::{ScriptedContextResult, StepError, Workspace, WorkspaceResult};
+
+fn workspace(workspace_result: &WorkspaceResult) -> Result<&Workspace, StepError> {
+    workspace_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))
+}
 
 #[given("a workspace with a gitignored cache on the remote")]
-fn workspace_with_cache(workspace: Workspace) -> Result<Workspace, StepError> {
+fn workspace_with_cache(workspace_result: WorkspaceResult) -> Result<WorkspaceResult, StepError> {
+    let workspace = workspace_result?;
     super::test_helpers::write_file(
         workspace.local_root.join(".gitignore").as_path(),
         "target/\n.DS_Store\n",
@@ -33,11 +40,12 @@ fn workspace_with_cache(workspace: Workspace) -> Result<Workspace, StepError> {
         "remove me",
     )?;
 
-    Ok(workspace)
+    Ok(Ok(workspace))
 }
 
 #[when("I run git-aware rsync sync to the remote path")]
-fn run_git_aware_sync(workspace: Workspace) -> Result<Workspace, StepError> {
+fn run_git_aware_sync(workspace_result: WorkspaceResult) -> Result<WorkspaceResult, StepError> {
+    let workspace = workspace_result?;
     let config = SyncConfig {
         rsync_bin: String::from("rsync"),
         ssh_bin: String::from("ssh"),
@@ -58,11 +66,12 @@ fn run_git_aware_sync(workspace: Workspace) -> Result<Workspace, StepError> {
     };
     syncer.sync(&workspace.local_root, &destination)?;
 
-    Ok(workspace)
+    Ok(Ok(workspace))
 }
 
 #[then("the gitignored cache directory remains after sync")]
-fn cache_survives(workspace: &Workspace) -> Result<(), StepError> {
+fn cache_survives(workspace_result: &WorkspaceResult) -> Result<(), StepError> {
+    let workspace = workspace(workspace_result)?;
     let cache_path = workspace.remote_root.join("target").join("cache.txt");
     if !cache_path.is_file() {
         return Err(StepError::Assertion(
@@ -73,7 +82,8 @@ fn cache_survives(workspace: &Workspace) -> Result<(), StepError> {
 }
 
 #[then("tracked files are mirrored to the remote")]
-fn tracked_files_updated(workspace: &Workspace) -> Result<(), StepError> {
+fn tracked_files_updated(workspace_result: &WorkspaceResult) -> Result<(), StepError> {
+    let workspace = workspace(workspace_result)?;
     let synced_file = workspace.remote_root.join("src").join("lib.rs");
     let fs = Dir::open_ambient_dir("/", ambient_authority()).map_err(|err| {
         StepError::Sync(SyncError::Spawn {
@@ -103,17 +113,20 @@ fn tracked_files_updated(workspace: &Workspace) -> Result<(), StepError> {
 }
 
 #[given("a scripted runner that succeeds at sync")]
-fn scripted_runner(scripted_context: ScriptedContext) -> ScriptedContext {
+fn scripted_runner(
+    scripted_context_result: ScriptedContextResult,
+) -> Result<ScriptedContextResult, StepError> {
+    let scripted_context = scripted_context_result?;
     scripted_context.runner.push_success(); // rsync success
-    scripted_context
+    Ok(Ok(scripted_context))
 }
 
 #[when("the remote command exits with \"{code}\"")]
 fn remote_command_exits(
-    scripted_context: ScriptedContext,
+    scripted_context_result: ScriptedContextResult,
     code: i32,
 ) -> Result<mriya::sync::RemoteCommandOutput, StepError> {
-    let scripted_context_val = scripted_context;
+    let scripted_context_val = scripted_context_result?;
     scripted_context_val.runner.push_exit_code(code);
     let syncer = Syncer::new(
         scripted_context_val.config.clone(),
@@ -146,14 +159,17 @@ fn orchestrator_reports_exit_code(
 }
 
 #[given("a scripted runner that fails during sync")]
-fn scripted_runner_with_failure(scripted_context: ScriptedContext) -> ScriptedContext {
+fn scripted_runner_with_failure(
+    scripted_context_result: ScriptedContextResult,
+) -> Result<ScriptedContextResult, StepError> {
+    let scripted_context = scripted_context_result?;
     scripted_context.runner.push_failure(12);
-    scripted_context
+    Ok(Ok(scripted_context))
 }
 
 #[when("I trigger sync against the workspace")]
-fn trigger_sync(scripted_context: ScriptedContext) -> Result<SyncError, StepError> {
-    let scripted_context_val = scripted_context;
+fn trigger_sync(scripted_context_result: ScriptedContextResult) -> Result<SyncError, StepError> {
+    let scripted_context_val = scripted_context_result?;
     let syncer = Syncer::new(
         scripted_context_val.config.clone(),
         scripted_context_val.runner.clone(),

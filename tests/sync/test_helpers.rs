@@ -22,15 +22,6 @@ pub struct Workspace {
     _remote_tmp: Arc<TempDir>,
 }
 
-impl Default for Workspace {
-    fn default() -> Self {
-        match Self::new() {
-            Ok(ws) => ws,
-            Err(err) => panic!("workspace default should succeed: {err}"),
-        }
-    }
-}
-
 impl Workspace {
     pub fn new() -> Result<Self, SyncError> {
         let local_tmp = Arc::new(temp_dir("local workspace")?);
@@ -136,36 +127,20 @@ pub fn build_scripted_context(
     })
 }
 
+pub type WorkspaceResult = Result<Workspace, SyncError>;
+pub type ScriptedContextResult = Result<ScriptedContext, SyncError>;
+
 #[fixture]
-pub fn workspace_result() -> Result<Workspace, SyncError> {
+pub fn workspace_result() -> WorkspaceResult {
     Workspace::new()
 }
 
 #[fixture]
-pub fn workspace(workspace_result: Result<Workspace, SyncError>) -> Workspace {
-    match workspace_result {
-        Ok(workspace) => workspace,
-        Err(err) => panic!("workspace fixture should initialize: {err}"),
-    }
-}
-
-#[fixture]
-pub fn scripted_context_result() -> Result<ScriptedContext, SyncError> {
-    let ctx = build_scripted_context(
+pub fn scripted_context_result() -> ScriptedContextResult {
+    build_scripted_context(
         super::test_doubles::ScriptedRunner::new(),
         "scripted context fixture",
-    )?;
-    Ok(ctx)
-}
-
-#[fixture]
-pub fn scripted_context(
-    scripted_context_result: Result<ScriptedContext, SyncError>,
-) -> ScriptedContext {
-    match scripted_context_result {
-        Ok(context) => context,
-        Err(err) => panic!("scripted context fixture should initialize: {err}"),
-    }
+    )
 }
 
 #[fixture]

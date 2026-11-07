@@ -2,8 +2,11 @@
 //!
 //! Provides a minimal gitignore-aware file copier that preserves ignored cache
 //! directories and prunes destination entries not present in the source.
+//! Each behaviour is enabled only by the rsync flag that causes it in real
+//! rsync, so a scenario fails if production stops passing the flag.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::fs_utf8::{DirEntry, FileType};
@@ -25,10 +28,50 @@ struct SimulationContext<'a> {
     ancestors: &'a mut HashSet<Utf8PathBuf>,
 }
 
-pub fn simulate_rsync(source: &Utf8Path, destination: &Utf8Path) -> Result<(), SyncError> {
+/// The rsync behaviours the simulator reproduces, each derived from the flag
+/// that enables it in real rsync.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsyncFlags {
+    /// `--delete`: prune destination entries absent from the source.
+    pub deletes_extraneous: bool,
+    /// A `--filter` rule that reads `.gitignore` files: skip, and protect on
+    /// the destination, ignored entries.
+    pub honours_gitignore: bool,
+}
+
+impl RsyncFlags {
+    /// Reads the flags from an rsync argument list.
+    ///
+    /// The filter rule is matched loosely (any `--filter` argument naming
+    /// `.gitignore`) so the test double does not pin the exact rule string.
+    pub fn from_args(args: &[OsString]) -> Self {
+        let has = |predicate: &dyn Fn(&str) -> bool| {
+            args.iter().filter_map(|arg| arg.to_str()).any(predicate)
+        };
+        Self {
+            deletes_extraneous: has(&|arg| arg == "--delete"),
+            honours_gitignore: has(&|arg| {
+                arg.starts_with("--filter") && arg.contains(".gitignore")
+            }),
+        }
+    }
+}
+
+pub fn simulate_rsync(
+    source: &Utf8Path,
+    destination: &Utf8Path,
+    flags: RsyncFlags,
+) -> Result<(), SyncError> {
     let fs = Dir::open_ambient_dir("/", ambient_authority())
         .map_err(|err| map_io_error(err.to_string()))?;
-    let rules = load_ignores(source)?;
+    let rules = if flags.honours_gitignore {
+        load_ignores(source)?
+    } else {
+        IgnoreRules {
+            dirs: HashSet::new(),
+            files: HashSet::new(),
+        }
+    };
     let mut kept: HashSet<Utf8PathBuf> = HashSet::new();
     let mut ancestors: HashSet<Utf8PathBuf> = HashSet::new();
     let mut context = SimulationContext {
@@ -40,8 +83,10 @@ pub fn simulate_rsync(source: &Utf8Path, destination: &Utf8Path) -> Result<(), S
         ancestors: &mut ancestors,
     };
     copy_tree(&mut context, source, destination)?;
-    compute_ancestors(context.kept, context.ancestors);
-    prune_destination(&mut context, destination)?;
+    if flags.deletes_extraneous {
+        compute_ancestors(context.kept, context.ancestors);
+        prune_destination(&mut context, destination)?;
+    }
     Ok(())
 }
 
