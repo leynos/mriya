@@ -60,8 +60,24 @@ impl ScalewayBackend {
     /// Returns [`ScalewayBackendError::Config`] when the provided configuration
     /// fails validation.
     pub fn new(config: ScalewayConfig) -> Result<Self, ScalewayBackendError> {
-        let test_run_id = std::env::var(TEST_RUN_ID_ENV).ok();
-        Self::new_with_test_run_id(config, test_run_id)
+        Self::new_with_env(config, &mockable::DefaultEnv)
+    }
+
+    /// Constructs a new backend, reading the test run ID from `env`.
+    ///
+    /// This is [`ScalewayBackend::new`] with an injectable environment: the
+    /// [`TEST_RUN_ID_ENV`] variable is looked up through `env` rather than the
+    /// process environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::Config`] when the provided configuration
+    /// fails validation.
+    pub fn new_with_env(
+        config: ScalewayConfig,
+        env: &impl mockable::Env,
+    ) -> Result<Self, ScalewayBackendError> {
+        Self::new_with_test_run_id(config, env.string(TEST_RUN_ID_ENV))
     }
 
     /// Constructs a new backend with an explicit test run ID.

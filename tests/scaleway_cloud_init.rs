@@ -6,6 +6,7 @@
 
 use std::sync::LazyLock;
 
+use mockable::{DefaultEnv, Env};
 use mriya::sync::{ProcessCommandRunner, SyncConfig, Syncer};
 use mriya::{RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig};
 use rstest::fixture;
@@ -17,7 +18,9 @@ use tokio::runtime::Runtime;
 static RUNTIME: LazyLock<Result<Runtime, std::io::Error>> = LazyLock::new(Runtime::new);
 
 fn scaleway_integration_enabled() -> bool {
-    let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
+    let enabled = DefaultEnv
+        .raw("MRIYA_RUN_SCALEWAY_TESTS")
+        .unwrap_or_default();
     matches!(
         enabled.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes"
@@ -32,9 +35,11 @@ fn scaleway_backend() -> Result<ScalewayBackend, String> {
         ));
     }
 
-    let secret =
-        std::env::var("SCW_SECRET_KEY").map_err(|err| format!("missing SCW_SECRET_KEY: {err}"))?;
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID")
+    let secret = DefaultEnv
+        .raw("SCW_SECRET_KEY")
+        .map_err(|err| format!("missing SCW_SECRET_KEY: {err}"))?;
+    let project = DefaultEnv
+        .raw("SCW_DEFAULT_PROJECT_ID")
         .map_err(|err| format!("missing SCW_DEFAULT_PROJECT_ID: {err}"))?;
     if secret.trim().is_empty() || project.trim().is_empty() {
         return Err(String::from(
@@ -55,7 +60,8 @@ fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
         ));
     }
 
-    let identity = std::env::var("MRIYA_SYNC_SSH_IDENTITY_FILE")
+    let identity = DefaultEnv
+        .raw("MRIYA_SYNC_SSH_IDENTITY_FILE")
         .map_err(|err| format!("missing MRIYA_SYNC_SSH_IDENTITY_FILE: {err}"))?;
     if identity.trim().is_empty() {
         return Err(String::from("empty MRIYA_SYNC_SSH_IDENTITY_FILE"));

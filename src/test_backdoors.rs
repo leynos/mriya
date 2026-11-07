@@ -4,18 +4,32 @@
 //! helpers let the binary short-circuit provisioning so tests can observe exit
 //! codes, streamed output, and request construction without cloud access.
 
-use std::env;
 use std::io::{self, Write};
 
+use mockable::Env;
 use mriya::{RunError, ScalewayBackendError};
 
 use super::{CliError, RunCommand, build_backend_and_request};
-pub(super) fn enable_fake_modes() -> bool {
-    env::var("MRIYA_FAKE_RUN_ENABLE").is_ok_and(|val| val == "1")
+
+/// Returns the outcome of a fake run when the environment selects one.
+///
+/// Yields `None` unless `MRIYA_FAKE_RUN_ENABLE` is `1` and either a fake run
+/// mode or a pre-failure mode is selected, so callers fall through to the real
+/// provisioning path.
+pub(super) fn fake_outcome(args: &RunCommand, env: &impl Env) -> Option<Result<i32, CliError>> {
+    if !enable_fake_modes(env) {
+        return None;
+    }
+    fake_run_from_env(args, env).or_else(|| prefail_from_env(env).map(Err))
 }
 
-pub(super) fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
-    let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
+fn enable_fake_modes(env: &impl Env) -> bool {
+    env.string("MRIYA_FAKE_RUN_ENABLE")
+        .is_some_and(|val| val == "1")
+}
+
+fn fake_run_from_env(args: &RunCommand, env: &impl Env) -> Option<Result<i32, CliError>> {
+    let mode = env.string("MRIYA_FAKE_RUN_MODE")?;
     match mode.as_str() {
         "exit-0" => {
             writeln!(io::stdout(), "fake-stdout").ok();
@@ -57,8 +71,8 @@ fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
     Ok(0)
 }
 
-pub(super) fn prefail_from_env() -> Option<CliError> {
-    let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
+fn prefail_from_env(env: &impl Env) -> Option<CliError> {
+    let mode = env.string("MRIYA_FAKE_RUN_PREFAIL")?;
     match mode.as_str() {
         "config" => Some(CliError::Config(String::from("fake"))),
         "sync" => Some(CliError::Sync(String::from("fake"))),
