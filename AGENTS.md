@@ -125,19 +125,24 @@ project:
     ```
 
     validating formatting across the entire workspace without modifying files.
-  - `make lint` executes:
+  - `make lint` runs the docstring gate, then executes:
 
     ```sh
+    cargo doc --workspace --no-deps
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    whitaker --all -- --workspace --all-targets --all-features
     ```
 
-    linting every target with all features enabled and denying all Clippy
-    warnings.
+    The documentation build runs with `RUSTDOCFLAGS="--cfg docsrs -D warnings"`
+    so rustdoc lints fail the gate. Clippy covers every target with all
+    features enabled and denies all warnings; the lint tables live in
+    `Cargo.toml` and `clippy.toml` (see "Lint baseline" in
+    `docs/developers-guide.md`).
   - `make test` executes:
 
     ```sh
-    cargo nextest run --all-targets --all-features
-    cargo test --doc --all-features
+    cargo nextest run --workspace --all-targets --all-features
+    cargo test --doc --workspace --all-features
     ```
 
     running the full workspace test suite under cargo-nextest, so the
@@ -156,7 +161,9 @@ project:
   missing; `make install-build-tools` installs the pinned `mold` and toolchain.
   Cranelift is a recorded exception pending maintainer approval; see
   `docs/developers-guide.md`.
-- Clippy warnings MUST be disallowed.
+- Clippy warnings MUST be disallowed. Every workspace member inherits the
+  workspace lint tables with `[lints] workspace = true`; never add a local
+  `[lints]` table to a member.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.
 - Where a function is too long, extract meaningfully named helper functions
