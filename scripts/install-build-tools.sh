@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Install the build tools the development build standard needs.
 #
-# Fetches the pinned mold release, verifies it against tools/mold/SHA256SUMS and
+# Fetches the pinned mold linker release, verifies it against tools/mold/SHA256SUMS and
 # unpacks it under $BUILD_TOOLS_PREFIX (default ~/.local); then installs the
 # pinned nightly with the components rust-toolchain.toml lists. Nothing here
-# touches the coverage, release or Whitaker toolchains. A mold already on PATH
+# touches the coverage, release or Whitaker toolchains. A mold linker already on PATH
 # at the pinned version is left alone, so a runner whose setup action installed
 # it does not download it twice.
 
@@ -14,7 +14,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/build-tools-common.sh
 . "$script_dir/build-tools-common.sh"
 
-MOLD_RELEASE_BASE_URL=${MOLD_RELEASE_BASE_URL:-https://github.com/rui314/mold/releases/download}
+LINKER_RELEASE_BASE_URL=${LINKER_RELEASE_BASE_URL:-https://github.com/rui314/mold/releases/download}
 
 # The scratch directory the EXIT trap removes. A named function rather than a
 # trap string, so a quote in TMPDIR cannot break the cleanup.
@@ -28,27 +28,27 @@ trap remove_workdir EXIT
 # An unlisted or ambiguous artefact is a hard failure, never a silent skip.
 verify_archive() {
   local archive=$1 name=$2 expected
-  expected=$(awk -v name="$name" '$2 == name { print $1 }' "$MOLD_SHA256SUMS_FILE")
-  [ -n "$expected" ] || fail "no checksum recorded for $name in $MOLD_SHA256SUMS_FILE"
+  expected=$(awk -v name="$name" '$2 == name { print $1 }' "$LINKER_SHA256SUMS_FILE")
+  [ -n "$expected" ] || fail "no checksum recorded for $name in $LINKER_SHA256SUMS_FILE"
   [ "$(printf '%s\n' "$expected" | grep -c .)" -eq 1 ] ||
     fail "several checksums recorded for $name; refusing to guess"
   printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status ||
     fail "checksum mismatch for $name; refusing to install"
-  note "verified $name against $MOLD_SHA256SUMS_FILE"
+  note "verified $name against $LINKER_SHA256SUMS_FILE"
 }
 
-install_mold() {
+install_linker() {
   local version=$1 name url
   if ! is_linux; then
-    note "mold is Linux-only; skipping on $(uname -s)"
+    note "the mold linker is Linux-only; skipping on $(uname -s)"
     return 0
   fi
-  if [ "$(installed_mold_version 2>/dev/null || true)" = "$version" ]; then
-    note "mold $version already on PATH at $(command -v mold)"
+  if [ "$(installed_linker_version 2>/dev/null || true)" = "$version" ]; then
+    note "mold linker $version already on PATH at $(command -v mold)"
     return 0
   fi
-  name="mold-$version-$(mold_arch)-linux.tar.gz"
-  url="$MOLD_RELEASE_BASE_URL/v$version/$name"
+  name="mold-$version-$(linker_arch)-linux.tar.gz"
+  url="$LINKER_RELEASE_BASE_URL/v$version/$name"
   BUILD_TOOLS_WORKDIR=$(mktemp -d)
   note "downloading $url"
   # A stall detector rather than a deadline, so a slow link still finishes
@@ -62,7 +62,7 @@ install_mold() {
   mkdir -p "$BUILD_TOOLS_PREFIX"
   tar --extract --gzip --strip-components=1 --directory "$BUILD_TOOLS_PREFIX" \
     --file "$BUILD_TOOLS_WORKDIR/$name" || fail "failed to unpack $name"
-  note "installed mold $version into $BUILD_TOOLS_PREFIX"
+  note "installed mold linker $version into $BUILD_TOOLS_PREFIX"
 }
 
 # The component names rust-toolchain.toml lists, one per line.
@@ -85,11 +85,11 @@ install_toolchain() {
 }
 
 main() {
-  local mold_pin toolchain_pin
-  mold_pin=$(mold_version) || return 1
+  local linker_pin toolchain_pin
+  linker_pin=$(linker_version) || return 1
   toolchain_pin=$(pinned_toolchain) || return 1
   # The linker first, so a checksum failure aborts before a toolchain download.
-  install_mold "$mold_pin"
+  install_linker "$linker_pin"
   install_toolchain "$toolchain_pin"
   note 'ready; verify with: make check-build-tools'
 }

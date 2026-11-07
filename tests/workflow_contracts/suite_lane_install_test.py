@@ -124,7 +124,7 @@ def test_every_way_of_reaching_the_suite_is_derived(suite_step: str) -> None:
     ],
     ids=["scalar", "list", "mapping_list", "mapping_scalar"],
 )
-def test_every_runs_on_form_is_recognised_as_linux(runs_on: str) -> None:
+def test_every_runs_on_form_is_recognized_as_linux(runs_on: str) -> None:
     """Scalar, list and mapping runner forms all count as Linux."""
     assert _problems(_workflow(runs_on, SUITE))[1] == 1
 

@@ -21,9 +21,12 @@ the spelling. Where one does, add an exact pattern to `typos.local.toml` for
 that name, never a blanket word or a mask over all inline code. The current
 exemptions are the Cargo JSON message kind `compiler-artifact` and the `mold`
 linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
-`setup-rust`, and the `-fuse-ld=mold` argument. Test each new exemption in both
-directions: the exact name passes and the same misspelling in ordinary prose
-fails.
+`setup-rust`, and the `-fuse-ld=mold` argument. The build-tools scripts and
+contracts add its command line and output (`command -v mold`, `mold --version`,
+its version banner), release archive names (`mold-2.41.0-x86_64-linux.tar.gz`),
+the `bin/mold` and `ld.mold` paths, and the exact quoted tool name `"mold"`.
+Test each new exemption in both directions: the exact name passes and the same
+misspelling in ordinary prose fails.
 
 `tests/spelling_contract.rs` runs that rule as an ordinary test, in two halves
 that answer different questions. The first half reads the generated

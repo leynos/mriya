@@ -30,6 +30,7 @@ extend-exclude = [
 [default]
 locale = "en-gb"
 extend-ignore-re = [
+    "\"mold\"",
     "(?m)^            artifact_suffix: aarch64-apple-darwin$",
     "(?m)^            artifact_suffix: linux-aarch64$",
     "(?m)^            artifact_suffix: linux-x86_64$",
@@ -63,9 +64,15 @@ extend-ignore-re = [
     "\\bAppFactory<Ser\\b",
     "\\bCARGO_TERM_COLOR\\b",
     "\\bartifact-(?:name|server-path)\\b",
+    "\\bbin/mold\\b",
     "\\bcolor-(?:mix|contrast)\\b",
+    "\\bcommand -v mold\\b",
     "\\bcompiler-artifact\\b",
     "\\binstall-mold\\b",
+    "\\bld\\.mold\\b",
+    "\\bmold (?:\\{version\\}|2\\.41\\.0) \\(compatible with GNU ld\\)",
+    "\\bmold --version\\b",
+    "\\bmold-(?:\\d|\\$version|\\{VERSION\\}|<version>)",
     "\\bmold\\s+linker\\b",
     "\\borganisation_id\\b",
     "\\brust-analyzer\\b",

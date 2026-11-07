@@ -10,7 +10,7 @@ use super::{
         Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_route, sandbox_with,
     },
     config::TOOLCHAIN,
-    installer::{Digest, installed_mold, published, run_installer, rustup_calls},
+    installer::{Digest, installed_linker, published, run_installer, rustup_calls},
     make::Host,
     process::probe_make,
 };
@@ -86,10 +86,10 @@ fn the_route_reader_accepts_and_refuses(
 /// falls back; a complete toolset passes.
 #[rstest]
 #[case::complete(Toolset::COMPLETE, &[])]
-#[case::no_mold(Toolset { mold: None, ..Toolset::COMPLETE }, &["mold not found", "make install-build-tools"])]
-#[case::drifted_mold(Toolset { mold: Some("2.40.4"), ..Toolset::COMPLETE }, &["does not match the pin 2.41.0", "make install-build-tools"])]
+#[case::no_linker(Toolset { linker: None, ..Toolset::COMPLETE }, &["mold linker not found", "make install-build-tools"])]
+#[case::drifted_linker(Toolset { linker: Some("2.40.4"), ..Toolset::COMPLETE }, &["does not match the pin 2.41.0", "make install-build-tools"])]
 #[case::no_c_compiler(Toolset { cc_links: None, ..Toolset::COMPLETE }, &["no C compiler"])]
-#[case::cc_rejects_mold(Toolset { cc_links: Some(false), ..Toolset::COMPLETE }, &["cannot link with -fuse-ld=mold"])]
+#[case::cc_rejects_the_linker(Toolset { cc_links: Some(false), ..Toolset::COMPLETE }, &["cannot link with -fuse-ld=mold"])]
 #[case::no_toolchain(Toolset { has_toolchain: false, ..Toolset::COMPLETE }, &["is not installed", "make install-build-tools"])]
 fn the_preflight_reports_each_gap_with_its_remedy(
     #[case] toolset: Toolset,
@@ -124,11 +124,14 @@ fn a_missing_tool_stops_every_development_route_before_cargo(
     #[case] route: &str,
 ) -> Result<(), String> {
     let sandbox = sandbox_with(Toolset {
-        mold: None,
+        linker: None,
         ..Toolset::COMPLETE
     })?;
     let output = run_route(&sandbox, route)?;
-    expect_actionable_failure(&output, &["mold not found", "make install-build-tools"])?;
+    expect_actionable_failure(
+        &output,
+        &["mold linker not found", "make install-build-tools"],
+    )?;
     let calls = cargo_calls(&sandbox)?;
     if calls.is_empty() {
         Ok(())
@@ -168,7 +171,7 @@ fn a_complete_toolset_lets_a_development_route_reach_cargo(
 #[test]
 fn the_release_route_needs_no_development_tool() -> Result<(), String> {
     let sandbox = sandbox_with(Toolset {
-        mold: None,
+        linker: None,
         cc_links: None,
         has_toolchain: false,
     })?;
@@ -186,10 +189,10 @@ fn the_release_route_needs_no_development_tool() -> Result<(), String> {
     Ok(())
 }
 
-/// Scenario: the installer against a published archive, a tampered checksum, and a mold already present.
+/// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
 ///
 /// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every component
-/// `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no toolchain; a mold
+/// `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no toolchain; a mold linker
 /// already at the pin is not downloaded again.
 #[test]
 fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() -> Result<(), String>
@@ -202,7 +205,7 @@ fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() 
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !installed_mold(&sandbox)? {
+    if !installed_linker(&sandbox)? {
         return Err("the archive was not unpacked into the prefix".to_owned());
     }
     let calls = rustup_calls(&sandbox)?.unwrap_or_default();
@@ -220,14 +223,14 @@ fn the_installer_refuses_a_checksum_mismatch_and_installs_nothing() -> Result<()
     let sandbox = published(Digest::Tampered)?;
     let output = run_installer(&sandbox)?;
     expect_actionable_failure(&output, &["checksum mismatch", "refusing to install"])?;
-    if installed_mold(&sandbox)? || rustup_calls(&sandbox)?.is_some() {
+    if installed_linker(&sandbox)? || rustup_calls(&sandbox)?.is_some() {
         return Err("a refused archive still installed something".to_owned());
     }
     Ok(())
 }
 
 #[test]
-fn the_installer_leaves_a_mold_already_at_the_pin_alone() -> Result<(), String> {
+fn the_installer_leaves_a_linker_already_at_the_pin_alone() -> Result<(), String> {
     let sandbox = published(Digest::Tampered)?;
     sandbox.write_tool("mold", "echo 'mold 2.41.0 (compatible with GNU ld)'")?;
     let output = run_installer(&sandbox)?;
@@ -238,8 +241,8 @@ fn the_installer_leaves_a_mold_already_at_the_pin_alone() -> Result<(), String> 
         ));
     }
     // The checksum is tampered, so any download attempt would have failed the run above.
-    if installed_mold(&sandbox)? {
-        return Err("a mold already at the pin was downloaded again".to_owned());
+    if installed_linker(&sandbox)? {
+        return Err("a mold linker already at the pin was downloaded again".to_owned());
     }
     Ok(())
 }
@@ -248,7 +251,7 @@ fn the_installer_leaves_a_mold_already_at_the_pin_alone() -> Result<(), String> 
 ///
 /// Invariant: `rust-analyzer` joins `rustfmt` and `clippy`, and the pin stays a dated nightly.
 #[test]
-fn the_toolchain_file_lists_rust_analyzer_beside_rustfmt_and_clippy() -> Result<(), String> {
+fn the_toolchain_file_lists_language_server_beside_rustfmt_and_clippy() -> Result<(), String> {
     let components = TOOLCHAIN
         .lines()
         .find(|line| line.trim_start().starts_with("components"))
