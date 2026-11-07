@@ -1,6 +1,6 @@
 //! BDD step definitions for janitor behaviour.
 
-use mriya::janitor::Janitor;
+use mriya::janitor::{Janitor, JanitorError};
 use mriya::test_support::{json_servers, json_volumes};
 use rstest_bdd_macros::{given, then, when};
 
@@ -8,6 +8,8 @@ use super::test_helpers::{JanitorContext, SweepOutcome, build_config};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
+    #[error(transparent)]
+    Setup(#[from] JanitorError),
     #[error("assertion failed: {0}")]
     Assertion(String),
 }
@@ -17,15 +19,19 @@ fn configured_janitor(
     mut janitor_context: JanitorContext,
     project: String,
     run_id: String,
-) -> JanitorContext {
-    janitor_context.config = Some(build_config(project.trim(), run_id.trim()));
-    janitor_context
+) -> Result<JanitorContext, StepError> {
+    janitor_context.config = Some(build_config(project.trim(), run_id.trim())?);
+    Ok(janitor_context)
 }
 
 #[given("scw lists one tagged server and one tagged volume")]
-fn scw_lists_tagged_resources(janitor_context: JanitorContext) -> JanitorContext {
+fn scw_lists_tagged_resources(
+    janitor_context: JanitorContext,
+) -> Result<JanitorContext, StepError> {
     let Some(config) = janitor_context.config.as_ref() else {
-        panic!("test setup requires configured janitor");
+        return Err(StepError::Assertion(String::from(
+            "test setup requires configured janitor",
+        )));
     };
     let tag = config.test_run_tag();
 
@@ -54,13 +60,17 @@ fn scw_lists_tagged_resources(janitor_context: JanitorContext) -> JanitorContext
         .runner
         .push_output(Some(0), json_volumes(&[("vol-b", "fr-par-1", &[])]), "");
 
-    janitor_context
+    Ok(janitor_context)
 }
 
 #[given("scw lists a tagged server that remains after deletion")]
-fn scw_lists_remaining_server(janitor_context: JanitorContext) -> JanitorContext {
+fn scw_lists_remaining_server(
+    janitor_context: JanitorContext,
+) -> Result<JanitorContext, StepError> {
     let Some(config) = janitor_context.config.as_ref() else {
-        panic!("test setup requires configured janitor");
+        return Err(StepError::Assertion(String::from(
+            "test setup requires configured janitor",
+        )));
     };
     let tag = config.test_run_tag();
 
@@ -83,20 +93,22 @@ fn scw_lists_remaining_server(janitor_context: JanitorContext) -> JanitorContext
         .runner
         .push_output(Some(0), json_volumes(&[]), "");
 
-    janitor_context
+    Ok(janitor_context)
 }
 
 #[when("I run the janitor sweep")]
-fn run_sweep(mut janitor_context: JanitorContext) -> JanitorContext {
+fn run_sweep(mut janitor_context: JanitorContext) -> Result<JanitorContext, StepError> {
     let Some(config) = janitor_context.config.clone() else {
-        panic!("test setup requires configured janitor");
+        return Err(StepError::Assertion(String::from(
+            "test setup requires configured janitor",
+        )));
     };
     let janitor = Janitor::new(config, janitor_context.runner.clone());
     janitor_context.outcome = Some(match janitor.sweep() {
         Ok(summary) => SweepOutcome::Success(summary),
         Err(err) => SweepOutcome::Failure(err.to_string()),
     });
-    janitor_context
+    Ok(janitor_context)
 }
 
 #[then("the janitor reports deleting {servers:u32} server and {volumes:u32} volume")]

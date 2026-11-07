@@ -50,97 +50,68 @@ fn write_temp_cloud_init_file(filename: &str, content: &str) -> anyhow::Result<(
     Ok((tmp, path_str))
 }
 
-#[test]
-fn config_validation_rejects_missing_secret_with_actionable_error() {
-    let cfg = ScalewayConfig {
-        secret_key: String::new(),
-        ..valid_config()
-    };
-
-    let error = cfg.validate().expect_err("secret is required");
+/// Verifies that validation produces actionable errors mentioning both the
+/// environment variable and configuration file for each required field.
+#[rstest]
+#[case::secret_key(
+    |cfg: &mut ScalewayConfig| cfg.secret_key.clear(),
+    "SCW_SECRET_KEY",
+    "secret_key"
+)]
+#[case::project_id(
+    |cfg: &mut ScalewayConfig| cfg.default_project_id.clear(),
+    "SCW_DEFAULT_PROJECT_ID",
+    "default_project_id"
+)]
+#[case::image(
+    |cfg: &mut ScalewayConfig| cfg.default_image.clear(),
+    "SCW_DEFAULT_IMAGE",
+    "default_image"
+)]
+#[case::instance_type(
+    |cfg: &mut ScalewayConfig| cfg.default_instance_type.clear(),
+    "SCW_DEFAULT_INSTANCE_TYPE",
+    "default_instance_type"
+)]
+#[case::zone(
+    |cfg: &mut ScalewayConfig| cfg.default_zone.clear(),
+    "SCW_DEFAULT_ZONE",
+    "default_zone"
+)]
+#[case::architecture(
+    |cfg: &mut ScalewayConfig| cfg.default_architecture.clear(),
+    "SCW_DEFAULT_ARCHITECTURE",
+    "default_architecture"
+)]
+fn config_validation_produces_actionable_errors(
+    valid_config: ScalewayConfig,
+    #[case] clear_field: fn(&mut ScalewayConfig),
+    #[case] env_var: &str,
+    #[case] toml_key: &str,
+) {
+    let mut cfg = valid_config;
+    clear_field(&mut cfg);
+    let error = cfg.validate().expect_err("validation should fail");
     let ConfigError::MissingField(ref message) = error else {
-        panic!("expected MissingField error");
+        panic!("expected MissingField error, got {error:?}");
     };
     assert!(
-        message.contains("SCW_SECRET_KEY"),
-        "error should mention env var: {message}"
+        message.contains(env_var),
+        "error should mention env var {env_var}: {message}"
     );
     assert!(
         message.contains("mriya.toml"),
         "error should mention config file: {message}"
     );
     assert!(
-        message.contains("secret_key"),
-        "error should mention TOML key: {message}"
+        message.contains(toml_key),
+        "error should mention TOML key {toml_key}: {message}"
     );
 }
 
-/// Verifies that validation produces actionable errors mentioning both the
-/// environment variable and configuration file for each required field.
-#[test]
-fn config_validation_produces_actionable_errors_for_all_fields() {
-    fn assert_actionable(
-        mut cfg: ScalewayConfig,
-        mutate: impl FnOnce(&mut ScalewayConfig),
-        env_var: &str,
-        toml_key: &str,
-    ) {
-        mutate(&mut cfg);
-        let error = cfg.validate().expect_err("validation should fail");
-        let message = error.to_string();
-        assert!(
-            message.contains(env_var),
-            "error should mention env var {env_var}: {message}"
-        );
-        assert!(
-            message.contains("mriya.toml"),
-            "error should mention config file: {message}"
-        );
-        assert!(
-            message.contains(toml_key),
-            "error should mention TOML key {toml_key}: {message}"
-        );
-    }
-
-    assert_actionable(
-        valid_config(),
-        |cfg| cfg.default_project_id.clear(),
-        "SCW_DEFAULT_PROJECT_ID",
-        "default_project_id",
-    );
-
-    assert_actionable(
-        valid_config(),
-        |cfg| cfg.default_image.clear(),
-        "SCW_DEFAULT_IMAGE",
-        "default_image",
-    );
-
-    assert_actionable(
-        valid_config(),
-        |cfg| cfg.default_instance_type.clear(),
-        "SCW_DEFAULT_INSTANCE_TYPE",
-        "default_instance_type",
-    );
-
-    assert_actionable(
-        valid_config(),
-        |cfg| cfg.default_zone.clear(),
-        "SCW_DEFAULT_ZONE",
-        "default_zone",
-    );
-
-    assert_actionable(
-        valid_config(),
-        |cfg| cfg.default_architecture.clear(),
-        "SCW_DEFAULT_ARCHITECTURE",
-        "default_architecture",
-    );
-}
-
-#[test]
-fn config_as_request_produces_valid_request() {
-    let cfg = valid_config();
+#[rstest]
+fn config_as_request_produces_valid_request(valid_config: ScalewayConfig) {
+    let cfg = valid_config;
     let request = cfg
         .as_request()
         .expect("valid configuration should produce an instance request");
@@ -156,49 +127,41 @@ fn config_as_request_produces_valid_request() {
     assert_eq!(request.cloud_init_user_data, None);
 }
 
-#[test]
-fn config_rejects_cloud_init_inline_and_file_together() {
-    let cfg = ScalewayConfig {
-        cloud_init_user_data: Some(String::from("#cloud-config\npackages: [jq]\n")),
-        cloud_init_user_data_file: Some(String::from("/tmp/user-data.yml")),
-        ..valid_config()
-    };
+#[rstest]
+#[case::inline_and_file_together(
+    |cfg: &mut ScalewayConfig| {
+        cfg.cloud_init_user_data = Some(String::from("#cloud-config\npackages: [jq]\n"));
+        cfg.cloud_init_user_data_file = Some(String::from("/tmp/user-data.yml"));
+    },
+    "SCW_CLOUD_INIT_USER_DATA"
+)]
+#[case::empty_inline(
+    |cfg: &mut ScalewayConfig| cfg.cloud_init_user_data = Some(String::from("   ")),
+    "cloud-init user-data must not be empty"
+)]
+fn config_rejects_invalid_inline_cloud_init(
+    valid_config: ScalewayConfig,
+    #[case] apply_invalid: fn(&mut ScalewayConfig),
+    #[case] expected_message: &str,
+) {
+    let mut cfg = valid_config;
+    apply_invalid(&mut cfg);
 
     let err = cfg
         .as_request()
-        .expect_err("expected conflict to error")
+        .expect_err("invalid inline cloud-init should be rejected")
         .to_string();
-    assert!(
-        err.contains("SCW_CLOUD_INIT_USER_DATA"),
-        "unexpected error: {err}"
-    );
+    assert!(err.contains(expected_message), "unexpected error: {err}");
 }
 
-#[test]
-fn config_rejects_empty_cloud_init_inline() {
-    let cfg = ScalewayConfig {
-        cloud_init_user_data: Some(String::from("   ")),
-        ..valid_config()
-    };
-
-    let err = cfg
-        .as_request()
-        .expect_err("expected empty inline to error")
-        .to_string();
-    assert!(
-        err.contains("cloud-init user-data must not be empty"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn config_reads_cloud_init_user_data_from_file() {
+#[rstest]
+fn config_reads_cloud_init_user_data_from_file(valid_config: ScalewayConfig) {
     let (_tmp, path_str) = write_temp_cloud_init_file("user-data.txt", "file-user-data")
         .expect("cloud-init fixture file should be created");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
-        ..valid_config()
+        ..valid_config
     };
 
     let request = cfg
@@ -210,8 +173,8 @@ fn config_reads_cloud_init_user_data_from_file() {
     );
 }
 
-#[test]
-fn config_errors_when_cloud_init_user_data_file_missing() {
+#[rstest]
+fn config_errors_when_cloud_init_user_data_file_missing(valid_config: ScalewayConfig) {
     let tmp = TempDir::new()
         .expect("temporary directory for the missing cloud-init fixture should be created");
     let missing_path = tmp.path().join("does-not-exist.txt");
@@ -222,7 +185,7 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(missing_path_str.clone()),
-        ..valid_config()
+        ..valid_config
     };
 
     let err = cfg
@@ -236,14 +199,14 @@ fn config_errors_when_cloud_init_user_data_file_missing() {
     assert_eq!(path, missing_path_str, "expected error path to match");
 }
 
-#[test]
-fn config_errors_when_cloud_init_user_data_file_is_empty() {
+#[rstest]
+fn config_errors_when_cloud_init_user_data_file_is_empty(valid_config: ScalewayConfig) {
     let (_tmp, path_str) = write_temp_cloud_init_file("user-data-empty.txt", "   \n\t  ")
         .expect("empty cloud-init fixture file should be created");
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(path_str),
-        ..valid_config()
+        ..valid_config
     };
 
     let err = cfg
@@ -260,8 +223,9 @@ fn config_errors_when_cloud_init_user_data_file_is_empty() {
     );
 }
 
+#[rstest]
 #[tokio::test]
-async fn config_expands_tilde_for_cloud_init_user_data_file() {
+async fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConfig) {
     let tmp = TempDir::new().expect("temporary home directory should be created");
     let home = tmp.path().to_string_lossy().to_string();
     let _guard = mriya::test_support::EnvGuard::set_vars(&[("HOME", home.as_str())]).await;
@@ -277,7 +241,7 @@ async fn config_expands_tilde_for_cloud_init_user_data_file() {
 
     let cfg = ScalewayConfig {
         cloud_init_user_data_file: Some(String::from("~/cloud-init/user-data.txt")),
-        ..valid_config()
+        ..valid_config
     };
 
     let request = cfg

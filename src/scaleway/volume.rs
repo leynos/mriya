@@ -25,28 +25,24 @@ pub(crate) struct UpdateInstanceVolumesRequest {
 mod tests {
     //! Unit tests for volume attachment serialization.
     use super::*;
+    use rstest::rstest;
 
-    #[test]
-    fn volume_attachment_serializes_without_boot_when_false() {
+    #[rstest]
+    #[case::omits_boot_when_false(false, r#"{"id":"vol-123"}"#)]
+    #[case::includes_boot_when_true(true, r#"{"id":"vol-123","boot":true}"#)]
+    fn volume_attachment_serializes_boot_only_when_true(
+        #[case] boot: bool,
+        #[case] expected: &str,
+    ) {
         let attachment = VolumeAttachment {
             id: String::from("vol-123"),
-            boot: false,
+            boot,
         };
         let json = serde_json::to_string(&attachment).expect("serialize");
-        assert!(!json.contains("boot"));
+        assert_eq!(json, expected);
     }
 
-    #[test]
-    fn volume_attachment_serializes_with_boot_when_true() {
-        let attachment = VolumeAttachment {
-            id: String::from("vol-123"),
-            boot: true,
-        };
-        let json = serde_json::to_string(&attachment).expect("serialize");
-        assert!(json.contains(r#""boot":true"#));
-    }
-
-    #[test]
+    #[rstest]
     fn update_request_serializes_volume_map() {
         let mut volumes = HashMap::new();
         volumes.insert(
@@ -64,9 +60,15 @@ mod tests {
             },
         );
         let request = UpdateInstanceVolumesRequest { volumes };
-        let json = serde_json::to_string(&request).expect("serialize");
-        assert!(json.contains(r#""volumes""#));
-        assert!(json.contains("root-vol"));
-        assert!(json.contains("cache-vol"));
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "volumes": {
+                    "0": {"id": "root-vol", "boot": true},
+                    "1": {"id": "cache-vol"},
+                }
+            })
+        );
     }
 }

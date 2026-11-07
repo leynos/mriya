@@ -1,6 +1,6 @@
 //! Shared fixtures and helpers for janitor BDD scenarios.
 
-use mriya::janitor::{DEFAULT_SCW_BIN, JanitorConfig, SweepSummary};
+use mriya::janitor::{DEFAULT_SCW_BIN, JanitorConfig, JanitorError, SweepSummary};
 use mriya::test_support::ScriptedRunner;
 use rstest::fixture;
 
@@ -26,9 +26,7 @@ pub fn janitor_context() -> JanitorContext {
     }
 }
 
-pub fn build_config(project: &str, run_id: &str) -> JanitorConfig {
-    match JanitorConfig::new(project, run_id, DEFAULT_SCW_BIN) {
-        Ok(config) => config,
-        Err(err) => panic!("janitor config should be valid: {err}"),
-    }
+/// Builds a janitor configuration, reporting invalid input to the caller.
+pub fn build_config(project: &str, run_id: &str) -> Result<JanitorConfig, JanitorError> {
+    JanitorConfig::new(project, run_id, DEFAULT_SCW_BIN)
 }

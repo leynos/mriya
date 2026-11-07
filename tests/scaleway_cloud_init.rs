@@ -68,11 +68,10 @@ fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
 }
 
 #[fixture]
-fn temp_source_dir() -> std::sync::Arc<TempDir> {
-    match TempDir::new() {
-        Ok(dir) => std::sync::Arc::new(dir),
-        Err(err) => panic!("temp dir should be created: {err}"),
-    }
+fn temp_source_dir() -> Result<std::sync::Arc<TempDir>, String> {
+    TempDir::new()
+        .map(std::sync::Arc::new)
+        .map_err(|err| format!("temp dir should be created: {err}"))
 }
 
 const CLOUD_INIT_JQ: &str = concat!(
@@ -95,7 +94,7 @@ fn valid_scaleway_credentials_and_sync(
 fn provision_with_cloud_init_and_run(
     scaleway_backend: Result<ScalewayBackend, String>,
     syncer: Result<Syncer<ProcessCommandRunner>, String>,
-    temp_source_dir: std::sync::Arc<TempDir>,
+    #[from(temp_source_dir)] temp_source_dir_result: Result<std::sync::Arc<TempDir>, String>,
     command: String,
 ) -> Result<mriya::sync::RemoteCommandOutput, mriya::RunError<ScalewayBackendError>> {
     let backend = scaleway_backend.unwrap_or_else(|err| skip!("{}", err));
@@ -106,6 +105,9 @@ fn provision_with_cloud_init_and_run(
         .map_err(mriya::RunError::Provision)?;
     request.cloud_init_user_data = Some(String::from(CLOUD_INIT_JQ));
 
+    let temp_source_dir = temp_source_dir_result.map_err(|message| {
+        mriya::RunError::Provision(ScalewayBackendError::Provider { message })
+    })?;
     let source = camino::Utf8PathBuf::from_path_buf(temp_source_dir.path().to_path_buf()).map_err(
         |path| {
             mriya::RunError::Provision(ScalewayBackendError::Provider {
@@ -151,7 +153,7 @@ fn jq_available(output: &mriya::sync::RemoteCommandOutput) {
 fn scenario_cloud_init_install_jq(
     scaleway_backend: Result<ScalewayBackend, String>,
     syncer: Result<Syncer<ProcessCommandRunner>, String>,
-    temp_source_dir: std::sync::Arc<TempDir>,
+    temp_source_dir: Result<std::sync::Arc<TempDir>, String>,
 ) {
     drop((scaleway_backend, syncer, temp_source_dir));
 }
