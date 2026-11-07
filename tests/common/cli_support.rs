@@ -19,15 +19,11 @@ macro_rules! string_newtype {
         struct $name(String);
 
         impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value)
-            }
+            fn from(value: String) -> Self { Self(value) }
         }
 
         impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self.0.as_str()
-            }
+            fn as_ref(&self) -> &str { self.0.as_str() }
         }
 
         impl std::fmt::Display for $name {
@@ -39,9 +35,7 @@ macro_rules! string_newtype {
         impl std::str::FromStr for $name {
             type Err = std::convert::Infallible;
 
-            fn from_str(value: &str) -> Result<Self, Self::Err> {
-                Ok(Self(value.to_owned()))
-            }
+            fn from_str(value: &str) -> Result<Self, Self::Err> { Ok(Self(value.to_owned())) }
         }
     };
 }

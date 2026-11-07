@@ -1,6 +1,6 @@
-//! Cases for the policy readers of the build-standard contract: which commands run tests, which tool a
-//! command runs, and the warning policy the commands that run tests must keep, each driven over
-//! fixtures first so that no rule passes by detecting nothing.
+//! Cases for the policy readers of the build-standard contract: which commands run tests, which
+//! tool a command runs, and the warning policy the commands that run tests must keep, each driven
+//! over fixtures first so that no rule passes by detecting nothing.
 
 use rstest::rstest;
 
@@ -15,12 +15,12 @@ use super::{
 #[derive(Clone, Copy)]
 struct Cmd(&'static str, &'static [&'static str]);
 
-/// Scenario: the `test` target's commands, with and without the warning policy, beside a version probe
-/// and a build that never carried it.
+/// Scenario: the `test` target's commands, with and without the warning policy, beside a version
+/// probe and a build that never carried it.
 ///
-/// Invariant: `make test` must run tests, and every command that runs them must keep `-D warnings`; a
-/// probe or a build is not held to it, and a probe keeping the policy cannot stand in for a test command
-/// that dropped it; another target is not held to it.
+/// Invariant: `make test` must run tests, and every command that runs them must keep `-D warnings`;
+/// a probe or a build is not held to it, and a probe keeping the policy cannot stand in for a test
+/// command that dropped it; another target is not held to it.
 #[rstest]
 #[case::test_keeps_the_policy(Fixture("test"), &[Cmd("cargo nextest run", &["-D", "warnings", THREADS_FLAG])], 0)]
 #[case::test_spelled_joined(Fixture("test"), &[Cmd("cargo test", &["-Dwarnings", THREADS_FLAG])], 0)]
@@ -69,8 +69,9 @@ fn the_test_target_keeps_the_warning_policy(
 /// Scenario: command lines in each spelling `make -n` prints Cargo in, on each host.
 ///
 /// Invariant: a command runs tests when its Cargo, bare or at any path (a `.exe` on Windows), is
-/// followed past any toolchain override and options by `test` or `nextest run`; a probe, a build and
-/// do not. (A line that merely echoes Cargo never reaches the reader: `commands_with_text` drops it.)
+/// followed past any toolchain override and options by `test` or `nextest run`; a probe, a build
+/// and do not. (A line that merely echoes Cargo never reaches the reader: `commands_with_text`
+/// drops it.)
 #[rstest]
 #[case::bare_test(Fixture("cargo test"), true)]
 #[case::nextest_run(Fixture("cargo nextest run --all-targets"), true)]
@@ -91,9 +92,9 @@ fn the_test_reader_recognizes_a_test_run_in_each_spelling(
 
 /// Scenario: command lines in the spellings `make -n` prints, reduced to the tool they run.
 ///
-/// Invariant: a build, test or lint command reads as its tool whatever assignment, toolchain override or
-/// path precedes it, `nextest` keeps its action, and a version probe, a formatter and a documentation
-/// build read as none.
+/// Invariant: a build, test or lint command reads as its tool whatever assignment, toolchain
+/// override or path precedes it, `nextest` keeps its action, and a version probe, a formatter and a
+/// documentation build read as none.
 #[rstest]
 #[case::a_build(Fixture("cargo build --release"), Some("cargo build"))]
 #[case::an_assignment_and_a_toolchain(

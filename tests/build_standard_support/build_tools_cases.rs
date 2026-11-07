@@ -1,13 +1,19 @@
-//! Cases for the build-tools contract: the routing reader against text it must accept and refuse, the
-//! preflight and installer scripts against each tool a developer may lack, and the real Make routes
-//! run with a missing or complete toolset. Case names are distinct, so a run can list and count them.
+//! Cases for the build-tools contract: the routing reader against text it must accept and refuse,
+//! the preflight and installer scripts against each tool a developer may lack, and the real Make
+//! routes run with a missing or complete toolset. Case names are distinct, so a run can list and
+//! count them.
 
 use rstest::rstest;
 
 use super::{
     build_tools_routes::{EXCLUDED_ROUTES, PREFLIGHT_ROUTES, route_problems, routing_problems},
     build_tools_scripts::{
-        Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_route, sandbox_with,
+        Toolset,
+        cargo_calls,
+        expect_actionable_failure,
+        run_preflight,
+        run_route,
+        sandbox_with,
     },
     config::TOOLCHAIN,
     installer::{Digest, installed_linker, published, run_installer, rustup_calls},
@@ -18,8 +24,9 @@ use super::{
 
 /// Scenario: the evaluated Make invocation for every route, on a Linux and a macOS host.
 ///
-/// Invariant: each development route prints the preflight before its first Cargo command, the release
-/// route prints none, no command hard-codes `cargo`, and the count proves the routes were read.
+/// Invariant: each development route prints the preflight before its first Cargo command, the
+/// release route prints none, no command hard-codes `cargo`, and the count proves the routes were
+/// read.
 #[rstest]
 #[case::linux(Host::Linux)]
 #[case::darwin(Host::Darwin)]
@@ -40,9 +47,9 @@ fn every_route_is_ordered_by_the_evaluated_make_invocation(
 
 /// Scenario: dry-run text a route must be refused for.
 ///
-/// Invariant: a missing preflight, a preflight after Cargo, a hard-coded `cargo` (also inside a quoted
-/// `trap`), a route that prints no Cargo command, and a release route that demands the preflight each
-/// name their fault; the well-formed text names none.
+/// Invariant: a missing preflight, a preflight after Cargo, a hard-coded `cargo` (also inside a
+/// quoted `trap`), a route that prints no Cargo command, and a release route that demands the
+/// preflight each name their fault; the well-formed text names none.
 #[rstest]
 #[case::well_formed(
     "scripts/check-build-tools.sh\nprobe-cargo fetch\nRUSTFLAGS=\"-D warnings\" probe-cargo test\n",
@@ -83,8 +90,8 @@ fn the_route_reader_accepts_and_refuses(
 
 /// Scenario: the preflight script run against a toolset missing something.
 ///
-/// Invariant: a gap fails with a message that names the gap and the command that fixes it, and never
-/// falls back; a complete toolset passes.
+/// Invariant: a gap fails with a message that names the gap and the command that fixes it, and
+/// never falls back; a complete toolset passes.
 #[rstest]
 #[case::complete(Toolset::COMPLETE, &[])]
 #[case::no_linker(Toolset { linker: None, ..Toolset::COMPLETE }, &["mold linker not found", "make install-build-tools"])]
@@ -112,8 +119,8 @@ fn the_preflight_reports_each_gap_with_its_remedy(
 
 /// Scenario: a development route run for real, with and without the tools it needs.
 ///
-/// Invariant: with a missing `mold` the route fails and the fake Cargo is never started, so there is no
-/// silent fallback to another linker; with a complete toolset the route reaches Cargo.
+/// Invariant: with a missing `mold` the route fails and the fake Cargo is never started, so there
+/// is no silent fallback to another linker; with a complete toolset the route reaches Cargo.
 #[rstest]
 #[case::make_build("build")]
 #[case::make_test("test")]
@@ -167,8 +174,8 @@ fn a_complete_toolset_lets_a_development_route_reach_cargo(
 
 /// Scenario: the release route with no `mold` at all.
 ///
-/// Invariant: a shipped artefact needs none of the development tools, so it neither runs the preflight
-/// nor fails for their absence.
+/// Invariant: a shipped artefact needs none of the development tools, so it neither runs the
+/// preflight nor fails for their absence.
 #[test]
 fn the_release_route_needs_no_development_tool() -> Result<(), String> {
     let sandbox = sandbox_with(Toolset {
@@ -190,11 +197,12 @@ fn the_release_route_needs_no_development_tool() -> Result<(), String> {
     Ok(())
 }
 
-/// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
+/// Scenario: the installer against a published archive, a tampered checksum, and a mold linker
+/// already present.
 ///
-/// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every component
-/// `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no toolchain; a mold linker
-/// already at the pin is not downloaded again.
+/// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every
+/// component `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no
+/// toolchain; a mold linker already at the pin is not downloaded again.
 #[test]
 fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() -> Result<(), String>
 {
@@ -210,8 +218,8 @@ fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() 
         return Err("the archive was not unpacked into the prefix".to_owned());
     }
     let calls = rustup_calls(&sandbox)?.unwrap_or_default();
-    let expected = "toolchain install nightly-2026-11-06 --profile minimal \
-                    --component rustfmt --component clippy --component rust-analyzer";
+    let expected = "toolchain install nightly-2026-11-06 --profile minimal --component rustfmt \
+                    --component clippy --component rust-analyzer";
     if calls.trim() == expected {
         Ok(())
     } else {

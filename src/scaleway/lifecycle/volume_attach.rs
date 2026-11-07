@@ -2,10 +2,12 @@
 
 use std::collections::HashMap;
 
+use super::super::{
+    ScalewayBackend,
+    ScalewayBackendError,
+    volume::{UpdateInstanceVolumesRequest, VolumeAttachment},
+};
 use crate::backend::InstanceHandle;
-
-use super::super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
-use super::super::{ScalewayBackend, ScalewayBackendError};
 
 /// Direction of a volume PATCH, used to choose the matching error variant.
 #[derive(Copy, Clone, Debug)]

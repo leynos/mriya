@@ -24,8 +24,9 @@ pub(crate) struct UpdateInstanceVolumesRequest {
 #[cfg(test)]
 mod tests {
     //! Unit tests for volume attachment serialization.
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case::omits_boot_when_false(false, r#"{"id":"vol-123"}"#)]

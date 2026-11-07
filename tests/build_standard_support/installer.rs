@@ -1,7 +1,8 @@
-//! The installer half of the build-tools contract. `scripts/install-build-tools.sh` runs in a sandbox
-//! whose release server is a local directory and whose `rustup` only logs its arguments, so a case can
-//! publish a mold linker archive, tamper with its checksum, or leave a pinned mold linker already on `PATH`, and then
-//! read exactly what the installer unpacked and which toolchain and components it asked for.
+//! The installer half of the build-tools contract. `scripts/install-build-tools.sh` runs in a
+//! sandbox whose release server is a local directory and whose `rustup` only logs its arguments, so
+//! a case can publish a `mold` linker archive, tamper with its checksum, or leave a pinned `mold`
+//! linker already on `PATH`, and then read exactly what the installer unpacked and which toolchain
+//! and components it asked for.
 
 use std::process::Output;
 
@@ -39,9 +40,7 @@ pub enum Digest {
 }
 
 /// Returns the archive name for the host.
-fn archive_name() -> String {
-    format!("mold-{VERSION}-{}-linux.tar.gz", std::env::consts::ARCH)
-}
+fn archive_name() -> String { format!("mold-{VERSION}-{}-linux.tar.gz", std::env::consts::ARCH) }
 
 /// Runs a host tool in the sandbox and returns its stdout, trimmed.
 fn capture(sandbox: &Sandbox, program: &str, args: &[&str]) -> Result<String, String> {
@@ -59,8 +58,8 @@ fn capture(sandbox: &Sandbox, program: &str, args: &[&str]) -> Result<String, St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Builds a sandbox with a local release directory holding the pinned archive, a checksum file for it,
-/// and a `rustup` that logs its arguments.
+/// Builds a sandbox with a local release directory holding the pinned archive, a checksum file for
+/// it, and a `rustup` that logs its arguments.
 ///
 /// # Errors
 ///
@@ -100,7 +99,8 @@ pub fn published(digest: Digest) -> Result<Sandbox, String> {
     Ok(sandbox)
 }
 
-/// Runs the installer in a sandbox, pointed at the sandbox's own release directory and checksum file.
+/// Runs the installer in a sandbox, pointed at the sandbox's own release directory and checksum
+/// file.
 ///
 /// # Errors
 ///
@@ -121,9 +121,7 @@ pub fn run_installer(sandbox: &Sandbox) -> Result<Output, String> {
 /// # Errors
 ///
 /// Returns the reason when the log exists but cannot be read.
-pub fn rustup_calls(sandbox: &Sandbox) -> Result<Option<String>, String> {
-    sandbox.read(CARGO_LOG)
-}
+pub fn rustup_calls(sandbox: &Sandbox) -> Result<Option<String>, String> { sandbox.read(CARGO_LOG) }
 
 /// Returns whether the installer unpacked `mold` into the sandbox's prefix.
 ///

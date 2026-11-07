@@ -1,11 +1,13 @@
 //! Validation tests for `SyncConfig` covering exit-code propagation.
 //! Uses shared fixtures to avoid duplication.
 
+use mriya::sync::Syncer;
 use rstest::rstest;
 
-use super::test_doubles::ScriptedRunner;
-use super::test_helpers::{base_sync_config, networking};
-use mriya::sync::Syncer;
+use super::{
+    test_doubles::ScriptedRunner,
+    test_helpers::{base_sync_config, networking},
+};
 
 #[rstest]
 fn run_remote_reports_missing_exit_code(

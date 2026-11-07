@@ -7,7 +7,8 @@ use super::{
     make::{Assignment, commands_from},
 };
 
-/// A command the chained-line test can place on a line, and how many assigned and bare builds it is.
+/// A command the chained-line test can place on a line, and how many assigned and bare builds it
+/// is.
 #[derive(Clone, Copy)]
 struct ChainedCommand {
     text: &'static str,

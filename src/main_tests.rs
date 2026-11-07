@@ -3,8 +3,9 @@
 //! Keeping these tests in a separate module helps keep `src/main.rs` focused
 //! and within the repository's file size limits.
 
-use super::*;
 use rstest::rstest;
+
+use super::*;
 
 async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
 where

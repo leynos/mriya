@@ -5,17 +5,19 @@
 //! tears the instance down. The `run` subcommand preserves remote exit codes
 //! locally and reports errors on stderr with meaningful exit statuses.
 
-use std::io::{self, Write};
-use std::process;
 #[cfg(test)]
 use std::{future::Future, pin::Pin};
-#[cfg(test)]
-use tokio::sync::Mutex;
+use std::{
+    io::{self, Write},
+    process,
+};
 
 use camino::Utf8PathBuf;
 use clap::Parser;
 use shell_escape::unix::escape;
 use thiserror::Error;
+#[cfg(test)]
+use tokio::sync::Mutex;
 
 mod cli;
 #[cfg(any(test, feature = "test-backdoors"))]
@@ -23,9 +25,20 @@ mod test_backdoors;
 
 use cli::{Cli, InitCommand, RunCommand};
 use mriya::{
-    ConfigStore, InitConfig, InitError, InitOrchestrator, InitRequest, InstanceRequest, RunError,
-    RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig, StreamingCommandRunner,
-    SyncConfig, Syncer,
+    ConfigStore,
+    InitConfig,
+    InitError,
+    InitOrchestrator,
+    InitRequest,
+    InstanceRequest,
+    RunError,
+    RunOrchestrator,
+    ScalewayBackend,
+    ScalewayBackendError,
+    ScalewayConfig,
+    StreamingCommandRunner,
+    SyncConfig,
+    Syncer,
 };
 #[cfg(any(test, feature = "test-backdoors"))]
 use test_backdoors::fake_outcome;
@@ -124,9 +137,7 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 }
 
 /// Runs the `init` subcommand.
-async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
-    init_command(command).await
-}
+async fn exec_init(command: InitCommand) -> Result<i32, CliError> { init_command(command).await }
 
 /// Provisions an instance, syncs the workspace, runs the command remotely,
 /// and returns the remote exit code.
@@ -326,15 +337,11 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
 }
 
 /// Writes `err` to standard error.
-fn report_error(err: &CliError) {
-    write_error(io::stderr(), err);
-}
+fn report_error(err: &CliError) { write_error(io::stderr(), err); }
 
 /// Writes `err` as a single line to `target`, ignoring write failures so a
 /// closed stream cannot mask the original error.
-fn write_error(mut target: impl Write, err: &CliError) {
-    writeln!(target, "{err}").ok();
-}
+fn write_error(mut target: impl Write, err: &CliError) { writeln!(target, "{err}").ok(); }
 
 #[cfg(test)]
 type RunHook =

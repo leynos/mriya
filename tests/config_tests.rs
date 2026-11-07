@@ -3,13 +3,11 @@
 #[path = "common/test_constants.rs"]
 mod test_constants;
 
+use camino::Utf8PathBuf;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
 use tempfile::TempDir;
-
-use camino::Utf8PathBuf;
-use cap_std::{ambient_authority, fs_utf8::Dir};
-
 use test_constants::DEFAULT_INSTANCE_TYPE;
 
 #[fixture]

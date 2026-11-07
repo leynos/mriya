@@ -3,16 +3,18 @@
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
-use mriya::sync::{RemoteCommandOutput, SyncConfig, SyncError};
-use mriya::{InstanceRequest, InstanceRequestBuilder};
+use mriya::{
+    InstanceRequest,
+    InstanceRequestBuilder,
+    sync::{RemoteCommandOutput, SyncConfig, SyncError},
+    test_support::ScriptedRunner,
+};
 use rstest::fixture;
 use tempfile::TempDir;
 use thiserror::Error;
 
 use super::test_doubles::ScriptedBackend;
-use crate::sync_config::sync_config;
-use crate::test_constants::DEFAULT_INSTANCE_TYPE;
-use mriya::test_support::ScriptedRunner;
+use crate::{sync_config::sync_config, test_constants::DEFAULT_INSTANCE_TYPE};
 
 #[derive(Clone, Debug)]
 pub struct RunContext {
@@ -62,9 +64,7 @@ pub type RunContextResult = Result<RunContext, RunTestError>;
 
 #[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-pub fn run_context_result() -> RunContextResult {
-    build_run_context()
-}
+pub fn run_context_result() -> RunContextResult { build_run_context() }
 
 pub fn build_run_context() -> RunContextResult {
     let tmp_dir =

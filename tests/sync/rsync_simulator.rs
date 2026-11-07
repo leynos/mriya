@@ -5,12 +5,13 @@
 //! Each behaviour is enabled only by the rsync flag that causes it in real
 //! rsync, so a scenario fails if production stops passing the flag.
 
-use std::collections::HashSet;
-use std::ffi::OsString;
+use std::{collections::HashSet, ffi::OsString};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cap_std::fs_utf8::{DirEntry, FileType};
-use cap_std::{ambient_authority, fs_utf8::Dir};
+use cap_std::{
+    ambient_authority,
+    fs_utf8::{Dir, DirEntry, FileType},
+};
 use mriya::sync::SyncError;
 
 #[derive(Clone, Debug)]
@@ -150,9 +151,7 @@ fn should_ignore(relative: &Utf8Path, rules: &IgnoreRules) -> bool {
         .is_some_and(|name| rules.files.contains(name))
 }
 
-fn relative_to_root(path: &Utf8Path) -> &Utf8Path {
-    path.strip_prefix("/").unwrap_or(path)
-}
+fn relative_to_root(path: &Utf8Path) -> &Utf8Path { path.strip_prefix("/").unwrap_or(path) }
 
 fn copy_tree(
     context: &mut SimulationContext,

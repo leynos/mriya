@@ -84,31 +84,37 @@ pub const UNKNOWN_CHANNEL: &str = "[toolchain]\nchannel = \"weekly\"\n";
 /// A workflow step that passes the input, quoted.
 pub const STEP_INSTALLS: &str = concat!(
     "    steps:\n      - name: Setup Rust\n",
-    "        uses: org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
     "        with:\n          install-mold: 'true'\n"
 );
 /// The same, with the bare value.
 pub const STEP_INSTALLS_BARE: &str = concat!(
-    "    steps:\n      - uses: org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
+    "    steps:\n      - uses: \
+     org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
     "        with:\n          install-mold: true\n"
 );
 /// A step with no input at all.
 pub const STEP_MISSING_INPUT: &str = concat!(
     "    steps:\n      - name: Setup Rust\n",
-    "        uses: org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n"
+    "        uses: \
+     org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n"
 );
 /// A step that turns the input off.
 pub const STEP_INPUT_OFF: &str = concat!(
     "    steps:\n      - name: Setup Rust\n",
-    "        uses: org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
     "        with:\n          install-mold: 'false'\n"
 );
 /// A step without the input, followed by a step that has one for another
 /// action.
 pub const STEP_BEFORE_A_SIBLING_THAT_INSTALLS: &str = concat!(
     "    steps:\n      - name: Setup Rust\n",
-    "        uses: org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
-    "      - name: Other\n        uses: org/other@abc\n        with:\n          install-mold: 'true'\n"
+    "        uses: \
+     org/shared-actions/.github/actions/setup-rust@0123456789abcdef0123456789abcdef01234567\n",
+    "      - name: Other\n        uses: org/other@abc\n        with:\n          install-mold: \
+     'true'\n"
 );
 /// A comment that names the action, and no step.
 pub const COMMENT_NAMING_THE_ACTION: &str =
@@ -116,30 +122,40 @@ pub const COMMENT_NAMING_THE_ACTION: &str =
 /// A coverage step that assigns `RUSTFLAGS` without a standard flag.
 pub const COVERAGE_OK: &str = concat!(
     "    steps:\n      - name: Cover\n",
-    "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/generate-coverage@\
+     0123456789abcdef0123456789abcdef01234567\n",
     "        env:\n          RUSTFLAGS: -D warnings\n"
 );
 /// A coverage step with no assignment.
 pub const COVERAGE_UNASSIGNED: &str = concat!(
     "    steps:\n      - name: Cover\n",
-    "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n"
+    "        uses: \
+     org/shared-actions/.github/actions/generate-coverage@\
+     0123456789abcdef0123456789abcdef01234567\n"
 );
 /// A coverage step that takes the frontend flag.
 pub const COVERAGE_WITH_THREADS: &str = concat!(
     "    steps:\n      - name: Cover\n",
-    "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/generate-coverage@\
+     0123456789abcdef0123456789abcdef01234567\n",
     "        env:\n          RUSTFLAGS: -D warnings -Zthreads=8\n"
 );
 /// A coverage step that takes `mold`.
 pub const COVERAGE_WITH_LINKER: &str = concat!(
     "    steps:\n      - name: Cover\n",
-    "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/generate-coverage@\
+     0123456789abcdef0123456789abcdef01234567\n",
     "        env:\n          RUSTFLAGS: -Clink-arg=-fuse-ld=mold\n"
 );
 /// A coverage step whose assignment belongs to the next step.
 pub const COVERAGE_BORROWING_A_SIBLING: &str = concat!(
     "    steps:\n      - name: Cover\n",
-    "        uses: org/shared-actions/.github/actions/generate-coverage@0123456789abcdef0123456789abcdef01234567\n",
+    "        uses: \
+     org/shared-actions/.github/actions/generate-coverage@\
+     0123456789abcdef0123456789abcdef01234567\n",
     "      - name: Other\n        env:\n          RUSTFLAGS: -D warnings\n"
 );
 

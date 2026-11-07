@@ -52,15 +52,11 @@ impl CommandInvocation {
 impl ScriptedRunner {
     /// Creates a new runner with no queued responses.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Returns a snapshot of all invocations recorded so far.
     #[must_use]
-    pub fn invocations(&self) -> Vec<CommandInvocation> {
-        self.invocations.borrow().clone()
-    }
+    pub fn invocations(&self) -> Vec<CommandInvocation> { self.invocations.borrow().clone() }
 
     /// Pushes a successful exit status.
     pub fn push_success(&self) {

@@ -28,7 +28,8 @@ enum StepKind {
 
 const SETUP: &str =
     "- uses: o/shared-actions/.github/actions/setup-rust@0123456789012345678901234567890123456789";
-const COVER: &str = "- uses: o/shared-actions/.github/actions/generate-coverage@0123456789012345678901234567890123456789";
+const COVER: &str = "- uses: o/shared-actions/.github/actions/generate-coverage@\
+                     0123456789012345678901234567890123456789";
 
 /// Which complaint a generated step must draw, and the offset of its `uses:` line.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,14 +50,16 @@ impl StepKind {
         Self::CommentNamingBoth,
     ];
 
-    /// Returns the step's lines, with `@FLAGS@` standing for a coverage policy the repository accepts.
+    /// Returns the step's lines, with `@FLAGS@` standing for a coverage policy the repository
+    /// accepts.
     const fn template(self) -> &'static [&'static str] {
         match self {
             Self::SetupInstalling => &[SETUP, "  with:", "    install-mold: 'true'"],
             Self::SetupInstallingBare => &[SETUP, "  with:", "    install-mold: true"],
             Self::SetupNotInstalling => &[
                 "- name: Set up Rust",
-                "  uses: o/shared-actions/.github/actions/setup-rust@0123456789012345678901234567890123456789",
+                "  uses: o/shared-actions/.github/actions/setup-rust@\
+                 0123456789012345678901234567890123456789",
                 "  with:",
                 "    # install-mold: 'true'",
             ],
@@ -69,9 +72,8 @@ impl StepKind {
                 "  env:",
                 "    RUSTFLAGS: -D warnings",
             ],
-            Self::CommentNamingBoth => &[
-                "# uses: setup-rust@ and generate-coverage@ with install-mold: 'true' and RUSTFLAGS: x",
-            ],
+            Self::CommentNamingBoth => &["# uses: setup-rust@ and generate-coverage@ with \
+                                          install-mold: 'true' and RUSTFLAGS: x"],
         }
     }
 

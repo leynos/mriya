@@ -1,18 +1,19 @@
 //! Volume initialization orchestration for `mriya init`.
 
-use std::ffi::OsString;
-use std::fmt::Display;
+use std::{ffi::OsString, fmt::Display};
 
 use camino::Utf8PathBuf;
+use helpers::{format_command, volume_name_for_project, volume_size_bytes};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 
-use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::config::ScalewayConfig;
-use crate::config_store::{ConfigStoreError, ConfigWriter};
-use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
-use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
-use helpers::{format_command, volume_name_for_project, volume_size_bytes};
+use crate::{
+    backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    config::ScalewayConfig,
+    config_store::{ConfigStoreError, ConfigWriter},
+    sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
+    volume::{VolumeBackend, VolumeHandle, VolumeRequest},
+};
 
 mod error;
 mod helpers;
