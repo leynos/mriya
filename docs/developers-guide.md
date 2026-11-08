@@ -539,8 +539,9 @@ without the fast flags:
 - Whitaker. The Whitaker half of `make lint` runs on its installer-managed
   toolchain, which must not inherit the development flags. Its command assigns
   `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`), never expands the
-  caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with `env -u` (Cargo reads
-  it in preference to `RUSTFLAGS`), and names neither `-Zthreads=8` nor the
+  caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with `unset ... &&` (Cargo
+  reads it in preference to `RUSTFLAGS`; `env -u` would hide the gate from the
+  `rust-makefile-baseline` rule), and names neither `-Zthreads=8` nor the
   `mold` flag. The Concordat rule checks its isolation.
 
 Cognitive complexity is not gated by Clippy. Clippy's `cognitive_complexity`
