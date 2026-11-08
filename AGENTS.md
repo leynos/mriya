@@ -125,11 +125,17 @@ project:
     ```
 
     validating formatting across the entire workspace without modifying files.
-  - `make lint` runs the docstring gate, then executes:
+  - `make lint` is `lint-clippy` followed by `lint-whitaker`, built serially.
+    `make lint-clippy` runs the preflight and the docstring gate, then:
 
     ```sh
     cargo doc --workspace --no-deps
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    ```
+
+    and `make lint-whitaker` runs the Whitaker Dylint suite last:
+
+    ```sh
     whitaker --all -- --workspace --all-targets --all-features
     ```
 
