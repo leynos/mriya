@@ -59,6 +59,8 @@ mod sandbox;
 mod sandbox_cases;
 #[path = "build_standard_support/shell.rs"]
 mod shell;
+#[path = "build_standard_support/whitaker_gate.rs"]
+mod whitaker_gate;
 #[path = "build_standard_support/workflow_exhaustive.rs"]
 mod workflow_exhaustive;
 use ci_steps::workflow_problems;
