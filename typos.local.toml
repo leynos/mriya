@@ -40,4 +40,12 @@ ignore = [
   "(?m)^      should_upload_workflow_artifacts: >-$",
   "(?m)^    if: needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
   "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
+  # `tests/spelling_contract.rs` judges the exemptions by feeding the gate the
+  # misspellings it must still report, so the file cannot itself pass the gate
+  # without them. Each reported spelling is written once, on the declaration
+  # line anchored below, and every probe interpolates that constant. The rest of
+  # the file stays in scope, so a misspelling elsewhere in it is still caught.
+  "(?m)^const CARGO_KIND: &str = \"artifact\";$",
+  "(?m)^const LINKER_NAME: &str = \"mold\";$",
+  "(?m)^const RUNTIME_KEY: &str = \"flavor\";$",
 ]
