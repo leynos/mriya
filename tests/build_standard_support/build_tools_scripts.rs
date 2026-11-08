@@ -47,20 +47,20 @@ pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
     if let Some(version) = toolset.linker {
         sandbox.write_tool(
             "mold",
-            &format!("echo 'mold {version} (compatible with GNU ld)'"),
+            format!("echo 'mold {version} (compatible with GNU ld)'"),
         )?;
     }
     if let Some(links) = toolset.cc_links {
         let status = i32::from(!links);
         let body = format!("cat >/dev/null; echo 'cc: fake link run' >&2; exit {status}");
-        sandbox.write_tool("cc", &body)?;
+        sandbox.write_tool("cc", body)?;
     }
     let listed = if toolset.has_toolchain {
         format!("echo '{PINNED_TOOLCHAIN}-x86_64-unknown-linux-gnu (active, default)'")
     } else {
         "echo 'stable-x86_64-unknown-linux-gnu (default)'".to_owned()
     };
-    sandbox.write_tool("rustup", &listed)?;
+    sandbox.write_tool("rustup", listed)?;
     sandbox.write_tool("probe-cargo", "echo \"$*\" >> \"$CARGO_LOG\"")?;
     Ok(sandbox)
 }

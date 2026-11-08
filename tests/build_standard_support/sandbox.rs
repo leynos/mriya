@@ -28,43 +28,58 @@ pub struct Sandbox {
 /// How many symlinks a lookup follows before it calls the chain a loop.
 const MAX_LINK_DEPTH: usize = 16;
 
-/// Returns whether `directory/name` is, or links through any chain of symlinks to, a regular file.
+/// What one component of a lookup path turned out to be, without following its link.
+enum Entry {
+    /// A regular file, so the lookup succeeded.
+    File,
+    /// A link and the path it names, which the lookup still has to judge.
+    Link(Utf8PathBuf),
+    /// Anything else: a directory, another file type, or an unreadable link.
+    Other,
+}
+
+/// Reads one path component and resolves at most one link from it.
 ///
 /// A capability directory refuses to follow a symlink whose target lies outside it, and a host's
 /// tools are exactly that: `/usr/bin/env` may be a link into a multicall binary elsewhere, or into
-/// `/etc/alternatives`. So each link is read, not followed, and its target is checked in the target's
-/// own parent directory. A dangling link, a loop, or a link to a directory is not a tool.
+/// `/etc/alternatives`. So the link is read, not followed, and its target is resolved in the
+/// target's own parent directory.
+fn entry_at(path: &Utf8Path) -> Option<Entry> {
+    let parent = path.parent()?;
+    let file = path.file_name()?;
+    let opened = Dir::open_ambient_dir(parent, ambient_authority()).ok()?;
+    let metadata = opened.symlink_metadata(file).ok()?;
+    if metadata.is_file() {
+        return Some(Entry::File);
+    }
+    if !metadata.is_symlink() {
+        return Some(Entry::Other);
+    }
+    let target = opened.read_link_contents(file).ok()?;
+    let resolved = if target.is_absolute() {
+        target
+    } else {
+        parent.join(target)
+    };
+    Some(Entry::Link(resolved))
+}
+
+/// Returns whether `directory/name` is, or links through any chain of symlinks to, a regular file.
+///
+/// A dangling link, a loop, or a link to a directory is not a tool.
 ///
 /// ```text
 /// is_tool(d, "env") -> true   when d/env -> /usr/lib/cargo/bin/coreutils/env, a regular file
 /// is_tool(d, "gone") -> false when d/gone -> ../nowhere
 /// ```
-pub fn is_tool(directory: &Utf8Path, name: &str) -> bool {
-    let mut current = directory.join(name);
+pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> bool {
+    let mut current = directory.join(name.as_ref());
     for _ in 0..MAX_LINK_DEPTH {
-        let (Some(parent), Some(file)) = (current.parent(), current.file_name()) else {
-            return false;
-        };
-        let Ok(opened) = Dir::open_ambient_dir(parent, ambient_authority()) else {
-            return false;
-        };
-        let Ok(metadata) = opened.symlink_metadata(file) else {
-            return false;
-        };
-        if metadata.is_file() {
-            return true;
+        match entry_at(&current) {
+            Some(Entry::File) => return true,
+            Some(Entry::Link(target)) => current = target,
+            Some(Entry::Other) | None => return false,
         }
-        if !metadata.is_symlink() {
-            return false;
-        }
-        let Ok(target) = opened.read_link_contents(file) else {
-            return false;
-        };
-        current = if target.is_absolute() {
-            target
-        } else {
-            parent.join(target)
-        };
     }
     false
 }
@@ -74,13 +89,14 @@ pub fn is_tool(directory: &Utf8Path, name: &str) -> bool {
 /// # Errors
 ///
 /// Returns the reason when the program is on no `PATH` directory.
-pub fn find_on_path(name: &str) -> Result<Utf8PathBuf, String> {
+pub fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
+    let program = name.as_ref();
     let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
     std::env::split_paths(&path)
         .filter_map(|entry| Utf8PathBuf::try_from(entry).ok())
-        .find(|directory| is_tool(directory, name))
-        .map(|directory| directory.join(name))
-        .ok_or_else(|| format!("`{name}` is not on PATH, so the sandbox cannot link it"))
+        .find(|directory| is_tool(directory, program))
+        .map(|directory| directory.join(program))
+        .ok_or_else(|| format!("`{program}` is not on PATH, so the sandbox cannot link it"))
 }
 
 impl Sandbox {
@@ -126,7 +142,7 @@ impl Sandbox {
     pub fn link_tools(&self, names: &[&str]) -> Result<(), String> {
         for name in names {
             let target = find_on_path(name)?;
-            self.write_tool(name, &format!("exec '{target}' \"$@\""))?;
+            self.write_tool(name, format!("exec '{target}' \"$@\""))?;
         }
         Ok(())
     }
@@ -136,15 +152,17 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the script cannot be written or made executable.
-    pub fn write_tool(&self, name: &str, body: &str) -> Result<(), String> {
+    pub fn write_tool(&self, name: impl AsRef<str>, body: impl AsRef<str>) -> Result<(), String> {
+        let tool = name.as_ref();
+        let script = body.as_ref();
         let bash = find_on_path("bash")?;
-        let path = format!("{BIN}/{name}");
+        let path = format!("{BIN}/{tool}");
         self.dir
-            .write(&path, format!("#!{bash}\n{body}\n"))
-            .map_err(|error| format!("writing {name}: {error}"))?;
+            .write(&path, format!("#!{bash}\n{script}\n"))
+            .map_err(|error| format!("writing {tool}: {error}"))?;
         self.dir
             .set_permissions(&path, Permissions::from_mode(0o755))
-            .map_err(|error| format!("making {name} executable: {error}"))
+            .map_err(|error| format!("making {tool} executable: {error}"))
     }
 
     /// Creates a directory, and its parents, under the sandbox's root.
@@ -152,10 +170,11 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the directory cannot be made.
-    pub fn make_dir(&self, relative: &str) -> Result<(), String> {
+    pub fn make_dir(&self, relative: impl AsRef<str>) -> Result<(), String> {
+        let path = relative.as_ref();
         self.dir
-            .create_dir_all(relative)
-            .map_err(|error| format!("creating {relative}: {error}"))
+            .create_dir_all(path)
+            .map_err(|error| format!("creating {path}: {error}"))
     }
 
     /// Creates a symlink whose contents are `target`, verbatim, at `relative` under the root.
@@ -163,10 +182,12 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the link cannot be made.
-    pub fn link(&self, relative: &str, target: &str) -> Result<(), String> {
+    pub fn link(&self, relative: impl AsRef<str>, target: impl AsRef<str>) -> Result<(), String> {
+        let link_path = relative.as_ref();
+        let link_target = target.as_ref();
         self.dir
-            .symlink_contents(target, relative)
-            .map_err(|error| format!("linking {relative}: {error}"))
+            .symlink_contents(link_target, link_path)
+            .map_err(|error| format!("linking {link_path}: {error}"))
     }
 
     /// Writes a plain file under the sandbox's root.
@@ -174,10 +195,11 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the file cannot be written.
-    pub fn write_file(&self, relative: &str, contents: &[u8]) -> Result<(), String> {
+    pub fn write_file(&self, relative: impl AsRef<str>, contents: &[u8]) -> Result<(), String> {
+        let path = relative.as_ref();
         self.dir
-            .write(relative, contents)
-            .map_err(|error| format!("writing {relative}: {error}"))
+            .write(path, contents)
+            .map_err(|error| format!("writing {path}: {error}"))
     }
 
     /// Reads a file under the sandbox's root, or `None` when it does not exist.
@@ -185,14 +207,15 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the file exists but cannot be read.
-    pub fn read(&self, relative: &str) -> Result<Option<String>, String> {
-        if !self.dir.exists(relative) {
+    pub fn read(&self, relative: impl AsRef<str>) -> Result<Option<String>, String> {
+        let path = relative.as_ref();
+        if !self.dir.exists(path) {
             return Ok(None);
         }
         self.dir
-            .read_to_string(relative)
+            .read_to_string(path)
             .map(Some)
-            .map_err(|error| format!("reading {relative}: {error}"))
+            .map_err(|error| format!("reading {path}: {error}"))
     }
 
     /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,
@@ -201,7 +224,7 @@ impl Sandbox {
     /// # Errors
     ///
     /// Returns the reason when the program cannot be found on the host.
-    pub fn command(&self, program: &str) -> Result<Command, String> {
+    pub fn command(&self, program: impl AsRef<str>) -> Result<Command, String> {
         let mut command = Command::new(find_on_path(program)?);
         command
             .env_clear()

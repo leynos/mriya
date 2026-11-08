@@ -71,9 +71,9 @@ pub fn published(digest: Digest) -> Result<Sandbox, String> {
     sandbox.write_tool("rustup", "echo \"$*\" >> \"$CARGO_LOG\"")?;
     let name = archive_name();
     let staged = format!("stage/{}", name.trim_end_matches(".tar.gz"));
-    sandbox.make_dir(&format!("{staged}/bin"))?;
-    sandbox.make_dir(&format!("release/v{VERSION}"))?;
-    sandbox.write_file(&format!("{staged}/bin/mold"), b"#!/bin/sh\n")?;
+    sandbox.make_dir(format!("{staged}/bin"))?;
+    sandbox.make_dir(format!("release/v{VERSION}"))?;
+    sandbox.write_file(format!("{staged}/bin/mold"), b"#!/bin/sh\n")?;
     let archive = format!("release/v{VERSION}/{name}");
     let root = sandbox.root().to_string();
     capture(

@@ -14,6 +14,7 @@ Run via ``make test-workflow-contracts``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,31 @@ RELEASE_ACTION = "rust-build-release@"
 
 #: Words that mark a flag the development standard owns.
 STANDARD_FLAG_MARKERS = ("-Zthreads", "mold", "-fuse-ld")
+
+
+def _release_steps(
+    workflow: dict[str, Any],
+) -> Iterator[tuple[str, int, dict[str, Any]]]:
+    """Yield ``(job_id, index, step)`` for every release-build step."""
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        for index, step in enumerate(job.get("steps") or []):
+            if RELEASE_ACTION in str(step.get("uses", "")):
+                yield job_id, index, step
+
+
+def _rustflags_problems(where: str, value: str) -> list[str]:
+    """Return the complaints about one release step's ``rustflags`` value."""
+    if not value:
+        return [f"{where}: passes no rustflags, so the exclusion is implicit"]
+    problems: list[str] = []
+    if "-D warnings" not in value and "-Dwarnings" not in value:
+        problems.append(f"{where}: rustflags {value!r} does not deny warnings")
+    problems.extend(
+        f"{where}: rustflags {value!r} names the development flag {marker}"
+        for marker in STANDARD_FLAG_MARKERS
+        if marker in value
+    )
+    return problems
 
 
 def release_problems(workflow: dict[str, Any], file: str) -> tuple[list[str], int]:
@@ -46,23 +72,11 @@ def release_problems(workflow: dict[str, Any], file: str) -> tuple[list[str], in
     """
     problems: list[str] = []
     judged = 0
-    for job_id, job in (workflow.get("jobs") or {}).items():
-        for index, step in enumerate(job.get("steps") or []):
-            if RELEASE_ACTION not in str(step.get("uses", "")):
-                continue
-            judged += 1
-            where = f"{file}:{job_id}:step {index}"
-            value = str((step.get("with") or {}).get("rustflags", "")).strip()
-            if not value:
-                problems.append(f"{where}: passes no rustflags, so the exclusion is implicit")
-                continue
-            if "-D warnings" not in value and "-Dwarnings" not in value:
-                problems.append(f"{where}: rustflags {value!r} does not deny warnings")
-            problems.extend(
-                f"{where}: rustflags {value!r} names the development flag {marker}"
-                for marker in STANDARD_FLAG_MARKERS
-                if marker in value
-            )
+    for job_id, index, step in _release_steps(workflow):
+        judged += 1
+        where = f"{file}:{job_id}:step {index}"
+        value = str((step.get("with") or {}).get("rustflags", "")).strip()
+        problems.extend(_rustflags_problems(where, value))
     return problems, judged
 
 

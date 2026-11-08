@@ -297,7 +297,7 @@ fn a_tool_is_found_through_any_symlink_that_reaches_a_file(
     // Climb from `<root>/bin` to `/` however deep the temporary directory is, then descend.
     let climb = "../".repeat(tools.root().components().count());
     let hop = format!("{climb}{}", real.as_str().trim_start_matches('/'));
-    tools.link("bin/relative", &hop)?;
+    tools.link("bin/relative", hop)?;
     tools.link("bin/chain", "absolute")?;
     tools.link("bin/dangling", "../nowhere")?;
     tools.link("bin/loop", "loop")?;
