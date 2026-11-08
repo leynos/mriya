@@ -266,9 +266,9 @@ Whitaker stops at the first failing crate, so it runs last. A bare prerequisite
 list does not order a build under `make -j`, so the Makefile declares
 `.NOTPARALLEL: lint`. With GNU Make 4.4 or later, that makes everything `lint`
 reaches build serially, in the listed order. Do not replace it with a
-prerequisite that merely lists the order. The gate is binding: every recipe is a
-plain command with no `-` prefix, `|| true`, existence guard or pipeline, so a
-non-zero exit from Whitaker fails the route and the CI `Lint` step.
+prerequisite that merely lists the order. The gate is binding: every recipe is
+a plain command with no `-` prefix, `|| true`, existence guard or pipeline, so
+a non-zero exit from Whitaker fails the route and the CI `Lint` step.
 `tests/build_standard_support/whitaker_gate.rs` runs the real Make routes
 against fakes at several `-j` values, fails Whitaker on purpose, and reads the
 recipes and the CI step for masking.
