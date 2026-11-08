@@ -1,6 +1,6 @@
 .PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie \
 	typecheck scaleway-test scaleway-janitor test-workflow-contracts spelling \
-	install-build-tools check-build-tools
+	install-build-tools check-build-tools lint-clippy lint-whitaker
 
 
 TARGET ?= mriya
@@ -151,10 +151,25 @@ interrogate: ## Enforce complete Python docstring coverage
 	    exit 1; \
 	  fi
 
-lint: check-build-tools ## Run Clippy, the Whitaker Dylint suite and the docstring gate
-	$(MAKE) --no-print-directory interrogate
+# `lint` is the composite gate: preflight, docstring gate, rustdoc and Clippy, then
+# the Whitaker Dylint suite last. A bare prerequisite list is no ordering
+# guarantee under `make -j`, so `.NOTPARALLEL` with a prerequisite makes GNU Make
+# 4.4 or later build everything `lint` reaches serially, in listed order. The leaf
+# targets stay runnable alone: `make lint-clippy` and `make lint-whitaker`. Every
+# recipe is a plain command, so the gate's failure is the recipe's exit status,
+# with no guard, ignored-error prefix or masking pipeline.
+.NOTPARALLEL: lint
+.PHONY: lint-clippy lint-whitaker
+lint: lint-clippy lint-whitaker ## Run Clippy, the Whitaker Dylint suite and the docstring gate
+
+lint-clippy: check-build-tools interrogate ## Run the docstring gate, rustdoc and Clippy
 	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) doc --workspace --no-deps
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) clippy $(CLIPPY_FLAGS)
+
+# Whitaker runs on its installer-managed toolchain, so it takes the warning policy
+# alone and none of the development flags (ADR-001 addendum). `CARGO_FLAGS`
+# selects every workspace package: no member needs `rustc_private` plumbing.
+lint-whitaker: ## Run the Whitaker Dylint suite over the workspace
 	env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS="$(RUST_FLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
 
 fmt: ## Format Rust and Markdown sources
