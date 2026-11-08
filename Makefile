@@ -167,10 +167,14 @@ lint-clippy: check-build-tools interrogate ## Run the docstring gate, rustdoc an
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) clippy $(CLIPPY_FLAGS)
 
 # Whitaker runs on its installer-managed toolchain, so it takes the warning policy
-# alone and none of the development flags (ADR-001 addendum). `CARGO_FLAGS`
-# selects every workspace package: no member needs `rustc_private` plumbing.
+# alone and none of the development flags (ADR-001 addendum). `unset` clears
+# `CARGO_ENCODED_RUSTFLAGS`, which Cargo reads in preference to `RUSTFLAGS`; it
+# precedes the gate with `&&` instead of `env -u` so the Concordat rule
+# `rust-makefile-baseline` can prove the gate is the recipe's command word.
+# `CARGO_FLAGS` selects every workspace package: no member needs `rustc_private`
+# plumbing.
 lint-whitaker: ## Run the Whitaker Dylint suite over the workspace
-	env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS="$(RUST_FLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
+	unset CARGO_ENCODED_RUSTFLAGS && RUSTFLAGS="$(RUST_FLAGS)" $(WHITAKER) --all -- $(CARGO_FLAGS)
 
 fmt: ## Format Rust and Markdown sources
 	$(CARGO) fmt --all

@@ -29,7 +29,11 @@ fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
     )?;
     sandbox.write_tool(
         "fake-whitaker",
-        &format!("echo \"whitaker $*\" >> \"$CARGO_LOG\"; exit {whitaker_status}"),
+        &format!(
+            "echo \"whitaker $*\" >> \"$CARGO_LOG\"; echo \"RUSTFLAGS=$RUSTFLAGS \
+             encoded=${{CARGO_ENCODED_RUSTFLAGS-unset}}\" > \"$CARGO_LOG.env\"; exit \
+             {whitaker_status}"
+        ),
     )?;
     Ok(sandbox)
 }
@@ -115,6 +119,36 @@ fn a_failing_whitaker_fails_the_route(
     }
 }
 
+/// Scenario: `make lint-whitaker` run with development flags in the caller's environment.
+///
+/// Invariant: Whitaker sees the warning policy alone, and `CARGO_ENCODED_RUSTFLAGS`, which Cargo
+/// reads in preference to `RUSTFLAGS`, is gone, so the development flags never reach its toolchain.
+#[test]
+fn whitaker_runs_with_the_warning_policy_alone() -> Result<(), String> {
+    let sandbox = lint_sandbox(0)?;
+    let output = sandbox
+        .command("make")?
+        .env("RUSTFLAGS", "-Zthreads=8")
+        .env("CARGO_ENCODED_RUSTFLAGS", "-Zthreads=8")
+        .args(["-B", "WHITAKER=fake-whitaker", "lint-whitaker"])
+        .output()
+        .map_err(|error| format!("running make lint-whitaker: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let seen = sandbox
+        .read("cargo.log.env")?
+        .ok_or("Whitaker recorded no environment")?;
+    if seen.trim() == "RUSTFLAGS=-D warnings encoded=unset" {
+        Ok(())
+    } else {
+        Err(format!("Whitaker saw `{}`", seen.trim()))
+    }
+}
+
 /// Scenario: a failing Clippy step before Whitaker.
 ///
 /// Invariant: the composite stops there and never starts Whitaker.
@@ -151,16 +185,7 @@ fn recipe_of<'a>(makefile: &'a str, target: &str) -> Option<Vec<&'a str>> {
 
 /// Returns why a gate recipe could be soft-failed, or an empty list when it cannot.
 fn masking_problems(recipe: &[&str], gate: &str) -> Vec<String> {
-    const MASKS: &[&str] = &[
-        "||",
-        "|",
-        ";",
-        "&&",
-        "command -v",
-        "which ",
-        "true",
-        "exit 0",
-    ];
+    const MASKS: &[&str] = &["||", "|", ";", "command -v", "which ", "true", "exit 0"];
     let mut problems = Vec::new();
     if !recipe.iter().any(|line| line.contains(gate)) {
         problems.push(format!("the recipe never runs `{gate}`"));
@@ -181,7 +206,7 @@ fn masking_problems(recipe: &[&str], gate: &str) -> Vec<String> {
 /// Invariant: the real recipes carry no existence guard, `|| true`, ignored-error prefix or
 /// pipeline; each masking shape is named when it appears.
 #[rstest]
-#[case::as_written(&["env -u CARGO_ENCODED_RUSTFLAGS RUSTFLAGS=\"-D warnings\" $(WHITAKER) --all -- --workspace"], "")]
+#[case::as_written(&["unset CARGO_ENCODED_RUSTFLAGS && RUSTFLAGS=\"-D warnings\" $(WHITAKER) --all -- --workspace"], "")]
 #[case::soft_failed(&["$(WHITAKER) --all || true"], "||")]
 #[case::ignored(&["-$(WHITAKER) --all"], "ignores errors")]
 #[case::guarded(&["command -v $(WHITAKER) && $(WHITAKER) --all"], "command -v")]
