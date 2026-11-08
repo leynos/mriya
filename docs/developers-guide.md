@@ -25,6 +25,19 @@ linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
 directions: the exact name passes and the same misspelling in ordinary prose
 fails.
 
+`tests/spelling_contract.rs` runs that rule as an ordinary test, so `make test`
+checks the gate's reach without needing the `typos` binary. It reads the
+generated `typos.toml`, applies every `extend-ignore-re` entry the way the gate
+does, and asserts both directions for each name the repository exempts. A
+property test then generates Tokio runtime attributes from the shared base's
+grammar — any spacing, any argument order, either quote form — and checks the
+mask swallows the whole attribute and nothing beside it. The file must carry
+the misspellings it judges, so each reported spelling is written once, on a
+`const` declaration line, and every probe interpolates that constant;
+`typos.local.toml` exempts exactly those three lines. Keep that shape when
+adding a probe: put the spelling in a constant and let the pattern anchor its
+declaration, rather than loosening the mask or excluding the file.
+
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
 environment. Bump that variable to adopt a newer release.
