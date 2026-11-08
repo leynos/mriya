@@ -509,10 +509,60 @@ CARGO_PROFILE_DEV_CODEGEN_BACKEND=cranelift \
 make test TEST_FLAGS="--all-targets --all-features --no-fail-fast"
 ```
 
-Recheck the exception when `rstest-bdd` moves to 0.6: that migration may change
-`skip!`, and whether the four tests still fail then is a question to measure,
-not a conclusion to carry over. Re-measure on every toolchain bump too, and
-adopt the backend when the whole suite passes. Adopting a backend also means
-checking the exclusion routes: the backend is a profile setting, which assigning
-`RUSTFLAGS` need not deselect, so verify the actual `rustc` invocation of the
-coverage and release builds.
+The `rstest-bdd` 0.6.0 migration rechecked the exception on 2026-11-08, with
+the command above and the same pin: the same four tests fail and the other 403
+of 407 pass, so 0.6 changes nothing here. `skip!` still unwinds, and the
+unwinding reliance stays. Re-measure on every toolchain bump too, and adopt the
+backend when the whole suite passes. Adopting a backend also means checking the
+exclusion routes: the backend is a profile setting, which assigning `RUSTFLAGS`
+need not deselect, so verify the actual `rustc` invocation of the coverage and
+release builds.
+
+## BDD testing with rstest-bdd
+
+The behavioural suites use `rstest-bdd` and `rstest-bdd-macros` 0.6.0 with
+explicit `#[scenario(path = ..., name = ...)]` functions; `scenarios!` is not
+used. The imported upstream guides are
+[`rstest-bdd-users-guide.md`](rstest-bdd-users-guide.md),
+[`rstest-bdd-v0-6-0-migration-guide.md`](rstest-bdd-v0-6-0-migration-guide.md)
+and
+[`rstest-bdd-v0-5-0-migration-guide.md`](rstest-bdd-v0-5-0-migration-guide.md).
+[`rstest-bdd-doc-provenance.md`](rstest-bdd-doc-provenance.md)
+records where they came from and the disposition of every breaking change from
+0.3 to 0.6. Do not use 0.6.1 or 0.7 APIs, although the imported 0.6.0 text
+mentions some.
+
+- **Fallible fixtures need a fallible scenario.** The scenario prelude unwraps
+  every `Result<T, E>` fixture with `?` and registers `T`. A scenario that
+  declares such a fixture must return `Result<(), E>` (spelled out, because the
+  return type is not resolved through aliases), or it does not compile. Steps
+  then ask for `T`, not the `Result`. A fixture error fails the scenario before
+  any step runs.
+- **A fixture that is merely switched off is not an error.** The live
+  Scaleway suites need `skip!`, which only runs inside a step. A `Result`
+  fixture that returned `Err` when `MRIYA_RUN_SCALEWAY_TESTS` is unset would
+  fail the scenario instead. Return an `Option` (as `tests/scaleway_backend.rs`
+  does) or the `Gated` wrapper in `tests/scaleway_cloud_init.rs`, and skip in
+  the step.
+- **Step `Result` values propagate.** A step that returns `Result<T, E>`, or a
+  local alias of it, fails the scenario on `Err` and injects `T` from `Ok(T)`.
+  `Ok(())` injects nothing. The error type must implement `Display`. A `Result`
+  wrapped in another type, such as the `Result<InitContextResult, StepError>`
+  the init steps return, is a payload and is injected whole, so a later step
+  still sees the inner `Result` and must check it. Use `#[when(..., value)]`
+  only to carry a `Result` as a payload on purpose, since it suppresses the
+  `Err`.
+- **Fixtures are per scenario.** Each scenario builds its fixtures afresh;
+  `#[once]` is the only opt-in to sharing and nothing here uses it. Do not rely
+  on state surviving into the next scenario.
+- **Underscore names.** One leading underscore on an implicit fixture
+  parameter is dropped, so `_marker` requests the `marker` fixture. Use
+  `#[from(_name)]` for a literal underscore key.
+- **Guard propagation.** `tests/step_return_propagation.rs` pins the rules
+  above. Its feature file is in `tests/regression_features/`, outside
+  `tests/features/`, because its first scenario fails by design and the test is
+  `#[should_panic(expected = ...)]` on the step's error text. To prove it still
+  bites, break one rule and watch it fail: add `, value` to the `Err` step's
+  attribute (the scenario then continues and panics with the "neutralized"
+  message, which no longer matches), or to the `Ok(Marker)` step (the marker
+  keeps its original value). Restore the step afterwards.
