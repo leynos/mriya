@@ -3,7 +3,7 @@
 ``goals_reaching_suite`` closes over prerequisites and ``make`` calls. The
 oracle here is an independent least fixed point over the same edges, so a
 closure that misses a cycle, a branch, or a goal that never reaches the suite
-disagrees with it. Hypothesis supplies the shapes a hand-written table would
+disagrees with it. Hypothesis supplies the shapes a handwritten table would
 take too long to enumerate: chains, branches, cycles, and disconnected goals.
 
 Run via ``make test-workflow-contracts``.
