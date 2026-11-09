@@ -89,9 +89,6 @@ jobs:
       contents: read
     env:
       CARGO_TERM_COLOR: always
-      # A path no earlier step writes to, so only this run's installer can
-      # satisfy the preflight below.
-      BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -103,6 +100,12 @@ jobs:
             exit 1
           fi
       - name: Install the pinned build tools into a fresh prefix
+        # The runner context is unavailable to a job-level `env`, so the prefix
+        # is set on each step that needs it. It is a path no earlier step
+        # writes to, so only this run's installer can satisfy the preflight
+        # below.
+        env:
+          BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
         run: |
           set -o pipefail
           make install-build-tools 2>&1 | tee build-tools-install.log
@@ -115,4 +118,6 @@ jobs:
           test -e "$BUILD_TOOLS_PREFIX/bin/ld.mold"
           test "$("$BUILD_TOOLS_PREFIX/bin/mold" --version | awk 'NR == 1 { print $2 }')" = "$pin"
       - name: Check the installed prefix satisfies the preflight
+        env:
+          BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
         run: make check-build-tools
