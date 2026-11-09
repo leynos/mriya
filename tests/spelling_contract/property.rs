@@ -1,10 +1,16 @@
-//! The generated property: an attribute the base claims to mask is masked whole.
+//! The generated property: the masks reach the runtime key and nothing beside it.
 //!
 //! The probe table pins the arrangements the shared base documents. This asks
-//! the wider question the table cannot: for *any* attribute that grammar claims
-//! to accept, with any spacing and any argument order, is the whole attribute
-//! swallowed and nothing beyond it? The malformed variant checks the other
+//! the wider question the table cannot: for any attribute that grammar claims
+//! to accept, with any argument order and spacing drawn from a bounded
+//! alphabet, is the runtime key swallowed exactly when the attribute is well
+//! formed, and visible when it is not? The malformed variant checks the other
 //! edge: an attribute missing its closing bracket must not be masked at all.
+//!
+//! It is a check on the key and on the line around it, not on every character
+//! of the attribute: an arrangement that masked the key while leaving another
+//! part of the attribute visible would pass it. The probe table and the
+//! real-engine half of the contract cover the surfaces this leaves open.
 
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
@@ -144,7 +150,8 @@ impl GeneratedCase {
     }
 }
 
-/// Generated runtime attributes are masked whole, their surroundings are not.
+/// The generated runtime key is masked exactly when the attribute is malformed,
+/// and the spelling beside it survives either way.
 #[test]
 fn generated_tokio_attributes_are_masked_without_reaching_their_surroundings() -> Result<(), String>
 {
