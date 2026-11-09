@@ -25,18 +25,37 @@ linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
 directions: the exact name passes and the same misspelling in ordinary prose
 fails.
 
-`tests/spelling_contract.rs` runs that rule as an ordinary test, so `make test`
-checks the gate's reach without needing the `typos` binary. It reads the
-generated `typos.toml`, applies every `extend-ignore-re` entry the way the gate
-does, and asserts both directions for each name the repository exempts. A
-property test then generates Tokio runtime attributes from the shared base's
-grammar — any spacing, any argument order, either quote form — and checks the
-mask swallows the whole attribute and nothing beside it. The file must carry
-the misspellings it judges, so each reported spelling is written once, on a
-`const` declaration line, and every probe interpolates that constant;
-`typos.local.toml` exempts exactly those three lines. Keep that shape when
-adding a probe: put the spelling in a constant and let the pattern anchor its
-declaration, rather than loosening the mask or excluding the file.
+`tests/spelling_contract.rs` runs that rule as an ordinary test, in two halves
+that answer different questions. The first half reads the generated
+`typos.toml`, compiles every `extend-ignore-re` entry with the `regex` crate
+and removes the matches before looking for the spelling, which names a lost or
+widened exemption directly. That is a model of the gate rather than the gate:
+Typos masks by span and drops a finding whose span starts or ends inside a
+match, so the two rules can differ for a spelling that only partly overlaps a
+mask. The second half closes that gap. It loads the same generated
+configuration into `typos-cli` — the crate the gate's pinned console script is
+built from, pinned to the version `typos-config-builder` names — and runs the
+same `FileChecker` the binary runs over isolated fixture files, so each exempt
+name, each misspelling in ordinary prose, each misspelling in a code span and
+each unbalanced declaration is judged exactly as it would be in a real build.
+Neither half needs the network, a fixed toolchain, or the `typos` binary.
+
+A property test covers the shared base's Tokio grammar beyond the arrangements
+the probe table pins: any spacing, any argument order, either quote form, a
+`main` runtime with a worker pool, and a malformed attribute as the opposite
+edge. It asserts the mask swallows the whole attribute and nothing beside it;
+the probe table and the real-engine half keep `local` on `main` and reject
+runtime kinds the base does not name. The contract checks the reach of the
+exemptions, not the shared dictionary, so it does not prove that a spelling the
+dictionary accepts today is still accepted tomorrow.
+
+The test files must carry the misspellings they judge, so each reported
+spelling is written once, on a `const` declaration line, and every probe and
+fixture body interpolates that constant; `typos.local.toml` exempts exactly
+those three declaration lines, anchored with `(?m)^…$` so a differently named
+or indented declaration is still reported. Keep that shape when adding a probe:
+put the spelling in a constant and let the pattern anchor its declaration,
+rather than loosening the mask or excluding the file.
 
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
