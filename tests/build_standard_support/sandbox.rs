@@ -2,6 +2,7 @@
 //! run against exactly the tools a test chooses: a pinned `mold`, a drifted one, none, a compiler that
 //! cannot link with it. Files go through `cap_std`, so the sandbox cannot reach outside its own root.
 
+use std::io;
 use std::process::Command;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -209,13 +210,27 @@ impl Sandbox {
     /// Returns the reason when the file exists but cannot be read.
     pub fn read(&self, relative: impl AsRef<str>) -> Result<Option<String>, String> {
         let path = relative.as_ref();
-        if !self.dir.exists(path) {
-            return Ok(None);
+        // Only a genuine missing file is absent. `exists` would turn a permission
+        // or I/O failure into a pass, which is how a contract stops proving.
+        match self.dir.read_to_string(path) {
+            Ok(contents) => Ok(Some(contents)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("reading {path}: {error}")),
         }
-        self.dir
-            .read_to_string(path)
-            .map(Some)
-            .map_err(|error| format!("reading {path}: {error}"))
+    }
+
+    /// Makes the sandbox's `uname` answer `Darwin` to `-s`, so both scripts' non-Linux branches run
+    /// on any host. Every other query still reaches the host `uname`, so `-m` keeps naming the real
+    /// architecture.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the host `uname` cannot be found or the stub cannot be written.
+    pub fn pretend_darwin(&self) -> Result<(), String> {
+        let real = find_on_path("uname")?;
+        let body =
+            format!("if [ \"${{1-}}\" = '-s' ]; then echo Darwin; else exec '{real}' \"$@\"; fi");
+        self.write_tool("uname", body)
     }
 
     /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,

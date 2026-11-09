@@ -91,7 +91,7 @@ test: check-build-tools ## Run tests with warnings treated as errors
 
 test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutation-testing contract
 	$(CV005_CONTRACTS) check --repository .
-	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
+	uv run --with 'pytest>=8' --with 'pyyaml>=6' --with 'hypothesis>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor

@@ -5,21 +5,28 @@
 
 use std::process::Output;
 
+use super::pins::{TOOLCHAIN, pinned_channel, pinned_linker};
 use super::sandbox::{CARGO_LOG, Sandbox};
 
-/// The mold linker release the repository pins, and the toolchain the preflight looks for.
-const PINNED_LINKER: &str = "2.41.0";
-const PINNED_TOOLCHAIN: &str = "nightly-2026-11-06";
 /// Host utilities the scripts and `make` itself use; the sandbox links these and nothing else.
 const UTILITIES: &[&str] = &[
     "bash", "env", "uname", "dirname", "grep", "awk", "tr", "mktemp", "rm", "sed", "cat", "sh",
 ];
 
+/// A `mold --version` the sandbox can report.
+#[derive(Clone, Copy)]
+pub enum Linker {
+    /// The release `tools/mold/VERSION` pins.
+    Pinned,
+    /// A version deliberately off the pin, to prove the preflight compares them.
+    Drifted(&'static str),
+}
+
 /// What the sandbox offers the preflight.
 #[derive(Clone, Copy)]
 pub struct Toolset {
     /// The version `mold --version` reports, or `None` for no `mold` on `PATH`.
-    pub linker: Option<&'static str>,
+    pub linker: Option<Linker>,
     /// Whether `cc` can link with `-fuse-ld=mold`; `None` leaves out `cc` altogether.
     pub cc_links: Option<bool>,
     /// Whether `rustup` lists the pinned toolchain.
@@ -29,7 +36,7 @@ pub struct Toolset {
 impl Toolset {
     /// Everything present, at the pins.
     pub const COMPLETE: Self = Self {
-        linker: Some(PINNED_LINKER),
+        linker: Some(Linker::Pinned),
         cc_links: Some(true),
         has_toolchain: true,
     };
@@ -44,7 +51,11 @@ impl Toolset {
 pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
     let sandbox = Sandbox::new()?;
     sandbox.link_tools(UTILITIES)?;
-    if let Some(version) = toolset.linker {
+    if let Some(linker) = toolset.linker {
+        let version = match linker {
+            Linker::Pinned => pinned_linker(),
+            Linker::Drifted(version) => version,
+        };
         sandbox.write_tool(
             "mold",
             format!("echo 'mold {version} (compatible with GNU ld)'"),
@@ -56,7 +67,8 @@ pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
         sandbox.write_tool("cc", body)?;
     }
     let listed = if toolset.has_toolchain {
-        format!("echo '{PINNED_TOOLCHAIN}-x86_64-unknown-linux-gnu (active, default)'")
+        let channel = pinned_channel(TOOLCHAIN)?;
+        format!("echo '{channel}-x86_64-unknown-linux-gnu (active, default)'")
     } else {
         "echo 'stable-x86_64-unknown-linux-gnu (default)'".to_owned()
     };

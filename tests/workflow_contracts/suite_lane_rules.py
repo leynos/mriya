@@ -18,7 +18,8 @@ Run via ``make test-workflow-contracts``.
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 #: The command that installs the pinned tools.
 INSTALL_COMMAND = "make install-build-tools"
@@ -183,8 +184,11 @@ def goals_reaching_suite(makefile: str) -> set[str]:
 
 def _declared_matrix_values(matrix: Mapping[str, Any], key: str) -> list[Any]:
     """Return the values a matrix declares for ``key`` as a plain list."""
-    declared = matrix.get(key)
-    return list(declared) if isinstance(declared, list) else []
+    match matrix.get(key):
+        case list() as declared:
+            return list(declared)
+        case _:
+            return []
 
 
 def _included_matrix_values(matrix: Mapping[str, Any], key: str) -> list[Any]:
@@ -204,8 +208,11 @@ def _matrix_values(job: Mapping[str, Any], key: str) -> list[str]:
 
 def _mapping_labels(runs_on: Mapping[str, Any]) -> list[str]:
     """Return the runner labels of a mapping-form ``runs-on``, group included."""
-    labels = runs_on.get("labels", [])
-    raw = [labels] if isinstance(labels, str) else [str(label) for label in labels]
+    match runs_on.get("labels", []):
+        case str() as label:
+            raw = [label]
+        case labels:
+            raw = [str(label) for label in labels]
     return [*raw, str(runs_on.get("group", ""))]
 
 
@@ -217,15 +224,16 @@ def _raw_labels(job: Mapping[str, Any]) -> list[str]:
     ContractGapError
         When ``runs-on`` has a form the contract cannot read.
     """
-    runs_on = job.get("runs-on")
-    if isinstance(runs_on, str):
-        return [runs_on]
-    if isinstance(runs_on, list):
-        return [str(label) for label in runs_on]
-    if isinstance(runs_on, dict):
-        return _mapping_labels(runs_on)
-    message = f"runs-on has an unreadable form: {runs_on!r}"
-    raise ContractGapError(message)
+    match job.get("runs-on"):
+        case str() as runs_on:
+            return [runs_on]
+        case list() as runs_on:
+            return [str(label) for label in runs_on]
+        case dict() as runs_on:
+            return _mapping_labels(runs_on)
+        case runs_on:
+            message = f"runs-on has an unreadable form: {runs_on!r}"
+            raise ContractGapError(message)
 
 
 def _resolve_label(job: Mapping[str, Any], label: str) -> list[str]:

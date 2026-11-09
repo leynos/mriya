@@ -14,6 +14,7 @@ Run via ``make test-workflow-contracts``.
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -40,17 +41,38 @@ def _release_steps(
                 yield job_id, index, step
 
 
+def _denies_warnings(tokens: list[str]) -> bool:
+    """Return whether the tokens deny warnings as a pair or as one joined flag."""
+    if "-Dwarnings" in tokens:
+        return True
+    return any(
+        first == "-D" and second == "warnings"
+        for first, second in zip(tokens, tokens[1:])
+    )
+
+
+def _normalized(tokens: list[str]) -> str:
+    """Return the tokens as one text, with ``-Z value`` spells joined.
+
+    ``rustc`` accepts ``-Zthreads=8`` and ``-Z threads=8`` alike, so a marker
+    check must read both as ``-Zthreads=8`` rather than miss the spaced form.
+    """
+    return " ".join(tokens).replace("-Z ", "-Z")
+
+
 def _rustflags_problems(where: str, value: str) -> list[str]:
     """Return the complaints about one release step's ``rustflags`` value."""
     if not value:
         return [f"{where}: passes no rustflags, so the exclusion is implicit"]
+    tokens = shlex.split(value)
+    text = _normalized(tokens)
     problems: list[str] = []
-    if "-D warnings" not in value and "-Dwarnings" not in value:
+    if not _denies_warnings(tokens):
         problems.append(f"{where}: rustflags {value!r} does not deny warnings")
     problems.extend(
         f"{where}: rustflags {value!r} names the development flag {marker}"
         for marker in STANDARD_FLAG_MARKERS
-        if marker in value
+        if marker in text
     )
     return problems
 
@@ -99,10 +121,23 @@ def _step(rustflags: str | None) -> dict[str, Any]:
         (None, "implicit"),
         ("", "implicit"),
         ("-D warnings -Zthreads=8", "-Zthreads"),
+        ("-D warnings -Z threads=8", "-Zthreads"),
         ("-D warnings -Clink-arg=-fuse-ld=mold", "mold"),
+        ("-D warnings -C link-arg=-fuse-ld=mold", "-fuse-ld"),
+        ("-D warnings=1", "does not deny warnings"),
         ("-C opt-level=3", "does not deny warnings"),
     ],
-    ids=["explicit", "absent", "empty", "frontend_leak", "linker_leak", "no_warning_policy"],
+    ids=[
+        "explicit",
+        "absent",
+        "empty",
+        "frontend_leak",
+        "spaced_frontend_leak",
+        "linker_leak",
+        "spaced_linker_leak",
+        "warnings_not_a_pair",
+        "no_warning_policy",
+    ],
 )
 def test_release_step_cases(rustflags: str | None, fragment: str) -> None:
     """Each way of weakening the exclusion is a complaint; the explicit form is not."""

@@ -34,10 +34,8 @@ artefacts also need a baseline that the fast flags would disturb.
   and CI step that assigns `RUSTFLAGS` without them.
 - Restate the flags in each recipe and step, held by a contract test. This is
   the option taken.
-- Adopt Cranelift for development builds. This repository does not: on the
-  current pin Cranelift cannot unwind, which fails four tests that use
-  `rstest_bdd::skip!`. The developers' guide records the scope and the
-  reproduction command.
+- Adopt Cranelift for development builds. The developers' guide records why
+  this repository does not.
 
 ## Decision outcome
 
@@ -47,9 +45,8 @@ flags into each development recipe, keeping the caller's own `RUSTFLAGS`.
 Coverage assigns its own flags and ignores the caller's. The release recipe
 keeps the caller's flags and names neither fast flag, so it ships from the
 platform linker; a direct `cargo build --release` takes the configuration's
-flags unless `RUSTFLAGS` is assigned. Cranelift is not adopted, as an exception
-that needs maintainer approval; the developers' guide records the measurement,
-its scope and the reason.
+flags unless `RUSTFLAGS` is assigned. Cranelift is not adopted; the developers'
+guide records the measurement and the reason.
 
 `tests/build_standard_contract.rs` reads the Cargo configuration sources and
 the commands `make -n` prints for each target, and the `setup-rust` steps of
@@ -61,9 +58,7 @@ the workflows, so a flag lost through a recipe or workflow edit fails there.
   must be GCC 12.1 or newer, or clang.
 - A change to a recipe or workflow step that assigns `RUSTFLAGS` must restate
   the flags, and the contract says which clause fails when it does not.
-- Revisit Cranelift when the toolchain or the failing tests change. The
-  `rstest-bdd` 0.6 migration may change `skip!`, so recheck the exception then;
-  the result is a measurement to take, not one to assume.
+- Revisit Cranelift when the toolchain or the failing tests change.
 
 ## Addendum (2026-11-06)
 
@@ -89,5 +84,13 @@ pinned toolchain is missing, and never falls back to another linker.
 `rust-analyzer`. Every Linux job that runs the suite, including the coverage
 job whose own build never links with `mold`, runs that installer first and
 unconditionally. The release workflow passes `rustflags: '-D warnings'` to the
-shared release action, so the exclusion no longer rests on the action's
-default. Cranelift remains an exception, now measured on the current pin.
+shared release action, so the exclusion no longer rests on the action's default.
+
+Cranelift remains an exception, now measured on the current pin rather than
+argued from the earlier one. On that pin it cannot unwind: a panic compiled by
+Cranelift does not find its handler, and the four tests that use
+`rstest_bdd::skip!` fail. The developers' guide records the scope and the
+reproduction command. The exception needs maintainer approval. Reassess it when
+the toolchain or those tests change; the `rstest-bdd` 0.6 migration is a likely
+moment, because it may change `skip!`. The result is a measurement to take, not
+one to assume.

@@ -51,7 +51,9 @@ def _problems(workflow: dict) -> tuple[list[str], int]:
 
 def test_the_goals_that_reach_the_suite_include_indirect_dependants() -> None:
     """``all`` and ``build-all`` reach the suite only through prerequisites."""
-    assert rules.goals_reaching_suite(MAKEFILE) == {"test", "all", "build-all"}
+    assert rules.goals_reaching_suite(MAKEFILE) == {"test", "all", "build-all"}, (
+        "indirect dependants of the suite goal were not derived"
+    )
 
 
 def test_a_makefile_without_a_suite_goal_is_a_gap() -> None:
@@ -62,7 +64,9 @@ def test_a_makefile_without_a_suite_goal_is_a_gap() -> None:
 
 def test_install_before_the_suite_is_sound() -> None:
     """The baseline: an unconditional install precedes the suite."""
-    assert _problems(_workflow("ubuntu-latest", INSTALL + SUITE)) == ([], 1)
+    assert _problems(_workflow("ubuntu-latest", INSTALL + SUITE)) == ([], 1), (
+        "an unconditional install before the suite must pass"
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,8 +114,8 @@ def test_a_broken_install_is_reported(label: str, steps: str, fragment: str) -> 
 def test_every_way_of_reaching_the_suite_is_derived(suite_step: str) -> None:
     """A new Linux job reaching the suite is held to the rule without a listing."""
     problems, judged = _problems(_workflow("ubuntu-latest", suite_step))
-    assert judged == 1
-    assert problems
+    assert judged == 1, "the job was not recognized as a Linux suite job"
+    assert problems, "a suite job without an installer was not reported"
 
 
 @pytest.mark.parametrize(
@@ -126,7 +130,9 @@ def test_every_way_of_reaching_the_suite_is_derived(suite_step: str) -> None:
 )
 def test_every_runs_on_form_is_recognized_as_linux(runs_on: str) -> None:
     """Scalar, list and mapping runner forms all count as Linux."""
-    assert _problems(_workflow(runs_on, SUITE))[1] == 1
+    assert _problems(_workflow(runs_on, SUITE))[1] == 1, (
+        f"{runs_on!r} was not recognized as a Linux runner"
+    )
 
 
 def test_a_matrix_reference_is_resolved_across_include_legs() -> None:
@@ -136,7 +142,9 @@ def test_a_matrix_reference_is_resolved_across_include_legs() -> None:
         "          - runner: windows-latest\n          - runner: ubuntu-latest\n"
     )
     workflow = _workflow("${{ matrix.runner }}", SUITE, extra)
-    assert _problems(workflow)[1] == 1
+    assert _problems(workflow)[1] == 1, (
+        "the Linux leg of an include matrix was not judged"
+    )
 
 
 def test_an_unresolvable_matrix_reference_is_a_gap() -> None:
@@ -156,7 +164,9 @@ def test_an_unresolvable_matrix_reference_is_a_gap() -> None:
 )
 def test_narrow_cases_are_not_judged(runs_on: str, steps: str) -> None:
     """Non-Linux suite jobs and Linux jobs that never run the suite pass."""
-    assert _problems(_workflow(runs_on, steps)) == ([], 0)
+    assert _problems(_workflow(runs_on, steps)) == ([], 0), (
+        f"{runs_on!r} should not be judged for a suite it does not run"
+    )
 
 
 def test_the_repository_workflows_hold_the_rule() -> None:

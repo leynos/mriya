@@ -11,7 +11,8 @@
 //! adding or dropping the selection is a deliberate edit of this contract.
 
 use super::ci_steps::{Workflow, cranelift_workflow_problems, whitaker_cranelift_problems};
-use super::config::{CONFIG, Problems, TOOLCHAIN};
+use super::config::{CONFIG, Problems};
+use super::pins::TOOLCHAIN;
 
 /// Whether this repository selects Cranelift for the development profile.
 pub const SELECTED: bool = false;

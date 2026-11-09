@@ -72,13 +72,20 @@ pinned_components() {
 }
 
 install_toolchain() {
-  local toolchain=$1 component
+  local toolchain=$1 component components_text
   local -a components=()
   command -v rustup >/dev/null 2>&1 ||
     fail 'rustup not found on PATH; install it from https://rustup.rs'
+  # Read the components first: process substitution discards the status of the
+  # reader, so an unreadable or unparsable file would otherwise install the
+  # toolchain with no components at all, leaving the lint gate without rustfmt
+  # or clippy.
+  if ! components_text=$(pinned_components) || [ -z "$components_text" ]; then
+    fail "cannot read the components in $RUST_TOOLCHAIN_FILE"
+  fi
   while IFS= read -r component; do
     components+=(--component "$component")
-  done < <(pinned_components)
+  done <<<"$components_text"
   note "installing toolchain $toolchain"
   rustup toolchain install "$toolchain" --profile minimal "${components[@]}" ||
     fail "failed to install toolchain $toolchain"

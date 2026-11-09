@@ -61,13 +61,21 @@ check_linker_driver() {
 # The pinned nightly must be installed: the parallel frontend is nightly-only,
 # and rustup will not install it unprompted.
 check_toolchain() {
-  local toolchain=$1
+  local toolchain=$1 listing
   if ! command -v rustup >/dev/null 2>&1; then
     note 'rustup not found on PATH; it selects the pinned nightly'
     note 'install it from https://rustup.rs'
     return 1
   fi
-  if ! rustup toolchain list | grep -q "^$toolchain"; then
+  # Read the whole listing before matching: a `grep -q` that exits at the first hit
+  # can send SIGPIPE to `rustup` in a pipeline, which `pipefail` then reports as a
+  # failed listing and so as a missing toolchain.
+  if ! listing=$(rustup toolchain list); then
+    note 'rustup could not list the installed toolchains'
+    note 'reinstall it from https://rustup.rs'
+    return 1
+  fi
+  if ! grep -q "^$toolchain" <<<"$listing"; then
     note "toolchain $toolchain is not installed"
     note 'install it with: make install-build-tools'
     return 1

@@ -37,8 +37,12 @@ mod injected;
 mod injected_held_out;
 #[path = "build_standard_support/installer.rs"]
 mod installer;
+#[path = "build_standard_support/installer_cases.rs"]
+mod installer_cases;
 #[path = "build_standard_support/make.rs"]
 mod make;
+#[path = "build_standard_support/pins.rs"]
+mod pins;
 #[path = "build_standard_support/policy_cases.rs"]
 mod policy_cases;
 #[path = "build_standard_support/process.rs"]
@@ -52,9 +56,10 @@ mod shell;
 #[path = "build_standard_support/workflow_exhaustive.rs"]
 mod workflow_exhaustive;
 use ci_steps::workflow_problems;
-use config::{CONFIG, Pin, Problems, TOOLCHAIN, config_problems};
+use config::{CONFIG, Pin, Problems, config_problems};
 use development::development_problems;
 use make::{Host, held_out_problems, held_out_target_count};
+use pins::TOOLCHAIN;
 use process::real_make;
 
 /// Turns a list of complaints into a test result.
