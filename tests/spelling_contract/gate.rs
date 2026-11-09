@@ -187,9 +187,16 @@ fn assert_fixtures(fixtures: &[Fixture]) -> Result<(), String> {
 }
 
 /// Whether the engine's findings for one fixture contradict its outcome.
+///
+/// An exempted fixture must be completely clean: asserting only that its own
+/// spelling is missing would pass a mask that swallowed the rest of the line
+/// too. A reported fixture must carry that spelling, but other findings in a
+/// deliberately misspelt body are not what the fixture pins.
 fn disagreed(fixture: &Fixture, found: &[String]) -> bool {
-    let is_reported = found.iter().any(|spelling| spelling == fixture.spelling);
-    is_reported != (fixture.outcome == Outcome::Reported)
+    match fixture.outcome {
+        Outcome::Clean => !found.is_empty(),
+        Outcome::Reported => !found.iter().any(|spelling| spelling == fixture.spelling),
+    }
 }
 
 /// The three external names pass the real engine, and the same spelling in

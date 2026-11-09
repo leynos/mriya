@@ -41,17 +41,18 @@ each unbalanced declaration is judged exactly as it would be in a real build.
 Neither half needs the network, a fixed toolchain, or the `typos` binary.
 
 A property test covers the shared base's Tokio grammar beyond the arrangements
-the probes pin: any spacing, any argument order, either quote form, a `main`
-runtime with a worker pool, and a malformed attribute as the opposite edge. It
-asserts two things about the text it generates — the runtime key survives the
-masks exactly when the attribute is malformed, and a spelling placed beside the
-attribute survives either way. That is a check on the key and on the
-surroundings, not on every character of the attribute: an arrangement that
-masked the key while leaving another part of the attribute visible would pass
-it. The probes and the real-engine half cover the rest, keeping `local` on
-`main` and rejecting runtime kinds the base does not name. The contract checks
-the reach of the exemptions, not the shared dictionary, so it does not prove
-that a spelling the dictionary accepts today is still accepted tomorrow.
+the probes pin: a spacing run that is empty, one space, or one tab, any
+argument order, either quote form, a `main` runtime with a worker pool, and a
+malformed attribute as the opposite edge. It asserts two things about the text
+it generates — the runtime key survives the masks exactly when the attribute is
+malformed, and a spelling placed beside the attribute survives either way. That
+is a check on the key and on the surroundings, not on every character of the
+attribute: an arrangement that masked the key while leaving another part of the
+attribute visible would pass it. The probes and the real-engine half cover the
+rest, keeping `local` on `main` and rejecting runtime kinds the base does not
+name. The contract checks the reach of the exemptions, not the shared
+dictionary, so it does not prove that a spelling the dictionary accepts today
+is still accepted tomorrow.
 
 The test files must carry the misspellings they judge, so each reported
 spelling is written once, on a `const` declaration line, and every probe and

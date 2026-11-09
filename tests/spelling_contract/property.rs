@@ -21,9 +21,16 @@ const PROSE_WORDS: &[&str] = &[
 /// Cases the generated property checks.
 const GENERATED_CASES: u32 = 256;
 
-/// One whitespace run the masks must absorb, as `\s*` does.
+/// One whitespace run the masks must absorb.
+///
+/// The shared base writes `\s*` everywhere it allows spacing, so the generator
+/// draws from a two-character alphabet up to length four rather than from a
+/// handful of literals. That covers runs the table never spells out — newlines,
+/// mixed tabs and spaces, and empty runs — without pretending to enumerate
+/// `\s*` itself.
 fn spacing() -> impl Strategy<Value = String> {
-    proptest::sample::select(vec!["", " ", "\t"]).prop_map(str::to_owned)
+    proptest::collection::vec(proptest::sample::select(vec![' ', '\t', '\n']), 0..5)
+        .prop_map(String::from_iter)
 }
 
 /// The quote form a runtime value takes, escaped or plain.
