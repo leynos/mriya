@@ -240,6 +240,24 @@ fn a_non_linux_host_skips_the_linker_checks() -> Result<(), String> {
     Ok(())
 }
 
+/// Scenario: a sandbox read of a path that is absent and one that exists but is not a file.
+///
+/// Invariant: only a genuinely missing path reads as absent; any other failure is an error naming the
+/// path, so a contract cannot pass by mistaking an unreadable file for one that was never written.
+#[test]
+fn a_sandbox_read_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(), String> {
+    let sandbox = Sandbox::new()?;
+    sandbox.make_dir("a-directory")?;
+    if sandbox.read("missing")?.is_some() {
+        return Err("a missing path read as present".to_owned());
+    }
+    match sandbox.read("a-directory") {
+        Ok(found) => Err(format!("a directory read as {found:?}")),
+        Err(reason) if reason.contains("a-directory") => Ok(()),
+        Err(reason) => Err(format!("the error does not name the path: {reason}")),
+    }
+}
+
 /// Scenario: the release route with no `mold` at all.
 ///
 /// Invariant: a shipped artefact needs none of the development tools, so it neither runs the preflight
