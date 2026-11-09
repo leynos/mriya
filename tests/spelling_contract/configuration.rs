@@ -9,6 +9,11 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 
 use crate::{CONFIG, OVERLAY};
 
+/// The generated file's name, as a contributor would see it in an error.
+const CONFIG_NAME: &str = "typos.toml";
+/// The overlay's name, as a contributor would see it in an error.
+const OVERLAY_NAME: &str = "typos.local.toml";
+
 /// The effective mask list, read out of the generated configuration.
 ///
 /// Both files are TOML and the shared base writes multi-line patterns, so the
@@ -16,7 +21,7 @@ use crate::{CONFIG, OVERLAY};
 /// does not parse, or that carries no list, is an error: an unreadable
 /// configuration must never read as "there are no exemptions".
 pub fn masks() -> Result<Vec<String>, String> {
-    parses(CONFIG)?
+    parses(CONFIG_NAME, CONFIG)?
         .get("default")
         .and_then(|default| default.get("extend-ignore-re"))
         .and_then(toml::Value::as_array)
@@ -39,7 +44,7 @@ pub fn masks() -> Result<Vec<String>, String> {
 /// overlay is read with the same parser the gate's merge uses, so both quote
 /// styles and any multi-line entry are covered.
 pub fn overlay_patterns() -> Result<Vec<String>, String> {
-    parses(OVERLAY)?
+    parses(OVERLAY_NAME, OVERLAY)?
         .get("patterns")
         .and_then(|patterns| patterns.get("ignore"))
         .and_then(toml::Value::as_array)
@@ -55,10 +60,14 @@ pub fn overlay_patterns() -> Result<Vec<String>, String> {
 }
 
 /// Parses one configuration document, naming it in the error.
-fn parses(document: &str) -> Result<toml::Table, String> {
+///
+/// Both files are read through this function, so the name is a parameter: a
+/// parse failure that said only "a configuration should parse" would leave a
+/// contributor unable to tell which of the two files to repair.
+fn parses(name: &str, document: &str) -> Result<toml::Table, String> {
     document
         .parse()
-        .map_err(|error: toml::de::Error| format!("a configuration should parse: {error}"))
+        .map_err(|error: toml::de::Error| format!("{name} should parse: {error}"))
 }
 
 /// `typos.toml` is generated, so a stale copy would leave these tests judging

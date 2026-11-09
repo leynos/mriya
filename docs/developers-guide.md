@@ -35,9 +35,14 @@ match, so the two rules can differ for a spelling that only partly overlaps a
 mask. The second half closes that gap. It loads the same generated
 configuration into `typos-cli` — the crate the gate's pinned console script is
 built from, pinned to the version `typos-config-builder` names — and runs the
-same `FileChecker` the binary runs over isolated fixture files, so each exempt
-name, each misspelling in ordinary prose, each misspelling in a code span and
-each unbalanced declaration is judged exactly as it would be in a real build.
+same `FileChecker` the binary runs over isolated fixture files. It covers every
+exempt form in `typos.local.toml`: the backticked name, the `mold linker`
+phrase, the `install-mold` input, the `-fuse-ld=mold` argument and the
+`.contains("mold")` probe. It also covers the negative direction — the bare
+name, and the same spelling in prose or in a code span — together with the
+anchored declarations in their LF, CRLF and indented forms and the Tokio
+attribute fixtures. A form the model half judges but the engine half does not
+run is covered by the model alone, so add it to both when adding an exemption.
 Neither half needs the network, a fixed toolchain, or the `typos` binary.
 
 A property test covers the shared base's Tokio grammar beyond the arrangements
@@ -65,6 +70,15 @@ rather than loosening the mask or excluding the file.
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
 environment. Bump that variable to adopt a newer release.
+
+The dev-dependency `typos-cli` carries an exact `=` requirement, which is a
+recorded exception to this workspace's caret-requirement rule. The exception is
+narrow and deliberate: `typos-config-builder` pins its own `typos` engine
+version (currently `typos==1.50.2`), and the contract test must compile the
+same engine the gate runs. An exact pin turns a `cargo update` that would
+otherwise drift the two engines into an immediate build failure. Move the pin in
+`Cargo.toml` and this paragraph together, and only when the builder's pin
+moves.
 
 ## Fetching dependencies before tests
 

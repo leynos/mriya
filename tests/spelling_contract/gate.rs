@@ -79,6 +79,11 @@ struct Collected {
     spellings: Mutex<Vec<String>>,
 }
 
+/// The reason a poisoned lock is reported rather than panicked on: this type
+/// lives outside any test body, so the test-only `expect` allowance does not
+/// cover it, and a panic here would take the engine's worker down with it.
+const POISONED: &str = "the collected spellings should not be poisoned";
+
 impl Report for Collected {
     fn report(&self, message: Message<'_>) -> Result<(), std::io::Error> {
         let Message::Typo(typo) = &message else {
@@ -87,7 +92,7 @@ impl Report for Collected {
         if !typo.corrections.is_valid() {
             self.spellings
                 .lock()
-                .expect("the collected spellings should not be poisoned")
+                .map_err(|error| std::io::Error::other(format!("{POISONED}: {error}")))?
                 .push(typo.typo.to_owned());
         }
         Ok(())
@@ -96,12 +101,12 @@ impl Report for Collected {
 
 impl Collected {
     /// The reported spellings, taken out of the shared cell.
-    fn take(&self) -> Vec<String> {
+    fn take(&self) -> Result<Vec<String>, String> {
         let mut guard = self
             .spellings
             .lock()
-            .expect("the collected spellings should not be poisoned");
-        std::mem::take(&mut *guard)
+            .map_err(|error| format!("{POISONED}: {error}"))?;
+        Ok(std::mem::take(&mut *guard))
     }
 }
 
@@ -160,7 +165,7 @@ fn judge_one(
     Typos
         .check_file(&native, true, &policy, &reporter)
         .map_err(|error| format!("{} should be checked: {error}", fixture.name))?;
-    Ok(reporter.take())
+    reporter.take()
 }
 
 /// Every fixture gets the outcome its body calls for.
@@ -237,6 +242,14 @@ fn the_real_engine_accepts_the_exempt_names_and_reports_their_misspellings() -> 
             LINKER_NAME,
             format!("Rustc receives -fuse-ld={LINKER_NAME} here.\n"),
         ),
+        // The exemption this repository added for a code probe, written the way
+        // a contributor would write it. The model half accepts the same text,
+        // so this fixture is what proves the engine agrees.
+        accepted(
+            "linker-contains",
+            LINKER_NAME,
+            format!("The reader probes value.contains(\"{LINKER_NAME}\") once.\n"),
+        ),
         // The negative direction: the same spelling, unmasked.
         reported(
             "cargo-kind-prose-misspelling",
@@ -291,10 +304,13 @@ fn the_declaration_exemptions_do_not_reach_a_different_declaration() -> Result<(
             CARGO_KIND,
             format!("const CARGO_KIND: &str = \"{CARGO_KIND}\";\r\n"),
         ),
+        // The same indented declaration as above, but CRLF: the `\r?` tolerance
+        // must stay anchored to the start of the line, not merely tolerate the
+        // carriage return, so an indented copy still reaches the gate.
         reported(
             "crlf-declaration-misspelling",
             CARGO_KIND,
-            format!("The build {CARGO_KIND} is stale.\r\n"),
+            format!("    const CARGO_KIND: &str = \"{CARGO_KIND}\";\r\n"),
         ),
         reported(
             "indented-declaration",

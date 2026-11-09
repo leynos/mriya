@@ -40,9 +40,16 @@ regex = "1.11"
 toml = "0.9"
 # The spelling contract runs the engine the gate uses, at the version the
 # builder pins, so the test and the gate cannot disagree about what a mask
-# reaches. It is a dev-dependency because it is a test-only observation, and
-# it is pinned exactly so a `typos` release cannot change the expected result
-# without the builder pin moving too.
+# reaches. It is a dev-dependency because it is a test-only observation.
+#
+# The exact pin is a deliberate exception to this workspace's caret-requirement
+# rule, and it is the version match, not reproducibility, that buys it: the
+# gate's engine comes from `typos-config-builder`, whose own `typos==1.50.2`
+# dependency is the version oracle. An exact pin here makes a mismatched
+# `cargo update` fail the build at once; a caret requirement would let the
+# crate this contract tests drift away from the engine the gate runs, and the
+# contract would then be proving something about an engine nobody uses.
+# Move this pin only when the builder's pin moves; see the developers' guide.
 typos-cli = "=1.50.2"
 
 [profile.dev]

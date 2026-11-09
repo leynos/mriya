@@ -5,7 +5,8 @@
 //! to accept, with any argument order and spacing drawn from a bounded
 //! alphabet, is the runtime key swallowed exactly when the attribute is well
 //! formed, and visible when it is not? The malformed variant checks the other
-//! edge: an attribute missing its closing bracket must not be masked at all.
+//! edge: the runtime key of an attribute missing its closing bracket must stay
+//! visible.
 //!
 //! It is a check on the key and on the line around it, not on every character
 //! of the attribute: an arrangement that masked the key while leaving another
@@ -150,8 +151,8 @@ impl GeneratedCase {
     }
 }
 
-/// The generated runtime key is masked exactly when the attribute is malformed,
-/// and the spelling beside it survives either way.
+/// The generated runtime key is visible exactly when the attribute is
+/// malformed, and the spelling beside it survives either way.
 #[test]
 fn generated_tokio_attributes_are_masked_without_reaching_their_surroundings() -> Result<(), String>
 {
@@ -164,7 +165,7 @@ fn generated_tokio_attributes_are_masked_without_reaching_their_surroundings() -
             prop_assert_eq!(
                 masked.contains(RUNTIME_KEY),
                 case.is_malformed,
-                "the runtime key was visible: {:?}",
+                "the runtime key visibility did not match well-formedness: {:?}",
                 text
             );
             prop_assert!(
