@@ -7,7 +7,8 @@ its ``rustflags`` input as ``RUSTFLAGS`` before its toolchain setup. Left empty,
 that input falls back to the nested ``setup-rust`` default, which happens to be
 ``-D warnings``; the release would then be excluded by a side effect nobody
 wrote down. The step therefore states the value, and these tests hold it: the
-value is non-empty, denies warnings, and names neither standard flag.
+value is non-empty, denies warnings with no lint cap undoing it, and names
+neither standard flag.
 
 Run via ``make test-workflow-contracts``.
 """
@@ -30,6 +31,9 @@ RELEASE_ACTION = "rust-build-release@"
 #: Words that mark a flag the development standard owns.
 STANDARD_FLAG_MARKERS = ("-Zthreads", "mold", "-fuse-ld")
 
+#: Lint-cap levels that leave ``-D warnings`` without effect.
+CAPPING_LEVELS = frozenset({"allow", "warn"})
+
 
 def _release_steps(
     workflow: dict[str, Any],
@@ -41,8 +45,25 @@ def _release_steps(
                 yield job_id, index, step
 
 
+def _cap_level(tokens: list[str]) -> str | None:
+    """Return the level a ``--cap-lints`` option names, if one is present."""
+    for index, token in enumerate(tokens):
+        if token == "--cap-lints" and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith("--cap-lints="):
+            return token.partition("=")[2]
+    return None
+
+
 def _denies_warnings(tokens: list[str]) -> bool:
-    """Return whether the tokens deny warnings as a pair or as one joined flag."""
+    """Return whether the tokens deny warnings, with no lower lint cap on top.
+
+    ``--cap-lints`` takes precedence over ``-D warnings``, so a cap of ``allow``
+    or ``warn`` leaves the release without the warning policy it appears to
+    state. ``deny`` and ``forbid`` cap at or above the denial and keep it.
+    """
+    if _cap_level(tokens) in CAPPING_LEVELS:
+        return False
     if "-Dwarnings" in tokens:
         return True
     return any(
@@ -51,13 +72,35 @@ def _denies_warnings(tokens: list[str]) -> bool:
     )
 
 
-def _normalized(tokens: list[str]) -> str:
-    """Return the tokens as one text, with ``-Z value`` spells joined.
+def _joined(tokens: list[str]) -> list[str]:
+    """Return the tokens with ``-Z value`` and ``-C value`` spells joined.
 
     ``rustc`` accepts ``-Zthreads=8`` and ``-Z threads=8`` alike, so a marker
     check must read both as ``-Zthreads=8`` rather than miss the spaced form.
     """
-    return " ".join(tokens).replace("-Z ", "-Z")
+    joined: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"-Z", "-C"} and index + 1 < len(tokens):
+            joined.append(f"{token}{tokens[index + 1]}")
+            index += 2
+        else:
+            joined.append(token)
+            index += 1
+    return joined
+
+
+def _names_marker(tokens: list[str], marker: str) -> bool:
+    """Return whether a token names the development flag ``marker``.
+
+    ``-Zthreads`` and ``-fuse-ld`` appear inside a longer token, while a bare
+    linker name is a whole word. Matching the joined text would reject an
+    unrelated value such as ``--cfg=xmoldx``.
+    """
+    if marker == "mold":
+        return marker in tokens
+    return any(marker in token for token in tokens)
 
 
 def _rustflags_problems(where: str, value: str) -> list[str]:
@@ -65,14 +108,14 @@ def _rustflags_problems(where: str, value: str) -> list[str]:
     if not value:
         return [f"{where}: passes no rustflags, so the exclusion is implicit"]
     tokens = shlex.split(value)
-    text = _normalized(tokens)
+    joined = _joined(tokens)
     problems: list[str] = []
     if not _denies_warnings(tokens):
         problems.append(f"{where}: rustflags {value!r} does not deny warnings")
     problems.extend(
         f"{where}: rustflags {value!r} names the development flag {marker}"
         for marker in STANDARD_FLAG_MARKERS
-        if marker in text
+        if _names_marker(joined, marker)
     )
     return problems
 
@@ -122,10 +165,14 @@ def _step(rustflags: str | None) -> dict[str, Any]:
         ("", "implicit"),
         ("-D warnings -Zthreads=8", "-Zthreads"),
         ("-D warnings -Z threads=8", "-Zthreads"),
-        ("-D warnings -Clink-arg=-fuse-ld=mold", "mold"),
+        ("-D warnings -Clink-arg=-fuse-ld=mold", "-fuse-ld"),
         ("-D warnings -C link-arg=-fuse-ld=mold", "-fuse-ld"),
         ("-D warnings=1", "does not deny warnings"),
         ("-C opt-level=3", "does not deny warnings"),
+        ("-D warnings --cap-lints allow", "does not deny warnings"),
+        ("-D warnings --cap-lints=warn", "does not deny warnings"),
+        ("-D warnings --cap-lints deny", ""),
+        ("-D warnings --cfg=xmoldx", ""),
     ],
     ids=[
         "explicit",
@@ -137,6 +184,10 @@ def _step(rustflags: str | None) -> dict[str, Any]:
         "spaced_linker_leak",
         "warnings_not_a_pair",
         "no_warning_policy",
+        "capped_by_allow",
+        "capped_by_warn",
+        "cap_keeps_the_policy",
+        "unrelated_value_is_not_a_flag",
     ],
 )
 def test_release_step_cases(rustflags: str | None, fragment: str) -> None:
