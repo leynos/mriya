@@ -1,6 +1,7 @@
-//! A throwaway directory standing in for the host's `PATH`, so the build-tools scripts and `make` can
-//! run against exactly the tools a test chooses: a pinned `mold`, a drifted one, none, a compiler that
-//! cannot link with it. Files go through `cap_std`, so the sandbox cannot reach outside its own root.
+//! A throwaway directory standing in for the host's `PATH`, so the build-tools scripts and `make`
+//! can run against exactly the tools a test chooses: a pinned `mold`, a drifted one, none, a
+//! compiler that cannot link with it. Files go through `cap_std`, so the sandbox cannot reach
+//! outside its own root.
 
 use std::{io, process::Command};
 
@@ -29,7 +30,8 @@ pub const LINKER_TOOL: &str = "mold";
 /// driver alone leaves the compiler's link step unable to find a linker.
 pub const LINKER_ENTRY: &str = "ld.mold";
 
-/// A temporary root holding a `bin` directory used as `PATH` and a `prefix` the installer writes to.
+/// A temporary root holding a `bin` directory used as `PATH` and a `prefix` the installer writes
+/// to.
 pub struct Sandbox {
     _root: TempDir,
     root_path: Utf8PathBuf,
@@ -188,18 +190,14 @@ impl Sandbox {
     }
 
     /// Returns the sandbox's root.
-    pub fn root(&self) -> &Utf8Path {
-        &self.root_path
-    }
+    pub fn root(&self) -> &Utf8Path { &self.root_path }
 
     /// Returns the directory the installer unpacks into.
-    pub fn prefix(&self) -> Utf8PathBuf {
-        self.root_path.join(PREFIX)
-    }
+    pub fn prefix(&self) -> Utf8PathBuf { self.root_path.join(PREFIX) }
 
-    /// Exposes host tools in the sandbox's `bin` through one-line wrappers, so a script can use them and
-    /// nothing else. A wrapper rather than a symlink: a capability directory refuses a link whose target
-    /// lies outside it.
+    /// Exposes host tools in the sandbox's `bin` through one-line wrappers, so a script can use
+    /// them and nothing else. A wrapper rather than a symlink: a capability directory refuses a
+    /// link whose target lies outside it.
     ///
     /// # Errors
     ///
@@ -350,8 +348,8 @@ impl Sandbox {
         self.write_tool("uname", body)
     }
 
-    /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,
-    /// the installer's prefix is the sandbox's, and the fake Cargo logs to [`CARGO_LOG`].
+    /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the
+    /// root, the installer's prefix is the sandbox's, and the fake Cargo logs to [`CARGO_LOG`].
     ///
     /// # Errors
     ///

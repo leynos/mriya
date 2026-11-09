@@ -1,6 +1,6 @@
 //! Readers for the flag half of the build standard: the flag lists and the `rustflags` sources in
-//! `.cargo/config.toml`. Everything is read as text, so the contract needs no parser dependency. The
-//! pins these readers are compared against live in the `pins` module.
+//! `.cargo/config.toml`. Everything is read as text, so the contract needs no parser dependency.
+//! The pins these readers are compared against live in the `pins` module.
 
 use super::pins::{is_date, pinned_channel};
 
@@ -62,9 +62,7 @@ impl Pin {
     }
 
     /// Returns whether the pin takes `-Zthreads`, which is a nightly flag.
-    pub const fn takes_threads(self) -> bool {
-        matches!(self, Self::Nightly)
-    }
+    pub const fn takes_threads(self) -> bool { matches!(self, Self::Nightly) }
 }
 
 /// A list of compiler flags, with `-C value` pairs joined into `-Cvalue` so
@@ -90,9 +88,7 @@ impl Flags {
     }
 
     /// Returns whether the list names one flag.
-    fn names(&self, flag: &str) -> bool {
-        self.0.iter().any(|candidate| candidate == flag)
-    }
+    fn names(&self, flag: &str) -> bool { self.0.iter().any(|candidate| candidate == flag) }
 
     /// Returns whether the list denies warnings, in either spelling.
     pub fn denies_warnings(&self) -> bool {
@@ -101,14 +97,10 @@ impl Flags {
     }
 
     /// Returns whether the list names the frontend flag.
-    pub fn names_threads(&self) -> bool {
-        self.names(THREADS_FLAG)
-    }
+    pub fn names_threads(&self) -> bool { self.names(THREADS_FLAG) }
 
     /// Returns whether the list names the linker flag.
-    pub fn names_linker(&self) -> bool {
-        self.names(LINKER_FLAG)
-    }
+    pub fn names_linker(&self) -> bool { self.names(LINKER_FLAG) }
 
     /// Returns the list without the linker flag, which is the one that may
     /// differ.
@@ -145,14 +137,10 @@ struct Source {
 
 impl Source {
     /// Returns whether the table applies on Linux alone.
-    fn is_linux(&self) -> bool {
-        self.table.starts_with("target.") && self.table.contains("linux")
-    }
+    fn is_linux(&self) -> bool { self.table.starts_with("target.") && self.table.contains("linux") }
 
     /// Returns whether the table selects every Linux target, not one triple.
-    fn is_all_linux(&self) -> bool {
-        self.table == ALL_LINUX_TABLE
-    }
+    fn is_all_linux(&self) -> bool { self.table == ALL_LINUX_TABLE }
 
     /// Returns what is wrong with the source's flags for a pin: the frontend
     /// flag on a nightly pin only, and `mold` in a Linux table only.
@@ -174,9 +162,7 @@ enum Line {
 }
 
 /// Returns the quoted strings in one line, in order.
-fn quoted(line: &str) -> Vec<&str> {
-    line.split('"').skip(1).step_by(2).collect()
-}
+fn quoted(line: &str) -> Vec<&str> { line.split('"').skip(1).step_by(2).collect() }
 
 /// Returns a line up to a `#` that starts a comment, ignoring a `#` inside a
 /// quoted string, and without trailing space.
@@ -256,7 +242,8 @@ fn shape_problems(found: &[Source], pin: Pin) -> Problems {
         ),
         (
             found.iter().any(Source::is_linux) && !found.iter().any(Source::is_all_linux),
-            "no `cfg(target_os = \"linux\")` table carries rustflags, so `mold` reaches one Linux architecture only",
+            "no `cfg(target_os = \"linux\")` table carries rustflags, so `mold` reaches one Linux \
+             architecture only",
         ),
         (
             pin.takes_threads() && !found.iter().any(|source| source.table == "build"),

@@ -2,11 +2,15 @@
 
 use std::collections::HashMap;
 
+use super::{
+    super::{
+        ScalewayBackend,
+        ScalewayBackendError,
+        volume::{UpdateInstanceVolumesRequest, VolumeAttachment},
+    },
+    volume_attach::VolumePatchContext,
+};
 use crate::backend::InstanceHandle;
-
-use super::super::volume::{UpdateInstanceVolumesRequest, VolumeAttachment};
-use super::super::{ScalewayBackend, ScalewayBackendError};
-use super::volume_attach::VolumePatchContext;
 
 impl ScalewayBackend {
     /// Detaches a volume from the instance while preserving the root volume.

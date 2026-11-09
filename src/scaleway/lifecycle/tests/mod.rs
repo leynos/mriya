@@ -1,17 +1,21 @@
 //! Unit tests for Scaleway lifecycle helpers.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use rstest::{fixture, rstest};
 use scaleway_rs::{ScalewayApi, ScalewayImage};
 
 use super::InstanceSnapshot;
-use crate::ScalewayConfig;
-use crate::backend::{InstanceHandle, InstanceRequest};
-use crate::scaleway::DEFAULT_SSH_PORT;
-use crate::scaleway::types::{Action, InstanceId, InstanceState, Zone};
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use crate::{
+    ScalewayConfig,
+    backend::{InstanceHandle, InstanceRequest},
+    scaleway::{
+        DEFAULT_SSH_PORT,
+        ScalewayBackend,
+        ScalewayBackendError,
+        types::{Action, InstanceId, InstanceState, Zone},
+    },
+};
 
 fn snapshot(
     id: impl Into<InstanceId>,

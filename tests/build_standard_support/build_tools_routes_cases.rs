@@ -5,22 +5,25 @@
 
 use rstest::rstest;
 
-use super::{
-    build_tools_scripts::{
-        Toolset, cargo_calls, expect_actionable_failure, run_route, sandbox_with,
-    },
-    make::Target,
-};
-
 #[cfg(target_os = "linux")]
 use super::build_tools_scripts::Linker;
 #[cfg(target_os = "linux")]
 use super::pins::pinned_linker;
+use super::{
+    build_tools_scripts::{
+        Toolset,
+        cargo_calls,
+        expect_actionable_failure,
+        run_route,
+        sandbox_with,
+    },
+    make::Target,
+};
 
 /// Scenario: a development route run for real, with and without the tools it needs.
 ///
-/// Invariant: with a missing `mold` the route fails and the fake Cargo is never started, so there is no
-/// silent fallback to another linker; with a complete toolset the route reaches Cargo.
+/// Invariant: with a missing `mold` the route fails and the fake Cargo is never started, so there
+/// is no silent fallback to another linker; with a complete toolset the route reaches Cargo.
 #[cfg(target_os = "linux")]
 #[rstest]
 #[case::make_build(Target("build"))]

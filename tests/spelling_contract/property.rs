@@ -13,12 +13,16 @@
 //! part of the attribute visible would pass it. The probe table and the
 //! real-engine half of the contract cover the surfaces this leaves open.
 
-use proptest::prelude::*;
-use proptest::test_runner::{Config, TestRunner};
+use proptest::{
+    prelude::*,
+    test_runner::{Config, TestRunner},
+};
 
-use crate::CARGO_KIND;
-use crate::RUNTIME_KEY;
-use crate::checks::{compiled_masks, strip_masks};
+use crate::{
+    CARGO_KIND,
+    RUNTIME_KEY,
+    checks::{compiled_masks, strip_masks},
+};
 
 /// The words a generated line may carry outside the attribute.
 const PROSE_WORDS: &[&str] = &[

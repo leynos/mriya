@@ -6,9 +6,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
 
 pub(super) struct StubApi {
     pub(super) base_url: String,
@@ -34,7 +36,8 @@ impl StubApi {
                 let (mut stream, _) = listener.accept().await?;
                 requests.push(read_request(&mut stream).await?);
                 let response = format!(
-                    "HTTP/1.1 {} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} Stub\r\nContent-Type: application/json\r\nContent-Length: \
+                     {}\r\nConnection: close\r\n\r\n{}",
                     reply.status,
                     reply.body.len(),
                     reply.body,

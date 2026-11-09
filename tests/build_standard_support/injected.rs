@@ -38,7 +38,8 @@ macro_rules! fake_make {
 }
 pub(super) use fake_make;
 
-/// Renders a command that assigns what a compliant recipe assigns on a host, followed by any lines after it.
+/// Renders a command that assigns what a compliant recipe assigns on a host, followed by any lines
+/// after it.
 fn compliant_text(host: Host, commands: &str) -> String {
     let linker = linker_flag(host);
     format!(
@@ -79,10 +80,12 @@ compliant_make!(
 // A fake runner with commands that run no compiled code under test, beside one that assigns.
 compliant_make!(
     exempt_commands_make,
-    "cargo test\ncargo fmt --all --check\ncargo metadata --format-version 1\nRUSTDOCFLAGS=\"-D warnings\" cargo doc"
+    "cargo test\ncargo fmt --all --check\ncargo metadata --format-version 1\nRUSTDOCFLAGS=\"-D \
+     warnings\" cargo doc"
 );
 
-/// A fake runner whose `lint` target runs Clippy and not Whitaker, and whose other targets run tests.
+/// A fake runner whose `lint` target runs Clippy and not Whitaker, and whose other targets run
+/// tests.
 fn lint_without_whitaker_make(target: Target<'_>, host: Host) -> Result<String, String> {
     let linker = linker_flag(host);
     let tool = if target.name() == "lint" {
@@ -99,7 +102,10 @@ fn lint_without_whitaker_make(target: Target<'_>, host: Host) -> Result<String, 
 fn chained_bare_make(_target: Target<'_>, host: Host) -> Result<String, String> {
     let linker = linker_flag(host);
     canned(format_args!(
-        "if RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo nextest --version; then cargo nextest run; else echo \"falling back to cargo test\"; RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test; fi\n"
+        "if RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo \
+         nextest --version; then cargo nextest run; else echo \"falling back to cargo test\"; \
+         RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test; \
+         fi\n"
     ))
 }
 
@@ -184,11 +190,12 @@ fn a_development_command_without_an_assignment_is_refused_and_an_exempt_one_is_n
     )
 }
 
-/// Scenario: development recipes whose only command is a metadata probe, or an assigned version probe.
+/// Scenario: development recipes whose only command is a metadata probe, or an assigned version
+/// probe.
 ///
 /// Invariant: each development target must run a tool of its own, so a target that only probes is
-/// refused instead of hiding behind the assignments another target supplies, and an assignment is no
-/// tool: a probe that carries `RUSTFLAGS` does not stand in for the build, test or lint command.
+/// refused instead of hiding behind the assignments another target supplies, and an assignment is
+/// no tool: a probe that carries `RUSTFLAGS` does not stand in for the build, test or lint command.
 #[test]
 fn a_development_target_that_runs_no_tool_is_refused() -> Result<(), String> {
     for runner in [probe_only_make as MakeRunner, assigned_probe_make] {
@@ -205,8 +212,8 @@ fn a_development_target_that_runs_no_tool_is_refused() -> Result<(), String> {
 
 /// Scenario: a record of the tools each target runs, against recipes that keep or drop one.
 ///
-/// Invariant: a target that stops running a recorded tool is refused by name, one lint command does not
-/// stand in for the other, and a target that keeps every recorded tool raises nothing.
+/// Invariant: a target that stops running a recorded tool is refused by name, one lint command does
+/// not stand in for the other, and a target that keeps every recorded tool raises nothing.
 #[test]
 fn a_target_that_stops_running_a_recorded_tool_is_refused() -> Result<(), String> {
     let recorded = [

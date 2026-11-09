@@ -1,7 +1,9 @@
 //! BDD step definitions for janitor behaviour.
 
-use mriya::janitor::{Janitor, JanitorError};
-use mriya::test_support::{json_servers, json_volumes};
+use mriya::{
+    janitor::{Janitor, JanitorError},
+    test_support::{json_servers, json_volumes},
+};
 use rstest_bdd_macros::{given, then, when};
 
 use super::test_helpers::{JanitorContext, SweepOutcome, build_config};

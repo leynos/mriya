@@ -94,9 +94,7 @@ impl JanitorConfig {
 
     /// Returns the full tag used for this test run.
     #[must_use]
-    pub fn test_run_tag(&self) -> String {
-        format!("{TEST_RUN_TAG_PREFIX}{}", self.test_run_id)
-    }
+    pub fn test_run_tag(&self) -> String { format!("{TEST_RUN_TAG_PREFIX}{}", self.test_run_id) }
 }
 
 /// Summary of janitor work.
@@ -168,9 +166,7 @@ impl Janitor<ProcessCommandRunner> {
 impl<R: CommandRunner> Janitor<R> {
     /// Creates a new janitor using the provided configuration and runner.
     #[must_use]
-    pub const fn new(config: JanitorConfig, runner: R) -> Self {
-        Self { config, runner }
-    }
+    pub const fn new(config: JanitorConfig, runner: R) -> Self { Self { config, runner } }
 
     /// Performs a sweep and returns how many resources were deleted.
     ///
@@ -261,9 +257,7 @@ impl<R: CommandRunner> Janitor<R> {
     }
 
     /// Reports whether `tags` contains `tag` exactly.
-    fn has_tag(tags: &[String], tag: &str) -> bool {
-        tags.iter().any(|existing| existing == tag)
-    }
+    fn has_tag(tags: &[String], tag: &str) -> bool { tags.iter().any(|existing| existing == tag) }
 
     /// Lists all servers in the project, keeping those carrying `tag`.
     fn list_tagged_servers(&self, tag: &str) -> Result<Vec<ScwServer>, JanitorError> {

@@ -3,8 +3,10 @@
 //! Provides a scripted backend that records teardown attempts and allows
 //! controlled failure of the destroy phase to exercise teardown handling.
 
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::{Arc, Mutex},
+};
 
 use mriya::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest, backend::BackendFuture};
 use thiserror::Error;

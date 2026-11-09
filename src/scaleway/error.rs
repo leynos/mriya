@@ -1,9 +1,9 @@
 //! Error types for the Scaleway backend.
 
-use crate::backend::BackendError;
-use crate::config::ConfigError;
 use scaleway_rs::ScalewayError;
 use thiserror::Error;
+
+use crate::{backend::BackendError, config::ConfigError};
 
 /// Errors raised by the Scaleway backend.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -123,7 +123,5 @@ impl From<BackendError> for ScalewayBackendError {
 }
 
 impl From<ConfigError> for ScalewayBackendError {
-    fn from(value: ConfigError) -> Self {
-        Self::Config(value.to_string())
-    }
+    fn from(value: ConfigError) -> Self { Self::Config(value.to_string()) }
 }

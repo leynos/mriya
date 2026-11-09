@@ -2,10 +2,10 @@
 
 use std::future::Future;
 
-use crate::backend::InstanceRequest;
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 
 use super::super::{ScalewayBackend, ScalewayBackendError};
+use crate::backend::InstanceRequest;
 
 impl ScalewayBackend {
     /// Resolves the image to boot from, preferring the project's own images.
