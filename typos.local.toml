@@ -45,7 +45,11 @@ ignore = [
   # without them. Each reported spelling is written once, on the declaration
   # line anchored below, and every probe interpolates that constant. The rest of
   # the file stays in scope, so a misspelling elsewhere in it is still caught.
-  "(?m)^const CARGO_KIND: &str = \"artifact\";$",
-  "(?m)^const LINKER_NAME: &str = \"mold\";$",
-  "(?m)^const RUNTIME_KEY: &str = \"flavor\";$",
+  # The `\r?` keeps the anchor exact while tolerating a checkout that has
+  # converted the file to CRLF; `(?mR)` would do the same for Typos alone, but
+  # the builder validates these patterns with Python's `re`, which has no `R`
+  # flag, so the portable form is the one that survives both engines.
+  "(?m)^const CARGO_KIND: &str = \"artifact\";\\r?$",
+  "(?m)^const LINKER_NAME: &str = \"mold\";\\r?$",
+  "(?m)^const RUNTIME_KEY: &str = \"flavor\";\\r?$",
 ]

@@ -274,6 +274,18 @@ fn the_declaration_exemptions_do_not_reach_a_different_declaration() -> Result<(
             RUNTIME_KEY,
             format!("const RUNTIME_KEY: &str = \"{RUNTIME_KEY}\";\n"),
         ),
+        // A checkout may convert line endings without losing the exemption; the
+        // anchor has to tolerate the carriage return, and still only here.
+        accepted(
+            "anchored-crlf-declaration",
+            CARGO_KIND,
+            format!("const CARGO_KIND: &str = \"{CARGO_KIND}\";\r\n"),
+        ),
+        reported(
+            "crlf-declaration-misspelling",
+            CARGO_KIND,
+            format!("The build {CARGO_KIND} is stale.\r\n"),
+        ),
         reported(
             "indented-declaration",
             CARGO_KIND,

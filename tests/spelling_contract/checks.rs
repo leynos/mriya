@@ -65,32 +65,18 @@ pub fn strip_masks(text: &str, patterns: &[Regex]) -> String {
     })
 }
 
-/// The probes whose text did not survive the masks with the wanted verdict.
-pub fn disagreements(patterns: &[Regex], probes: &[Probe]) -> Vec<String> {
-    probes
-        .iter()
-        .filter(|probe| {
-            strip_masks(&probe.text, patterns).contains(probe.spelling)
-                != (probe.verdict == Verdict::Reported)
-        })
-        .map(|probe| {
-            format!(
-                "{:?} wanted {:?} for {:?}",
-                probe.text, probe.verdict, probe.spelling
-            )
-        })
-        .collect()
-}
-
-/// Checks every probe against the masks and names the ones that disagreed.
-pub fn check(probes: &[Probe]) -> Result<(), String> {
+/// Checks one probe against the masks, naming it if the verdict was wrong.
+///
+/// A single probe per call is what lets the `rstest` cases fail one at a time:
+/// the message names the text that disagreed, not a count over a table.
+pub fn check(probe: &Probe) -> Result<(), String> {
     let patterns = compiled_masks()?;
-    let found = disagreements(&patterns, probes);
-    if found.is_empty() {
-        return Ok(());
+    let survives = strip_masks(&probe.text, &patterns).contains(probe.spelling);
+    if survives != (probe.verdict == Verdict::Reported) {
+        return Err(format!(
+            "{:?} wanted {:?} for {:?}",
+            probe.text, probe.verdict, probe.spelling
+        ));
     }
-    Err(format!(
-        "the exemptions disagreed with {} probe(s): {found:#?}",
-        found.len()
-    ))
+    Ok(())
 }
