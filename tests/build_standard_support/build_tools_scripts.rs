@@ -5,6 +5,7 @@
 
 use std::process::Output;
 
+use super::make::Target;
 use super::pins::{TOOLCHAIN, pinned_channel, pinned_linker};
 use super::sandbox::{CARGO_LOG, Sandbox};
 
@@ -100,10 +101,10 @@ pub fn run_preflight(sandbox: &Sandbox) -> Result<Output, String> {
 /// # Errors
 ///
 /// Returns the reason when `make` cannot be started.
-pub fn run_route(sandbox: &Sandbox, route: &str) -> Result<Output, String> {
+pub fn run_route(sandbox: &Sandbox, route: Target<'_>) -> Result<Output, String> {
     sandbox
         .command("make")?
-        .args(["-B", "CARGO=probe-cargo", route])
+        .args(["-B", "CARGO=probe-cargo", route.name()])
         .output()
         .map_err(|error| format!("running make {route}: {error}"))
 }

@@ -32,17 +32,7 @@ pub fn pinned_linker() -> &'static str {
 ///
 /// Returns the reason when the channel is missing, repeated or malformed.
 pub fn pinned_channel(toolchain: &str) -> Result<&str, String> {
-    let declarations = toolchain_channels(toolchain);
-    if let Some(reason) = declarations
-        .iter()
-        .find_map(|declaration| declaration.as_ref().err())
-    {
-        return Err(reason.clone());
-    }
-    let channels: Vec<&str> = declarations
-        .iter()
-        .filter_map(|declaration| declaration.as_ref().ok().copied())
-        .collect();
+    let channels = toolchain_channels(toolchain)?;
     match channels.as_slice() {
         [] => Err("rust-toolchain.toml names no channel".to_owned()),
         [channel] => Ok(*channel),
@@ -66,38 +56,27 @@ pub fn pinned_channel(toolchain: &str) -> Result<&str, String> {
 /// Returns the reason when no list is declared, one is declared twice, or an entry is not a quoted
 /// name.
 pub fn pinned_components(toolchain: &str) -> Result<Vec<&str>, String> {
-    let mut table = "";
-    let mut found: Option<Vec<&str>> = None;
-    for line in toolchain
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-    {
-        if line.starts_with('[') {
-            table = line.trim_matches(|c| c == '[' || c == ']').trim();
-            continue;
-        }
-        if table != "toolchain" {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        if key.trim() != "components" {
-            continue;
-        }
-        if found.is_some() {
-            return Err(format!(
-                "`{line}`: the components are declared more than once"
-            ));
-        }
-        let list = value.split('#').next().unwrap_or_default().trim();
-        found = Some(component_list(list).map_err(|reason| format!("`{line}`: {reason}"))?);
+    let mut declarations = values_of(toolchain, "components");
+    let Some(declaration) = declarations.next() else {
+        return Err("rust-toolchain.toml lists no components".to_owned());
+    };
+    if declarations.next().is_some() {
+        return Err("rust-toolchain.toml declares the components more than once".to_owned());
     }
-    match found {
-        Some(components) if !components.is_empty() => Ok(components),
-        _ => Err("rust-toolchain.toml lists no components".to_owned()),
+    let components = component_list(declaration)
+        .map_err(|reason| format!("`components = {declaration}`: {reason}"))?;
+    if components.is_empty() {
+        return Err("rust-toolchain.toml lists no components".to_owned());
     }
+    Ok(components)
+}
+
+/// Returns the values of every `wanted` declaration under `[toolchain]`, in file order.
+fn values_of<'a>(toolchain: &'a str, wanted: &'a str) -> impl Iterator<Item = &'a str> {
+    toolchain_declarations(toolchain)
+        .into_iter()
+        .filter(move |(key, _)| *key == wanted)
+        .map(|(_, value)| value)
 }
 
 /// Parses one bracketed list of quoted component names.
@@ -134,57 +113,73 @@ pub(super) fn is_date(text: &str) -> bool {
     widths == [4, 2, 2] && text.chars().all(|c| c.is_ascii_digit() || c == '-')
 }
 
-/// Returns the quoted value of a `channel = "..."` line, if the line is one.
+/// Returns the quoted value of a `channel = "..."` value, if it is one.
 ///
-/// A `channel` key whose value is not a closed quoted string, or that carries
-/// anything but a comment after the closing quote, is a malformed declaration
-/// and an error: skipping it would let `channel = nightly` beside a valid
+/// A value that is not a closed quoted string, or that carries anything but a
+/// comment after the closing quote, is a malformed declaration and an error:
+/// skipping it would let `channel = nightly` beside a valid
 /// `channel = "stable"` read as one stable pin.
 ///
 /// ```text
-/// channel = "stable"            -> Some(Ok("stable"))
-/// channel = "stable" # pinned   -> Some(Ok("stable"))
-/// channel = nightly             -> Some(Err(..))
-/// channel = "stable             -> Some(Err(..))
-/// channel = "stable" junk       -> Some(Err(..))
-/// channel_x = "stable"          -> None
+/// "\"stable\""            -> Ok("stable")
+/// "\"stable\" # pinned"   -> Ok("stable")
+/// "nightly"               -> Err(..)
+/// "\"stable"              -> Err(..)
+/// "\"stable\" junk"       -> Err(..)
 /// ```
-fn channel_declaration(line: &str) -> Option<Result<&str, String>> {
-    let (key, value) = line.split_once('=')?;
-    if key.trim() != "channel" {
-        return None;
-    }
-    let Some(rest) = value.trim().strip_prefix('"') else {
-        return Some(Err(format!("`{line}`: the channel is not a quoted string")));
+fn channel_value(value: &str) -> Result<&str, String> {
+    let Some(rest) = value.strip_prefix('"') else {
+        return Err(format!("`channel = {value}` is not a quoted string"));
     };
     let Some((name, after)) = rest.split_once('"') else {
-        return Some(Err(format!("`{line}`: the channel has no closing quote")));
+        return Err(format!("`channel = {value}` has no closing quote"));
     };
     let trailing = after.trim();
     if trailing.is_empty() || trailing.starts_with('#') {
-        Some(Ok(name))
+        Ok(name)
     } else {
-        Some(Err(format!(
-            "`{line}`: unexpected content after the channel"
-        )))
+        Err(format!("`channel = {value}` has content after the channel"))
     }
 }
 
-/// Returns every `channel` declaration under `[toolchain]`, skipping comments, so a
-/// lookalike key, a commented line or a key in another table is not counted.
-fn toolchain_channels(toolchain: &str) -> Vec<Result<&str, String>> {
+/// Returns every `key = value` declaration under `[toolchain]`, in file order, with commented
+/// lines, keys in another table and trailing comments on a value all skipped.
+///
+/// Both readers below start from this, so a lookalike key, a commented line or a key in another
+/// table is not counted by either.
+fn toolchain_declarations(toolchain: &str) -> Vec<(&str, &str)> {
     let mut table = "";
     let mut found = Vec::new();
-    for line in toolchain
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-    {
-        if line.starts_with('[') {
-            table = line.trim_matches(|c| c == '[' || c == ']').trim();
+    for line in toolchain.lines().map(str::trim) {
+        if let Some(name) = table_name(line) {
+            table = name;
         } else if table == "toolchain" {
-            found.extend(channel_declaration(line));
+            found.extend(declaration(line));
         }
     }
     found
+}
+
+/// Returns the table a `[name]` line opens, or `None` for any other line.
+fn table_name(line: &str) -> Option<&str> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?;
+    Some(name.trim())
+}
+
+/// Returns the `(key, value)` one line declares, or `None` for a comment, a blank line or anything
+/// else that declares nothing. A trailing comment is stripped from the value.
+fn declaration(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once('=')?;
+    let name = key.trim();
+    if name.starts_with('#') {
+        return None;
+    }
+    let without_comment = value.split('#').next().unwrap_or_default().trim();
+    Some((name, without_comment))
+}
+
+/// Returns every `channel` declaration under `[toolchain]`, so a malformed or repeated one is an
+/// error rather than a skipped line.
+fn toolchain_channels(toolchain: &str) -> Result<Vec<&str>, String> {
+    values_of(toolchain, "channel").map(channel_value).collect()
 }

@@ -12,6 +12,7 @@ use super::{
         run_installer_with_toolchain, rustup_calls,
     },
     pins::{TOOLCHAIN, pinned_channel, pinned_components, pinned_linker},
+    sandbox::Sandbox,
 };
 
 #[cfg(target_os = "linux")]
@@ -30,6 +31,39 @@ fn expected_toolchain_request() -> Result<String, String> {
     ))
 }
 
+/// Runs the installer and checks that it succeeded, left the linker as `linker_expected`, and
+/// asked `rustup` for exactly the pinned toolchain and components.
+fn expect_the_pinned_toolchain_only(
+    sandbox: &Sandbox,
+    linker_expected: bool,
+    host: &str,
+) -> Result<(), String> {
+    let output = run_installer(sandbox)?;
+    if !output.status.success() {
+        return Err(format!(
+            "the installer failed on {host}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if installed_linker(sandbox)? != linker_expected {
+        let verdict = if linker_expected {
+            "was not unpacked"
+        } else {
+            "was unpacked"
+        };
+        return Err(format!("{host}: the linker {verdict}"));
+    }
+    let calls = rustup_calls(sandbox)?.unwrap_or_default();
+    let expected = expected_toolchain_request()?;
+    if calls.trim() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{host} asked rustup `{calls}`, expected `{expected}`"
+        ))
+    }
+}
+
 /// Scenario: the installer on a host that is not Linux.
 ///
 /// Invariant: it requests the pinned toolchain with every component `rust-toolchain.toml` lists and
@@ -39,25 +73,7 @@ fn expected_toolchain_request() -> Result<String, String> {
 fn the_installer_skips_the_linker_on_a_non_linux_host() -> Result<(), String> {
     let sandbox = published(Digest::Tampered)?;
     sandbox.pretend_darwin()?;
-    let output = run_installer(&sandbox)?;
-    if !output.status.success() {
-        return Err(format!(
-            "the installer failed on a non-Linux host: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if installed_linker(&sandbox)? {
-        return Err("a non-Linux host unpacked a mold linker".to_owned());
-    }
-    let calls = rustup_calls(&sandbox)?.unwrap_or_default();
-    let expected = expected_toolchain_request()?;
-    if calls.trim() == expected {
-        Ok(())
-    } else {
-        Err(format!(
-            "a non-Linux host asked rustup `{calls}`, expected `{expected}`"
-        ))
-    }
+    expect_the_pinned_toolchain_only(&sandbox, false, "a non-Linux host")
 }
 
 /// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
@@ -70,23 +86,7 @@ fn the_installer_skips_the_linker_on_a_non_linux_host() -> Result<(), String> {
 fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() -> Result<(), String>
 {
     let sandbox = published(Digest::Honest)?;
-    let output = run_installer(&sandbox)?;
-    if !output.status.success() {
-        return Err(format!(
-            "installer failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if !installed_linker(&sandbox)? {
-        return Err("the archive was not unpacked into the prefix".to_owned());
-    }
-    let calls = rustup_calls(&sandbox)?.unwrap_or_default();
-    let expected = expected_toolchain_request()?;
-    if calls.trim() == expected {
-        Ok(())
-    } else {
-        Err(format!("rustup was asked `{calls}`, expected `{expected}`"))
-    }
+    expect_the_pinned_toolchain_only(&sandbox, true, "a Linux host")
 }
 
 #[cfg(target_os = "linux")]

@@ -52,6 +52,28 @@ fn is_absence(error: &io::Error) -> bool {
     )
 }
 
+/// Returns the value of one filesystem read, reading an absence as `None` and any other failure as
+/// a reason naming the path.
+///
+/// Every read a lookup makes goes through here, so a failure the lookup cannot attribute to
+/// absence is reported rather than silently read as "no tool".
+fn or_absence<T>(result: io::Result<T>, path: &Utf8Path) -> Result<Option<T>, String> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_absence(&error) => Ok(None),
+        Err(error) => Err(format!("reading {path}: {error}")),
+    }
+}
+
+/// Resolves a link target against the directory the link was read from.
+fn resolve_against(parent: &Utf8Path, target: Utf8PathBuf) -> Utf8PathBuf {
+    if target.is_absolute() {
+        target
+    } else {
+        parent.join(target)
+    }
+}
+
 /// Reads one path component and resolves at most one link from it.
 ///
 /// A capability directory refuses to follow a symlink whose target lies outside it, and a host's
@@ -67,16 +89,11 @@ fn entry_at(path: &Utf8Path) -> Result<Option<Entry>, String> {
     let (Some(parent), Some(file)) = (path.parent(), path.file_name()) else {
         return Ok(Some(Entry::Other));
     };
-    let unreadable = |error: io::Error| format!("reading {path}: {error}");
-    let opened = match Dir::open_ambient_dir(parent, ambient_authority()) {
-        Ok(opened) => opened,
-        Err(error) if is_absence(&error) => return Ok(None),
-        Err(error) => return Err(unreadable(error)),
+    let Some(opened) = or_absence(Dir::open_ambient_dir(parent, ambient_authority()), path)? else {
+        return Ok(None);
     };
-    let metadata = match opened.symlink_metadata(file) {
-        Ok(metadata) => metadata,
-        Err(error) if is_absence(&error) => return Ok(None),
-        Err(error) => return Err(unreadable(error)),
+    let Some(metadata) = or_absence(opened.symlink_metadata(file), path)? else {
+        return Ok(None);
     };
     if metadata.is_file() {
         return Ok(Some(Entry::File));
@@ -84,17 +101,10 @@ fn entry_at(path: &Utf8Path) -> Result<Option<Entry>, String> {
     if !metadata.is_symlink() {
         return Ok(Some(Entry::Other));
     }
-    let target = match opened.read_link_contents(file) {
-        Ok(target) => target,
-        Err(error) if is_absence(&error) => return Ok(None),
-        Err(error) => return Err(unreadable(error)),
+    let Some(target) = or_absence(opened.read_link_contents(file), path)? else {
+        return Ok(None);
     };
-    let resolved = if target.is_absolute() {
-        target
-    } else {
-        parent.join(target)
-    };
-    Ok(Some(Entry::Link(resolved)))
+    Ok(Some(Entry::Link(resolve_against(parent, target))))
 }
 
 /// Returns whether `directory/name` is, or links through any chain of symlinks to, a regular file.

@@ -9,7 +9,7 @@ use super::{
     build_tools_scripts::{
         Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_route, sandbox_with,
     },
-    make::Host,
+    make::{Host, Target},
     process::probe_make,
     sandbox::{Sandbox, is_tool},
 };
@@ -126,14 +126,14 @@ fn the_preflight_reports_each_gap_with_its_remedy(
 /// silent fallback to another linker; with a complete toolset the route reaches Cargo.
 #[cfg(target_os = "linux")]
 #[rstest]
-#[case::make_build("build")]
-#[case::make_test("test")]
-#[case::make_lint("lint")]
-#[case::make_typecheck("typecheck")]
-#[case::make_scaleway_test("scaleway-test")]
-#[case::make_scaleway_janitor("scaleway-janitor")]
+#[case::make_build(Target("build"))]
+#[case::make_test(Target("test"))]
+#[case::make_lint(Target("lint"))]
+#[case::make_typecheck(Target("typecheck"))]
+#[case::make_scaleway_test(Target("scaleway-test"))]
+#[case::make_scaleway_janitor(Target("scaleway-janitor"))]
 fn a_missing_tool_stops_every_development_route_before_cargo(
-    #[case] route: &str,
+    #[case] route: Target<'static>,
 ) -> Result<(), String> {
     let sandbox = sandbox_with(Toolset {
         linker: None,
@@ -155,12 +155,12 @@ fn a_missing_tool_stops_every_development_route_before_cargo(
 }
 
 #[rstest]
-#[case::make_build("build")]
-#[case::make_test("test")]
-#[case::make_typecheck("typecheck")]
-#[case::make_scaleway_janitor("scaleway-janitor")]
+#[case::make_build(Target("build"))]
+#[case::make_test(Target("test"))]
+#[case::make_typecheck(Target("typecheck"))]
+#[case::make_scaleway_janitor(Target("scaleway-janitor"))]
 fn a_complete_toolset_lets_a_development_route_reach_cargo(
-    #[case] route: &str,
+    #[case] route: Target<'static>,
 ) -> Result<(), String> {
     let sandbox = sandbox_with(Toolset::COMPLETE)?;
     let output = run_route(&sandbox, route)?;
@@ -197,7 +197,7 @@ fn a_development_route_prefers_the_installed_prefix_over_the_inherited_path() ->
     )?;
     sandbox.make_dir("prefix/bin")?;
     sandbox.link("prefix/bin/mold", "../../bin/pinned-mold")?;
-    let output = run_route(&sandbox, "test")?;
+    let output = run_route(&sandbox, Target("test"))?;
     if !output.status.success() {
         return Err(format!(
             "`make test` failed although the prefix holds the pinned release: {}",
@@ -266,6 +266,26 @@ fn a_non_linux_host_still_fails_without_the_pinned_toolchain() -> Result<(), Str
     Ok(())
 }
 
+/// Checks that a lookup reports absence only for a path that is missing, and that every other
+/// failure is an error naming the path.
+///
+/// `present` is what the lookup answered for a path that does not exist; `unreadable` is its
+/// answer for a path the filesystem refuses to read for some reason other than absence.
+fn expect_only_absence_reads_as_missing<T>(
+    path: &str,
+    present: bool,
+    unreadable: Result<T, String>,
+) -> Result<(), String> {
+    if present {
+        return Err(format!("{path} read as present"));
+    }
+    match unreadable {
+        Ok(_) => Err(format!("{path} read as usable")),
+        Err(reason) if reason.contains(path) => Ok(()),
+        Err(reason) => Err(format!("the error does not name {path}: {reason}")),
+    }
+}
+
 /// Scenario: a sandbox read of a path that is absent and one that exists but is not a file.
 ///
 /// Invariant: only a genuinely missing path reads as absent; any other failure is an error naming the
@@ -274,14 +294,11 @@ fn a_non_linux_host_still_fails_without_the_pinned_toolchain() -> Result<(), Str
 fn a_sandbox_read_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(), String> {
     let sandbox = Sandbox::new()?;
     sandbox.make_dir("a-directory")?;
-    if sandbox.read("missing")?.is_some() {
-        return Err("a missing path read as present".to_owned());
-    }
-    match sandbox.read("a-directory") {
-        Ok(found) => Err(format!("a directory read as {found:?}")),
-        Err(reason) if reason.contains("a-directory") => Ok(()),
-        Err(reason) => Err(format!("the error does not name the path: {reason}")),
-    }
+    expect_only_absence_reads_as_missing(
+        "a-directory",
+        sandbox.read("missing")?.is_some(),
+        sandbox.read("a-directory"),
+    )
 }
 
 /// Scenario: the release route with no `mold` at all.
@@ -295,7 +312,7 @@ fn the_release_route_needs_no_development_tool() -> Result<(), String> {
         cc_links: None,
         has_toolchain: false,
     })?;
-    let output = run_route(&sandbox, "release")?;
+    let output = run_route(&sandbox, Target("release"))?;
     if !output.status.success() {
         return Err(format!(
             "`make release` failed: {}",
@@ -359,12 +376,10 @@ fn a_tool_is_found_through_any_symlink_that_reaches_a_file(
 fn a_tool_lookup_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(), String> {
     let sandbox = Sandbox::new()?;
     sandbox.link("bin/loop", "loop")?;
-    if is_tool(&sandbox.root().join("bin"), "missing")? {
-        return Err("a missing tool was reported as present".to_owned());
-    }
-    match is_tool(&sandbox.root().join("bin/loop"), "mold") {
-        Ok(found) => Err(format!("a looping directory lookup said {found}")),
-        Err(reason) if reason.contains("bin/loop") => Ok(()),
-        Err(reason) => Err(format!("the error does not name the path: {reason}")),
-    }
+    let bin = sandbox.root().join("bin");
+    expect_only_absence_reads_as_missing(
+        "bin/loop",
+        is_tool(&bin, "missing")?,
+        is_tool(&bin.join("loop"), "mold"),
+    )
 }
