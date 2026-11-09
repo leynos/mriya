@@ -2,6 +2,8 @@
 //! trusts, the toolchain and components it requests, and the host it skips the linker on. The sandbox
 //! turns each of those into a file the case can read back.
 
+use rstest::rstest;
+
 use super::{
     build_tools_scripts::expect_actionable_failure,
     config::Pin,
@@ -9,18 +11,30 @@ use super::{
         Digest, SHA256SUMS, archive_name, installed_linker, published, run_installer,
         run_installer_with_toolchain, rustup_calls,
     },
-    pins::{TOOLCHAIN, pinned_linker},
+    pins::{TOOLCHAIN, pinned_channel, pinned_components, pinned_linker},
 };
 
 #[cfg(target_os = "linux")]
 use super::installer::run_installer_with_repository_checksums;
-#[cfg(target_os = "linux")]
-use super::pins::pinned_channel;
+
+/// Returns the one `rustup` request the installer must make for the pinned toolchain.
+fn expected_toolchain_request() -> Result<String, String> {
+    let components: Vec<String> = pinned_components(TOOLCHAIN)?
+        .into_iter()
+        .map(|component| format!("--component {component}"))
+        .collect();
+    Ok(format!(
+        "toolchain install {} --profile minimal {}",
+        pinned_channel(TOOLCHAIN)?,
+        components.join(" ")
+    ))
+}
 
 /// Scenario: the installer on a host that is not Linux.
 ///
-/// Invariant: it installs the toolchain and skips the linker, even when the published checksum is
-/// tampered, because no linker is downloaded at all.
+/// Invariant: it requests the pinned toolchain with every component `rust-toolchain.toml` lists and
+/// skips the linker, even when the published checksum is tampered, because no linker is downloaded
+/// at all.
 #[test]
 fn the_installer_skips_the_linker_on_a_non_linux_host() -> Result<(), String> {
     let sandbox = published(Digest::Tampered)?;
@@ -35,10 +49,15 @@ fn the_installer_skips_the_linker_on_a_non_linux_host() -> Result<(), String> {
     if installed_linker(&sandbox)? {
         return Err("a non-Linux host unpacked a mold linker".to_owned());
     }
-    if rustup_calls(&sandbox)?.is_none() {
-        return Err("a non-Linux host skipped the toolchain too".to_owned());
+    let calls = rustup_calls(&sandbox)?.unwrap_or_default();
+    let expected = expected_toolchain_request()?;
+    if calls.trim() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "a non-Linux host asked rustup `{calls}`, expected `{expected}`"
+        ))
     }
-    Ok(())
 }
 
 /// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
@@ -62,11 +81,7 @@ fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() 
         return Err("the archive was not unpacked into the prefix".to_owned());
     }
     let calls = rustup_calls(&sandbox)?.unwrap_or_default();
-    let expected = format!(
-        "toolchain install {} --profile minimal \
-         --component rustfmt --component clippy --component rust-analyzer",
-        pinned_channel(TOOLCHAIN)?
-    );
+    let expected = expected_toolchain_request()?;
     if calls.trim() == expected {
         Ok(())
     } else {
@@ -169,18 +184,47 @@ fn the_installer_leaves_a_linker_already_at_the_pin_alone() -> Result<(), String
 /// Invariant: `rust-analyzer` joins `rustfmt` and `clippy`, and the pin stays a dated nightly.
 #[test]
 fn the_toolchain_file_lists_language_server_beside_rustfmt_and_clippy() -> Result<(), String> {
-    let components = TOOLCHAIN
-        .lines()
-        .find(|line| line.trim_start().starts_with("components"))
-        .ok_or("rust-toolchain.toml has no components line")?;
+    let components = pinned_components(TOOLCHAIN)?;
     for name in ["rustfmt", "clippy", "rust-analyzer"] {
-        if !components.contains(&format!("\"{name}\"")) {
-            return Err(format!("{name} is missing from `{components}`"));
+        if !components.contains(&name) {
+            return Err(format!("{name} is missing from {components:?}"));
         }
     }
     match Pin::read(TOOLCHAIN) {
         Ok(Pin::Nightly) => Ok(()),
         Ok(other) => Err(format!("the pin is {other:?}, not a dated nightly")),
         Err(reason) => Err(reason),
+    }
+}
+
+/// Scenario: the component list a toolchain file declares.
+///
+/// Invariant: a bracketed list of quoted names is read in order, with or without a comment or a
+/// trailing comma, while a missing, repeated, unquoted or empty declaration is an error rather than
+/// an empty list, so the installer contract never asserts against components that were dropped.
+#[rstest]
+#[case::listed(
+    "[toolchain]\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+    Some(&["rustfmt", "clippy"][..])
+)]
+#[case::commented_and_trailing(
+    "[toolchain]\ncomponents = [\"rustfmt\",] # pinned\n",
+    Some(&["rustfmt"][..])
+)]
+#[case::another_table("[dependencies]\ncomponents = [\"x\"]\n", None)]
+#[case::missing("[toolchain]\nchannel = \"nightly\"\n", None)]
+#[case::repeated("[toolchain]\ncomponents = [\"a\"]\ncomponents = [\"b\"]\n", None)]
+#[case::unquoted("[toolchain]\ncomponents = [rustfmt]\n", None)]
+#[case::empty("[toolchain]\ncomponents = []\n", None)]
+fn the_component_list_is_read_or_refused(
+    #[case] toolchain: &str,
+    #[case] expected: Option<&[&str]>,
+) -> Result<(), String> {
+    match (pinned_components(toolchain), expected) {
+        (Ok(found), Some(wanted)) if found == wanted => Ok(()),
+        (Err(_), None) => Ok(()),
+        (found, wanted) => Err(format!(
+            "for `{toolchain}` the reader said {found:?}, expected {wanted:?}"
+        )),
     }
 }

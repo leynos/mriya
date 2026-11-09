@@ -75,3 +75,44 @@ jobs:
           use-cargo-nextest: 'true'
           with-ratchet: 'true'
           publish-artefact: 'false'
+
+  install-build-tools:
+    # The suite job above gets its `mold` from setup-rust, so its `make
+    # install-build-tools` finds the pin already on PATH and returns early: the
+    # download, checksum check and unpack never run there. This job is the
+    # counterweight. It installs nothing beforehand — the runner's own `rustup`
+    # is all it starts with — so the installer really downloads the pinned
+    # linker, verifies it against the committed checksums and installs the
+    # pinned toolchain, and the preflight then accepts what it produced.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      # A path no earlier step writes to, so only this run's installer can
+      # satisfy the preflight below.
+      BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+      - name: Prove no linker is on PATH yet
+        run: |
+          if command -v mold >/dev/null 2>&1; then
+            echo 'the pinned linker is already on PATH, so the install would skip it' >&2
+            exit 1
+          fi
+      - name: Install the pinned build tools into a fresh prefix
+        run: |
+          set -o pipefail
+          make install-build-tools 2>&1 | tee build-tools-install.log
+          pin=$(tr -d '[:space:]' < tools/mold/VERSION)
+          grep -qE "^build-tools: downloading https://[^ ]+/v${pin}/[^ ]+\.tar\.gz$" build-tools-install.log
+          grep -qE "^build-tools: verified [^ ]+\.tar\.gz against [^ ]+/SHA256SUMS$" build-tools-install.log
+          grep -q "^build-tools: installed mold linker ${pin} into " build-tools-install.log
+          grep -q "^build-tools: installing toolchain " build-tools-install.log
+          test -x "$BUILD_TOOLS_PREFIX/bin/mold"
+          test -e "$BUILD_TOOLS_PREFIX/bin/ld.mold"
+          test "$("$BUILD_TOOLS_PREFIX/bin/mold" --version | awk 'NR == 1 { print $2 }')" = "$pin"
+      - name: Check the installed prefix satisfies the preflight
+        run: make check-build-tools

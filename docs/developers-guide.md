@@ -265,9 +265,13 @@ before anything else is installed.
 Installed tooling need not be active in every job. The coverage build never
 links with `mold`, but the suite it runs starts Cargo, so every Linux job that
 runs the suite runs `make install-build-tools` in its own step, with no `if:`
-and no `continue-on-error`, before the suite. CI installs `mold` through
-`setup-rust` as well; the installer sees the pinned version and does not
-download it again.
+and no `continue-on-error`, before the suite. Those jobs get `mold` from
+`setup-rust` first, so their install sees the pinned version and returns early.
+The `install-build-tools` job in `ci.yml` is the end-to-end counterpart: it
+starts with nothing but the runner's own `rustup`, no linker on `PATH` and an
+empty prefix, then asserts that the download, checksum check, unpack and
+toolchain install happened and that `make check-build-tools` accepts what the
+installer produced.
 
 ### The contracts
 

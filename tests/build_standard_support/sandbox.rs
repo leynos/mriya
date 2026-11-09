@@ -35,8 +35,21 @@ enum Entry {
     File,
     /// A link and the path it names, which the lookup still has to judge.
     Link(Utf8PathBuf),
-    /// Anything else: a directory, another file type, or an unreadable link.
+    /// Anything else: a directory or another file type.
     Other,
+}
+
+/// Returns whether a failed read means the path is absent rather than unreadable.
+///
+/// A path below a regular file is `NotADirectory`, which is as absent as a
+/// missing parent for a lookup's purposes. Everything else — a permission
+/// failure, an I/O error, a symlink loop in the parent — says the filesystem
+/// could not answer, which is not the same as answering "no".
+fn is_absence(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
 }
 
 /// Reads one path component and resolves at most one link from it.
@@ -45,59 +58,90 @@ enum Entry {
 /// tools are exactly that: `/usr/bin/env` may be a link into a multicall binary elsewhere, or into
 /// `/etc/alternatives`. So the link is read, not followed, and its target is resolved in the
 /// target's own parent directory.
-fn entry_at(path: &Utf8Path) -> Option<Entry> {
-    let parent = path.parent()?;
-    let file = path.file_name()?;
-    let opened = Dir::open_ambient_dir(parent, ambient_authority()).ok()?;
-    let metadata = opened.symlink_metadata(file).ok()?;
+///
+/// # Errors
+///
+/// Returns the reason, naming the path, when the filesystem fails for any reason other than the
+/// path being absent.
+fn entry_at(path: &Utf8Path) -> Result<Option<Entry>, String> {
+    let (Some(parent), Some(file)) = (path.parent(), path.file_name()) else {
+        return Ok(Some(Entry::Other));
+    };
+    let unreadable = |error: io::Error| format!("reading {path}: {error}");
+    let opened = match Dir::open_ambient_dir(parent, ambient_authority()) {
+        Ok(opened) => opened,
+        Err(error) if is_absence(&error) => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    };
+    let metadata = match opened.symlink_metadata(file) {
+        Ok(metadata) => metadata,
+        Err(error) if is_absence(&error) => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    };
     if metadata.is_file() {
-        return Some(Entry::File);
+        return Ok(Some(Entry::File));
     }
     if !metadata.is_symlink() {
-        return Some(Entry::Other);
+        return Ok(Some(Entry::Other));
     }
-    let target = opened.read_link_contents(file).ok()?;
+    let target = match opened.read_link_contents(file) {
+        Ok(target) => target,
+        Err(error) if is_absence(&error) => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    };
     let resolved = if target.is_absolute() {
         target
     } else {
         parent.join(target)
     };
-    Some(Entry::Link(resolved))
+    Ok(Some(Entry::Link(resolved)))
 }
 
 /// Returns whether `directory/name` is, or links through any chain of symlinks to, a regular file.
 ///
-/// A dangling link, a loop, or a link to a directory is not a tool.
+/// A dangling link, a loop, or a link to a directory is not a tool. A path that
+/// exists but cannot be read is an error, never an absence: a contract that
+/// reported "not a tool" for an unreadable one would pass while proving nothing.
 ///
 /// ```text
-/// is_tool(d, "env") -> true   when d/env -> /usr/lib/cargo/bin/coreutils/env, a regular file
-/// is_tool(d, "gone") -> false when d/gone -> ../nowhere
+/// is_tool(d, "env")  -> Ok(true)   when d/env -> /usr/lib/cargo/bin/coreutils/env, a regular file
+/// is_tool(d, "gone") -> Ok(false)  when d/gone -> ../nowhere
 /// ```
-pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> bool {
+///
+/// # Errors
+///
+/// Returns the reason when a path cannot be read for a reason other than absence.
+pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> Result<bool, String> {
     let mut current = directory.join(name.as_ref());
     for _ in 0..MAX_LINK_DEPTH {
-        match entry_at(&current) {
-            Some(Entry::File) => return true,
+        match entry_at(&current)? {
+            Some(Entry::File) => return Ok(true),
             Some(Entry::Link(target)) => current = target,
-            Some(Entry::Other) | None => return false,
+            Some(Entry::Other) | None => return Ok(false),
         }
     }
-    false
+    Ok(false)
 }
 
 /// Looks a program up on the host's `PATH`.
 ///
 /// # Errors
 ///
-/// Returns the reason when the program is on no `PATH` directory.
+/// Returns the reason when the program is on no `PATH` directory, or when a `PATH` entry cannot be
+/// read for a reason other than absence.
 pub fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
     let program = name.as_ref();
     let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
-    std::env::split_paths(&path)
-        .filter_map(|entry| Utf8PathBuf::try_from(entry).ok())
-        .find(|directory| is_tool(directory, program))
-        .map(|directory| directory.join(program))
-        .ok_or_else(|| format!("`{program}` is not on PATH, so the sandbox cannot link it"))
+    let directories =
+        std::env::split_paths(&path).filter_map(|entry| Utf8PathBuf::try_from(entry).ok());
+    for directory in directories {
+        if is_tool(&directory, program)? {
+            return Ok(directory.join(program));
+        }
+    }
+    Err(format!(
+        "`{program}` is not on PATH, so the sandbox cannot link it"
+    ))
 }
 
 impl Sandbox {

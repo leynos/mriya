@@ -52,6 +52,75 @@ pub fn pinned_channel(toolchain: &str) -> Result<&str, String> {
     }
 }
 
+/// Returns the components `rust-toolchain.toml` lists under `[toolchain]`, in file order.
+///
+/// Cases assert that the installer requested these components, so adding one to
+/// the file extends what the contract checks without editing the cases.
+///
+/// ```text
+/// pinned_components("components = [\"rustfmt\", \"clippy\"]") == Ok(vec!["rustfmt", "clippy"])
+/// ```
+///
+/// # Errors
+///
+/// Returns the reason when no list is declared, one is declared twice, or an entry is not a quoted
+/// name.
+pub fn pinned_components(toolchain: &str) -> Result<Vec<&str>, String> {
+    let mut table = "";
+    let mut found: Option<Vec<&str>> = None;
+    for line in toolchain
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+    {
+        if line.starts_with('[') {
+            table = line.trim_matches(|c| c == '[' || c == ']').trim();
+            continue;
+        }
+        if table != "toolchain" {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "components" {
+            continue;
+        }
+        if found.is_some() {
+            return Err(format!(
+                "`{line}`: the components are declared more than once"
+            ));
+        }
+        let list = value.split('#').next().unwrap_or_default().trim();
+        found = Some(component_list(list).map_err(|reason| format!("`{line}`: {reason}"))?);
+    }
+    match found {
+        Some(components) if !components.is_empty() => Ok(components),
+        _ => Err("rust-toolchain.toml lists no components".to_owned()),
+    }
+}
+
+/// Parses one bracketed list of quoted component names.
+fn component_list(value: &str) -> Result<Vec<&str>, String> {
+    let Some(inner) = value
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return Err("the components are not a bracketed list".to_owned());
+    };
+    inner
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            entry
+                .strip_prefix('"')
+                .and_then(|name| name.strip_suffix('"'))
+                .ok_or_else(|| format!("`{entry}` is not a quoted component name"))
+        })
+        .collect()
+}
+
 /// Returns whether text is a `YYYY-MM-DD` date, which is how a dated nightly names itself. A bare
 /// `nightly` floats, so it is no pin and the reader does not know it.
 ///

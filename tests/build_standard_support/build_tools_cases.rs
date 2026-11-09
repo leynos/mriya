@@ -240,6 +240,32 @@ fn a_non_linux_host_skips_the_linker_checks() -> Result<(), String> {
     Ok(())
 }
 
+/// Scenario: the preflight on a host that is not Linux and has no pinned toolchain either.
+///
+/// Invariant: skipping the linker checks does not skip the toolchain check, so a non-Linux host
+/// fails with the toolchain diagnostic and its remedy while still saying the linker is Linux-only.
+#[test]
+fn a_non_linux_host_still_fails_without_the_pinned_toolchain() -> Result<(), String> {
+    let sandbox = sandbox_with(Toolset {
+        linker: None,
+        cc_links: None,
+        has_toolchain: false,
+    })?;
+    sandbox.pretend_darwin()?;
+    let output = run_preflight(&sandbox)?;
+    expect_actionable_failure(&output, &["is not installed", "make install-build-tools"])?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("Linux-only") {
+        return Err(format!(
+            "the preflight never said the linker is Linux-only: {stderr}"
+        ));
+    }
+    if stderr.contains("mold linker not found") {
+        return Err(format!("the preflight checked the linker anyway: {stderr}"));
+    }
+    Ok(())
+}
+
 /// Scenario: a sandbox read of a path that is absent and one that exists but is not a file.
 ///
 /// Invariant: only a genuinely missing path reads as absent; any other failure is an error naming the
@@ -316,10 +342,29 @@ fn a_tool_is_found_through_any_symlink_that_reaches_a_file(
     tools.link("bin/dangling", "../nowhere")?;
     tools.link("bin/loop", "loop")?;
     tools.link("bin/directory", outside.root().join("subdir").as_str())?;
-    let found = is_tool(&tools.root().join("bin"), name);
+    let found = is_tool(&tools.root().join("bin"), name)?;
     if found == expected {
         Ok(())
     } else {
         Err(format!("is_tool({name}) was {found}, expected {expected}"))
+    }
+}
+
+/// Scenario: a tool lookup below a directory that links to itself, so opening it fails.
+///
+/// Invariant: only a path that is genuinely absent reads as "no tool"; a filesystem that cannot
+/// answer is an error naming the path, so a lookup cannot pass by mistaking an unreadable tool for
+/// one that was never installed.
+#[test]
+fn a_tool_lookup_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(), String> {
+    let sandbox = Sandbox::new()?;
+    sandbox.link("bin/loop", "loop")?;
+    if is_tool(&sandbox.root().join("bin"), "missing")? {
+        return Err("a missing tool was reported as present".to_owned());
+    }
+    match is_tool(&sandbox.root().join("bin/loop"), "mold") {
+        Ok(found) => Err(format!("a looping directory lookup said {found}")),
+        Err(reason) if reason.contains("bin/loop") => Ok(()),
+        Err(reason) => Err(format!("the error does not name the path: {reason}")),
     }
 }
