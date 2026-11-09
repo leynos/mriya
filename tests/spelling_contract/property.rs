@@ -24,10 +24,10 @@ const GENERATED_CASES: u32 = 256;
 /// One whitespace run the masks must absorb.
 ///
 /// The shared base writes `\s*` everywhere it allows spacing, so the generator
-/// draws from a two-character alphabet up to length four rather than from a
-/// handful of literals. That covers runs the table never spells out — newlines,
-/// mixed tabs and spaces, and empty runs — without pretending to enumerate
-/// `\s*` itself.
+/// draws from a three-character alphabet (space, tab, newline) in runs of up to
+/// four characters, rather than from a handful of literals. That covers runs
+/// the table never spells out — newlines, mixed tabs and spaces, and empty runs
+/// — without pretending to enumerate `\s*` itself.
 fn spacing() -> impl Strategy<Value = String> {
     proptest::collection::vec(proptest::sample::select(vec![' ', '\t', '\n']), 0..5)
         .prop_map(String::from_iter)

@@ -188,10 +188,13 @@ fn assert_fixtures(fixtures: &[Fixture]) -> Result<(), String> {
 
 /// Whether the engine's findings for one fixture contradict its outcome.
 ///
-/// An exempted fixture must be completely clean: asserting only that its own
-/// spelling is missing would pass a mask that swallowed the rest of the line
-/// too. A reported fixture must carry that spelling, but other findings in a
-/// deliberately misspelt body are not what the fixture pins.
+/// An exempted fixture must be completely clean. Asserting only that its own
+/// spelling is missing would also pass a mask that had swallowed the fixture's
+/// other words, because that spelling is the only thing asked about either way.
+/// Cleanliness is evidence about this fixture's own text, not proof that no
+/// broader mask exists: the negative fixtures below are what pin the masking
+/// that must *not* happen. A reported fixture must carry its own spelling;
+/// other findings in a deliberately misspelt body are not what it pins.
 fn disagreed(fixture: &Fixture, found: &[String]) -> bool {
     match fixture.outcome {
         Outcome::Clean => !found.is_empty(),
