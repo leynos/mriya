@@ -29,7 +29,7 @@ fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
     )?;
     sandbox.write_tool(
         "fake-whitaker",
-        &format!(
+        format!(
             "echo \"whitaker $*\" >> \"$CARGO_LOG\"; echo \"RUSTFLAGS=$RUSTFLAGS \
              encoded=${{CARGO_ENCODED_RUSTFLAGS-unset}}\" > \"$CARGO_LOG.env\"; exit \
              {whitaker_status}"
