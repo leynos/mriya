@@ -11,7 +11,7 @@ use super::{
     },
     make::{Host, Target},
     process::probe_make,
-    sandbox::{Sandbox, is_tool},
+    sandbox::{LINKER_TOOL, Sandbox, is_tool},
 };
 
 #[cfg(target_os = "linux")]
@@ -380,6 +380,6 @@ fn a_tool_lookup_reports_a_failure_it_cannot_attribute_to_absence() -> Result<()
     expect_only_absence_reads_as_missing(
         "bin/loop",
         is_tool(&bin, "missing")?,
-        is_tool(&bin.join("loop"), "mold"),
+        is_tool(&bin.join("loop"), LINKER_TOOL),
     )
 }

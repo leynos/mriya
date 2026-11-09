@@ -12,7 +12,7 @@ use super::{
         run_installer_with_toolchain, rustup_calls,
     },
     pins::{TOOLCHAIN, pinned_channel, pinned_components, pinned_linker},
-    sandbox::Sandbox,
+    sandbox::{LINKER_TOOL, Sandbox},
 };
 
 #[cfg(target_os = "linux")]
@@ -159,9 +159,9 @@ fn the_installer_stops_before_rustup_when_it_cannot_read_the_components() -> Res
 fn the_installer_leaves_a_linker_already_at_the_pin_alone() -> Result<(), String> {
     let sandbox = published(Digest::Tampered)?;
     sandbox.write_tool(
-        "mold",
+        LINKER_TOOL,
         format!(
-            "echo 'mold {pin} (compatible with GNU ld)'",
+            "echo '{LINKER_TOOL} {pin} (compatible with GNU ld)'",
             pin = pinned_linker()
         ),
     )?;

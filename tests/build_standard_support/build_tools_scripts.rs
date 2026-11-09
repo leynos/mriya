@@ -7,7 +7,7 @@ use std::process::Output;
 
 use super::make::Target;
 use super::pins::{TOOLCHAIN, pinned_channel, pinned_linker};
-use super::sandbox::{CARGO_LOG, Sandbox};
+use super::sandbox::{CARGO_LOG, LINKER_TOOL, Sandbox};
 
 /// Host utilities the scripts and `make` itself use; the sandbox links these and nothing else.
 const UTILITIES: &[&str] = &[
@@ -58,8 +58,8 @@ pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
             Linker::Drifted(version) => version,
         };
         sandbox.write_tool(
-            "mold",
-            format!("echo 'mold {version} (compatible with GNU ld)'"),
+            LINKER_TOOL,
+            format!("echo '{LINKER_TOOL} {version} (compatible with GNU ld)'"),
         )?;
     }
     if let Some(links) = toolset.cc_links {

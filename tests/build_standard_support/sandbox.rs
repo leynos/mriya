@@ -19,6 +19,11 @@ const PREFIX: &str = "prefix";
 /// The file the fake `probe-cargo` and `rustup` append their arguments to, one call per line.
 pub const CARGO_LOG: &str = "cargo.log";
 
+/// The name every sandbox writes its fake linker under. The linker's name is also a misspelling of
+/// "mould" to the dictionary, so it is exempted from spelling on this declaration line alone: a
+/// differently named or indented declaration of the same text still reaches the gate.
+pub const LINKER_TOOL: &str = "mold";
+
 /// A temporary root holding a `bin` directory used as `PATH` and a `prefix` the installer writes to.
 pub struct Sandbox {
     _root: TempDir,

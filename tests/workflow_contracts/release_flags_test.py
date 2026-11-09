@@ -28,8 +28,12 @@ WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 #: The shared action whose steps build the shipped artefact.
 RELEASE_ACTION = "rust-build-release@"
 
+#: The linker's name. The dictionary reads it as a misspelling of ``mould``, so
+#: it is exempted from spelling on this declaration line alone.
+LINKER_NAME = "mold"
+
 #: Words that mark a flag the development standard owns.
-STANDARD_FLAG_MARKERS = ("-Zthreads", "mold", "-fuse-ld")
+STANDARD_FLAG_MARKERS = ("-Zthreads", LINKER_NAME, "-fuse-ld")
 
 #: Lint-cap levels that leave ``-D warnings`` without effect.
 CAPPING_LEVELS = frozenset({"allow", "warn"})
@@ -98,7 +102,7 @@ def _names_marker(tokens: list[str], marker: str) -> bool:
     linker name is a whole word. Matching the joined text would reject an
     unrelated value such as ``--cfg=xmoldx``.
     """
-    if marker == "mold":
+    if marker == LINKER_NAME:
         return marker in tokens
     return any(marker in token for token in tokens)
 

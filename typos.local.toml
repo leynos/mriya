@@ -25,8 +25,7 @@ ignore = [
   '\.contains\("mold"\)',
   # The linker's own command line and output, its release archive names (with a
   # literal version or a format placeholder), the `bin/mold` path inside them,
-  # the `pinned-mold` stand-in a sandbox test writes, and the exact quoted tool
-  # name a script or test passes as an argument.
+  # and the `pinned-mold` stand-in a sandbox test writes.
   '\bcommand -v mold\b',
   '\bmold --version\b',
   '\bmold (?:\{version\}|\{pin\}|\d+\.\d+\.\d+) \(compatible with GNU ld\)',
@@ -34,7 +33,11 @@ ignore = [
   '\bbin/mold\b',
   '\bld\.mold\b',
   '\bpinned-mold\b',
-  '"mold"',
+  # The tool name is declared once per language, and only that exact
+  # declaration is exempt: a differently named or indented declaration of the
+  # same text still reaches the gate, which the spelling contract checks.
+  '(?m)^pub const LINKER_TOOL: &str = "mold";$',
+  '(?m)^LINKER_NAME = "mold"$',
   "\\bCARGO_TERM_COLOR\\b",
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
