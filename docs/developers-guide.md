@@ -89,6 +89,32 @@ together, though, and the builder's pin can move on its own, so check them
 against each other when you bump either. Move the pin in `Cargo.toml` and this
 paragraph together, and only when the builder's pin moves.
 
+## Running Python tools with uv
+
+Every uv route in the Makefile except `spelling` goes through `$(UV_GATE)`,
+which is `python3 scripts/uv_gate.py`. The helper is vendored byte-for-byte from
+`uv_gate/uv_gate.py` in `leynos/shared-actions` (version 0.2.1, commit
+`2ddf19b3fd52c0f1089db0d57b015f859b80ab67`, SHA-256
+`fe7671d8663ec89ce1076ebb857847802e46c8d6607ab1e012daa443e335e66e`). Do not
+edit it: the concordat rule `uv-gate-baseline` compares its digest with the
+canonical ones. To adopt a newer helper, replace the file with the published
+copy once its digest is listed in the rule.
+
+The helper runs uv from a cleaned environment and the global uv cache, offline
+first, with at most one online step when uv proves a cache miss. Consequently
+the Makefile must not set `UV_CACHE_DIR` or `UV_TOOL_DIR`, call `uv run`,
+`uv sync` or `uvx` directly, or pass `--refresh` or `--upgrade`. This
+repository has no `pyproject.toml`, so the helper's `tool` subcommand runs each
+tool at an exact pin: `interrogate==$(INTERROGATE_VERSION)`, pytest and PyYAML
+for the workflow contract tests, and `cv005-contracts` at a full commit. The
+`prepare` and `run` subcommands are unused until the repository gains a
+`pyproject.toml` and `uv.lock`.
+
+`spelling` is the exception. The `spelling-config-baseline` rule requires
+`typos-config-builder` at a release tag, and the helper refuses any Git spec
+that is not a full commit, so that recipe runs `uv tool run` directly. The
+`uv-gate-baseline` rule accepts a release tag for that one tool and no other.
+
 ## Fetching dependencies before tests
 
 The CLI tests build the `mriya` binary with their own `cargo`. Cargo resolves
@@ -140,18 +166,18 @@ running `cv005-contracts check`, the shared contract library in
 `leynos/shared-actions` (`packages/cv005-contracts`), from a full commit named
 by `CV005_CONTRACTS_REF` in the Makefile, and then the mutation-testing pytest
 contract in `tests/workflow_contracts/`. A fix to the rules is therefore a pin
-bump. The target needs `uv`, which fetches the Python 3.13 the library runs
-under. The repository's parameters are in `.github/cv005.toml`: its
-`repository` name and the `[selection]` inputs the baseline measures, which the
-publisher's generator must carry and every pull-request lane must match. The
-library's own suite proves each rule refuses the shape it exists to refuse, so
-this repository keeps no copy of the readers or the refusal cases. It reads
-every workflow strictly (a repeated key is an error) and follows local
-reusable-workflow calls transitively, so a called workflow cannot reach
-CodeScene on a pull request's behalf. For the same reason the release dry run,
-which runs for every pull request, calls the release workflow without
-`secrets: inherit`: the release workflow reads only `GITHUB_TOKEN`, which a
-called workflow receives anyway.
+bump. The target needs `uv`, which it runs through `$(UV_GATE)`, and which
+fetches the Python 3.13 the library runs under. The repository's parameters are
+in `.github/cv005.toml`: its `repository` name and the `[selection]` inputs the
+baseline measures, which the publisher's generator must carry and every
+pull-request lane must match. The library's own suite proves each rule refuses
+the shape it exists to refuse, so this repository keeps no copy of the readers
+or the refusal cases. It reads every workflow strictly (a repeated key is an
+error) and follows local reusable-workflow calls transitively, so a called
+workflow cannot reach CodeScene on a pull request's behalf. For the same reason
+the release dry run, which runs for every pull request, calls the release
+workflow without `secrets: inherit`: the release workflow reads only
+`GITHUB_TOKEN`, which a called workflow receives anyway.
 
 ## Scaleway lifecycle tests
 
