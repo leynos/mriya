@@ -13,6 +13,8 @@
 mod build_tools_cases;
 #[path = "build_standard_support/build_tools_routes.rs"]
 mod build_tools_routes;
+#[path = "build_standard_support/build_tools_routes_cases.rs"]
+mod build_tools_routes_cases;
 #[path = "build_standard_support/build_tools_scripts.rs"]
 mod build_tools_scripts;
 #[path = "build_standard_support/chain_exhaustive.rs"]
@@ -49,6 +51,8 @@ mod policy_cases;
 mod process;
 #[path = "build_standard_support/reader_cases.rs"]
 mod reader_cases;
+#[path = "build_standard_support/repo_copy.rs"]
+mod repo_copy;
 #[path = "build_standard_support/sandbox.rs"]
 mod sandbox;
 #[path = "build_standard_support/shell.rs"]

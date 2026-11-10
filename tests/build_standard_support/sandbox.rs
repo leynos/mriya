@@ -2,7 +2,7 @@
 //! run against exactly the tools a test chooses: a pinned `mold`, a drifted one, none, a compiler that
 //! cannot link with it. Files go through `cap_std`, so the sandbox cannot reach outside its own root.
 
-use std::{io, os::unix::fs::PermissionsExt as _, process::Command};
+use std::{io, process::Command};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
@@ -142,51 +142,6 @@ pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> Result<bool, Stri
     Ok(false)
 }
 
-/// Returns every regular file below `directory`, in a stable order.
-///
-/// # Errors
-///
-/// Returns the reason when the directory or a nested path cannot be read.
-fn walk_files(directory: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
-    let mut files = Vec::new();
-    let mut pending = vec![directory.to_owned()];
-    while let Some(next) = pending.pop() {
-        let entries = std::fs::read_dir(&next)
-            .map_err(|error| format!("reading directory {next}: {error}"))?;
-        for entry in entries {
-            let entry = entry.map_err(|error| format!("reading an entry of {next}: {error}"))?;
-            let path = Utf8PathBuf::from_path_buf(entry.path())
-                .map_err(|path| format!("non-UTF-8 path: {}", path.display()))?;
-            let kind = entry
-                .file_type()
-                .map_err(|error| format!("statting {path}: {error}"))?;
-            if kind.is_dir() {
-                pending.push(path);
-            } else if kind.is_file() {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
-/// Returns the files a copy should take from one source entry: every regular file below a
-/// directory, or the entry itself when it is a file.
-///
-/// The two cases are named because a caller that walked a file would fail, and a caller that
-/// treated a directory as one file would copy nothing.
-///
-/// # Errors
-///
-/// Returns the reason when a directory below the entry cannot be read.
-fn source_files(given: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
-    if given.is_dir() {
-        return walk_files(given);
-    }
-    Ok(vec![given.to_owned()])
-}
-
 /// Looks a program up on the host's `PATH`.
 ///
 /// # Errors
@@ -299,6 +254,18 @@ impl Sandbox {
             .map_err(|error| format!("linking {link_path}: {error}"))
     }
 
+    /// Gives a file under the sandbox's root a mode, so a copied script stays executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the file cannot be reached or its mode cannot be set.
+    pub fn set_mode(&self, relative: impl AsRef<str>, mode: u32) -> Result<(), String> {
+        let path = relative.as_ref();
+        self.dir
+            .set_permissions(path, Permissions::from_mode(mode))
+            .map_err(|error| format!("giving {path} mode {mode:o}: {error}"))
+    }
+
     /// Writes a plain file under the sandbox's root.
     ///
     /// # Errors
@@ -309,6 +276,32 @@ impl Sandbox {
         self.dir
             .write(path, contents)
             .map_err(|error| format!("writing {path}: {error}"))
+    }
+
+    /// Rewrites a file under the sandbox's root, reporting whether the rewrite changed it.
+    ///
+    /// A no-op rewrite is almost always a case whose search text has drifted from
+    /// the script, so it is reported rather than written, letting the caller fail
+    /// with the reason instead of a silently unchanged fixture.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the file cannot be read or written.
+    pub fn rewrite_file(
+        &self,
+        relative: impl AsRef<str>,
+        rewrite: impl FnOnce(&str) -> String,
+    ) -> Result<bool, String> {
+        let path = relative.as_ref();
+        let Some(before) = self.read(path)? else {
+            return Err(format!("no {path} to rewrite"));
+        };
+        let after = rewrite(&before);
+        if after == before {
+            return Ok(false);
+        }
+        self.write_file(path, after.as_bytes())?;
+        Ok(true)
     }
 
     /// Reads a file under the sandbox's root, or `None` when it does not exist.
@@ -354,48 +347,6 @@ impl Sandbox {
         let real = find_on_path("uname")?;
         let body = format!("if [ \"${{1-}}\" = '-s' ]; then exit 1; else exec '{real}' \"$@\"; fi");
         self.write_tool("uname", body)
-    }
-
-    /// Copies the repository's `scripts/`, the pins they read, and `rust-toolchain.toml` into the
-    /// sandbox root, returning the copied directory's absolute path.
-    ///
-    /// A script locates the repository from its own directory, so a copy under the sandbox makes
-    /// that root the repository: the pin files resolve inside the sandbox, and a case may rewrite a
-    /// copy to prove something about the script's text without touching the tree under review.
-    ///
-    /// # Errors
-    ///
-    /// Returns the reason when a file cannot be read, written, or given its mode.
-    pub fn copy_scripts(&self) -> Result<Utf8PathBuf, String> {
-        let source = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
-        for relative in ["scripts", "tools/mold", "rust-toolchain.toml"] {
-            for entry in source_files(&source.join(relative))? {
-                self.copy_file(source, &entry)?;
-            }
-        }
-        Ok(self.root_path.join("scripts"))
-    }
-
-    /// Copies one file into the sandbox at its path relative to `source`, keeping its mode.
-    ///
-    /// The mode matters because a script copied without its executable bit cannot be
-    /// run, which would look like a failing script rather than a broken fixture.
-    fn copy_file(&self, source: &Utf8Path, entry: &Utf8Path) -> Result<(), String> {
-        let inside = entry
-            .strip_prefix(source)
-            .map_err(|error| format!("locating {entry}: {error}"))?;
-        let contents = std::fs::read(entry).map_err(|error| format!("reading {entry}: {error}"))?;
-        let mode = std::fs::metadata(entry)
-            .map_err(|error| format!("statting {entry}: {error}"))?
-            .permissions()
-            .mode();
-        if let Some(parent) = inside.parent() {
-            self.make_dir(parent)?;
-        }
-        self.write_file(inside, &contents)?;
-        self.dir
-            .set_permissions(inside, Permissions::from_mode(mode))
-            .map_err(|error| format!("copying the mode of {entry}: {error}"))
     }
 
     /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,

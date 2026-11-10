@@ -2,6 +2,7 @@
 //! accept and refuse, the preflight against each tool a developer may lack, and the real Make routes
 //! run with a missing or complete toolset. Case names are distinct, so a run can list and count them.
 
+use camino::Utf8Path;
 use rstest::rstest;
 
 use super::{
@@ -12,6 +13,7 @@ use super::{
     },
     make::{Host, Target},
     process::probe_make,
+    repo_copy,
     sandbox::{LINKER_TOOL, Sandbox, is_tool},
 };
 
@@ -131,107 +133,16 @@ fn the_preflight_reports_each_gap_with_its_remedy(
 #[test]
 fn the_driver_check_fails_when_the_flag_never_reaches_the_compiler() -> Result<(), String> {
     let sandbox = sandbox_with(Toolset::COMPLETE)?;
-    let preflight = sandbox.copy_scripts()?.join("check-build-tools.sh");
-    let script = std::fs::read_to_string(&preflight)
-        .map_err(|error| format!("reading the preflight copy: {error}"))?;
-    let without_flag = script.replace(" -fuse-ld=mold -o ", " -o ");
-    if without_flag == script {
+    let source = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
+    let preflight = repo_copy::copy_into(&sandbox, source)?.join("check-build-tools.sh");
+    let without_flag = sandbox.rewrite_file("scripts/check-build-tools.sh", |script| {
+        script.replace(" -fuse-ld=mold -o ", " -o ")
+    })?;
+    if !without_flag {
         return Err("the preflight no longer passes -fuse-ld=mold".to_owned());
     }
-    std::fs::write(&preflight, without_flag)
-        .map_err(|error| format!("rewriting the preflight copy: {error}"))?;
     let output = run_preflight_script(&sandbox, &preflight)?;
     expect_actionable_failure(&output, &["cannot link with -fuse-ld=mold"])
-}
-
-/// Scenario: a development route run for real, with and without the tools it needs.
-///
-/// Invariant: with a missing `mold` the route fails and the fake Cargo is never started, so there is no
-/// silent fallback to another linker; with a complete toolset the route reaches Cargo.
-#[cfg(target_os = "linux")]
-#[rstest]
-#[case::make_build(Target("build"))]
-#[case::make_test(Target("test"))]
-#[case::make_lint(Target("lint"))]
-#[case::make_typecheck(Target("typecheck"))]
-#[case::make_scaleway_test(Target("scaleway-test"))]
-#[case::make_scaleway_janitor(Target("scaleway-janitor"))]
-fn a_missing_tool_stops_every_development_route_before_cargo(
-    #[case] route: Target<'static>,
-) -> Result<(), String> {
-    let sandbox = sandbox_with(Toolset {
-        linker: None,
-        ..Toolset::COMPLETE
-    })?;
-    let output = run_route(&sandbox, route)?;
-    expect_actionable_failure(
-        &output,
-        &["mold linker not found", "make install-build-tools"],
-    )?;
-    let calls = cargo_calls(&sandbox)?;
-    if calls.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "`make {route}` ran Cargo past a failed preflight: {calls:?}"
-        ))
-    }
-}
-
-#[rstest]
-#[case::make_build(Target("build"))]
-#[case::make_test(Target("test"))]
-#[case::make_typecheck(Target("typecheck"))]
-#[case::make_scaleway_janitor(Target("scaleway-janitor"))]
-fn a_complete_toolset_lets_a_development_route_reach_cargo(
-    #[case] route: Target<'static>,
-) -> Result<(), String> {
-    let sandbox = sandbox_with(Toolset::COMPLETE)?;
-    let output = run_route(&sandbox, route)?;
-    if !output.status.success() {
-        return Err(format!(
-            "`make {route}` failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if cargo_calls(&sandbox)?.is_empty() {
-        return Err(format!("`make {route}` succeeded without running Cargo"));
-    }
-    Ok(())
-}
-
-/// Scenario: a route whose inherited `PATH` resolves a drifted `mold` before the installed prefix.
-///
-/// Invariant: the Makefile's prefix outranks the inherited `PATH`, so the route uses the pinned
-/// release the installer unpacked rather than a distribution one earlier in the caller's `PATH`.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_development_route_prefers_the_installed_prefix_over_the_inherited_path() -> Result<(), String>
-{
-    let sandbox = sandbox_with(Toolset {
-        linker: Some(Linker::Drifted("0.0.0")),
-        ..Toolset::COMPLETE
-    })?;
-    sandbox.write_tool(
-        "pinned-mold",
-        format!(
-            "echo 'mold {pin} (compatible with GNU ld)'",
-            pin = pinned_linker()
-        ),
-    )?;
-    sandbox.make_dir("prefix/bin")?;
-    sandbox.link("prefix/bin/mold", "../../bin/pinned-mold")?;
-    let output = run_route(&sandbox, Target("test"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "`make test` failed although the prefix holds the pinned release: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if cargo_calls(&sandbox)?.is_empty() {
-        return Err("`make test` succeeded without running Cargo".to_owned());
-    }
-    Ok(())
 }
 
 /// Scenario: the preflight on a host that is not Linux.
