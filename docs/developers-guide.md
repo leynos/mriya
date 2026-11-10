@@ -359,14 +359,14 @@ Scope: a dev-profile build with `-Zcodegen-backend=cranelift` on
 x86-64 Linux with the standard's `-Zthreads=8` and `mold` flags. The pin has
 since moved, and nothing has re-measured the backend on the current one, so
 read this as a statement about the toolchain named, not about today's pin.
-Other platforms are unmeasured. The
-failure is in unwinding: a panic compiled by Cranelift does not find its
-handler, so `catch_unwind`, `resume_unwind`, `Drop` on unwind, and a panic on a
-spawned thread fail, and the last aborts the process with
-`failed to initiate panic, error 5`. `#[should_panic]` still passes, because
-libtest's outermost handler catches the panic, so a probe limited to it reads
-as a pass. A dependency-free probe crate shows the same failures without `mold`
-and without `-Zthreads=8`, so the backend alone causes them.
+Other platforms are unmeasured. The failure is in unwinding: a panic compiled
+by Cranelift does not find its handler, so `catch_unwind`, `resume_unwind`,
+`Drop` on unwind, and a panic on a spawned thread fail, and the last aborts the
+process with `failed to initiate panic, error 5`. `#[should_panic]` still
+passes, because libtest's outermost handler catches the panic, so a probe
+limited to it reads as a pass. A dependency-free probe crate shows the same
+failures without `mold` and without `-Zthreads=8`, so the backend alone causes
+them.
 
 Four tests fail, all through `rstest_bdd::skip!`, which unwinds:
 `scenario_provision_and_destroy`, `scenario_reject_unknown_image` and
