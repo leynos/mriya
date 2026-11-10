@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted on 8 October 2026. Development, test, lint and typecheck builds use
-the parallel `rustc` frontend (`-Zthreads=8`) and, on Linux, the `mold` linker,
-while coverage and release builds stay off the fast flags.
+Accepted on 8 October 2026, amended on 7 November 2026. Development, test, lint
+and typecheck builds use the parallel `rustc` frontend (`-Zthreads=8`) and, on
+Linux, the `mold` linker, while coverage and release builds stay off the fast
+flags.
 
 ## Date
 
@@ -70,3 +71,26 @@ development build footprint joins the standard: `[profile.dev]` sets
 `incremental = false` and `debug = 0`, and `.cargo/config.toml` sets
 `[unstable] embed-metadata = false`. Debugging needs
 `CARGO_PROFILE_DEV_DEBUG=true`.
+
+## Addendum (2026-11-07)
+
+The standard gained a preflight and an explicit release exclusion. `build`,
+`test`, `lint`, `typecheck` and the Scaleway targets depend on
+`check-build-tools`, which stops with an installation hint when `mold`, a C
+compiler that accepts `-fuse-ld=mold` (GCC 12.1 or newer, or clang), or the
+pinned toolchain is missing, and never falls back to another linker.
+`make install-build-tools` installs the checksum-verified `mold` pinned in
+`tools/mold` and the pinned toolchain with `rustfmt`, `clippy` and
+`rust-analyzer`. Every Linux job that runs the suite, including the coverage
+job whose own build never links with `mold`, runs that installer first and
+unconditionally. The release workflow passes `rustflags: '-D warnings'` to the
+shared release action, so the exclusion no longer rests on the action's default.
+
+Cranelift remains an exception, now measured on the current pin rather than
+argued from the earlier one. On that pin it cannot unwind: a panic compiled by
+Cranelift does not find its handler, and the four tests that use
+`rstest_bdd::skip!` fail. The developers' guide records the scope and the
+reproduction command. The exception needs maintainer approval. Reassess it when
+the toolchain or those tests change; the `rstest-bdd` 0.6 migration is a likely
+moment, because it may change `skip!`. The result is a measurement to take, not
+one to assume.

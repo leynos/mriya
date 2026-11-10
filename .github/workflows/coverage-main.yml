@@ -55,6 +55,13 @@ jobs:
         with:
           install-mold: 'true'
           expect-cache: any
+      - name: Install build tools
+        # `check-build-tools` gates the development routes, and the suite
+        # starts Cargo, so every job that runs it installs the pinned `mold` and
+        # toolchain first, unconditionally. A coverage build never links with
+        # `mold`, but the install is not skipped on that account.
+        # tests/workflow_contracts/suite_lane_install_test.py holds the rule.
+        run: make install-build-tools
       # The selection is the baseline every pull request's ratchet is measured
       # against, so ci.yml's must match it field for field.
       - name: Fetch dependencies

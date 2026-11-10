@@ -1,11 +1,10 @@
-//! Readers for the Cargo configuration half of the build standard: the
-//! toolchain pin, the flag lists, and the `rustflags` sources in
-//! `.cargo/config.toml`. Everything is read as text, so the contract needs no
-//! parser dependency.
+//! Readers for the flag half of the build standard: the flag lists and the `rustflags` sources in
+//! `.cargo/config.toml`. Everything is read as text, so the contract needs no parser dependency. The
+//! pins these readers are compared against live in the `pins` module.
+
+use super::pins::{is_date, pinned_channel};
 
 pub const CONFIG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.cargo/config.toml"));
-pub const TOOLCHAIN: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/rust-toolchain.toml"));
 
 /// The parallel-frontend flag every `rustflags` source carries on a nightly
 /// pin.
@@ -41,24 +40,7 @@ impl Pin {
     ///
     /// Returns the reason when the channel is missing, repeated or unsupported.
     pub fn read(toolchain: &str) -> Result<Self, String> {
-        let declarations = toolchain_channels(toolchain);
-        if let Some(reason) = declarations
-            .iter()
-            .find_map(|declaration| declaration.as_ref().err())
-        {
-            return Err(reason.clone());
-        }
-        let channels: Vec<&str> = declarations
-            .iter()
-            .filter_map(|declaration| declaration.as_ref().ok().copied())
-            .collect();
-        match channels.as_slice() {
-            [] => Err("rust-toolchain.toml names no channel".to_owned()),
-            [channel] => Self::classify(channel),
-            _ => Err(format!(
-                "rust-toolchain.toml names more than one channel: {channels:?}"
-            )),
-        }
+        Self::classify(pinned_channel(toolchain)?)
     }
 
     /// Classifies one channel name.
@@ -83,74 +65,6 @@ impl Pin {
     pub const fn takes_threads(self) -> bool {
         matches!(self, Self::Nightly)
     }
-}
-
-/// Returns whether text is a `YYYY-MM-DD` date, which is how a dated nightly names itself. A bare
-/// `nightly` floats, so it is no pin and the reader does not know it.
-///
-/// ```text
-/// is_date("2026-05-28") == true
-/// is_date("preview")    == false
-/// is_date("2026-5-28")  == false
-/// ```
-fn is_date(text: &str) -> bool {
-    let widths: Vec<usize> = text.split('-').map(str::len).collect();
-    widths == [4, 2, 2] && text.chars().all(|c| c.is_ascii_digit() || c == '-')
-}
-
-/// Returns the quoted value of a `channel = "..."` line, if the line is one.
-///
-/// A `channel` key whose value is not a closed quoted string, or that carries
-/// anything but a comment after the closing quote, is a malformed declaration
-/// and an error: skipping it would let `channel = nightly` beside a valid
-/// `channel = "stable"` read as one stable pin.
-///
-/// ```text
-/// channel = "stable"            -> Some(Ok("stable"))
-/// channel = "stable" # pinned   -> Some(Ok("stable"))
-/// channel = nightly             -> Some(Err(..))
-/// channel = "stable             -> Some(Err(..))
-/// channel = "stable" junk       -> Some(Err(..))
-/// channel_x = "stable"          -> None
-/// ```
-fn channel_declaration(line: &str) -> Option<Result<&str, String>> {
-    let (key, value) = line.split_once('=')?;
-    if key.trim() != "channel" {
-        return None;
-    }
-    let Some(rest) = value.trim().strip_prefix('"') else {
-        return Some(Err(format!("`{line}`: the channel is not a quoted string")));
-    };
-    let Some((name, after)) = rest.split_once('"') else {
-        return Some(Err(format!("`{line}`: the channel has no closing quote")));
-    };
-    let trailing = after.trim();
-    if trailing.is_empty() || trailing.starts_with('#') {
-        Some(Ok(name))
-    } else {
-        Some(Err(format!(
-            "`{line}`: unexpected content after the channel"
-        )))
-    }
-}
-
-/// Returns every `channel` declaration under `[toolchain]`, skipping comments, so a
-/// lookalike key, a commented line or a key in another table is not counted.
-fn toolchain_channels(toolchain: &str) -> Vec<Result<&str, String>> {
-    let mut table = "";
-    let mut found = Vec::new();
-    for line in toolchain
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-    {
-        if line.starts_with('[') {
-            table = line.trim_matches(|c| c == '[' || c == ']').trim();
-        } else if table == "toolchain" {
-            found.extend(channel_declaration(line));
-        }
-    }
-    found
 }
 
 /// A list of compiler flags, with `-C value` pairs joined into `-Cvalue` so

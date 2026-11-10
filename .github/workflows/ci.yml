@@ -22,6 +22,13 @@ jobs:
         with:
           install-mold: 'true'
           expect-cache: any
+      - name: Install build tools
+        # `check-build-tools` gates the development routes, and the suite
+        # starts Cargo, so every job that runs it installs the pinned `mold` and
+        # toolchain first, unconditionally. A coverage build never links with
+        # `mold`, but the install is not skipped on that account.
+        # tests/workflow_contracts/suite_lane_install_test.py holds the rule.
+        run: make install-build-tools
       - name: Install mdtablefix
         # `make check-fmt` runs `mdtablefix --check --git`; 0.6.0 is the
         # first release with `--check` and `--git`.
@@ -68,3 +75,52 @@ jobs:
           use-cargo-nextest: 'true'
           with-ratchet: 'true'
           publish-artefact: 'false'
+
+  install-build-tools:
+    # The suite job above gets its `mold` from setup-rust, so its `make
+    # install-build-tools` finds the pin already on PATH and returns early: the
+    # download, checksum check and unpack never run there. This job is the
+    # counterweight. It installs nothing beforehand — the runner's own `rustup`
+    # is all it starts with — so the installer really downloads the pinned
+    # linker, verifies it against the committed checksums and installs the
+    # pinned toolchain, and the preflight then accepts what it produced.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          # This job never pushes, so the checkout token is not needed in the
+          # clone's config; zizmor reports the default as `artipacked`.
+          persist-credentials: false
+      - name: Prove no linker is on PATH yet
+        run: |
+          if command -v mold >/dev/null 2>&1; then
+            echo 'the pinned linker is already on PATH, so the install would skip it' >&2
+            exit 1
+          fi
+      - name: Install the pinned build tools into a fresh prefix
+        # The runner context is unavailable to a job-level `env`, so the prefix
+        # is set on each step that needs it. It is a path no earlier step
+        # writes to, so only this run's installer can satisfy the preflight
+        # below.
+        env:
+          BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
+        run: |
+          set -o pipefail
+          make install-build-tools 2>&1 | tee build-tools-install.log
+          pin=$(tr -d '[:space:]' < tools/mold/VERSION)
+          grep -qE "^build-tools: downloading https://[^ ]+/v${pin}/[^ ]+\.tar\.gz$" build-tools-install.log
+          grep -qE "^build-tools: verified [^ ]+\.tar\.gz against [^ ]+/SHA256SUMS$" build-tools-install.log
+          grep -q "^build-tools: installed mold linker ${pin} into " build-tools-install.log
+          grep -q "^build-tools: installing toolchain " build-tools-install.log
+          test -x "$BUILD_TOOLS_PREFIX/bin/mold"
+          test -e "$BUILD_TOOLS_PREFIX/bin/ld.mold"
+          test "$("$BUILD_TOOLS_PREFIX/bin/mold" --version | awk 'NR == 1 { print $2 }')" = "$pin"
+      - name: Check the installed prefix satisfies the preflight
+        env:
+          BUILD_TOOLS_PREFIX: ${{ runner.temp }}/build-tools
+        run: make check-build-tools

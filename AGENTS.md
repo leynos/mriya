@@ -145,6 +145,17 @@ project:
     `cargo binstall cargo-nextest`). Use `make fmt`
     (`cargo fmt --workspace`) to apply formatting fixes reported by the
     formatter check.
+- The development build standard (the parallel `rustc` frontend and, on Linux,
+  the `mold` linker) reaches a build three separate ways; keep them distinct.
+  Bare Cargo reads `.cargo/config.toml`. The Makefile restates the same flags
+  in every recipe that assigns `RUSTFLAGS`, because an assigned value displaces
+  the file. The explicit non-development routes (`make release`, the coverage
+  step, and the Whitaker command in `make lint`) assign `RUSTFLAGS` without
+  them on purpose. `build`, `test`, `lint`, and `typecheck` run
+  `check-build-tools` first and stop with an installation hint when `mold` is
+  missing; `make install-build-tools` installs the pinned `mold` and toolchain.
+  Cranelift is a recorded exception pending maintainer approval; see
+  `docs/developers-guide.md`.
 - Clippy warnings MUST be disallowed.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.

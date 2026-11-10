@@ -23,6 +23,23 @@ ignore = [
   '\binstall-mold\b',
   '-fuse-ld=mold\b',
   '\.contains\("mold"\)',
+  # The linker's own command line and output, its release archive names (with a
+  # literal version or a format placeholder), the `bin/mold` path inside them,
+  # and the `pinned-mold` stand-in a sandbox test writes.
+  '\bcommand -v mold\b',
+  '\bmold --version\b',
+  '\bmold (?:\{version\}|\{pin\}|\d+\.\d+\.\d+) \(compatible with GNU ld\)',
+  '\bmold-(?:\d|\$version|\{VERSION\}|\{\}|<version>)',
+  '\bbin/mold\b',
+  '\bld\.mold\b',
+  '\bpinned-mold\b',
+  # The tool name is declared once per language, and only that exact
+  # declaration is exempt: a differently named or indented declaration of the
+  # same text still reaches the gate, which the spelling contract checks. The
+  # `\r?` keeps the anchor exact while tolerating a checkout whose line endings
+  # are CRLF, as the declaration patterns below do.
+  '(?m)^pub const LINKER_TOOL: &str = "mold";\r?$',
+  '(?m)^LINKER_NAME = "mold"\r?$',
   "\\bCARGO_TERM_COLOR\\b",
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",

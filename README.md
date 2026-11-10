@@ -52,6 +52,8 @@ For configuration, credentials, and detailed usage:
 
 - [User guide](docs/users-guide.md) – Credentials, sync behaviour, and backend
   guarantees.
+- [Migrating to 0.2.0](docs/migration-0.2.0.md) – Install the pinned build
+  tools and put the prefix on `PATH`.
 - [Roadmap](docs/roadmap.md) – Phased development plan.
 
 ## Requirements

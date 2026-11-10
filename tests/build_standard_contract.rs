@@ -9,6 +9,14 @@
 //! listed `setup-rust` step passes `install-mold`. Fixtures come first, so no
 //! rule passes by detecting nothing.
 
+#[path = "build_standard_support/build_tools_cases.rs"]
+mod build_tools_cases;
+#[path = "build_standard_support/build_tools_routes.rs"]
+mod build_tools_routes;
+#[path = "build_standard_support/build_tools_routes_cases.rs"]
+mod build_tools_routes_cases;
+#[path = "build_standard_support/build_tools_scripts.rs"]
+mod build_tools_scripts;
 #[path = "build_standard_support/chain_exhaustive.rs"]
 mod chain_exhaustive;
 #[path = "build_standard_support/ci_steps.rs"]
@@ -29,22 +37,33 @@ mod fixtures;
 mod injected;
 #[path = "build_standard_support/injected_held_out.rs"]
 mod injected_held_out;
+#[path = "build_standard_support/installer.rs"]
+mod installer;
+#[path = "build_standard_support/installer_cases.rs"]
+mod installer_cases;
 #[path = "build_standard_support/make.rs"]
 mod make;
+#[path = "build_standard_support/pins.rs"]
+mod pins;
 #[path = "build_standard_support/policy_cases.rs"]
 mod policy_cases;
 #[path = "build_standard_support/process.rs"]
 mod process;
 #[path = "build_standard_support/reader_cases.rs"]
 mod reader_cases;
+#[path = "build_standard_support/repo_copy.rs"]
+mod repo_copy;
+#[path = "build_standard_support/sandbox.rs"]
+mod sandbox;
 #[path = "build_standard_support/shell.rs"]
 mod shell;
 #[path = "build_standard_support/workflow_exhaustive.rs"]
 mod workflow_exhaustive;
 use ci_steps::workflow_problems;
-use config::{CONFIG, Pin, Problems, TOOLCHAIN, config_problems};
+use config::{CONFIG, Pin, Problems, config_problems};
 use development::development_problems;
 use make::{Host, held_out_problems, held_out_target_count};
+use pins::TOOLCHAIN;
 use process::real_make;
 
 /// Turns a list of complaints into a test result.

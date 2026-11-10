@@ -1,5 +1,6 @@
 .PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie \
-	typecheck scaleway-test scaleway-janitor test-workflow-contracts spelling
+	typecheck scaleway-test scaleway-janitor test-workflow-contracts spelling \
+	install-build-tools check-build-tools
 
 
 TARGET ?= mriya
@@ -40,13 +41,34 @@ TYPOS_CONFIG_BUILDER = $(UV_ENV) $(UV) tool run --python 3.14 --from \
 	typos-config-builder
 
 # The development build standard (concordat rule `rust-build-defaults`):
-# the parallel rustc frontend and, on Linux, the mold linker. An assigned
-# RUSTFLAGS replaces every `rustflags` table in .cargo/config.toml, so each
-# recipe that sets it composes these onto any inherited value (CI's
-# setup-rust exports one), except coverage, which stays on LLVM and the
-# platform linker.
+# the parallel rustc frontend and, on Linux, the mold linker. There are three
+# separate layers, and this file owns only the second:
+#
+# 1. Bare Cargo. `.cargo/config.toml` carries the flags, so `cargo build` gets
+#    them with no Make involved.
+# 2. Make's restatement. An assigned RUSTFLAGS replaces every `rustflags` table
+#    in that file, so each development recipe composes these flags onto any
+#    inherited value (CI's setup-rust exports one) itself.
+# 3. The explicit non-development routes, which stay off the standard:
+#    `release` assigns RUSTFLAGS without the flags; coverage (in CI) assigns its
+#    own; and the Whitaker command in `lint` clears CARGO_ENCODED_RUSTFLAGS and
+#    assigns the warning policy alone.
+#
+# The development routes (`build`, `test`, `lint`, `typecheck` and the Scaleway
+# targets) depend on `check-build-tools`, which stops with an installation hint
+# when `mold` or a C compiler that accepts -fuse-ld=mold is missing. It never falls
+# back to another linker. `make install-build-tools` provides the pinned `mold` and
+# toolchain. `release` needs neither, so it has no preflight.
 BUILD_HOST_OS := $(shell uname -s)
 STANDARD_RUSTFLAGS := -Zthreads=8$(if $(filter Linux,$(BUILD_HOST_OS)), -Clink-arg=-fuse-ld=mold)
+
+# `-fuse-ld=mold` resolves the linker by PATH order, so the prefix `make
+# install-build-tools` unpacks the pinned release into leads PATH for every
+# recipe and outranks a distribution `mold`. A bare `cargo` outside Make needs
+# the same directory on PATH.
+BUILD_TOOLS_PREFIX ?= $(HOME)/.local
+export BUILD_TOOLS_PREFIX
+export PATH := $(BUILD_TOOLS_PREFIX)/bin:$(PATH)
 
 build: target/debug/$(TARGET) ## Build debug binary
 release: target/release/$(TARGET) ## Build release binary
@@ -56,19 +78,25 @@ all: check-fmt lint test spelling test-workflow-contracts ## Perform a comprehen
 clean: ## Remove build artefacts
 	$(CARGO) clean
 
-test: ## Run tests with warnings treated as errors
+install-build-tools: ## Install the pinned mold linker and Rust toolchain
+	@scripts/install-build-tools.sh
+
+check-build-tools: ## Check the `mold` linker, C compiler and toolchain prerequisites
+	@scripts/check-build-tools.sh
+
+test: check-build-tools ## Run tests with warnings treated as errors
 	$(CARGO) fetch --locked
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run $(TEST_FLAGS) $(BUILD_JOBS)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) test --doc --all-features $(BUILD_JOBS)
 
 test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutation-testing contract
 	$(CV005_CONTRACTS) check --repository .
-	uv run --with 'pytest>=8' --with 'pyyaml>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
+	uv run --with 'pytest>=8' --with 'pyyaml>=6' --with 'hypothesis>=6' pytest $(WORKFLOW_CONTRACT_TESTS) -q
 
-scaleway-janitor: ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
+scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
 
-scaleway-test: ## Run Scaleway integration tests with janitor sweep
+scaleway-test: check-build-tools ## Run Scaleway integration tests with janitor sweep
 	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)
 	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
 	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
@@ -77,8 +105,13 @@ scaleway-test: ## Run Scaleway integration tests with janitor sweep
 	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor ; \
 	MRIYA_RUN_SCALEWAY_TESTS=1 MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) test --test scaleway_backend --test scaleway_cloud_init -- --test-threads=1
 
-typecheck: ## Typecheck the workspace
+typecheck: check-build-tools ## Typecheck the workspace
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) check $(CARGO_FLAGS) $(BUILD_JOBS)
+
+# The preflight is order-only and debug-only: it must not rebuild the binary, and
+# a release build uses neither `mold` nor the frontend flag. The pattern rule below
+# supplies the recipe.
+target/debug/$(TARGET): | check-build-tools
 
 target/%/$(TARGET): ## Build binary in debug or release mode
 	$(if $(findstring release,$(@)),RUSTFLAGS="$${RUSTFLAGS-}",RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)") $(CARGO) build $(BUILD_JOBS) $(if $(findstring release,$(@)),--release) --bin $(TARGET)
@@ -106,7 +139,7 @@ interrogate: ## Enforce complete Python docstring coverage
 	    exit 1; \
 	  fi
 
-lint: ## Run Clippy, the Whitaker Dylint suite and the docstring gate
+lint: check-build-tools ## Run Clippy, the Whitaker Dylint suite and the docstring gate
 	$(MAKE) --no-print-directory interrogate
 	RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) doc --no-deps
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) clippy $(CLIPPY_FLAGS)
