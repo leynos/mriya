@@ -35,15 +35,17 @@ match, so the two rules can differ for a spelling that only partly overlaps a
 mask. The second half closes that gap. It loads the same generated
 configuration into `typos-cli` — the crate the gate's pinned console script is
 built from, pinned to the version `typos-config-builder` names — and runs the
-same `FileChecker` the binary runs over isolated fixture files. It covers every
-exempt form in `typos.local.toml`: the backticked name, the `mold linker`
+same `FileChecker` the binary runs over isolated fixture files. It covers the
+exempt forms a fixture exercises: the backticked name, the `mold linker`
 phrase, the `install-mold` input, the `-fuse-ld=mold` argument and the
-`.contains("mold")` probe. It also covers the negative direction — the bare
-name, and the same spelling in prose or in a code span — together with the
-anchored declarations in their LF, CRLF and indented forms and the Tokio
-attribute fixtures. A form the model half judges but the engine half does not
-run is covered by the model alone, so add it to both when adding an exemption.
-Neither half needs the network, a fixed toolchain, or the `typos` binary.
+`.contains("mold")` probe. It does not cover every entry in `typos.local.toml`:
+`CARGO_TERM_COLOR`, `organisation_id` and the workflow lines are judged by the
+model half alone. It also covers the negative direction — the bare name, and
+the same spelling in prose or in a code span — together with the anchored
+declarations in their LF, CRLF and indented forms and the Tokio attribute
+fixtures. When adding an exemption, add it to both halves: a form only the
+model judges is covered by the model alone. Neither half needs the network, a
+fixed toolchain, or the `typos` binary.
 
 A property test covers the shared base's Tokio grammar beyond the arrangements
 the probes pin: a spacing run of up to four characters drawn from spaces, tabs
@@ -75,10 +77,12 @@ The dev-dependency `typos-cli` carries an exact `=` requirement, which is a
 recorded exception to this workspace's caret-requirement rule. The exception is
 narrow and deliberate: `typos-config-builder` pins its own `typos` engine
 version (currently `typos==1.50.2`), and the contract test must compile the
-same engine the gate runs. An exact pin turns a `cargo update` that would
-otherwise drift the two engines into an immediate build failure. Move the pin in
-`Cargo.toml` and this paragraph together, and only when the builder's pin
-moves.
+same engine the gate runs. The pin keeps the two engines aligned without an
+inference: an ordinary `cargo update` leaves `typos-cli` at `1.50.2` rather
+than drifting it, and so cannot fail the build. Nothing ties the two versions
+together, though, and the builder's pin can move on its own, so check them
+against each other when you bump either. Move the pin in `Cargo.toml` and this
+paragraph together, and only when the builder's pin moves.
 
 ## Fetching dependencies before tests
 
