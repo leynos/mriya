@@ -355,8 +355,11 @@ default, and it needs maintainer approval; until that is recorded here, treat
 it as proposed, not granted.
 
 Scope: a dev-profile build with `-Zcodegen-backend=cranelift` on
-`nightly-2026-11-06` (the pin), measured on 2026-11-07 on x86-64 Linux with the
-standard's `-Zthreads=8` and `mold` flags. Other platforms are unmeasured. The
+`nightly-2026-11-06`, the pin at the time of measurement, on 2026-11-07 on
+x86-64 Linux with the standard's `-Zthreads=8` and `mold` flags. The pin has
+since moved, and nothing has re-measured the backend on the current one, so
+read this as a statement about the toolchain named, not about today's pin.
+Other platforms are unmeasured. The
 failure is in unwinding: a panic compiled by Cranelift does not find its
 handler, so `catch_unwind`, `resume_unwind`, `Drop` on unwind, and a panic on a
 spawned thread fail, and the last aborts the process with
