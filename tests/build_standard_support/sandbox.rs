@@ -171,6 +171,22 @@ fn walk_files(directory: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
     Ok(files)
 }
 
+/// Returns the files a copy should take from one source entry: every regular file below a
+/// directory, or the entry itself when it is a file.
+///
+/// The two cases are named because a caller that walked a file would fail, and a caller that
+/// treated a directory as one file would copy nothing.
+///
+/// # Errors
+///
+/// Returns the reason when a directory below the entry cannot be read.
+fn source_files(given: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
+    if given.is_dir() {
+        return walk_files(given);
+    }
+    Ok(vec![given.to_owned()])
+}
+
 /// Looks a program up on the host's `PATH`.
 ///
 /// # Errors
@@ -353,33 +369,33 @@ impl Sandbox {
     pub fn copy_scripts(&self) -> Result<Utf8PathBuf, String> {
         let source = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
         for relative in ["scripts", "tools/mold", "rust-toolchain.toml"] {
-            // A single file is its own entry; `walk_files` only descends directories.
-            let given = source.join(relative);
-            let files = if given.is_dir() {
-                walk_files(&given)?
-            } else {
-                vec![given]
-            };
-            for entry in files {
-                let inside = entry
-                    .strip_prefix(source)
-                    .map_err(|error| format!("locating {entry}: {error}"))?;
-                let contents =
-                    std::fs::read(&entry).map_err(|error| format!("reading {entry}: {error}"))?;
-                let mode = std::fs::metadata(&entry)
-                    .map_err(|error| format!("statting {entry}: {error}"))?
-                    .permissions()
-                    .mode();
-                if let Some(parent) = inside.parent() {
-                    self.make_dir(parent)?;
-                }
-                self.write_file(inside, &contents)?;
-                self.dir
-                    .set_permissions(inside, Permissions::from_mode(mode))
-                    .map_err(|error| format!("copying the mode of {entry}: {error}"))?;
+            for entry in source_files(&source.join(relative))? {
+                self.copy_file(source, &entry)?;
             }
         }
         Ok(self.root_path.join("scripts"))
+    }
+
+    /// Copies one file into the sandbox at its path relative to `source`, keeping its mode.
+    ///
+    /// The mode matters because a script copied without its executable bit cannot be
+    /// run, which would look like a failing script rather than a broken fixture.
+    fn copy_file(&self, source: &Utf8Path, entry: &Utf8Path) -> Result<(), String> {
+        let inside = entry
+            .strip_prefix(source)
+            .map_err(|error| format!("locating {entry}: {error}"))?;
+        let contents = std::fs::read(entry).map_err(|error| format!("reading {entry}: {error}"))?;
+        let mode = std::fs::metadata(entry)
+            .map_err(|error| format!("statting {entry}: {error}"))?
+            .permissions()
+            .mode();
+        if let Some(parent) = inside.parent() {
+            self.make_dir(parent)?;
+        }
+        self.write_file(inside, &contents)?;
+        self.dir
+            .set_permissions(inside, Permissions::from_mode(mode))
+            .map_err(|error| format!("copying the mode of {entry}: {error}"))
     }
 
     /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,
