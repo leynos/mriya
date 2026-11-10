@@ -39,13 +39,14 @@ same `FileChecker` the binary runs over isolated fixture files. It covers the
 exempt forms a fixture exercises: the backticked name, the `mold linker`
 phrase, the `install-mold` input, the `-fuse-ld=mold` argument and the
 `.contains("mold")` probe. It does not cover every entry in `typos.local.toml`:
-`CARGO_TERM_COLOR`, `organisation_id` and the workflow lines are judged by the
-model half alone. It also covers the negative direction — the bare name, and
-the same spelling in prose or in a code span — together with the anchored
-declarations in their LF, CRLF and indented forms and the Tokio attribute
-fixtures. When adding an exemption, add it to both halves: a form only the
-model judges is covered by the model alone. Neither half needs the network, a
-fixed toolchain, or the `typos` binary.
+`CARGO_TERM_COLOR`, `organisation_id` and the workflow lines have no probe in
+either half, so nothing here judges their behaviour, and the configuration test
+only confirms each pattern reaches the generated file. It also covers the
+negative direction — the bare name, and the same spelling in prose or in a code
+span — together with the anchored declarations in their LF, CRLF and indented
+forms and the Tokio attribute fixtures. When adding an exemption, add it to
+both halves: a form with no probe is covered by neither. Neither half needs the
+network, a fixed toolchain, or the `typos` binary.
 
 A property test covers the shared base's Tokio grammar beyond the arrangements
 the probes pin: a spacing run of up to four characters drawn from spaces, tabs

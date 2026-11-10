@@ -45,10 +45,12 @@ toml = "0.9"
 # The exact pin is a deliberate exception to this workspace's caret-requirement
 # rule, and it is the version match, not reproducibility, that buys it: the
 # gate's engine comes from `typos-config-builder`, whose own `typos==1.50.2`
-# dependency is the version oracle. An exact pin here makes a mismatched
-# `cargo update` fail the build at once; a caret requirement would let the
-# crate this contract tests drift away from the engine the gate runs, and the
-# contract would then be proving something about an engine nobody uses.
+# dependency is the version oracle. An exact pin holds the crate this contract
+# tests at that one version, so an ordinary `cargo update` leaves it alone
+# rather than drifting it away from the engine the gate runs; the contract
+# would otherwise end up proving something about an engine nobody uses.
+# Nothing ties the two pins together, so check them against each other when
+# either moves.
 # Move this pin only when the builder's pin moves; see the developers' guide.
 typos-cli = "=1.50.2"
 
