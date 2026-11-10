@@ -93,6 +93,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
+          # This job never pushes, so the checkout token is not needed in the
+          # clone's config; zizmor reports the default as `artipacked`.
+          persist-credentials: false
       - name: Prove no linker is on PATH yet
         run: |
           if command -v mold >/dev/null 2>&1; then

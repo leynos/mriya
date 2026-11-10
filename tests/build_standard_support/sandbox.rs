@@ -24,6 +24,11 @@ pub const CARGO_LOG: &str = "cargo.log";
 /// differently named or indented declaration of the same text still reaches the gate.
 pub const LINKER_TOOL: &str = "mold";
 
+/// The entry point `-fuse-ld=mold` resolves. The installer must see this beside
+/// the driver before it treats an installed linker as complete: a tree with the
+/// driver alone leaves the compiler's link step unable to find a linker.
+pub const LINKER_ENTRY: &str = "ld.mold";
+
 /// A temporary root holding a `bin` directory used as `PATH` and a `prefix` the installer writes to.
 pub struct Sandbox {
     _root: TempDir,

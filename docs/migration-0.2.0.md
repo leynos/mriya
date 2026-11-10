@@ -23,11 +23,13 @@ verifies it against `tools/mold/SHA256SUMS`, unpacks it under
 
 The Makefile puts `$(BUILD_TOOLS_PREFIX)/bin` first on `PATH` for every recipe,
 so `make` targets find the pinned release even when a distribution `mold`
-appears earlier in your shell's `PATH`. A bare `cargo build` outside Make does
-not: add the same directory to your shell profile.
+appears earlier in the shell's `PATH`. A bare `cargo build` outside Make does
+not: add that same directory to the shell profile. `BUILD_TOOLS_PREFIX`
+defaults to `~/.local`, and the Makefile permits overriding it, so the example
+names the variable rather than assuming the default:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
 
 ## What did not change

@@ -35,9 +35,11 @@ ignore = [
   '\bpinned-mold\b',
   # The tool name is declared once per language, and only that exact
   # declaration is exempt: a differently named or indented declaration of the
-  # same text still reaches the gate, which the spelling contract checks.
-  '(?m)^pub const LINKER_TOOL: &str = "mold";$',
-  '(?m)^LINKER_NAME = "mold"$',
+  # same text still reaches the gate, which the spelling contract checks. The
+  # `\r?` keeps the anchor exact while tolerating a checkout whose line endings
+  # are CRLF, as the declaration patterns below do.
+  '(?m)^pub const LINKER_TOOL: &str = "mold";\r?$',
+  '(?m)^LINKER_NAME = "mold"\r?$',
   "\\bCARGO_TERM_COLOR\\b",
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",

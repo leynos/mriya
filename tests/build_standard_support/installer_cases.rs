@@ -12,7 +12,7 @@ use super::{
         run_installer_with_toolchain, rustup_calls,
     },
     pins::{TOOLCHAIN, pinned_channel, pinned_components, pinned_linker},
-    sandbox::{LINKER_TOOL, Sandbox},
+    sandbox::{LINKER_ENTRY, LINKER_TOOL, Sandbox},
 };
 
 #[cfg(target_os = "linux")]
@@ -165,6 +165,9 @@ fn the_installer_leaves_a_linker_already_at_the_pin_alone() -> Result<(), String
             pin = pinned_linker()
         ),
     )?;
+    // The skip applies to an installed linker, which the compiler reaches as
+    // `-fuse-ld=mold`; without this entry point the installer must download.
+    sandbox.write_tool(LINKER_ENTRY, "exit 0")?;
     let output = run_installer(&sandbox)?;
     if !output.status.success() {
         return Err(format!(

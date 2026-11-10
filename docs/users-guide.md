@@ -281,10 +281,11 @@ The preflight requires `mold` at exactly the version in `tools/mold/VERSION`
 does not pass. `make install-build-tools` unpacks the pinned release under
 `$(BUILD_TOOLS_PREFIX)`, which defaults to `~/.local`. The Makefile puts that
 prefix's `bin` first on `PATH`, so every Make target uses the pinned release; a
-bare `cargo build` outside Make needs the same directory on `PATH`:
+bare `cargo build` outside Make needs the same directory on `PATH`. The example
+reads the variable the Makefile reads, so it follows an override:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
 
 A release build (`make release`) needs neither `mold` nor the preflight. It

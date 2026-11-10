@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Iterator
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +72,7 @@ def _denies_warnings(tokens: list[str]) -> bool:
     if "-Dwarnings" in tokens:
         return True
     return any(
-        first == "-D" and second == "warnings"
-        for first, second in zip(tokens, tokens[1:])
+        first == "-D" and second == "warnings" for first, second in pairwise(tokens)
     )
 
 

@@ -11,8 +11,6 @@ Run via ``make test-workflow-contracts``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -28,7 +26,7 @@ EDGES = st.sets(
 
 
 @st.composite
-def makefiles(draw: Any) -> tuple[str, set[tuple[str, str]], str]:
+def makefiles(draw: st.DrawFn) -> tuple[str, set[tuple[str, str]], str]:
     """Draw a Makefile, the edges it declares, and the goal that runs the suite."""
     suite_goal = draw(st.sampled_from(NAMES))
     edges = draw(EDGES)

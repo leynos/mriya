@@ -43,7 +43,12 @@ install_linker() {
     note "the mold linker is Linux-only; skipping on $(uname -s)"
     return 0
   fi
-  if [ "$(installed_linker_version 2>/dev/null || true)" = "$version" ]; then
+  # The compiler reaches the linker through `-fuse-ld=mold`, which resolves the
+  # `ld.mold` entry point rather than `mold` itself. A tree that carries the
+  # driver but not its linker entry point is not installable-by-skip: the
+  # preflight probe would fail and point here, so this check must repair it.
+  if [ "$(installed_linker_version 2>/dev/null || true)" = "$version" ] &&
+    command -v ld.mold >/dev/null 2>&1; then
     note "mold linker $version already on PATH at $(command -v mold)"
     return 0
   fi
