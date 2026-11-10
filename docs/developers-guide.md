@@ -250,7 +250,10 @@ any compilation. It checks, and reports every gap in one pass:
 
 A missing tool stops the route with an installation hint. There is no fallback
 to another linker. `release` has no preflight, because it needs none of these
-tools.
+tools. The platform is read once, by `detect_platform`, and a `uname -s` that
+cannot answer stops both scripts instead of reading as "not Linux": treating it
+that way would skip every linker check and report success, which is the silent
+pass the preflight exists to prevent.
 
 `make install-build-tools` provides them: it downloads the pinned `mold`
 release, verifies it against `tools/mold/SHA256SUMS`, unpacks it under
@@ -287,7 +290,11 @@ installer produced.
   (`build_standard_support/sandbox.rs`) holding exactly the tools a case
   chooses, and runs the real Make routes there with a fake Cargo, to prove that
   a missing `mold` stops every development route before Cargo starts and that a
-  complete toolset reaches it.
+  complete toolset reaches it. The fake `cc` links only when it receives
+  `-fuse-ld=mold`, so one case rewrites a copy of the preflight to drop that
+  argument and requires the complete toolset to fail: the probe is proved to
+  depend on the flag rather than pass whatever the driver does. A `uname -s`
+  that fails is a case of its own, for both scripts.
 - `tests/workflow_contracts/suite_lane_install_test.py` derives the Linux jobs
   that run the suite (through the coverage action, `cargo nextest run`, or a
   Make goal that reaches it) and requires the installer, unconditionally,

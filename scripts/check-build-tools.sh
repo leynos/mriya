@@ -44,7 +44,14 @@ check_linker_driver() {
     note 'install GCC 12.1 or newer, or clang, with your package manager'
     return 1
   fi
-  scratch=$(mktemp -d)
+  # An unwritable temporary directory would leave `scratch` empty, so the probe
+  # would write to `/probe` and `/log`; stop here rather than read a confusing
+  # `cc` error as a linker problem.
+  scratch=$(mktemp -d) || {
+    note 'could not create the scratch directory the linker probe needs'
+    note 'check that TMPDIR names a writable directory'
+    return 1
+  }
   printf 'int main(void) { return 0; }\n' |
     cc -x c - -fuse-ld=mold -o "$scratch/probe" >"$scratch/log" 2>&1 || status=1
   if [ "$status" -ne 0 ]; then
@@ -90,11 +97,12 @@ main() {
   # empty pin. An assignment propagates the status.
   linker_pin=$(linker_version) || return 1
   toolchain_pin=$(pinned_toolchain) || return 1
-  if is_linux; then
+  detect_platform
+  if is_linux "$HOST_PLATFORM"; then
     check_linker "$linker_pin" || status=1
     check_linker_driver || status=1
   else
-    note "the mold linker is Linux-only; $(uname -s) keeps its platform linker"
+    note "the mold linker is Linux-only; $HOST_PLATFORM keeps its platform linker"
   fi
   check_toolchain "$toolchain_pin" || status=1
   [ "$status" -eq 0 ] || note 'build tools check failed; see the messages above'

@@ -32,8 +32,34 @@ fail() {
   exit 1
 }
 
+# The host platform, set by `detect_platform`. Empty means not yet detected.
+HOST_PLATFORM=
+
+# Detects the host platform into `HOST_PLATFORM`, aborting when `uname` cannot
+# answer.
+#
+# It sets a variable rather than printing one, and callers run it as a bare
+# statement, because both alternatives lose the failure. Inside `$(...)` a
+# `fail` ends only the subshell, and inside `is_linux`, called as an `if`
+# condition, `set -e` is suspended for the whole function. Either way an
+# unanswered `uname` would arrive as an empty string, read as a non-Linux host,
+# skip every linker check, and report success: exactly the silent pass this
+# preflight exists to prevent.
+detect_platform() {
+  HOST_PLATFORM=$(uname -s) || fail 'could not detect the host platform: uname -s failed'
+  [ -n "$HOST_PLATFORM" ] || fail 'could not detect the host platform: uname -s said nothing'
+}
+
 # Whether the host links with the mold linker at all; it ships for Linux only.
-is_linux() { [ "$(uname -s)" = 'Linux' ]; }
+#
+# The argument must be a successful `detect_platform` result. Refusing an empty
+# one turns a caller that skipped the detection into a loud bug rather than a
+# host that silently is not Linux.
+is_linux() {
+  local platform=$1
+  [ -n "$platform" ] || fail 'is_linux needs a detected platform; call detect_platform first'
+  [ "$platform" = 'Linux' ]
+}
 
 # Read a one-line pin. A missing, blank or multi-line file aborts rather than
 # yielding a version that would build a nonsensical download URL.

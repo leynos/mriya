@@ -39,8 +39,8 @@ verify_archive() {
 
 install_linker() {
   local version=$1 name url
-  if ! is_linux; then
-    note "the mold linker is Linux-only; skipping on $(uname -s)"
+  if ! is_linux "$HOST_PLATFORM"; then
+    note "the mold linker is Linux-only; skipping on $HOST_PLATFORM"
     return 0
   fi
   # The compiler reaches the linker through `-fuse-ld=mold`, which resolves the
@@ -100,6 +100,7 @@ main() {
   local linker_pin toolchain_pin
   linker_pin=$(linker_version) || return 1
   toolchain_pin=$(pinned_toolchain) || return 1
+  detect_platform
   # The linker first, so a checksum failure aborts before a toolchain download.
   install_linker "$linker_pin"
   install_toolchain "$toolchain_pin"

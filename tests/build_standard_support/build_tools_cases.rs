@@ -7,7 +7,8 @@ use rstest::rstest;
 use super::{
     build_tools_routes::{EXCLUDED_ROUTES, PREFLIGHT_ROUTES, route_problems, routing_problems},
     build_tools_scripts::{
-        Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_route, sandbox_with,
+        Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_preflight_script,
+        run_route, sandbox_with,
     },
     make::{Host, Target},
     process::probe_make,
@@ -96,6 +97,7 @@ fn the_route_reader_accepts_and_refuses(
 #[case::no_c_compiler(Toolset { cc_links: None, ..Toolset::COMPLETE }, &["no C compiler"])]
 #[case::cc_rejects_the_linker(Toolset { cc_links: Some(false), ..Toolset::COMPLETE }, &["cannot link with -fuse-ld=mold"])]
 #[case::no_toolchain(Toolset { has_toolchain: false, ..Toolset::COMPLETE }, &["is not installed", "make install-build-tools"])]
+#[case::unreadable_platform(Toolset { platform_answers: false, ..Toolset::COMPLETE }, &["could not detect the host platform"])]
 fn the_preflight_reports_each_gap_with_its_remedy(
     #[case] toolset: Toolset,
     #[case] fragments: &[&str],
@@ -118,6 +120,28 @@ fn the_preflight_reports_each_gap_with_its_remedy(
         expected.push(&drift);
     }
     expect_actionable_failure(&output, &expected)
+}
+
+/// Scenario: the preflight probe with its linker flag removed.
+///
+/// Invariant: the driver check depends on the flag reaching `cc`. A fake that
+/// ignored its arguments would let the probe pass without it, so this rewrites
+/// the script's one `-fuse-ld=mold` argument and requires the previously
+/// passing complete toolset to fail, naming the driver rather than the linker.
+#[test]
+fn the_driver_check_fails_when_the_flag_never_reaches_the_compiler() -> Result<(), String> {
+    let sandbox = sandbox_with(Toolset::COMPLETE)?;
+    let preflight = sandbox.copy_scripts()?.join("check-build-tools.sh");
+    let script = std::fs::read_to_string(&preflight)
+        .map_err(|error| format!("reading the preflight copy: {error}"))?;
+    let without_flag = script.replace(" -fuse-ld=mold -o ", " -o ");
+    if without_flag == script {
+        return Err("the preflight no longer passes -fuse-ld=mold".to_owned());
+    }
+    std::fs::write(&preflight, without_flag)
+        .map_err(|error| format!("rewriting the preflight copy: {error}"))?;
+    let output = run_preflight_script(&sandbox, &preflight)?;
+    expect_actionable_failure(&output, &["cannot link with -fuse-ld=mold"])
 }
 
 /// Scenario: a development route run for real, with and without the tools it needs.
@@ -250,6 +274,7 @@ fn a_non_linux_host_still_fails_without_the_pinned_toolchain() -> Result<(), Str
         linker: None,
         cc_links: None,
         has_toolchain: false,
+        ..Toolset::COMPLETE
     })?;
     sandbox.pretend_darwin()?;
     let output = run_preflight(&sandbox)?;
@@ -311,6 +336,7 @@ fn the_release_route_needs_no_development_tool() -> Result<(), String> {
         linker: None,
         cc_links: None,
         has_toolchain: false,
+        ..Toolset::COMPLETE
     })?;
     let output = run_route(&sandbox, Target("release"))?;
     if !output.status.success() {

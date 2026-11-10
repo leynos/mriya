@@ -2,8 +2,7 @@
 //! run against exactly the tools a test chooses: a pinned `mold`, a drifted one, none, a compiler that
 //! cannot link with it. Files go through `cap_std`, so the sandbox cannot reach outside its own root.
 
-use std::io;
-use std::process::Command;
+use std::{io, os::unix::fs::PermissionsExt as _, process::Command};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{
@@ -143,13 +142,42 @@ pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> Result<bool, Stri
     Ok(false)
 }
 
+/// Returns every regular file below `directory`, in a stable order.
+///
+/// # Errors
+///
+/// Returns the reason when the directory or a nested path cannot be read.
+fn walk_files(directory: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![directory.to_owned()];
+    while let Some(next) = pending.pop() {
+        let entries = std::fs::read_dir(&next)
+            .map_err(|error| format!("reading directory {next}: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("reading an entry of {next}: {error}"))?;
+            let path = Utf8PathBuf::from_path_buf(entry.path())
+                .map_err(|path| format!("non-UTF-8 path: {}", path.display()))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("statting {path}: {error}"))?;
+            if kind.is_dir() {
+                pending.push(path);
+            } else if kind.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 /// Looks a program up on the host's `PATH`.
 ///
 /// # Errors
 ///
 /// Returns the reason when the program is on no `PATH` directory, or when a `PATH` entry cannot be
 /// read for a reason other than absence.
-pub fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
+fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
     let program = name.as_ref();
     let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
     let directories =
@@ -295,6 +323,63 @@ impl Sandbox {
         let body =
             format!("if [ \"${{1-}}\" = '-s' ]; then echo Darwin; else exec '{real}' \"$@\"; fi");
         self.write_tool("uname", body)
+    }
+
+    /// Makes the sandbox's `uname -s` fail, so the scripts' platform detection cannot answer.
+    ///
+    /// A detection that reads this as "not Linux" would skip every linker
+    /// check and report success, which is the failure the preflight exists to
+    /// prevent; the contract asserts the scripts abort instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the host `uname` cannot be found or the stub cannot be written.
+    pub fn pretend_uname_fails(&self) -> Result<(), String> {
+        let real = find_on_path("uname")?;
+        let body = format!("if [ \"${{1-}}\" = '-s' ]; then exit 1; else exec '{real}' \"$@\"; fi");
+        self.write_tool("uname", body)
+    }
+
+    /// Copies the repository's `scripts/`, the pins they read, and `rust-toolchain.toml` into the
+    /// sandbox root, returning the copied directory's absolute path.
+    ///
+    /// A script locates the repository from its own directory, so a copy under the sandbox makes
+    /// that root the repository: the pin files resolve inside the sandbox, and a case may rewrite a
+    /// copy to prove something about the script's text without touching the tree under review.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when a file cannot be read, written, or given its mode.
+    pub fn copy_scripts(&self) -> Result<Utf8PathBuf, String> {
+        let source = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
+        for relative in ["scripts", "tools/mold", "rust-toolchain.toml"] {
+            // A single file is its own entry; `walk_files` only descends directories.
+            let given = source.join(relative);
+            let files = if given.is_dir() {
+                walk_files(&given)?
+            } else {
+                vec![given]
+            };
+            for entry in files {
+                let inside = entry
+                    .strip_prefix(source)
+                    .map_err(|error| format!("locating {entry}: {error}"))?;
+                let contents =
+                    std::fs::read(&entry).map_err(|error| format!("reading {entry}: {error}"))?;
+                let mode = std::fs::metadata(&entry)
+                    .map_err(|error| format!("statting {entry}: {error}"))?
+                    .permissions()
+                    .mode();
+                if let Some(parent) = inside.parent() {
+                    self.make_dir(parent)?;
+                }
+                self.write_file(inside, &contents)?;
+                self.dir
+                    .set_permissions(inside, Permissions::from_mode(mode))
+                    .map_err(|error| format!("copying the mode of {entry}: {error}"))?;
+            }
+        }
+        Ok(self.root_path.join("scripts"))
     }
 
     /// Returns a command that sees only the sandbox: its `bin` is the whole `PATH`, `HOME` is the root,

@@ -76,6 +76,23 @@ fn the_installer_skips_the_linker_on_a_non_linux_host() -> Result<(), String> {
     expect_the_pinned_toolchain_only(&sandbox, false, "a non-Linux host")
 }
 
+/// Scenario: the installer on a host whose `uname -s` fails.
+///
+/// Invariant: an unanswered platform aborts before either half runs. Reading it
+/// as "not Linux" would skip the linker and still succeed, so the failure would
+/// look like a host that had nothing to install.
+#[test]
+fn the_installer_stops_when_the_platform_cannot_be_detected() -> Result<(), String> {
+    let sandbox = published(Digest::Honest)?;
+    sandbox.pretend_uname_fails()?;
+    let output = run_installer(&sandbox)?;
+    expect_actionable_failure(&output, &["could not detect the host platform"])?;
+    if rustup_calls(&sandbox)?.is_some() {
+        return Err("the installer went on to install a toolchain".to_owned());
+    }
+    Ok(())
+}
+
 /// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
 ///
 /// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every component

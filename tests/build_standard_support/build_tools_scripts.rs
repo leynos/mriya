@@ -32,6 +32,8 @@ pub struct Toolset {
     pub cc_links: Option<bool>,
     /// Whether `rustup` lists the pinned toolchain.
     pub has_toolchain: bool,
+    /// Whether the host can answer `uname -s`; `false` makes platform detection fail.
+    pub platform_answers: bool,
 }
 
 impl Toolset {
@@ -40,6 +42,7 @@ impl Toolset {
         linker: Some(Linker::Pinned),
         cc_links: Some(true),
         has_toolchain: true,
+        platform_answers: true,
     };
 }
 
@@ -63,9 +66,7 @@ pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
         )?;
     }
     if let Some(links) = toolset.cc_links {
-        let status = i32::from(!links);
-        let body = format!("cat >/dev/null; echo 'cc: fake link run' >&2; exit {status}");
-        sandbox.write_tool("cc", body)?;
+        sandbox.write_tool("cc", fake_cc(links))?;
     }
     let listed = if toolset.has_toolchain {
         let channel = pinned_channel(TOOLCHAIN)?;
@@ -75,7 +76,36 @@ pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
     };
     sandbox.write_tool("rustup", listed)?;
     sandbox.write_tool("probe-cargo", "echo \"$*\" >> \"$CARGO_LOG\"")?;
+    if !toolset.platform_answers {
+        sandbox.pretend_uname_fails()?;
+    }
     Ok(sandbox)
+}
+
+/// A `cc` whose link succeeds only when the preflight passes `-fuse-ld=mold`.
+///
+/// The preflight's whole purpose is to prove the driver accepts the flag the
+/// build standard gives it. A fake that ignored its arguments would pass with
+/// the flag removed, so it would prove nothing; this one fails in that case,
+/// making the probe's use of the flag observable.
+///
+/// `links` is whether the driver can link at the pin: true accepts the flag,
+/// false rejects it, and either way a probe without the flag fails.
+fn fake_cc(links: bool) -> String {
+    let with_flag = i32::from(!links);
+    // A probe that omits the flag always fails, whatever the driver can do
+    // with it, so the case for a driver that rejects the flag keeps failing
+    // for the reason it is named after rather than for the missing flag.
+    let without_flag = 1;
+    format!(
+        "cat >/dev/null\n\
+         for arg in \"$@\"; do\n    \
+         if [ \"$arg\" = '-fuse-ld=mold' ]; then\n        \
+         echo 'cc: fake link with -fuse-ld=mold' >&2\n        \
+         exit {with_flag}\n    \
+         fi\ndone\n\
+         echo 'cc: fake link without -fuse-ld=mold' >&2\nexit {without_flag}\n"
+    )
 }
 
 /// Returns a process's stderr as text, for a message to quote.
@@ -92,6 +122,22 @@ pub fn run_preflight(sandbox: &Sandbox) -> Result<Output, String> {
     sandbox
         .command("bash")?
         .arg("scripts/check-build-tools.sh")
+        .output()
+        .map_err(|error| format!("running the preflight: {error}"))
+}
+
+/// Runs one preflight script in the sandbox, from a path the caller supplies.
+///
+/// # Errors
+///
+/// Returns the reason when the script cannot be started.
+pub fn run_preflight_script(
+    sandbox: &Sandbox,
+    script: impl AsRef<std::path::Path>,
+) -> Result<Output, String> {
+    sandbox
+        .command("bash")?
+        .arg(script.as_ref())
         .output()
         .map_err(|error| format!("running the preflight: {error}"))
 }
