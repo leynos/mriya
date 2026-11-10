@@ -51,7 +51,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@d9c4e1ad5ce37404760ac02b85ba1e8db279b003
+        uses: leynos/shared-actions/.github/actions/setup-rust@0eabb6bc07148981de5da395e30cd78d83f5c7c2
         with:
           install-mold: 'true'
           expect-cache: any
@@ -66,7 +66,7 @@ jobs:
           # measurement, so it takes neither the parallel frontend nor the mold linker.
           # Assigning RUSTFLAGS displaces every `rustflags` table in .cargo/config.toml.
           RUSTFLAGS: -D warnings
-        uses: leynos/shared-actions/.github/actions/generate-coverage@d9c4e1ad5ce37404760ac02b85ba1e8db279b003
+        uses: leynos/shared-actions/.github/actions/generate-coverage@0eabb6bc07148981de5da395e30cd78d83f5c7c2
         with:
           output-path: lcov.info
           format: lcov
@@ -83,7 +83,7 @@ jobs:
       # what stops a dispatch from a branch uploading that branch's coverage.
       - name: Upload coverage data to CodeScene
         if: steps.codescene-token.outputs.available == 'true' && github.ref == 'refs/heads/main'
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@d9c4e1ad5ce37404760ac02b85ba1e8db279b003
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@0eabb6bc07148981de5da395e30cd78d83f5c7c2
         with:
           path: lcov.info
           format: lcov
