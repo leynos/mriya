@@ -1,6 +1,6 @@
 //! Contract tests for the Rust build standard.
 //!
-//! The standard makes the parallel `rustc` frontend and, on Linux, mold the
+//! The standard makes the parallel `rustc` frontend and, on Linux, `mold` the
 //! default for every development build. Cargo applies one `rustflags` source
 //! rather than merging them, and an assigned `RUSTFLAGS` replaces every source,
 //! so the flags are repeated in each configuration source, restated by each
@@ -56,7 +56,7 @@ fn none_of(problems: &Problems) -> Result<(), String> {
     }
 }
 
-/// Every workflow that builds under the standard installs mold. A repository
+/// Every workflow that builds under the standard installs `mold`. A repository
 /// whose workflows do not set up Rust through `setup-rust` lists none, and the
 /// check then reads nothing; a listed workflow must have a step to read.
 #[test]

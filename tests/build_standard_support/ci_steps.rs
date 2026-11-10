@@ -1,11 +1,11 @@
 //! Reader for the CI half of the build standard: every workflow that builds under
-//! the standard installs mold through `setup-rust`'s `install-mold` input, so the
+//! the standard installs `mold` through `setup-rust`'s `install-mold` input, so the
 //! Linux jobs have the linker the configuration names, and every coverage step
 //! assigns `RUSTFLAGS` itself, without a standard flag.
 //!
 //! The workflows are read as text, one step at a time. A release workflow is not
 //! listed: a release stays on the platform linker, and its build steps assign
-//! `RUSTFLAGS`, so mold never reaches a release link. A release build inside a
+//! `RUSTFLAGS`, so `mold` never reaches a release link. A release build inside a
 //! listed workflow is judged like any other step there.
 
 use super::config::{Flags, Problems, THREADS_FLAG};
@@ -238,7 +238,7 @@ pub fn linker_install_problems(workflow: &Workflow) -> Problems {
 /// assign `RUSTFLAGS` itself, or assigns one that names a standard flag.
 ///
 /// A coverage build is a measurement, so it takes neither the frontend flag nor
-/// mold. The exception is explicit in the step, not a side effect of whatever
+/// `mold`. The exception is explicit in the step, not a side effect of whatever
 /// the setup action exports.
 ///
 /// ```text

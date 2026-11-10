@@ -12,13 +12,18 @@ accepted = []
 
 [patterns]
 ignore = [
-  # Cargo JSON uses this exact external protocol identifier.
-  '"compiler-artifact"',
-  # `mold` is the linker's name, not a misspelling of `mould`.
-  "\\bmold\\b",
+  # Cargo JSON uses this exact external protocol identifier, quoted or in a code span.
+  '\bcompiler-artifact\b',
+  # `mold` is the linker's name, not a misspelling of `mould`. Exempt only the
+  # backticked name, the "mold linker" phrase, the `setup-rust` input
+  # `install-mold`, and the `-fuse-ld=mold` linker
+  # argument, and the one `contains("mold")` test probe.
+  '`mold`',
+  '\bmold\s+linker\b',
+  '\binstall-mold\b',
+  '-fuse-ld=mold\b',
+  '\.contains\("mold"\)',
   "\\bCARGO_TERM_COLOR\\b",
-  # Inline code spans are masked; the shared dictionary does not mask them yet.
-  '`[^`\n]+`',
   "\\borganisation_id\\b",
   "(?m)^    #\\[case\\(\"Café 🚀\", \"caf\"\\)\\]$",
   "(?m)^    types: \\[opened, reopened, synchronize, labeled, ready_for_review\\]$",
@@ -35,4 +40,16 @@ ignore = [
   "(?m)^      should_upload_workflow_artifacts: >-$",
   "(?m)^    if: needs\\.metadata\\.outputs\\.should_upload_workflow_artifacts == 'true'$",
   "(?m)^#\\[tokio::test\\(flavor = \"current_thread\"\\)\\]$",
+  # `tests/spelling_contract.rs` judges the exemptions by feeding the gate the
+  # misspellings it must still report, so the file cannot itself pass the gate
+  # without them. Each reported spelling is written once, on the declaration
+  # line anchored below, and every probe interpolates that constant. The rest of
+  # the file stays in scope, so a misspelling elsewhere in it is still caught.
+  # The `\r?` keeps the anchor exact while tolerating a checkout that has
+  # converted the file to CRLF; `(?mR)` would do the same for Typos alone, but
+  # the builder validates these patterns with Python's `re`, which has no `R`
+  # flag, so the portable form is the one that survives both engines.
+  "(?m)^const CARGO_KIND: &str = \"artifact\";\\r?$",
+  "(?m)^const LINKER_NAME: &str = \"mold\";\\r?$",
+  "(?m)^const RUNTIME_KEY: &str = \"flavor\";\\r?$",
 ]

@@ -14,13 +14,76 @@ binary, and enforces the shared phrase corrections `typos` cannot express.
 Because `typos.toml` is rewritten on every run, never edit its entries by hand
 and never check it for drift in continuous integration. Add narrow
 repository-specific terminology, identifiers, and deliberate fixtures to
-`typos.local.toml`; the shared dictionary carries everything else. Quoted APIs
-and identifiers retain upstream spelling when put in backticks or fenced code
-blocks, which the gate ignores, so they need no word-level exception.
+`typos.local.toml`; the shared dictionary carries everything else. The shared
+base masks fenced code blocks, but not inline code: backticks do not exempt a
+word, so spell identifiers in en-GB-oxendict unless an external system fixes
+the spelling. Where one does, add an exact pattern to `typos.local.toml` for
+that name, never a blanket word or a mask over all inline code. The current
+exemptions are the Cargo JSON message kind `compiler-artifact` and the `mold`
+linker, matched as `` `mold` ``, "mold linker", the `install-mold` input of
+`setup-rust`, and the `-fuse-ld=mold` argument. Test each new exemption in both
+directions: the exact name passes and the same misspelling in ordinary prose
+fails.
+
+`tests/spelling_contract.rs` runs that rule as an ordinary test, in two halves
+that answer different questions. The first half reads the generated
+`typos.toml`, compiles every `extend-ignore-re` entry with the `regex` crate
+and removes the matches before looking for the spelling, which names a lost or
+widened exemption directly. That is a model of the gate rather than the gate:
+Typos masks by span and drops a finding whose span starts or ends inside a
+match, so the two rules can differ for a spelling that only partly overlaps a
+mask. The second half closes that gap. It loads the same generated
+configuration into `typos-cli` — the crate the gate's pinned console script is
+built from, pinned to the version `typos-config-builder` names — and runs the
+same `FileChecker` the binary runs over isolated fixture files. It covers the
+exempt forms a fixture exercises: the backticked name, the `mold linker`
+phrase, the `install-mold` input, the `-fuse-ld=mold` argument and the
+`.contains("mold")` probe. It does not cover every entry in `typos.local.toml`:
+`CARGO_TERM_COLOR`, `organisation_id` and the workflow lines have no probe in
+either half, so nothing here judges their behaviour, and the configuration test
+only confirms each pattern reaches the generated file. It also covers the
+negative direction — the bare name, and the same spelling in prose or in a code
+span — together with the anchored declarations in their LF, CRLF and indented
+forms and the Tokio attribute fixtures. When adding an exemption, add it to
+both halves: a form with no probe is covered by neither. Neither half needs the
+network, a fixed toolchain, or the `typos` binary.
+
+A property test covers the shared base's Tokio grammar beyond the arrangements
+the probes pin: a spacing run of up to four characters drawn from spaces, tabs
+and newlines, any argument order, either quote form, a `main` runtime with a
+worker pool, and a malformed attribute as the opposite edge. It asserts two
+things about the text it generates — the runtime key survives the masks exactly
+when the attribute is malformed, and a spelling placed beside the attribute
+survives either way. That is a check on the key and on the surroundings, not on
+every character of the attribute: an arrangement that masked the key while
+leaving another part of the attribute visible would pass it. The probes and the
+real-engine half cover the rest, keeping `local` on `main` and rejecting
+runtime kinds the base does not name. The contract checks the reach of the
+exemptions, not the shared dictionary, so it does not prove that a spelling the
+dictionary accepts today is still accepted tomorrow.
+
+The test files must carry the misspellings they judge, so each reported
+spelling is written once, on a `const` declaration line, and every probe and
+fixture body interpolates that constant; `typos.local.toml` exempts exactly
+those three declaration lines, anchored with `(?m)^…$` so a differently named
+or indented declaration is still reported. Keep that shape when adding a probe:
+put the spelling in a constant and let the pattern anchor its declaration,
+rather than loosening the mask or excluding the file.
 
 The gate ships as the `typos-config-builder` command, pinned by the Makefile's
 `TYPOS_CONFIG_BUILDER_VERSION` variable and run in an isolated Python 3.14
 environment. Bump that variable to adopt a newer release.
+
+The dev-dependency `typos-cli` carries an exact `=` requirement, which is a
+recorded exception to this workspace's caret-requirement rule. The exception is
+narrow and deliberate: `typos-config-builder` pins its own `typos` engine
+version (currently `typos==1.50.2`), and the contract test must compile the
+same engine the gate runs. The pin keeps the two engines aligned without an
+inference: an ordinary `cargo update` leaves `typos-cli` at `1.50.2` rather
+than drifting it, and so cannot fail the build. Nothing ties the two versions
+together, though, and the builder's pin can move on its own, so check them
+against each other when you bump either. Move the pin in `Cargo.toml` and this
+paragraph together, and only when the builder's pin moves.
 
 ## Fetching dependencies before tests
 
