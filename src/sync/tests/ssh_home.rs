@@ -21,6 +21,53 @@ fn syncer_with_identity(identity: &str) -> Syncer<crate::test_support::ScriptedR
     Syncer::new(cfg, crate::test_support::ScriptedRunner::new()).expect("config should validate")
 }
 
+/// Builds an environment whose `HOME` cannot be decoded.
+///
+/// One shared constructor keeps the three undecodable-`HOME` cases from
+/// drifting into subtly different environments.
+fn env_with_undecodable_home() -> mockable::MockEnv {
+    mock_env_with_raw(|_| {
+        Err(std::env::VarError::NotUnicode(OsString::from(
+            "/home/\u{fffd}",
+        )))
+    })
+}
+
+/// The three entry points that expand a `~/` identity, so the failure case
+/// below can prove each one propagates it rather than swallowing it.
+#[rstest]
+#[case::common_options(
+    |syncer: &Syncer<crate::test_support::ScriptedRunner>, env: &mockable::MockEnv| {
+        syncer.common_ssh_options(22, env).map(|_| ())
+    }
+)]
+#[case::ssh_args(
+    |syncer: &Syncer<crate::test_support::ScriptedRunner>, env: &mockable::MockEnv| {
+        syncer.build_ssh_args(&networking(), "echo ok", env).map(|_| ())
+    }
+)]
+#[case::remote_shell(
+    |syncer: &Syncer<crate::test_support::ScriptedRunner>, env: &mockable::MockEnv| {
+        syncer.build_remote_shell(22, env).map(|_| ())
+    }
+)]
+fn an_undecodable_home_reaches_every_expansion_site(
+    #[case] run: fn(
+        &Syncer<crate::test_support::ScriptedRunner>,
+        &mockable::MockEnv,
+    ) -> Result<(), SyncError>,
+) {
+    let syncer = syncer_with_identity("~/keys/id");
+    let env = env_with_undecodable_home();
+
+    let result = run(&syncer, &env);
+
+    assert!(
+        matches!(result, Err(SyncError::HomeUnavailable(_))),
+        "an unusable HOME should be reported at this boundary: {result:?}"
+    );
+}
+
 #[rstest]
 #[case::absolute("/keys/id_ed25519", "/keys/id_ed25519")]
 #[case::expanded("~/.ssh/id_ed25519", "/home/tester/.ssh/id_ed25519")]
@@ -53,68 +100,13 @@ fn ssh_options_forward_an_unexpanded_tilde_when_home_is_absent() {
 }
 
 #[test]
-fn ssh_options_reject_an_undecodable_home_for_a_tilde_path() {
-    let syncer = syncer_with_identity("~/keys/id");
-    let env = mock_env_with_raw(|_| {
-        Err(std::env::VarError::NotUnicode(OsString::from(
-            "/home/\u{fffd}",
-        )))
-    });
-
-    let result = syncer.common_ssh_options(22, &env);
-
-    assert!(
-        matches!(result, Err(SyncError::HomeUnavailable(_))),
-        "a tilde path with an undecodable HOME should fail: {result:?}"
-    );
-}
-
-#[test]
 fn ssh_options_ignore_an_undecodable_home_for_an_absolute_path() {
     let syncer = syncer_with_identity("/keys/id");
-    let env = mock_env_with_raw(|_| {
-        Err(std::env::VarError::NotUnicode(OsString::from(
-            "/home/\u{fffd}",
-        )))
-    });
+    let env = env_with_undecodable_home();
 
     let args = syncer
         .common_ssh_options(22, &env)
         .expect("an absolute path needs no HOME");
 
     assert!(args.contains(&OsString::from("/keys/id")));
-}
-
-#[test]
-fn ssh_args_propagate_the_home_failure() {
-    let syncer = syncer_with_identity("~/keys/id");
-    let env = mock_env_with_raw(|_| {
-        Err(std::env::VarError::NotUnicode(OsString::from(
-            "/home/\u{fffd}",
-        )))
-    });
-
-    let result = syncer.build_ssh_args(&networking(), "echo ok", &env);
-
-    assert!(
-        matches!(result, Err(SyncError::HomeUnavailable(_))),
-        "an unusable HOME should reach the SSH argument builder: {result:?}"
-    );
-}
-
-#[test]
-fn rsync_remote_shell_propagates_the_home_failure() {
-    let syncer = syncer_with_identity("~/keys/id");
-    let env = mock_env_with_raw(|_| {
-        Err(std::env::VarError::NotUnicode(OsString::from(
-            "/home/\u{fffd}",
-        )))
-    });
-
-    let result = syncer.build_remote_shell(22, &env);
-
-    assert!(
-        matches!(result, Err(SyncError::HomeUnavailable(_))),
-        "an unusable HOME should reach the rsync remote shell: {result:?}"
-    );
 }
