@@ -1882,6 +1882,7 @@ dependencies = [
  "clap",
  "clap_mangen",
  "mockable",
+ "mriya-test-macros",
  "ortho_config",
  "predicates 3.1.4",
  "proptest",
@@ -1901,6 +1902,14 @@ dependencies = [
  "toml 0.9.8",
  "typos-cli",
  "uuid",
+]
+
+[[package]]
+name = "mriya-test-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
