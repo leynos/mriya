@@ -15,8 +15,10 @@ use crate::backend::InstanceHandle;
 use crate::scaleway::types::Zone;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
+/// Response page from the list-servers call.
 #[derive(Deserialize)]
 struct ListInstancesResponse {
+    /// Instances on this page; an empty list marks the end of pagination.
     servers: Vec<ScalewayInstance>,
 }
 
