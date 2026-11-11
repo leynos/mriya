@@ -3,23 +3,34 @@
 use mriya::sync::CACHE_SUBDIRECTORIES;
 use rstest_bdd_macros::{given, then};
 
-use super::bdd_steps::{SshLookupDirection, StepError, find_ssh_command, last_ssh_remote_command};
-use super::test_helpers::RunContext;
+use super::bdd_steps::{
+    SshLookupDirection, StepError, context, find_ssh_command, last_ssh_remote_command,
+};
+use super::test_helpers::{RunContext, RunContextResult};
 
 #[given("cache routing is disabled")]
-fn cache_routing_disabled(mut run_context: RunContext) -> RunContext {
+fn cache_routing_disabled(
+    run_context_result: RunContextResult,
+) -> Result<RunContextResult, StepError> {
+    let mut run_context = run_context_result?;
     run_context.sync_config.route_build_caches = false;
-    run_context
+    Ok(Ok(run_context))
 }
 
 #[given("cache directory creation is disabled")]
-fn cache_directory_creation_disabled(mut run_context: RunContext) -> RunContext {
+fn cache_directory_creation_disabled(
+    run_context_result: RunContextResult,
+) -> Result<RunContextResult, StepError> {
+    let mut run_context = run_context_result?;
     run_context.sync_config.create_cache_directories = false;
-    run_context
+    Ok(Ok(run_context))
 }
 
 #[then("the remote command routes Cargo caches to the volume")]
-fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
+fn remote_command_routes_cargo_caches(
+    run_context_result: &RunContextResult,
+) -> Result<(), StepError> {
+    let run_context = context(run_context_result)?;
     let remote_command = last_ssh_remote_command(run_context)?;
     for required in [
         "if mountpoint -q /mriya 2>/dev/null; then",
@@ -44,7 +55,10 @@ fn remote_command_routes_cargo_caches(run_context: &RunContext) -> Result<(), St
 }
 
 #[then("the remote command does not route Cargo caches")]
-fn remote_command_does_not_route_cargo_caches(run_context: &RunContext) -> Result<(), StepError> {
+fn remote_command_does_not_route_cargo_caches(
+    run_context_result: &RunContextResult,
+) -> Result<(), StepError> {
+    let run_context = context(run_context_result)?;
     let remote_command = last_ssh_remote_command(run_context)?;
 
     const CARGO_CACHE_VARS: &[&str] = &["CARGO_TARGET_DIR=", "CARGO_HOME=", "RUSTUP_HOME="];
@@ -65,7 +79,10 @@ fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> 
 }
 
 #[then("the mount command creates cache subdirectories")]
-fn mount_command_creates_cache_subdirectories(run_context: &RunContext) -> Result<(), StepError> {
+fn mount_command_creates_cache_subdirectories(
+    run_context_result: &RunContextResult,
+) -> Result<(), StepError> {
+    let run_context = context(run_context_result)?;
     // The first SSH command is the mount + mkdir cache dirs command
     let mount_command = first_ssh_raw_command(run_context)?;
 
@@ -98,8 +115,9 @@ fn mount_command_creates_cache_subdirectories(run_context: &RunContext) -> Resul
 
 #[then("the mount command does not create cache subdirectories")]
 fn mount_command_does_not_create_cache_subdirectories(
-    run_context: &RunContext,
+    run_context_result: &RunContextResult,
 ) -> Result<(), StepError> {
+    let run_context = context(run_context_result)?;
     // The first SSH command is the mount command
     let mount_command = first_ssh_raw_command(run_context)?;
 

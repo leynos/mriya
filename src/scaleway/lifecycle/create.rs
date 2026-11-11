@@ -77,11 +77,7 @@ impl ScalewayBackend {
         request: &InstanceRequest,
         image_id: &str,
     ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
-        let url = format!(
-            "{}/zones/{}/servers",
-            super::SCALEWAY_INSTANCE_API_BASE,
-            request.zone
-        );
+        let url = format!("{}/zones/{}/servers", self.instance_api_base, request.zone);
         let name = format!("mriya-{}", Uuid::new_v4().simple());
         let tags = Self::instance_tags(self.test_run_id.as_deref());
         let payload = CreateServerRequest {

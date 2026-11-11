@@ -11,19 +11,22 @@ use super::volume_attach::VolumePatchContext;
 impl ScalewayBackend {
     /// Detaches a volume from the instance while preserving the root volume.
     ///
+    /// The instance is re-read first so the replacement payload keeps whatever
+    /// the provider currently reports at index `"0"`. Reading through the
+    /// backend's own HTTP boundary, rather than the SDK helper, lets callers
+    /// substitute a loopback API.
+    ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::VolumeDetachFailed`] when the API
-    /// rejects the detachment request.
+    /// Returns [`ScalewayBackendError::VolumeNotFound`] when the instance
+    /// reports no root volume, and [`ScalewayBackendError::VolumeDetachFailed`]
+    /// when the API rejects the detachment request.
     pub(in crate::scaleway) async fn detach_volume(
         &self,
         handle: &InstanceHandle,
         volume_id: &str,
     ) -> Result<(), ScalewayBackendError> {
-        let instance = self
-            .api
-            .get_instance_async(&handle.zone, &handle.id)
-            .await?;
+        let instance = self.get_instance(handle).await?;
 
         let root_volume_id = instance
             .volumes
