@@ -93,6 +93,11 @@ impl CommandRunner for ProcessCommandRunner {
     }
 }
 
+/// Spawns a thread that copies `reader` to this process's stderr (or stdout)
+/// as it arrives while also capturing it.
+///
+/// The thread returns the captured text, decoded lossily as UTF-8, or a
+/// `Spawn` error naming `program` when reading or writing fails.
 fn forward_stream(
     reader: impl Read + Send + 'static,
     is_stderr: bool,
