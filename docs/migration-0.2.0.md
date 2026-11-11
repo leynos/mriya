@@ -42,9 +42,11 @@ export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 
 ## Environment access goes through `mockable`
 
-Production code no longer calls `std::env` directly: it reads through
-`mockable::Env`, and `DefaultEnv` is injected at each entry point. Library
-users keep every existing entry point and gain injectable ones beside them:
+Production code no longer reads environment variables through `std::env`: it
+reads them through `mockable::Env`, and `DefaultEnv` is injected at each entry
+point. Reads that are not environment variables are unaffected; `main.rs` still
+calls `std::env::current_dir`, which has no `Env` equivalent. Library users
+keep every existing entry point and gain injectable ones beside them:
 
 - `mriya::sync::expand_tilde(path)` is unchanged in name, signature and
   arity, and still returns the path unchanged when `HOME` is absent. Its one

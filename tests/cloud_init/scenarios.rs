@@ -52,10 +52,10 @@ fn scenario_cloud_init_tilde_file(cli_context: CliContext) {
     let _ = cli_context;
 }
 
-// The scenario needs a byte-backed `OsString` to hold a non-UTF-8 `HOME`, so
-// it is tagged `@unix` and filtered out where it cannot be expressed. The
-// filter is at registration rather than in the step, because a step that only
-// failed would report the platform gap as a product defect.
+// The step assembles its non-UTF-8 `HOME` from bytes, which this workspace does
+// only on Unix, so the scenario is tagged `@unix` and filtered out elsewhere.
+// The filter is at registration rather than in the step, because a step that
+// only failed would report the platform gap as a product defect.
 #[cfg(unix)]
 #[scenario(
     path = "tests/features/cloud_init.feature",

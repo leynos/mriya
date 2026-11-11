@@ -84,8 +84,9 @@ mod undecodable_path {
     //! use it: it re-executes the test binary with the value in the real
     //! environment, which is the only way to reach the case at all.
     //!
-    //! Only a platform with a byte-backed `OsString` can build the value, and
-    //! this workspace's allocator of such values is Unix.
+    //! The value is assembled from bytes, which this workspace does only on
+    //! Unix. Windows can also hold an unpaired surrogate through
+    //! `OsString::from_wide`, but nothing here builds one.
 
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;

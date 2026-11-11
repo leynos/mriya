@@ -288,6 +288,9 @@ test process, which is why the tilde cloud-init scenario can assert an expanded
 path without a guard or a lock. The undecodable-`HOME` scenario goes the same
 way, handing the child an `OsString` built from non-UTF-8 bytes; the child
 reports the failure, so no test process is ever left with an unusable `HOME`.
+That step assembles the value from bytes, which this workspace does only on
+Unix, so the scenario carries `@unix` and is filtered out at registration on
+other platforms.
 
 The build-standard contract's sandbox reads `PATH` through the same boundary
 and with the same rule: `find_on_path` reports an unset `PATH` and an

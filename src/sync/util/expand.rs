@@ -52,10 +52,12 @@ pub fn expand_tilde_with_home(path: &str, home: Option<&str>) -> String {
 /// leaves the tilde for `ssh` to resolve.
 ///
 /// The one difference is the undecodable case. The previous entry converted a
-/// non-UTF-8 `HOME` lossily, producing a path that cannot exist; this one
-/// reads it through [`home_from_env`] and falls back to the path unchanged,
-/// which is the same result as an absent `HOME`. Production code calls
-/// [`home_from_env`] directly so it can report the real cause instead.
+/// non-UTF-8 `HOME` lossily, so the path it produced held replacement
+/// characters and named whatever file those happened to spell rather than the
+/// one the user configured. This entry reads the value through
+/// [`home_from_env`] and falls back to the path unchanged, which is the same
+/// result as an absent `HOME`. Production code calls [`home_from_env`]
+/// directly so it can report the real cause instead.
 ///
 /// # Examples
 ///

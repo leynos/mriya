@@ -168,7 +168,7 @@ fn run_with_cloud_init_file_under_home(
     )
 }
 
-/// Steps the non-UTF-8 `HOME` scenario, which only Unix can express.
+/// Steps the non-UTF-8 `HOME` scenario, which is built only on Unix.
 ///
 /// The scenario carries `@unix` in the feature file and is filtered out at
 /// registration on other platforms, so neither this step nor the scenario
