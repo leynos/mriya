@@ -37,13 +37,31 @@ string_newtype!(FilePath);
 /// directory that owns the file; the resulting context contains the captured
 /// status, stdout, and stderr.
 fn execute_run_command(
+    cli_context: CliContext,
+    additional_args: &[&str],
+    tmp_dir: Option<TempDir>,
+) -> Result<CliContext, StepError> {
+    run_with_home(cli_context, additional_args, tmp_dir, None)
+}
+
+/// Runs the CLI with an optional `HOME` override for one scenario.
+///
+/// The override matters only to tilde expansion, which reads `HOME` through
+/// the process environment; every other scenario passes `None` and inherits
+/// the test process's own. Command construction and process-spawn failures
+/// become `StepError::Execution`.
+fn run_with_home(
     mut cli_context: CliContext,
     additional_args: &[&str],
     tmp_dir: Option<TempDir>,
+    home: Option<&str>,
 ) -> Result<CliContext, StepError> {
     let mut cmd = cli_context
         .base_command()
         .map_err(|err| StepError::Execution(err.to_string()))?;
+    if let Some(directory) = home {
+        cmd.env("HOME", directory);
+    }
     cmd.arg("run");
     cmd.args(additional_args);
     cmd.args(["--", "echo", "ok"]);
@@ -100,6 +118,32 @@ fn run_with_cloud_init_file(
         cli_context,
         &["--cloud-init-file", file_path_string],
         Some(tmp_dir),
+    )
+}
+
+#[when("I run mriya with cloud-init file \"{path}\" relative to the temporary home")]
+fn run_with_cloud_init_file_under_home(
+    cli_context: CliContext,
+    path: FilePath,
+) -> Result<CliContext, StepError> {
+    let tmp_dir = TempDir::new().map_err(|err| StepError::TempFile(err.to_string()))?;
+    let home = Utf8PathBuf::from_path_buf(tmp_dir.path().to_path_buf())
+        .map_err(|raw| StepError::TempFile(format!("non-utf8 temp dir path: {}", raw.display())))?;
+    // The feature file names the file; its content is what the assertion
+    // measures, so the step writes a fixed payload and keeps the stated size
+    // from drifting if the scenario is reused for another path.
+    let content = "file-user-data";
+    Dir::open_ambient_dir(&home, ambient_authority())
+        .map_err(|err| StepError::TempFile(err.to_string()))?
+        .write(path.as_ref(), content)
+        .map_err(|err| StepError::TempFile(err.to_string()))?;
+    let tilde_path = format!("~/{path}");
+    let home_text = home.as_str();
+    run_with_home(
+        cli_context,
+        &["--cloud-init-file", &tilde_path],
+        Some(tmp_dir),
+        Some(home_text),
     )
 }
 

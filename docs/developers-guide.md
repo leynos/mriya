@@ -242,6 +242,41 @@ mutation testing against the current candidate before using counts as evidence.
 The loopback tests exercise the network-boundary survivors reported by the
 earlier run.
 
+### The environment boundary
+
+Production code never calls `std::env` directly. It reads through
+`mockable::Env`, whose `DefaultEnv` is the real process environment and whose
+`MockEnv`, available only under the dev-dependency's `mock` feature, is what
+the tests use. Two accessors matter:
+
+- `string` reports a variable as `None` when it is absent or not valid
+  Unicode. Code that only wants a value when one is usable, such as the
+  `MRIYA_FAKE_*` gates, uses it.
+- `raw` returns `VarError`, so it can tell an absent variable from one that
+  is present but undecodable. Code that must not silently fall back, such as
+  tilde expansion, uses it.
+
+`src/sync/util/expand.rs` is where the distinction is spent. `home_from_env`
+reads `HOME` only when the path it is given starts with `~/`, returns
+`Ok(None)` for an absent `HOME` (leaving the caller its own fallback), and
+reports `HomeUnavailable` for an undecodable one. `expand_tilde_with_home` then
+does the pure string work with no environment access at all. Each caller names
+the path in its own error: `Syncer::common_ssh_options` takes the `Env` it is
+handed, and `config.rs` and `main.rs` turn the cloud-init `HomeUnavailable`
+into a message naming the file the user asked for.
+
+`src/test_helpers.rs` builds the `MockEnv` cases from a variable table, so a
+test never mutates the process environment. `mock_env` answers both accessors
+from one decodable table; `mock_env_with_raw` takes a closure, which is the
+only way to express `NotUnicode` and therefore the way the undecodable-`HOME`
+cases are written. A test that genuinely needs the live process environment —
+the public `expand_tilde` entry, or a CLI behaviour scenario that sets `HOME`
+for the child — uses `temp_env::with_var` or `Command::env`, never `set_var`.
+
+The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
+test process, which is why the tilde cloud-init scenario can assert an expanded
+path without a guard or a lock.
+
 ### Internal module boundaries
 
 Two sibling modules exist to keep their parents inside the 400-line budget

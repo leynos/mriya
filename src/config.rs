@@ -157,6 +157,13 @@ impl ScalewayConfig {
                 path,
                 message,
             },
+            CloudInitError::HomeUnavailable { path } => ConfigError::CloudInit(format!(
+                concat!(
+                    "cannot expand `{path}`: HOME is set to a value that is not valid UTF-8; ",
+                    "set HOME to a UTF-8 directory or use an absolute cloud-init file path"
+                ),
+                path = path
+            )),
         })
     }
 

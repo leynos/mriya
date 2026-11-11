@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 
 use camino::Utf8Path;
+use mockable::{DefaultEnv, Env};
 
 use crate::backend::InstanceNetworking;
 
@@ -22,7 +23,7 @@ pub use types::{
     CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
     StreamingCommandRunner, SyncDestination,
 };
-pub use util::{expand_tilde, expand_tilde_with_env};
+pub use util::{HomeUnavailable, expand_tilde_with_home, home_from_env};
 
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]
@@ -159,7 +160,7 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let args = self.build_ssh_args(networking, command);
+        let args = self.build_ssh_args(networking, command, &DefaultEnv)?;
         let output = self.runner.run(&self.config.ssh_bin, &args)?;
 
         Ok(RemoteCommandOutput {
@@ -195,7 +196,7 @@ impl<R: CommandRunner> Syncer<R> {
                 port,
                 path,
             } => {
-                let remote_shell = self.build_remote_shell(*port);
+                let remote_shell = self.build_remote_shell(*port, &DefaultEnv)?;
                 args.push(OsString::from("--rsh"));
                 args.push(OsString::from(remote_shell));
                 args.push(OsString::from(format!("{source}/")));
@@ -210,25 +211,46 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(args)
     }
 
+    /// Builds the `ssh` argument list for one remote command.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::HomeUnavailable`] when the configured identity
+    /// file starts with `~/` and `HOME` cannot be decoded, because
+    /// `ssh` would otherwise be handed the literal path `~/…` and fail for a
+    /// reason the user cannot act on.
     fn build_ssh_args(
         &self,
         networking: &InstanceNetworking,
         remote_command: &str,
-    ) -> Vec<OsString> {
-        let mut args = self.common_ssh_options(networking.ssh_port);
+        env: &impl Env,
+    ) -> Result<Vec<OsString>, SyncError> {
+        let mut args = self.common_ssh_options(networking.ssh_port, env)?;
         args.push(OsString::from(format!(
             "{}@{}",
             self.config.ssh_user, networking.public_ip
         )));
         args.push(OsString::from(remote_command));
-        args
+        Ok(args)
     }
 
-    fn common_ssh_options(&self, port: u16) -> Vec<OsString> {
+    /// Builds the SSH options shared by `ssh` and the rsync remote shell.
+    ///
+    /// Reading `HOME` here, rather than inside the expansion, is what keeps
+    /// [`expand_tilde_with_home`] free of I/O: this is the boundary that owns
+    /// the process-environment lookup, and it reports the failure at the
+    /// boundary instead of passing an unexpanded path down to `ssh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::HomeUnavailable`] when the identity file needs a
+    /// `HOME` that `env` cannot decode.
+    fn common_ssh_options(&self, port: u16, env: &impl Env) -> Result<Vec<OsString>, SyncError> {
         let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
 
         if let Some(ref identity_file) = self.config.ssh_identity_file {
-            let expanded = expand_tilde(identity_file);
+            let home = home_from_env(env, identity_file)?;
+            let expanded = expand_tilde_with_home(identity_file, home.as_deref());
             args.push(OsString::from("-i"));
             args.push(OsString::from(expanded));
         }
@@ -251,17 +273,17 @@ impl<R: CommandRunner> Syncer<R> {
             )));
         }
 
-        args
+        Ok(args)
     }
 
-    fn build_remote_shell(&self, port: u16) -> String {
+    fn build_remote_shell(&self, port: u16, env: &impl Env) -> Result<String, SyncError> {
         let opts = self
-            .common_ssh_options(port)
+            .common_ssh_options(port, env)?
             .into_iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join(" ");
-        format!("{} {}", self.config.ssh_bin, opts)
+        Ok(format!("{} {}", self.config.ssh_bin, opts))
     }
 
     fn build_remote_command(&self, remote_command: &str) -> String {

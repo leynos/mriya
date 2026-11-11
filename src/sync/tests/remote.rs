@@ -213,7 +213,10 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
     runner.push_success();
     let syncer = Syncer::new(base_config, runner).expect("config should validate");
     let wrapped = syncer.build_remote_command("echo ok");
-    let args = syncer.build_ssh_args(&networking, &wrapped);
+    let env = crate::test_helpers::mock_env(&[("HOME", "/home/tester")]);
+    let args = syncer
+        .build_ssh_args(&networking, &wrapped, &env)
+        .expect("the injected HOME is decodable");
 
     assert_eq!(
         args.last(),

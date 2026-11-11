@@ -39,3 +39,27 @@ export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 - `make release` and the release workflow still need none of these tools. They
   assign their own `RUSTFLAGS`, so a shipped artefact keeps the platform linker.
 - Coverage builds still run without the fast flags.
+
+## Environment access goes through `mockable`
+
+Production code no longer calls `std::env` directly: it reads through
+`mockable::Env`, and `DefaultEnv` is injected at each entry point. Library
+users see new injectable entry points beside the unchanged ones:
+
+- `mriya::sync::expand_tilde_with_home(path, home)` — the pure expansion, with
+  `home_from_env` supplying the value;
+- `mriya::cloud_init::resolve_cloud_init_user_data_with_env`;
+- `ScalewayBackend::new_with_env`.
+
+`mockable` 3.0.0 with default features off is now a regular and build
+dependency, and `temp-env` 0.3.6 is a dev-dependency.
+
+### Behaviour changes
+
+- A `~/` path with a `HOME` that is not valid UTF-8 is now an error rather than
+  a lossily converted path. The message names the file and suggests an absolute
+  path.
+- The test-support `EnvGuard` and `ENV_LOCK` are gone from the public
+  `test_support` module. A test that needs the live environment should use
+  `temp_env::with_var` for the process, or `Command::env` for a spawned child;
+  a test of production logic should inject a `mockable::MockEnv`.

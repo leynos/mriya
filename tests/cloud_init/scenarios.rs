@@ -43,3 +43,11 @@ fn scenario_cloud_init_empty(cli_context: CliContext) {
 fn scenario_cloud_init_missing_file(cli_context: CliContext) {
     let _ = cli_context;
 }
+
+#[scenario(
+    path = "tests/features/cloud_init.feature",
+    name = "Expand a tilde cloud-init file path through HOME"
+)]
+fn scenario_cloud_init_tilde_file(cli_context: CliContext) {
+    let _ = cli_context;
+}

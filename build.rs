@@ -21,6 +21,12 @@ mod cli;
 
 use cli::Cli;
 
+/// Generates the `mriya` man page into Cargo's `OUT_DIR`.
+///
+/// # Errors
+///
+/// Returns an error when `OUT_DIR` is unset or not valid UTF-8, when the CLI
+/// definition cannot be rendered, or when the page cannot be written.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/cli");

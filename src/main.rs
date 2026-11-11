@@ -101,6 +101,15 @@ async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
     init_command(command).await
 }
 
+/// Provisions an instance, runs the requested command, and tears it down.
+///
+/// Short-circuits to a fake outcome when a test backdoor selects one, so the
+/// CLI behaviour suite can assert exit codes without cloud access.
+///
+/// # Errors
+///
+/// Returns the first failure from request construction, sync configuration,
+/// the remote command, or teardown.
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     #[cfg(any(test, feature = "test-backdoors"))]
     {
@@ -220,6 +229,15 @@ fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliEr
         mriya::cloud_init::CloudInitError::FileRead { path, message } => {
             CliError::InvalidCloudInit(format!(
                 "failed to read --cloud-init-file {path}: {message}"
+            ))
+        }
+        mriya::cloud_init::CloudInitError::HomeUnavailable { path } => {
+            CliError::InvalidCloudInit(format!(
+                concat!(
+                    "cannot expand --cloud-init-file {path}: HOME is set to a value that is ",
+                    "not valid UTF-8; set HOME to a UTF-8 directory or pass an absolute path"
+                ),
+                path = path
             ))
         }
     })

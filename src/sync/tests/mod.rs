@@ -8,5 +8,6 @@ mod fixtures;
 mod remote;
 mod rsync;
 mod ssh;
+mod ssh_home;
 mod streaming;
 mod util;

@@ -158,6 +158,12 @@ pub enum SyncError {
         /// Configuration field that failed validation.
         field: String,
     },
+    /// Raised when a `~/` path needs a `HOME` the environment cannot decode.
+    ///
+    /// The expansion helper reports this without a path, because each boundary
+    /// names the file it was expanding.
+    #[error("cannot expand a `~/` path: {0}")]
+    HomeUnavailable(#[from] super::util::HomeUnavailable),
     /// Raised when the source directory does not exist.
     #[error("sync source directory missing: {path}")]
     MissingSource {

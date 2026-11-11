@@ -20,7 +20,10 @@ fn common_ssh_options_includes_identity_flag(
     let runner = ScriptedRunner::new();
     runner.push_success();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    let args = syncer.build_ssh_args(&networking, "echo ok");
+    let env = crate::test_helpers::mock_env(&[("HOME", "/home/tester")]);
+    let args = syncer
+        .build_ssh_args(&networking, "echo ok", &env)
+        .expect("the injected HOME is decodable");
     let args_strs: Vec<String> = args
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
@@ -78,8 +81,9 @@ fn rsync_remote_shell_includes_identity_flag(base_config: SyncConfig) {
 fn ssh_option_strings(cfg: SyncConfig) -> Result<Vec<String>, SyncError> {
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(cfg, runner)?;
+    let env = crate::test_helpers::mock_env(&[("HOME", "/home/tester")]);
     Ok(syncer
-        .common_ssh_options(22)
+        .common_ssh_options(22, &env)?
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect())

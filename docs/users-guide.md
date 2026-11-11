@@ -109,6 +109,19 @@ Or inline (handy for short scripts):
 mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 ```
 
+A file path starting with `~/` is expanded through `HOME` before the file is
+read:
+
+```bash
+mriya run --cloud-init-file ~/cloud-init.yml -- jq --version
+```
+
+If `HOME` is absent the path is passed through unchanged, which is what a shell
+does for a path it cannot expand. If `HOME` is set but is not valid UTF-8, the
+run fails with an error naming the file and suggesting an absolute path, rather
+than silently reading a path that cannot exist. The same rule applies to
+`~/.ssh/...` identity paths, where the equivalent error names `HOME`.
+
 When cloud-init user-data is configured, Mriya:
 
 - syncs the workspace as usual

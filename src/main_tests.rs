@@ -108,6 +108,22 @@ fn fake_outcome_missing_exit_code_from_fake_mode() {
     );
 }
 
+#[test]
+fn fake_outcome_prefers_a_run_mode_over_a_prefail_mode() {
+    // Both modes are selected; a fake run models a completed run, so it must
+    // win over the early-failure mode rather than depending on match order.
+    let env = mock_env(&[
+        ("MRIYA_FAKE_RUN_ENABLE", "1"),
+        ("MRIYA_FAKE_RUN_MODE", "exit-0"),
+        ("MRIYA_FAKE_RUN_PREFAIL", "backend"),
+    ]);
+
+    let result = test_backdoors::fake_outcome(&echo_command(), &env)
+        .expect("a selected fake run should short-circuit the real path");
+
+    assert_eq!(result.ok(), Some(0), "the run mode should take precedence");
+}
+
 #[rstest]
 #[case::disabled(&[("MRIYA_FAKE_RUN_MODE", "exit-0")])]
 #[case::enable_not_one(&[("MRIYA_FAKE_RUN_ENABLE", "0"), ("MRIYA_FAKE_RUN_MODE", "exit-0")])]

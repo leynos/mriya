@@ -27,3 +27,9 @@ Feature: Cloud-init user-data configuration
     Given fake request dumping is enabled for cloud-init
     When I run mriya with missing cloud-init file "does-not-exist.yml"
     Then the run fails with error containing "failed to read --cloud-init-file"
+
+  Scenario: Expand a tilde cloud-init file path through HOME
+    Given fake request dumping is enabled for cloud-init
+    When I run mriya with cloud-init file "user-data.yml" relative to the temporary home
+    Then the run request has cloud-init user-data present "true"
+    And the run request has cloud-init user-data size "14"
