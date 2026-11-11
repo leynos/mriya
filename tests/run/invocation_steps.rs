@@ -1,6 +1,7 @@
 //! BDD step definitions for cache-volume mounting and for the ordering of the
 //! mount, cloud-init, sync, and remote command invocations.
 
+use mriya::test_support::CommandInvocation;
 use rstest_bdd_macros::{given, then};
 
 use super::bdd_steps::{StepError, context};
@@ -84,7 +85,24 @@ fn mount_precedes_sync(run_context_result: &RunContextResult) -> Result<(), Step
 fn sync_and_run_follow_failed_mount(
     run_context_result: &RunContextResult,
 ) -> Result<(), StepError> {
+    let roles = classify_invocations(context(run_context_result)?);
+    // The mount ran first, so the first scripted response — the failure — was
+    // consumed by it. Without this, a run that skipped the mount entirely
+    // would satisfy the ordering assertion with the failure going to rsync.
+    if roles.first() != Some(&InvocationRole::Mount) {
+        return Err(StepError::Assertion(format!(
+            "expected the failed mount to run first, got {roles:?}"
+        )));
+    }
     mount_precedes_sync(run_context_result)
+}
+
+/// Reports whether this SSH invocation is a cloud-init readiness poll.
+fn is_cloud_init_check(invocation: &CommandInvocation) -> bool {
+    invocation
+        .args
+        .last()
+        .is_some_and(|arg| arg.to_string_lossy().contains("boot-finished"))
 }
 
 #[then("cloud-init readiness is checked before executing the remote command")]
@@ -107,30 +125,25 @@ fn cloud_init_checked_before_remote_command(
         )));
     }
 
-    let cloud_init_index = ssh_invocations.iter().position(|invocation| {
-        invocation
-            .args
-            .last()
-            .is_some_and(|arg| arg.to_string_lossy().contains("boot-finished"))
-    });
+    let cloud_init_index = ssh_invocations.iter().position(is_cloud_init_check);
 
-    let remote_index = ssh_invocations.iter().position(|invocation| {
-        invocation
-            .args
-            .last()
-            .is_some_and(|arg| arg.to_string_lossy().contains("echo ok"))
-    });
+    // The remote command is the final SSH call in the run, so identifying it
+    // by position is exact where matching its text is not: the same payload
+    // can appear inside a mount or cloud-init argument.
+    let Some(last) = ssh_invocations.last() else {
+        return Err(StepError::Assertion(String::from(
+            "expected an ssh invocation",
+        )));
+    };
+    let last_index = ssh_invocations.len() - 1;
 
-    match (cloud_init_index, remote_index) {
-        (Some(ci), Some(remote)) if ci < remote => Ok(()),
-        (Some(_), Some(_)) => Err(StepError::Assertion(String::from(
+    match cloud_init_index {
+        Some(check_index) if check_index < last_index && !is_cloud_init_check(last) => Ok(()),
+        Some(_) => Err(StepError::Assertion(String::from(
             "expected cloud-init check to run before the remote command",
         ))),
-        (None, _) => Err(StepError::Assertion(String::from(
+        None => Err(StepError::Assertion(String::from(
             "missing cloud-init readiness check invocation",
-        ))),
-        (_, None) => Err(StepError::Assertion(String::from(
-            "missing remote command invocation",
         ))),
     }
 }

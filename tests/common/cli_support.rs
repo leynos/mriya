@@ -8,6 +8,11 @@
 
 use std::process::Output;
 
+/// The image label the CLI selects when a scenario does not set one.
+///
+/// It must match `ScalewayConfig::default_image`; a scenario that changes the
+/// config default without changing this constant asserts against an image the
+/// binary never resolves.
 pub const DEFAULT_IMAGE_LABEL: &str = "Ubuntu 24.04 Noble Numbat";
 const DUMMY_SECRET_KEY: &str = "dummy-secret";
 const DUMMY_PROJECT_ID: &str = "11111111-2222-3333-4444-555555555555";
@@ -133,19 +138,23 @@ pub fn check_field_value(
 ///
 /// # Errors
 ///
-/// Returns the failure message when no output was captured, the run
-/// succeeded, or stderr lacks the snippet.
+/// Returns the failure message when no output was captured, the run succeeded,
+/// or stderr lacks the snippet. Both streams are included, because a run can
+/// fail before writing to stderr and the stdout then holds the only clue.
 pub fn check_run_failed_with(output: Option<&CliOutput>, snippet: &str) -> Result<(), String> {
     let captured = captured(output)?;
     if captured.status_code == 0 {
-        return Err(String::from("expected non-zero exit status"));
+        return Err(format!(
+            "expected non-zero exit status, got success; stdout: {}; stderr: {}",
+            captured.stdout, captured.stderr
+        ));
     }
     if captured.stderr.contains(snippet) {
         Ok(())
     } else {
         Err(format!(
-            "expected stderr to contain '{snippet}', got: {}",
-            captured.stderr
+            "expected stderr to contain '{snippet}', got: {}; stdout: {}",
+            captured.stderr, captured.stdout
         ))
     }
 }

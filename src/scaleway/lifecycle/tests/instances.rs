@@ -9,14 +9,13 @@
 use anyhow::{Context, Result};
 use rstest::rstest;
 
-use super::backend_fixture;
-use super::base_request;
-use super::http_stub::{Reply, StubApi};
+use super::http_stub::{Reply, only_request, request_body, request_url, with_stub};
+use super::{backend_fixture, base_request};
 use crate::backend::InstanceRequest;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
-/// Represents a successful creation, reusing the single-server fixture the
-/// detach path also decodes.
+/// A successful creation, reusing the single-server fixture the detach path
+/// also decodes.
 fn created_instance() -> Reply {
     Reply {
         status: 201,
@@ -24,31 +23,12 @@ fn created_instance() -> Reply {
     }
 }
 
-/// Represents a structured provider rejection that does not identify the
-/// instance type.
+/// A structured provider rejection that does not identify the instance type.
 fn rejected() -> Reply {
     Reply {
         status: 404,
         body: String::from(r#"{"type":"denied","message":"no such image"}"#),
     }
-}
-
-/// Parses a captured request target so tests can inspect its path.
-fn request_url(request: &str) -> Result<reqwest::Url> {
-    let path = request
-        .split_whitespace()
-        .nth(1)
-        .context("request path missing")?;
-    reqwest::Url::parse(&format!("http://localhost{path}")).context("invalid request URL")
-}
-
-/// Returns the body of a captured request, which follows the blank line that
-/// ends its headers.
-fn request_body(request: &str) -> Result<serde_json::Value> {
-    let (_, body) = request
-        .split_once("\r\n\r\n")
-        .context("request body missing")?;
-    serde_json::from_str(body).context("request body is not JSON")
 }
 
 /// Scenario: creating an instance before its cache volume is attached.
@@ -59,18 +39,19 @@ fn request_body(request: &str) -> Result<serde_json::Value> {
 #[rstest]
 #[tokio::test]
 async fn create_instance_stopped_posts_a_stopped_server(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     base_request: InstanceRequest,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![created_instance()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let server = backend_fixture
-        .create_instance_stopped(&base_request, "img-test")
+    let (result, requests) =
+        with_stub(backend_fixture, vec![created_instance()], async |backend| {
+            backend
+                .create_instance_stopped(&base_request, "img-test")
+                .await
+        })
         .await?;
+    let server = result?;
     assert_eq!(server.id, "id");
-    let requests = stub.finish().await?;
-    assert_eq!(requests.len(), 1);
-    let request = requests.first().context("creation request missing")?;
+    let request = only_request(&requests)?;
     assert!(request.starts_with("POST "), "{request}");
     assert_eq!(
         request_url(request)?.path(),
@@ -122,19 +103,20 @@ fn without_name(body: &serde_json::Value) -> Result<serde_json::Value> {
 #[rstest]
 #[tokio::test]
 async fn create_instance_stopped_preserves_a_provider_rejection(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     base_request: InstanceRequest,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![rejected()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let error = backend_fixture
-        .create_instance_stopped(&base_request, "img-test")
-        .await
-        .expect_err("a rejected creation must fail");
+    let (result, requests) = with_stub(backend_fixture, vec![rejected()], async |backend| {
+        backend
+            .create_instance_stopped(&base_request, "img-test")
+            .await
+    })
+    .await?;
+    let error = result.expect_err("a rejected creation must fail");
     assert!(
         matches!(error, ScalewayBackendError::Provider { ref message } if message.contains("no such image")),
         "{error:?}"
     );
-    assert_eq!(stub.finish().await?.len(), 1);
+    assert_eq!(requests.len(), 1);
     Ok(())
 }

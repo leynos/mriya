@@ -10,13 +10,13 @@
 use anyhow::{Context, Result};
 use rstest::rstest;
 
-use super::http_stub::{Reply, StubApi};
+use super::http_stub::{Reply, only_request, request_body, request_url, with_stub};
 use super::{backend_fixture, handle};
 use crate::backend::InstanceHandle;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
-use crate::volume::VolumeRequest;
+use crate::volume::{VolumeHandle, VolumeRequest};
 
-/// Represents a successful PATCH that changes volumes.
+/// A provider response confirming a volume patch.
 fn patched() -> Reply {
     Reply {
         status: 200,
@@ -24,7 +24,7 @@ fn patched() -> Reply {
     }
 }
 
-/// Represents a successful volume creation.
+/// A provider response confirming a volume creation.
 fn created_volume() -> Reply {
     Reply {
         status: 201,
@@ -32,30 +32,37 @@ fn created_volume() -> Reply {
     }
 }
 
-/// Represents a structured provider rejection for error-preservation checks.
+/// A structured provider denial shared by the rejection cases.
 fn rejected() -> Reply {
     Reply {
         status: 404,
-        body: String::from(r#"{"type":"denied","message":"no such server"}"#),
+        body: String::from(r#"{"type":"denied","message":"no such volume"}"#),
     }
 }
 
-/// Parses a captured request target so tests can inspect its path.
-fn request_url(request: &str) -> Result<reqwest::Url> {
-    let path = request
-        .split_whitespace()
-        .nth(1)
-        .context("request path missing")?;
-    reqwest::Url::parse(&format!("http://localhost{path}")).context("invalid request URL")
+/// The single-server instance fixture whose `"0"` index is the root volume.
+fn attached_instance() -> Reply {
+    Reply {
+        status: 200,
+        body: include_str!("fixtures/detach-instance.json").to_owned(),
+    }
 }
 
-/// Returns the body of a captured request, which follows the blank line that
-/// ends its headers.
-fn request_body(request: &str) -> Result<serde_json::Value> {
-    let (_, body) = request
-        .split_once("\r\n\r\n")
-        .context("request body missing")?;
-    serde_json::from_str(body).context("request body is not JSON")
+/// The same instance with every volume index removed.
+fn rootless_instance() -> Result<Reply> {
+    let mut instance: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/detach-instance.json"))
+            .context("detach fixture is not JSON")?;
+    let volumes = instance
+        .pointer_mut("/server/volumes")
+        .context("detach fixture has no volumes")?
+        .as_object_mut()
+        .context("detach fixture volumes are not an object")?;
+    volumes.clear();
+    Ok(Reply {
+        status: 200,
+        body: serde_json::to_string(&instance)?,
+    })
 }
 
 /// Scenario: attaching a cache volume to a stopped instance.
@@ -66,17 +73,17 @@ fn request_body(request: &str) -> Result<serde_json::Value> {
 #[rstest]
 #[tokio::test]
 async fn attach_volume_patches_root_and_cache_indices(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![patched()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    backend_fixture
-        .attach_volume(&handle, "vol-cache", String::from("vol-root"))
-        .await?;
-    let requests = stub.finish().await?;
-    assert_eq!(requests.len(), 1);
-    let request = requests.first().context("attachment request missing")?;
+    let (result, requests) = with_stub(backend_fixture, vec![patched()], async |backend| {
+        backend
+            .attach_volume(&handle, "vol-cache", String::from("vol-root"))
+            .await
+    })
+    .await?;
+    result?;
+    let request = only_request(&requests)?;
     assert!(request.starts_with("PATCH "), "{request}");
     assert_eq!(
         request_url(request)?.path(),
@@ -94,62 +101,118 @@ async fn attach_volume_patches_root_and_cache_indices(
     Ok(())
 }
 
-/// Scenario: attaching a volume when the instance snapshot has no root volume.
+/// Scenario: attaching a volume when the root identifier is blank.
 ///
-/// Invariant: an empty root identifier fails before any request is sent, so a
-/// missing root volume is reported as `VolumeNotFound` rather than patched away.
+/// Invariant: a blank root fails as `VolumeNotFound` before any request is
+/// sent, so a caller cannot patch away an unknown root volume.
 #[rstest]
 #[tokio::test]
 async fn attach_volume_rejects_a_missing_root_volume(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let stub = StubApi::start(Vec::new()).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let error = backend_fixture
-        .attach_volume(&handle, "vol-cache", String::from("   "))
-        .await
-        .expect_err("a blank root volume must not be attached");
-    assert!(matches!(
-        error,
-        ScalewayBackendError::VolumeNotFound {
-            ref volume_id,
-            ..
-        } if volume_id == "0"
-    ));
-    stub.finish().await?;
+    let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
+        backend
+            .attach_volume(&handle, "vol-cache", String::from("   "))
+            .await
+    })
+    .await?;
+    let error = result.expect_err("a blank root volume must not be attached");
+    assert!(
+        matches!(error, ScalewayBackendError::VolumeNotFound { ref volume_id, .. } if volume_id == "0"),
+        "{error:?}"
+    );
+    assert!(requests.is_empty(), "{requests:?}");
     Ok(())
 }
 
-/// Scenario: the provider rejects an attachment.
+/// One rejected volume operation and the error it must report.
 ///
-/// Invariant: a non-success response becomes `VolumeAttachmentFailed`, naming
-/// the volume and carrying the provider's message.
-#[rstest]
-#[tokio::test]
-async fn attach_volume_reports_a_provider_rejection(
-    mut backend_fixture: ScalewayBackend,
-    handle: InstanceHandle,
-) -> Result<()> {
-    let stub = StubApi::start(vec![rejected()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let error = backend_fixture
-        .attach_volume(&handle, "vol-cache", String::from("vol-root"))
-        .await
-        .expect_err("a rejected attachment must fail");
-    match error {
-        ScalewayBackendError::VolumeAttachmentFailed {
-            volume_id,
-            instance_id,
-            message,
-        } => {
-            assert_eq!(volume_id, "vol-cache");
-            assert_eq!(instance_id, "id");
-            assert!(!message.is_empty(), "the provider message was dropped");
+/// Each row carries the exact provider message the stub returns, so the test
+/// proves the message is carried through rather than merely that some error
+/// occurred. For example, the attach row expects `VolumeAttachmentFailed`
+/// naming `vol-cache` and `id`.
+#[derive(Clone, Copy)]
+enum Rejection {
+    Attach,
+    Detach,
+    Create,
+}
+
+impl Rejection {
+    /// Runs the rejected operation against `backend`.
+    async fn run(
+        self,
+        backend: &ScalewayBackend,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        match self {
+            Self::Attach => {
+                backend
+                    .attach_volume(handle, "vol-cache", String::from("vol-root"))
+                    .await
+            }
+            Self::Detach => backend.detach_volume(handle, "vol-cache").await,
+            Self::Create => backend
+                .create_volume(&VolumeRequest::new("cache", 10_000_000_000, "zone", "proj"))
+                .await
+                .map(drop),
         }
-        other => return Err(anyhow::anyhow!("unexpected error: {other:?}")),
     }
-    assert_eq!(stub.finish().await?.len(), 1);
+
+    /// The reply script that reaches this operation's rejection.
+    fn script(self) -> Vec<Reply> {
+        match self {
+            Self::Attach | Self::Create => vec![rejected()],
+            // Detaching reads the instance before it patches.
+            Self::Detach => vec![attached_instance(), rejected()],
+        }
+    }
+
+    /// The error this operation must report for the stub's denial.
+    fn expected(self) -> ScalewayBackendError {
+        match self {
+            Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
+                volume_id: String::from("vol-cache"),
+                instance_id: String::from("id"),
+                message: rejected().body,
+            },
+            Self::Detach => ScalewayBackendError::VolumeDetachFailed {
+                volume_id: String::from("vol-cache"),
+                instance_id: String::from("id"),
+                message: rejected().body,
+            },
+            Self::Create => ScalewayBackendError::VolumeCreateFailed {
+                name: String::from("cache"),
+                zone: String::from("zone"),
+                message: rejected().body,
+            },
+        }
+    }
+}
+
+/// Scenario: the provider rejects an attach, detach, or create request.
+///
+/// Invariant: each wrapper reports the operation-specific error naming the
+/// volume and instance (or name and zone) plus the provider's own message, so
+/// an operator can tell which request failed and why.
+#[rstest]
+#[case::attach(Rejection::Attach)]
+#[case::detach(Rejection::Detach)]
+#[case::create(Rejection::Create)]
+#[tokio::test]
+async fn rejected_volume_operations_report_the_operation_error(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+    #[case] rejection: Rejection,
+) -> Result<()> {
+    let (result, requests) = with_stub(backend_fixture, rejection.script(), async |backend| {
+        rejection.run(backend, &handle).await
+    })
+    .await?;
+    let error = result.expect_err("a rejected operation must fail");
+    assert_eq!(error, rejection.expected());
+    assert_eq!(requests.len(), rejection.script().len());
     Ok(())
 }
 
@@ -160,20 +223,16 @@ async fn attach_volume_reports_a_provider_rejection(
 #[rstest]
 #[tokio::test]
 async fn detach_volume_keeps_only_the_root_index(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![
-        Reply {
-            status: 200,
-            body: include_str!("fixtures/detach-instance.json").to_owned(),
-        },
-        patched(),
-    ])
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![attached_instance(), patched()],
+        async |backend| backend.detach_volume(&handle, "vol-cache").await,
+    )
     .await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    backend_fixture.detach_volume(&handle, "vol-cache").await?;
-    let requests = stub.finish().await?;
+    result?;
     assert_eq!(requests.len(), 2);
     let read = requests.first().context("instance read missing")?;
     assert!(read.starts_with("GET "), "{read}");
@@ -194,65 +253,47 @@ async fn detach_volume_keeps_only_the_root_index(
 
 /// Scenario: detaching when the instance reports no root volume.
 ///
-/// Invariant: the detach stops with `VolumeNotFound` before sending a PATCH,
-/// so an unexpected provider shape cannot clear every volume index.
+/// Invariant: the detach stops with `VolumeNotFound` after the read and before
+/// the PATCH, so an unexpected provider shape cannot clear every index.
 #[rstest]
 #[tokio::test]
 async fn detach_volume_rejects_an_instance_without_a_root_volume(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![Reply {
-        status: 200,
-        body: rootless_instance()?,
-    }])
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![rootless_instance()?],
+        async |backend| backend.detach_volume(&handle, "vol-cache").await,
+    )
     .await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let error = backend_fixture
-        .detach_volume(&handle, "vol-cache")
-        .await
-        .expect_err("a detached cache volume cannot supply a root volume");
+    let error = result.expect_err("an instance without a root volume cannot be detached");
     assert!(
         matches!(error, ScalewayBackendError::VolumeNotFound { ref volume_id, .. } if volume_id == "0"),
         "{error:?}"
     );
-    assert_eq!(stub.finish().await?.len(), 1);
+    assert_eq!(requests.len(), 1);
     Ok(())
-}
-
-/// Removes every volume from the fixture, modelling an instance whose
-/// snapshot reports no root volume to preserve.
-fn rootless_instance() -> Result<String> {
-    let mut instance: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/detach-instance.json"))
-            .context("detach fixture is not JSON")?;
-    let volumes = instance
-        .pointer_mut("/server/volumes")
-        .context("detach fixture has no volumes")?
-        .as_object_mut()
-        .context("detach fixture volumes are not an object")?;
-    volumes.clear();
-    Ok(serde_json::to_string(&instance)?)
 }
 
 /// Scenario: creating a Block Storage volume.
 ///
-/// Invariant: the POST carries the requested name, size, and project, and the
-/// provider's identifiers come back as the handle.
+/// Invariant: the POST carries the requested name, size, project, and tags,
+/// and the provider's identifiers come back as the handle.
 #[rstest]
 #[tokio::test]
 async fn create_volume_posts_the_request_and_returns_the_handle(
-    mut backend_fixture: ScalewayBackend,
+    backend_fixture: ScalewayBackend,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![created_volume()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let wanted = VolumeRequest::new("cache", 10_000_000_000, "zone", "proj");
-    let volume = backend_fixture.create_volume(&wanted).await?;
+    let (result, requests) = with_stub(backend_fixture, vec![created_volume()], async |backend| {
+        let wanted = VolumeRequest::new("cache", 10_000_000_000, "zone", "proj");
+        backend.create_volume(&wanted).await
+    })
+    .await?;
+    let volume: VolumeHandle = result?;
     assert_eq!(volume.id, "vol-created");
     assert_eq!(volume.zone, "zone");
-    let requests = stub.finish().await?;
-    assert_eq!(requests.len(), 1);
-    let request = requests.first().context("creation request missing")?;
+    let request = only_request(&requests)?;
     assert!(request.starts_with("POST "), "{request}");
     assert_eq!(
         request_url(request)?.path(),
@@ -268,37 +309,5 @@ async fn create_volume_posts_the_request_and_returns_the_handle(
             "tags": ["mriya", "cache"],
         })
     );
-    Ok(())
-}
-
-/// Scenario: the provider rejects a volume creation.
-///
-/// Invariant: a non-success response becomes `VolumeCreateFailed`, naming the
-/// requested volume so the caller can report which one failed.
-#[rstest]
-#[tokio::test]
-async fn create_volume_reports_a_provider_rejection(
-    mut backend_fixture: ScalewayBackend,
-) -> Result<()> {
-    let stub = StubApi::start(vec![rejected()]).await?;
-    backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    let request = VolumeRequest::new("cache", 10_000_000_000, "zone", "proj");
-    let error = backend_fixture
-        .create_volume(&request)
-        .await
-        .expect_err("a rejected creation must fail");
-    match error {
-        ScalewayBackendError::VolumeCreateFailed {
-            name,
-            zone,
-            message,
-        } => {
-            assert_eq!(name, "cache");
-            assert_eq!(zone, "zone");
-            assert!(!message.is_empty(), "the provider message was dropped");
-        }
-        other => return Err(anyhow::anyhow!("unexpected error: {other:?}")),
-    }
-    assert_eq!(stub.finish().await?.len(), 1);
     Ok(())
 }

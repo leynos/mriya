@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use rstest::rstest;
 use tokio::net::TcpListener;
 
-use super::http_stub::{Reply, StubApi};
+use super::http_stub::{Reply, StubApi, request_url};
 use super::{backend_fixture, handle};
 use crate::backend::{Backend, InstanceHandle};
 use crate::scaleway::types::{Action, Zone};
@@ -34,15 +34,6 @@ fn provider_error() -> Reply {
         status: 403,
         body: String::from("{\"type\":\"denied\",\"message\":\"no access\"}"),
     }
-}
-
-/// Parses a captured request target so tests can inspect its path and query.
-fn request_url(request: &str) -> Result<reqwest::Url> {
-    let path = request
-        .split_whitespace()
-        .nth(1)
-        .context("request path missing")?;
-    reqwest::Url::parse(&format!("http://localhost{path}")).context("invalid request URL")
 }
 
 /// Checks snapshot mapping and paginated GET request details through the SDK

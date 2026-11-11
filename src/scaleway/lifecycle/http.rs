@@ -2,10 +2,13 @@
 //! actions.
 //!
 //! Keeping the endpoint private lets tests substitute a loopback API without
-//! altering global environment variables or calling the live provider. Every
-//! Instance API call goes through `instance_api_base` for the same reason: the
-//! SDK's own helpers hard-code the production host, which leaves the caller
-//! unreachable from a test.
+//! altering global environment variables or calling the live provider. The
+//! instance read, list, delete, power-on, create, and volume paths all format
+//! their URL from `instance_api_base` for the same reason: the SDK's own
+//! helpers hard-code the production host, which leaves the caller unreachable
+//! from a test. Image lookup is the one exception; it still delegates to
+//! `ScalewayListInstanceImagesBuilder` on the SDK client and is covered by the
+//! pure selection cases instead.
 
 use reqwest::{RequestBuilder, Response};
 use scaleway_rs::{ScalewayApiError, ScalewayError, ScalewayInstance};

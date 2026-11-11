@@ -24,6 +24,66 @@ fn configured_janitor(
     Ok(janitor_context)
 }
 
+#[cfg(test)]
+mod tests {
+    //! Exercises the step-level conversion that a rejected config exercises.
+
+    use super::*;
+
+    /// A blank project must surface as `StepError::Setup`, not a panic or an
+    /// assertion failure, so the scenario reports the original cause.
+    #[test]
+    fn blank_project_becomes_a_setup_error() {
+        let error = configured_janitor(
+            JanitorContext::default(),
+            String::from("   "),
+            String::from("run-1"),
+        )
+        .expect_err("a blank project must be rejected");
+        assert!(
+            matches!(
+                error,
+                StepError::Setup(JanitorError::InvalidConfig { ref field }) if field == "project_id"
+            ),
+            "{error:?}"
+        );
+    }
+}
+
+/// Builds a janitor configuration without failing the scenario when rejected.
+///
+/// The rejection is the behaviour under test here, so it is recorded for the
+/// `then` step instead of being converted into a step error. For example, a
+/// whitespace project leaves `setup_error` set and `config` empty.
+#[given("a janitor configured for project \"{project}\" and test run \"{run_id}\"")]
+fn unvalidated_janitor(
+    mut janitor_context: JanitorContext,
+    project: String,
+    run_id: String,
+) -> JanitorContext {
+    match build_config(project.trim(), run_id.trim()) {
+        Ok(config) => janitor_context.config = Some(config),
+        Err(error) => janitor_context.setup_error = Some(error),
+    }
+    janitor_context
+}
+
+#[then("the janitor rejects the configuration because {field} is blank")]
+fn reports_invalid_config(
+    janitor_context: &JanitorContext,
+    field: String,
+) -> Result<(), StepError> {
+    match janitor_context.setup_error.as_ref() {
+        Some(JanitorError::InvalidConfig { field: reported }) if reported == &field => Ok(()),
+        Some(error) => Err(StepError::Assertion(format!(
+            "expected a blank {field} rejection, got: {error}"
+        ))),
+        None => Err(StepError::Assertion(String::from(
+            "expected the configuration to be rejected, but it was accepted",
+        ))),
+    }
+}
+
 #[given("scw lists one tagged server and one tagged volume")]
 fn scw_lists_tagged_resources(
     janitor_context: JanitorContext,
