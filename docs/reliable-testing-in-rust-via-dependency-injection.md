@@ -19,8 +19,8 @@ This leads to several problems:
 The solution is a classic software design pattern: **Dependency Injection
 (DI)**. Instead of a function reaching out to the global state, its
 dependencies are provided as arguments. The `mockable` crate offers a
-convenient set of traits (`Env`, `Clock`, etc.) to implement this pattern for
-common system interactions in Rust.
+convenient set of traits (`Env`, and `Clock` behind its `clock` feature) to
+implement this pattern for common system interactions in Rust.
 
 ______________________________________________________________________
 
@@ -134,65 +134,80 @@ ______________________________________________________________________
 
 This dependency injection pattern also applies to other non-deterministic
 dependencies, such as the system clock. The `mockable` crate provides a `Clock`
-trait for this purpose.
+trait for this purpose, behind the `clock` feature. That feature pulls in
+`chrono`, so the trait deals in `chrono`'s `DateTime<Utc>` and
+`DateTime<Local>` rather than `std::time::SystemTime`:
 
 ### Untestable code
 
 ```rust,no_run
-use std::time::{SystemTime, Duration};
+use chrono::{DateTime, Duration, Utc};
 
-fn is_cache_entry_stale(creation_time: SystemTime) -> bool {
-    let timeout = Duration::from_secs(300);
-    match SystemTime::now().duration_since(creation_time) {
-        Ok(age) => age > timeout,
-        Err(_) => false,
-    }
+fn is_cache_entry_stale(creation_time: DateTime<Utc>) -> bool {
+    let timeout = Duration::seconds(300);
+    Utc::now() - creation_time > timeout
 }
 ```
 
 ### Testable refactor
 
 ```rust,no_run
+use chrono::{DateTime, Duration, Utc};
 use mockable::Clock;
-use std::time::{SystemTime, Duration};
 
-fn is_cache_entry_stale(creation_time: SystemTime, clock: &impl Clock) -> bool {
-    let timeout = Duration::from_secs(300);
-    match clock.now().duration_since(creation_time) {
-        Ok(age) => age > timeout,
-        Err(_) => false,
-    }
+fn is_cache_entry_stale(creation_time: DateTime<Utc>, clock: &impl Clock) -> bool {
+    let timeout = Duration::seconds(300);
+    clock.utc() - creation_time > timeout
 }
 ```
 
 ### Testing with `MockClock`
 
+`MockClock` is a `mockall` mock of the trait, not a self-advancing clock. Each
+test sets the reading it wants, which is what makes the two cases independent:
+
 ```rust,no_run
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockable::{MockClock, Clock};
-    use std::time::{Duration, SystemTime};
 
     #[test]
     fn test_cache_is_not_stale() {
+        let creation_time = Utc::now();
         let mut clock = MockClock::new();
-        let creation_time = clock.now();
-        clock.advance(Duration::from_secs(100));
+        clock
+            .expect_utc()
+            .return_const(creation_time + Duration::seconds(100));
         assert!(!is_cache_entry_stale(creation_time, &clock));
     }
 
     #[test]
     fn test_cache_is_stale() {
+        let creation_time = Utc::now();
         let mut clock = MockClock::new();
-        let creation_time = clock.now();
-        clock.advance(Duration::from_secs(301));
+        clock
+            .expect_utc()
+            .return_const(creation_time + Duration::seconds(301));
         assert!(is_cache_entry_stale(creation_time, &clock));
     }
 }
 ```
 
-In production, an instance of `RealClock::new()` would be used.
+In production, `DefaultClock` is the implementation to pass.
+
+The `clock` feature is separate from `mock`, so a crate that uses the trait
+needs both features in its dev-dependencies. `mockable` does not re-export
+`chrono`, so the types in the function signature must be imported from `chrono`
+declared as a direct dependency:
+
+```toml
+[dependencies]
+chrono = "0.4"
+mockable = { version = "3.0.0", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+mockable = { version = "3.0.0", default-features = false, features = ["clock", "mock"] }
+```
 
 ______________________________________________________________________
 
@@ -206,12 +221,13 @@ ______________________________________________________________________
   `impl Env` or `impl Clock`.
 - **`Mock*` for Tests:** Use `MockEnv` and `MockClock` in unit tests for
   isolated, deterministic control.
-- **`Default*` for Production:** Use `DefaultEnv` and the default clock in the
+- **`Default*` for Production:** Use `DefaultEnv` and `DefaultClock` in the
   application to interact with the actual system.
 - **`DefaultEnv` is read-only:** `Env` exposes no setters, so it cannot change
   the process environment. Tests that genuinely need the live process
   environment (for example, code that reads `HOME` through a seam-less
   dependency) should use scoped `temp_env::with_var` closures, never direct
   `set_var`. For unit tests, `MockEnv` is preferable.
-- **Clock section:** the `Clock` examples above describe the older 0.1.x API
-  and have not been re-verified against 3.x, where `Clock` exposes `utc()`.
+- **`Clock` is `utc()` and `local()`:** `mockable` 3.x returns `chrono`
+  `DateTime` values, and `MockClock` is a `mockall` mock whose reading each
+  test sets, so both features are needed in dev-dependencies.
