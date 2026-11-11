@@ -24,6 +24,11 @@ pub struct RunContext {
     pub cloud_init_poll_interval_override: Option<Duration>,
     pub cloud_init_wait_timeout_override: Option<Duration>,
     pub outcome: Option<RunResult>,
+    /// The command the scenario asked the orchestrator to run remotely.
+    ///
+    /// Steps assert against this instead of matching a literal, so a scenario
+    /// that changes its command cannot keep passing on a stale text search.
+    pub requested_command: Option<String>,
     pub(crate) source_tmp: std::sync::Arc<TempDir>,
 }
 
@@ -58,20 +63,14 @@ pub enum RunTestError {
     Workspace(String),
 }
 
+pub type RunContextResult = Result<RunContext, RunTestError>;
+
 #[fixture]
-pub fn run_context_result() -> Result<RunContext, RunTestError> {
+pub fn run_context_result() -> RunContextResult {
     build_run_context()
 }
 
-#[fixture]
-pub fn run_context(run_context_result: Result<RunContext, RunTestError>) -> RunContext {
-    match run_context_result {
-        Ok(context) => context,
-        Err(err) => panic!("run context fixture should initialize: {err}"),
-    }
-}
-
-pub fn build_run_context() -> Result<RunContext, RunTestError> {
+pub fn build_run_context() -> RunContextResult {
     let tmp_dir =
         TempDir::new().map_err(|err| RunTestError::Workspace(format!("tempdir: {err}")))?;
     let source = Utf8PathBuf::from_path_buf(tmp_dir.path().to_path_buf()).map_err(|path| {
@@ -82,25 +81,23 @@ pub fn build_run_context() -> Result<RunContext, RunTestError> {
         backend: ScriptedBackend::new(),
         runner: ScriptedRunner::new(),
         sync_config: sync_config(),
-        request: request(),
+        request: request()?,
         source,
         cloud_init_poll_interval_override: None,
         cloud_init_wait_timeout_override: None,
         outcome: None,
+        requested_command: None,
         source_tmp: std::sync::Arc::new(tmp_dir),
     })
 }
 
-pub fn request() -> InstanceRequest {
-    let built = InstanceRequestBuilder::new()
+pub fn request() -> Result<InstanceRequest, RunTestError> {
+    InstanceRequestBuilder::new()
         .image_label("ubuntu")
         .instance_type(DEFAULT_INSTANCE_TYPE)
         .zone("fr-par-1")
         .project_id("project")
         .architecture("x86_64")
-        .build();
-    match built {
-        Ok(request) => request,
-        Err(err) => panic!("builder fixture should be valid: {err}"),
-    }
+        .build()
+        .map_err(|err| RunTestError::Workspace(format!("instance request: {err}")))
 }

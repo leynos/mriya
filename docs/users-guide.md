@@ -173,7 +173,10 @@ To enable the cache volume:
 
 1. Run `mriya init` to create and format a Block Storage volume in the
    configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` to replace an existing configured volume ID.
+   `mriya init --force` to replace an existing configured volume ID. If any
+   step after provisioning fails — including the instance read it performs
+   before detaching the volume — the command destroys the formatter instance
+   before reporting the error, so a failed run does not leave a VM billing.
 2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash
@@ -238,11 +241,15 @@ volume_size_gb = 50
 - Destroys the instance and polls until the API no longer lists it, failing if
   any residual resource remains.
 
-Each API request to list instances, power an instance on, or delete it has a
-30-second timeout. If a request times out, Mriya reports a provider error;
-check connectivity to the Scaleway API and the instance's actual state before
+Each API request to read or list instances, create a server or volume, power an
+instance on, attach or detach a volume, or delete an instance has a 30-second
+timeout. That includes the instance read `mriya init` performs before it
+detaches the volume, so a hung provider cannot leave the command waiting
+indefinitely. If a request times out, Mriya reports a provider error; check
+connectivity to the Scaleway API and the instance's actual state before
 retrying, as the request may have reached Scaleway even though its response did
-not arrive.
+not arrive. Image lookup is the exception: it goes through the Scaleway SDK,
+which applies no such bound.
 
 ## Running the integration check
 

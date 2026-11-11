@@ -23,9 +23,11 @@ Feature: Remote execution via mriya run
   Scenario: Mount cache volume before syncing when volume ID is configured
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the run result exit code is "0"
+    And the cache volume is mounted before files are synced
     And the instance is destroyed
 
   Scenario: Continue execution when volume mount fails
@@ -35,11 +37,13 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the run result exit code is "0"
+    And files are still synced and the remote command still runs after the failed mount
     And the instance is destroyed
 
   Scenario: Route Cargo caches to the mounted cache volume
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo test"
     Then the remote command routes Cargo caches to the volume
@@ -49,6 +53,7 @@ Feature: Remote execution via mriya run
     Given a ready backend and sync pipeline
     And cache routing is disabled
     And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo test"
     Then the remote command does not route Cargo caches
@@ -88,6 +93,7 @@ Feature: Remote execution via mriya run
   Scenario: Create cache subdirectories after mounting the volume
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the mount command creates cache subdirectories
@@ -97,6 +103,7 @@ Feature: Remote execution via mriya run
     Given a ready backend and sync pipeline
     And cache directory creation is disabled
     And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the mount command does not create cache subdirectories

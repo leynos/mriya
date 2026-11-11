@@ -1,13 +1,12 @@
 //! BDD step definitions for cloud-init user-data CLI handling.
 
-use std::fmt;
-
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use rstest_bdd_macros::{given, then, when};
 use tempfile::TempDir;
 
-use super::test_helpers::{CliContext, CliOutput};
+use super::test_helpers::CliContext;
+use crate::cli_support::{CliOutput, check_field_value, check_run_failed_with, string_newtype};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
@@ -19,52 +18,10 @@ pub enum StepError {
     TempFile(String),
 }
 
-macro_rules! string_newtype {
-    ($name:ident) => {
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct $name(String);
-
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value)
-            }
-        }
-
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self.0.as_str()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(self.as_ref())
-            }
-        }
-
-        impl std::str::FromStr for $name {
-            type Err = std::convert::Infallible;
-
-            fn from_str(value: &str) -> Result<Self, Self::Err> {
-                Ok(Self(value.to_owned()))
-            }
-        }
-    };
-}
-
 string_newtype!(UserData);
-string_newtype!(OutputKey);
 string_newtype!(OutputValue);
 string_newtype!(ErrorSnippet);
 string_newtype!(FilePath);
-
-fn extract_value(stdout: &str, key: &OutputKey) -> Option<String> {
-    let key_value = key.as_ref();
-    stdout
-        .lines()
-        .find_map(|line| line.strip_prefix(&format!("{key_value}=")))
-        .map(str::to_owned)
-}
 
 /// Runs the compiled CLI in fake request-dump mode and stores its output in
 /// the returned context.
@@ -156,36 +113,17 @@ fn run_with_missing_cloud_init_file(
 
 fn assert_field_value(
     cli_context: &CliContext,
-    field_name: &str,
     key: &str,
     expected: &str,
 ) -> Result<(), StepError> {
-    let Some(output) = &cli_context.output else {
-        return Err(StepError::Assertion(String::from("missing command output")));
-    };
-
-    let output_key = OutputKey(key.to_owned());
-    let actual = extract_value(&output.stdout, &output_key).ok_or_else(|| {
-        StepError::Assertion(format!(
-            "stdout missing {field_name} key, got: {}",
-            output.stdout
-        ))
-    })?;
-
-    if actual != expected {
-        return Err(StepError::Assertion(format!(
-            "expected {field_name} '{expected}', got '{actual}'"
-        )));
-    }
-
-    Ok(())
+    check_field_value(cli_context.output.as_ref(), key, expected).map_err(StepError::Assertion)
 }
 
 macro_rules! cloud_init_field_assertion {
     ($fn_name:ident, $step_pattern:literal, $field:literal, $param:ident) => {
         #[then($step_pattern)]
         fn $fn_name(cli_context: &CliContext, $param: OutputValue) -> Result<(), StepError> {
-            assert_field_value(cli_context, $field, $field, $param.as_ref())
+            assert_field_value(cli_context, $field, $param.as_ref())
         }
     };
 }
@@ -209,19 +147,6 @@ fn assert_run_fails_with_error(
     cli_context: &CliContext,
     snippet: ErrorSnippet,
 ) -> Result<(), StepError> {
-    let Some(output) = &cli_context.output else {
-        return Err(StepError::Assertion(String::from("missing command output")));
-    };
-    if output.status_code == 0 {
-        return Err(StepError::Assertion(String::from(
-            "expected non-zero exit status",
-        )));
-    }
-    if !output.stderr.contains(snippet.as_ref()) {
-        return Err(StepError::Assertion(format!(
-            "expected stderr to contain '{snippet}', got: {}",
-            output.stderr
-        )));
-    }
-    Ok(())
+    check_run_failed_with(cli_context.output.as_ref(), snippet.as_ref())
+        .map_err(StepError::Assertion)
 }

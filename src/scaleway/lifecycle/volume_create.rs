@@ -42,11 +42,7 @@ impl ScalewayBackend {
         &self,
         request: &VolumeRequest,
     ) -> Result<VolumeHandle, ScalewayBackendError> {
-        let url = format!(
-            "{}/zones/{}/volumes",
-            super::SCALEWAY_INSTANCE_API_BASE,
-            request.zone
-        );
+        let url = format!("{}/zones/{}/volumes", self.instance_api_base, request.zone);
         let payload = CreateVolumeRequest {
             name: request.name.clone(),
             size: request.size_bytes,

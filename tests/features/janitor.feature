@@ -13,3 +13,11 @@ Feature: Scaleway test-run janitor
     When I run the janitor sweep
     Then the janitor reports a not-clean error
 
+  Scenario: Reject configuration with a blank project
+    Given a janitor configured for project "   " and test run "run-1"
+    Then the janitor rejects the configuration because project_id is blank
+
+  Scenario: Reject configuration with a blank test run
+    Given a janitor configured for project "project" and test run "  "
+    Then the janitor rejects the configuration because test_run_id is blank
+

@@ -194,14 +194,46 @@ and IPv6 addresses, invalid or missing addresses, absence, provider errors, and
 different observation orderings. This is sampled coverage, not a formal proof.
 
 The private `instance_api_base` field defaults to Scaleway's official Instance
-API. Tests replace it with a loopback HTTP script; it is used only for snapshot
-`GET` requests, instance `DELETE` requests, and power-on `POST` requests. Those
-tests exercise the backend's `wait_for_ready` and `destroy` paths, including
-the SDK's full server response type, authentication header, query parameters,
-pagination, and provider error handling. A loopback SSH listener covers
-readiness through the SSH check. The shared HTTP client applies a 30-second
-per-request timeout to these calls. The base URL is an internal test seam, not
-a user configuration option.
+API. Tests replace it with a loopback HTTP script; every Instance API path the
+backend formats itself uses it: the single-instance `GET`, the paginated list
+and snapshot `GET`, instance `DELETE`, power-on `POST`, server `POST` during
+creation, the volume `POST`, and the attachment `PATCH` that both attach and
+detach send. Those tests exercise the backend's `create`, `wait_for_ready`,
+`destroy`, and volume paths, including the SDK's full server response type,
+authentication header, query parameters, pagination, and provider error
+handling. A loopback SSH listener covers readiness through the SSH check. The
+shared HTTP client applies a 30-second per-request timeout to these calls; the
+SDK's own helpers apply none, so a detachment read that stays on the SDK could
+wait indefinitely. The base URL is an internal test seam, not a user
+configuration option.
+
+Image lookup is the one remaining SDK helper that does not honour
+`instance_api_base`: `resolve_image_id` calls
+`ScalewayListInstanceImagesBuilder`, which hard-codes the production host. That
+path is covered by the pure selection and filtering cases rather than by a
+loopback script.
+
+### Behavioural test support
+
+The behavioural suites under `tests/` share two support modules rather than
+each keeping a private copy:
+
+- `tests/common/cli_support.rs` supplies the binary-driving helpers the
+  `cloud_init` and `instance_overrides` suites both need, including
+  `DEFAULT_IMAGE_LABEL` — the label the CLI resolves when a scenario sets none,
+  which must track `ScalewayConfig::default_image` — and
+  `check_run_failed_with`, whose failure message reports both streams so a run
+  that fails before writing to stderr still explains itself.
+- `tests/sync/rsync_simulator.rs` derives `RsyncFlags` from the real argument
+  vector the sync code built. `--delete` and `--filter=:- .gitignore` are
+  matched exactly, so a scenario fails when production stops passing either
+  rule rather than when the simulator's copy logic changes. `simulate_rsync`
+  then copies under whatever behaviours those flags name.
+
+The run suite classifies each recorded invocation against the command the
+scenario requested, carried on `RunContext::requested_command`, so its ordering
+assertions fail when the remote command is skipped instead of passing on any
+trailing SSH call.
 
 Mutation exclusions in `.cargo/mutants.toml` remain limited to test-backdoor
 scaffolding and the equivalent instance-request builder mutant. Scoped mutation

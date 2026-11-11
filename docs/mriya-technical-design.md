@@ -231,10 +231,11 @@ provisioning) that will guide subsequent optimizations.
 
 ### Implementation status (October 2026)
 
-- **Backend API boundary:** The backend retains `scaleway-rs` for image searches
-  and the instance lookup needed to recover the root volume during detachment.
-  Direct HTTP handles instance creation, volume creation and attachment
-  updates, and lifecycle snapshot listing, power-on, and deletion.
+- **Backend API boundary:** The backend retains `scaleway-rs` for image
+  searches only. Direct HTTP handles the single-instance read — including the
+  one detachment uses to recover the root volume — instance creation, volume
+  creation and attachment updates, and lifecycle snapshot listing, power-on,
+  and deletion.
 - **Configuration:** Credentials and defaults are layered via `ortho-config`
   with the `SCW_*` prefix. The loader honours defaults (zone `fr-par-1`, type
   `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges
@@ -252,12 +253,18 @@ provisioning) that will guide subsequent optimizations.
 
 ### Scaleway HTTP boundary decision (15 October 2026)
 
-Snapshot listing, power-on, and deletion use the shared HTTP client through
-`src/scaleway/lifecycle/http.rs`; the client is defined in
-`src/scaleway/lifecycle/mod.rs`. The private `instance_api_base` defaults to
-Scaleway's official Instance API and lets tests substitute a loopback server.
-Each request has a 30-second request timeout, not a hard lifecycle timeout;
-`wait_timeout` remains the polling-loop deadline. The readiness wrapper groups
+Snapshot listing, the single-instance read, power-on, deletion, server
+creation, volume creation, and volume attachment and detachment all use the
+shared HTTP client through `src/scaleway/lifecycle/http.rs`; the client is
+defined in `src/scaleway/lifecycle/mod.rs`. The private `instance_api_base`
+defaults to Scaleway's official Instance API and lets tests substitute a
+loopback server. Each request has a 30-second request timeout, not a hard
+lifecycle timeout; `wait_timeout` remains the polling-loop deadline. Volume
+detachment re-reads the instance through that boundary so the caller supplies
+the root volume it preserves, which the SDK helper could not do against a
+substituted host. Image lookup remains on the SDK's
+`ScalewayListInstanceImagesBuilder`, which hard-codes the production host, and
+is covered by the pure selection cases instead. The readiness wrapper groups
 its settings in `PollSettings`, and the production `poll_for_public_ip` and
 `poll_until_gone` loops receive an instance-fetch closure. HTTP failures map to
 the existing `ScalewayBackendError::Provider` variant; no public error variants
