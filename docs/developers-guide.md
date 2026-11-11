@@ -251,6 +251,28 @@ the same; do not add a local `[lints]` table, which Cargo rejects alongside
 documentation under `--cfg docsrs -D warnings`, runs Clippy over every target,
 and then runs the Whitaker suite.
 
+### The lint gate: Clippy first, Whitaker last
+
+`make lint` is `lint: lint-clippy lint-whitaker`, and each half runs alone:
+
+- `make lint-clippy` runs the preflight, then the docstring gate (the
+  `interrogate` prerequisite), `cargo doc` and Clippy.
+- `make lint-whitaker` runs `whitaker --all -- $(CARGO_FLAGS)`, which covers
+  every workspace package, every target and every feature. It needs the
+  Whitaker installer-managed toolchain, which CI provisions through the
+  `install-whitaker` action. Override the executable with `WHITAKER=<path>`.
+
+Whitaker stops at the first failing crate, so it runs last. A bare prerequisite
+list does not order a build under `make -j`, so the Makefile declares
+`.NOTPARALLEL: lint`. With GNU Make 4.4 or later, that makes everything `lint`
+reaches build serially, in the listed order. Do not replace it with a
+prerequisite that merely lists the order. The gate is binding: every recipe is
+a plain command with no `-` prefix, `|| true`, existence guard or pipeline, so
+a non-zero exit from Whitaker fails the route and the CI `Lint` step.
+`tests/build_standard_support/whitaker_gate.rs` runs the real Make routes
+against fakes at several `-j` values, fails Whitaker on purpose, and reads the
+recipes and the CI step for masking.
+
 The baseline is the Concordat canon at commit `e728ce2`
 (`platform-standards/canon/lint/rust/`), with no local extensions beyond the
 `mriya-test-macros` fixture helper described above. `unsafe_code` is `forbid`,
@@ -320,8 +342,9 @@ without the fast flags:
 - Whitaker. The Whitaker half of `make lint` runs on its installer-managed
   toolchain, which must not inherit the development flags. Its command assigns
   `RUSTFLAGS` the warning policy alone (`$(RUST_FLAGS)`), never expands the
-  caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with `env -u` (Cargo reads
-  it in preference to `RUSTFLAGS`), and names neither `-Zthreads=8` nor the
+  caller's value, clears `CARGO_ENCODED_RUSTFLAGS` with `unset ... &&` (Cargo
+  reads it in preference to `RUSTFLAGS`; `env -u` would hide the gate from the
+  `rust-makefile-baseline` rule), and names neither `-Zthreads=8` nor the
   `mold` flag. The Concordat rule checks its isolation.
 
 ### Installed tooling and the preflight
