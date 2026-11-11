@@ -179,6 +179,7 @@ fn outcome(
 
     let request_clone = request.clone();
     let source_clone = source.clone();
+    let requested_command = command.clone();
     let result = runtime.block_on(async move {
         orchestrator
             .execute(&request_clone, &source_clone, command.as_str())
@@ -213,6 +214,7 @@ fn outcome(
         cloud_init_poll_interval_override,
         cloud_init_wait_timeout_override,
         outcome: Some(result_enum),
+        requested_command: Some(requested_command),
         source_tmp,
     }))
 }

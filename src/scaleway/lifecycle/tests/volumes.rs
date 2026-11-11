@@ -236,6 +236,13 @@ async fn detach_volume_keeps_only_the_root_index(
     assert_eq!(requests.len(), 2);
     let read = requests.first().context("instance read missing")?;
     assert!(read.starts_with("GET "), "{read}");
+    // The read is a real provider call, so it must authenticate: a loopback
+    // request without the token would pass a URL-only assertion while the
+    // live path returned 401.
+    assert!(
+        read.contains("x-auth-token: dummy"),
+        "instance read must carry the configured token: {read}"
+    );
     assert_eq!(
         request_url(read)?.path(),
         "/instance/v1/zones/zone/servers/id"

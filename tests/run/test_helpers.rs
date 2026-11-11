@@ -24,6 +24,11 @@ pub struct RunContext {
     pub cloud_init_poll_interval_override: Option<Duration>,
     pub cloud_init_wait_timeout_override: Option<Duration>,
     pub outcome: Option<RunResult>,
+    /// The command the scenario asked the orchestrator to run remotely.
+    ///
+    /// Steps assert against this instead of matching a literal, so a scenario
+    /// that changes its command cannot keep passing on a stale text search.
+    pub requested_command: Option<String>,
     pub(crate) source_tmp: std::sync::Arc<TempDir>,
 }
 
@@ -81,6 +86,7 @@ pub fn build_run_context() -> RunContextResult {
         cloud_init_poll_interval_override: None,
         cloud_init_wait_timeout_override: None,
         outcome: None,
+        requested_command: None,
         source_tmp: std::sync::Arc::new(tmp_dir),
     })
 }
