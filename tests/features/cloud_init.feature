@@ -34,6 +34,7 @@ Feature: Cloud-init user-data configuration
     Then the run request has cloud-init user-data present "true"
     And the run request has cloud-init user-data size "14"
 
+  @unix
   Scenario: Report a tilde cloud-init path that HOME cannot decode
     Given fake request dumping is enabled for cloud-init
     When I run mriya with a tilde cloud-init file and a non-UTF-8 HOME

@@ -244,10 +244,11 @@ earlier run.
 
 ### The environment boundary
 
-Production code never calls `std::env` directly. It reads through
-`mockable::Env`, whose `DefaultEnv` is the real process environment and whose
-`MockEnv`, available only under the dev-dependency's `mock` feature, is what
-the tests use. Two accessors matter:
+Production code reads environment *variables* through `mockable::Env`, never
+through `std::env`: `DefaultEnv` is the real process environment, and `MockEnv`
+is what the tests use, available only under the dev-dependency's `mock`
+feature. The one exception is not a variable: `std::env::current_dir` has no
+`Env` equivalent and `main.rs` still calls it. Two accessors matter:
 
 - `string` reports a variable as `None` when it is absent or not valid
   Unicode. Code that only wants a value when one is usable, such as the

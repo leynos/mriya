@@ -78,9 +78,9 @@ environment variables a function actually depended on.
   visible API change at that call site and a compile error until the caller
   supplies one.
 - An undecodable `HOME` makes a `~/` cloud-init path or SSH identity path
-  fail with a message naming the path, where it previously passed through. The
-  users' guide records this; the 0.2.0 migration note records it as a behaviour
-  change.
+  fail with a message naming the path, where it previously converted the value
+  lossily into a path that cannot exist. The users' guide records this; the
+  0.2.0 migration note records it as a behaviour change.
 - The build-standard sandbox distinguishes an unset `PATH` from an
   undecodable one for the same reason.
 - `test_support`'s `EnvGuard` and `ENV_LOCK` are removed. A test that needs a

@@ -54,15 +54,17 @@ users keep every existing entry point and gain injectable ones beside them:
 - `mriya::cloud_init::resolve_cloud_init_user_data_with_env`;
 - `ScalewayBackend::new_with_env`.
 
-`SyncError::HomeUnavailable` is no longer a newtype over the expansion helper's
-error. It now carries the identity file that needed expanding:
+`SyncError` and `CloudInitError` each gain a `HomeUnavailable` variant, because
+the environment can no longer be read silently at the point of expansion:
 
 ```rust
 SyncError::HomeUnavailable { path: String, source: sync::HomeUnavailable }
+CloudInitError::HomeUnavailable { path: String }
 ```
 
-A caller that matched the tuple variant must match the struct variant. Code
-that only formats the error is unaffected: the message names the file.
+Neither variant existed in 0.1.0, so no released variant changes shape. A
+downstream exhaustive `match` over either enum needs a new arm; code that only
+formats the error is unaffected, and the message names the file.
 
 `mockable` 3.0.0 with default features off is now a regular and build
 dependency, and `temp-env` 0.3.6 is a dev-dependency. The decision and its

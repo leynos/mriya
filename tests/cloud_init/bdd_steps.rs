@@ -170,9 +170,11 @@ fn run_with_cloud_init_file_under_home(
 
 /// Steps the non-UTF-8 `HOME` scenario, which only Unix can express.
 ///
-/// The binding needs a step per phrase either way, so the Windows build keeps
-/// the phrase and fails the assertion: a scenario that quietly stopped
-/// exercising the undecodable case would be worse than a named gap.
+/// The scenario carries `@unix` in the feature file and is filtered out at
+/// registration on other platforms, so neither this step nor the scenario
+/// exists there. A Windows build therefore has no binding for the phrase,
+/// which is visible in the registration rather than as a scenario that runs
+/// and fails.
 #[when("I run mriya with a tilde cloud-init file and a non-UTF-8 HOME")]
 #[cfg(unix)]
 fn run_with_tilde_cloud_init_and_undecodable_home(
@@ -187,16 +189,6 @@ fn run_with_tilde_cloud_init_and_undecodable_home(
         None,
         Some(undecodable_home),
     )
-}
-
-#[when("I run mriya with a tilde cloud-init file and a non-UTF-8 HOME")]
-#[cfg(not(unix))]
-fn run_with_tilde_cloud_init_and_undecodable_home_unix_only(
-    _cli_context: CliContext,
-) -> Result<CliContext, StepError> {
-    Err(StepError::Assertion(String::from(
-        "a non-UTF-8 HOME needs a Unix-style OsString and cannot be expressed on this platform",
-    )))
 }
 
 #[when("I run mriya with missing cloud-init file \"{path}\"")]
