@@ -231,10 +231,11 @@ provisioning) that will guide subsequent optimizations.
 
 ### Implementation status (October 2026)
 
-- **Backend API boundary:** The backend retains `scaleway-rs` for image searches
-  and the instance lookup needed to recover the root volume during detachment.
-  Direct HTTP handles instance creation, volume creation and attachment
-  updates, and lifecycle snapshot listing, power-on, and deletion.
+- **Backend API boundary:** The backend retains `scaleway-rs` for image
+  searches only. Direct HTTP handles the single-instance read — including the
+  one detachment uses to recover the root volume — instance creation, volume
+  creation and attachment updates, and lifecycle snapshot listing, power-on,
+  and deletion.
 - **Configuration:** Credentials and defaults are layered via `ortho-config`
   with the `SCW_*` prefix. The loader honours defaults (zone `fr-par-1`, type
   `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges

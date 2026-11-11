@@ -258,6 +258,35 @@ async fn detach_volume_keeps_only_the_root_index(
     Ok(())
 }
 
+/// Scenario: detaching when the provider rejects the instance read.
+///
+/// Invariant: the read's denial is reported as a provider error and no PATCH
+/// follows, so a caller that cannot see the instance never rewrites its
+/// volumes from an empty payload.
+#[rstest]
+#[tokio::test]
+async fn detach_volume_reports_a_rejected_instance_read(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+) -> Result<()> {
+    let (result, requests) = with_stub(backend_fixture, vec![rejected()], async |backend| {
+        backend.detach_volume(&handle, "vol-cache").await
+    })
+    .await?;
+    let error = result.expect_err("a rejected read cannot be detached");
+    // The read's denial is a provider error, not a detachment error: the PATCH
+    // never ran, so reporting `VolumeDetachFailed` would blame the wrong call.
+    assert_eq!(
+        error,
+        ScalewayBackendError::Provider {
+            message: String::from("Api: denied - no such volume"),
+        }
+    );
+    assert_eq!(requests.len(), 1, "no PATCH may follow a rejected read");
+    assert!(only_request(&requests)?.starts_with("GET "));
+    Ok(())
+}
+
 /// Scenario: detaching when the instance reports no root volume.
 ///
 /// Invariant: the detach stops with `VolumeNotFound` after the read and before

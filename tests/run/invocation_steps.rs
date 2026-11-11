@@ -75,6 +75,11 @@ fn classify_invocation(
     }
 }
 
+/// Classifies every recorded invocation for the scenario's requested command.
+///
+/// Fails when the scenario never went through the `when` step, because without
+/// a command there is no way to tell the remote call from a readiness poll and
+/// any ordering assertion would be vacuous.
 fn classify_invocations(run_context: &RunContext) -> Result<Vec<InvocationRole>, StepError> {
     let ssh_bin = run_context.sync_config.ssh_bin.as_str();
     let Some(command) = run_context.requested_command.as_deref() else {
