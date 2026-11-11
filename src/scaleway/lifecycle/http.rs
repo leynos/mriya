@@ -1,7 +1,11 @@
-//! HTTP boundary for snapshot polling, instance deletion, and power-on actions.
+//! HTTP boundary for instance reads, snapshot polling, deletion, and power-on
+//! actions.
 //!
 //! Keeping the endpoint private lets tests substitute a loopback API without
-//! altering global environment variables or calling the live provider.
+//! altering global environment variables or calling the live provider. Every
+//! Instance API call goes through `instance_api_base` for the same reason: the
+//! SDK's own helpers hard-code the production host, which leaves the caller
+//! unreachable from a test.
 
 use reqwest::{RequestBuilder, Response};
 use scaleway_rs::{ScalewayApiError, ScalewayError, ScalewayInstance};
@@ -14,6 +18,11 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 #[derive(Deserialize)]
 struct ListInstancesResponse {
     servers: Vec<ScalewayInstance>,
+}
+
+#[derive(Deserialize)]
+struct GetInstanceResponse {
+    server: ScalewayInstance,
 }
 
 /// Adds request context when a transport or response-body operation fails.
@@ -51,6 +60,31 @@ async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayB
 }
 
 impl ScalewayBackend {
+    /// Reads one instance through the substitutable HTTP boundary.
+    ///
+    /// For example, a `{"server": {...}}` response yields that server, while a
+    /// provider denial becomes a `ScalewayError::Api` provider error.
+    pub(in crate::scaleway) async fn get_instance(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<ScalewayInstance, ScalewayBackendError> {
+        let url = format!(
+            "{}/zones/{}/servers/{}",
+            self.instance_api_base, handle.zone, handle.id,
+        );
+        let response = checked_response(
+            super::HTTP_CLIENT
+                .get(&url)
+                .header("X-Auth-Token", &self.config.secret_key),
+        )
+        .await?;
+        let result = response
+            .json::<GetInstanceResponse>()
+            .await
+            .map_err(|error| request_error(&error))?;
+        Ok(result.server)
+    }
+
     /// Lists the selected instance using the SDK's pagination contract.
     ///
     /// For example, one matching server on page 1 followed by an empty page 2

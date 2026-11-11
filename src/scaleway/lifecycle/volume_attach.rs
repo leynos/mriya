@@ -117,9 +117,7 @@ impl ScalewayBackend {
     ) -> Result<(), ScalewayBackendError> {
         let url = format!(
             "{}/zones/{}/servers/{}",
-            super::SCALEWAY_INSTANCE_API_BASE,
-            handle.zone,
-            handle.id
+            self.instance_api_base, handle.zone, handle.id
         );
 
         let response = super::HTTP_CLIENT

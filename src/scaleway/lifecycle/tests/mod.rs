@@ -153,5 +153,7 @@ mod image;
 mod wait;
 
 mod http_stub;
+mod instances;
 mod network;
 mod properties;
+mod volumes;
