@@ -1,13 +1,15 @@
-//! The behavioural half of the build-tools contract: the preflight and installer scripts and the Make
-//! routes that run them, executed against a sandbox `PATH` holding exactly the tools a case chooses.
-//! Dry-run text proves what Make would print; these prove the preflight stops a route that lacks a
-//! tool, tells the developer how to fix it, and lets a complete toolset through to Cargo.
+//! The behavioural half of the build-tools contract: the preflight and installer scripts and the
+//! Make routes that run them, executed against a sandbox `PATH` holding exactly the tools a case
+//! chooses. Dry-run text proves what Make would print; these prove the preflight stops a route that
+//! lacks a tool, tells the developer how to fix it, and lets a complete toolset through to Cargo.
 
 use std::process::Output;
 
-use super::make::Target;
-use super::pins::{TOOLCHAIN, pinned_channel, pinned_linker};
-use super::sandbox::{CARGO_LOG, LINKER_TOOL, Sandbox};
+use super::{
+    make::Target,
+    pins::{TOOLCHAIN, pinned_channel, pinned_linker},
+    sandbox::{CARGO_LOG, LINKER_TOOL, Sandbox},
+};
 
 /// Host utilities the scripts and `make` itself use; the sandbox links these and nothing else.
 const UTILITIES: &[&str] = &[
@@ -46,8 +48,8 @@ impl Toolset {
     };
 }
 
-/// Builds a sandbox holding the utilities and the fakes `toolset` describes, plus a `probe-cargo` that
-/// logs its arguments.
+/// Builds a sandbox holding the utilities and the fakes `toolset` describes, plus a `probe-cargo`
+/// that logs its arguments.
 ///
 /// # Errors
 ///
@@ -109,9 +111,7 @@ fn fake_cc(links: bool) -> String {
 }
 
 /// Returns a process's stderr as text, for a message to quote.
-fn stderr_of(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
+fn stderr_of(output: &Output) -> String { String::from_utf8_lossy(&output.stderr).into_owned() }
 
 /// Runs the preflight script directly in the sandbox.
 ///

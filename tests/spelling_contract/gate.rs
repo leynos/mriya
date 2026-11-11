@@ -26,9 +26,7 @@ use typos_cli::{
     report::{Message, Report},
 };
 
-use crate::CONFIG;
-use crate::probes::tokio_attribute;
-use crate::{CARGO_KIND, LINKER_NAME, RUNTIME_KEY};
+use crate::{CARGO_KIND, CONFIG, LINKER_NAME, RUNTIME_KEY, probes::tokio_attribute};
 
 /// What the engine must make of one fixture.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

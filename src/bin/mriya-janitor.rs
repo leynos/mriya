@@ -3,9 +3,10 @@
 //! This binary deletes any Scaleway resources tagged with
 //! `mriya-test-run-<MRIYA_TEST_RUN_ID>` and then verifies the set is empty.
 
+use std::io::Write as _;
+
 use clap::Parser;
 use mriya::janitor::{DEFAULT_SCW_BIN, Janitor, JanitorConfig, TEST_RUN_ID_ENV};
-use std::io::Write as _;
 
 /// Command-line arguments for the janitor.
 #[derive(Debug, Parser)]

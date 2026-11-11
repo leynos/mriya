@@ -3,8 +3,10 @@
 
 use rstest_bdd_macros::{given, then};
 
-use super::bdd_steps::{StepError, context};
-use super::test_helpers::{RunContext, RunContextResult};
+use super::{
+    bdd_steps::{StepError, context},
+    test_helpers::{RunContext, RunContextResult},
+};
 
 /// Scripted exit status for an SSH mount command that fails outright, for
 /// example because the mount point cannot be created.

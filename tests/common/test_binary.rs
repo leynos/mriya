@@ -48,9 +48,7 @@ impl TestBinary {
     ///
     /// For example, two calls give separate empty argument lists that invoke
     /// the same executable.
-    fn command(&self) -> assert_cmd::Command {
-        assert_cmd::Command::new(&self.executable)
-    }
+    fn command(&self) -> assert_cmd::Command { assert_cmd::Command::new(&self.executable) }
 }
 
 static MRIYA_BIN: LazyLock<Result<TestBinary, BuildError>> = LazyLock::new(build_test_binary);

@@ -1,13 +1,22 @@
 //! Test doubles for init workflow scenarios.
 
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::{Arc, Mutex},
+};
 
 use camino::Utf8PathBuf;
-use mriya::backend::BackendFuture;
 use mriya::{
-    Backend, ConfigStoreError, ConfigWriter, InstanceHandle, InstanceNetworking, InstanceRequest,
-    VolumeBackend, VolumeHandle, VolumeRequest,
+    Backend,
+    ConfigStoreError,
+    ConfigWriter,
+    InstanceHandle,
+    InstanceNetworking,
+    InstanceRequest,
+    VolumeBackend,
+    VolumeHandle,
+    VolumeRequest,
+    backend::BackendFuture,
 };
 use thiserror::Error;
 
@@ -42,13 +51,9 @@ impl FailureMode {
 struct Failures(u8);
 
 impl Failures {
-    const fn set(&mut self, mode: FailureMode) {
-        self.0 |= mode.flag();
-    }
+    const fn set(&mut self, mode: FailureMode) { self.0 |= mode.flag(); }
 
-    const fn contains(self, mode: FailureMode) -> bool {
-        self.0 & mode.flag() != 0
-    }
+    const fn contains(self, mode: FailureMode) -> bool { self.0 & mode.flag() != 0 }
 }
 
 #[derive(Debug, Default)]

@@ -3,17 +3,27 @@
 //! This module contains the core step definitions. Cache-related steps are
 //! in the `cache_steps` submodule.
 
-use mriya::RunOrchestrator;
-use mriya::sync::{RemoteCommandOutput, Syncer};
-use rstest_bdd_macros::{given, then, when};
 use std::time::Duration;
+
+use mriya::{
+    RunOrchestrator,
+    sync::{RemoteCommandOutput, Syncer},
+    test_support::ScriptedRunner,
+};
+use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
-use super::test_doubles::ScriptedBackend;
-use super::test_helpers::{
-    RunContext, RunContextResult, RunFailure, RunFailureKind, RunResult, RunTestError,
+use super::{
+    test_doubles::ScriptedBackend,
+    test_helpers::{
+        RunContext,
+        RunContextResult,
+        RunFailure,
+        RunFailureKind,
+        RunResult,
+        RunTestError,
+    },
 };
-use mriya::test_support::ScriptedRunner;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {

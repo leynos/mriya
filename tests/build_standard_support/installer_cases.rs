@@ -1,22 +1,27 @@
-//! Cases for the installer half of the build-tools contract: the archive it verifies, the checksums it
-//! trusts, the toolchain and components it requests, and the host it skips the linker on. The sandbox
-//! turns each of those into a file the case can read back.
+//! Cases for the installer half of the build-tools contract: the archive it verifies, the checksums
+//! it trusts, the toolchain and components it requests, and the host it skips the linker on. The
+//! sandbox turns each of those into a file the case can read back.
 
 use rstest::rstest;
 
+#[cfg(target_os = "linux")]
+use super::installer::run_installer_with_repository_checksums;
 use super::{
     build_tools_scripts::expect_actionable_failure,
     config::Pin,
     installer::{
-        Digest, SHA256SUMS, archive_name, installed_linker, published, run_installer,
-        run_installer_with_toolchain, rustup_calls,
+        Digest,
+        SHA256SUMS,
+        archive_name,
+        installed_linker,
+        published,
+        run_installer,
+        run_installer_with_toolchain,
+        rustup_calls,
     },
     pins::{TOOLCHAIN, pinned_channel, pinned_components, pinned_linker},
     sandbox::{LINKER_ENTRY, LINKER_TOOL, Sandbox},
 };
-
-#[cfg(target_os = "linux")]
-use super::installer::run_installer_with_repository_checksums;
 
 /// Returns the one `rustup` request the installer must make for the pinned toolchain.
 fn expected_toolchain_request() -> Result<String, String> {
@@ -93,11 +98,12 @@ fn the_installer_stops_when_the_platform_cannot_be_detected() -> Result<(), Stri
     Ok(())
 }
 
-/// Scenario: the installer against a published archive, a tampered checksum, and a mold linker already present.
+/// Scenario: the installer against a published archive, a tampered checksum, and a mold linker
+/// already present.
 ///
-/// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every component
-/// `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no toolchain; a mold linker
-/// already at the pin is not downloaded again.
+/// Invariant: an honest archive is unpacked and the pinned toolchain is requested with every
+/// component `rust-toolchain.toml` lists; a checksum mismatch installs nothing and requests no
+/// toolchain; a mold linker already at the pin is not downloaded again.
 #[cfg(target_os = "linux")]
 #[test]
 fn the_installer_unpacks_a_verified_archive_and_requests_the_pinned_toolchain() -> Result<(), String>

@@ -1,10 +1,13 @@
 //! Configuration loading via `ortho-config`.
 
-use crate::backend::InstanceRequest;
-use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::{
+    backend::InstanceRequest,
+    cloud_init::{CloudInitError, resolve_cloud_init_user_data},
+};
 
 /// TOML section name for Scaleway configuration.
 const SCALEWAY_SECTION: &str = "scaleway";
@@ -158,14 +161,14 @@ impl ScalewayConfig {
             ))),
             CloudInitError::FilePathEmpty | CloudInitError::FileEmpty => {
                 ConfigError::CloudInit(String::from(concat!(
-                    "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
+                    "cloud-init user-data file must not be empty; set \
+                     SCW_CLOUD_INIT_USER_DATA_FILE ",
                     "(or cloud_init_user_data_file in [scaleway])"
                 )))
             }
-            CloudInitError::FileRead { path, message } => ConfigError::CloudInitFileRead {
-                path,
-                message,
-            },
+            CloudInitError::FileRead { path, message } => {
+                ConfigError::CloudInitFileRead { path, message }
+            }
         })
     }
 
@@ -267,7 +270,5 @@ pub enum ConfigError {
 }
 
 impl From<ortho_config::OrthoError> for ConfigError {
-    fn from(value: ortho_config::OrthoError) -> Self {
-        Self::Parse(value.to_string())
-    }
+    fn from(value: ortho_config::OrthoError) -> Self { Self::Parse(value.to_string()) }
 }

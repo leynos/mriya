@@ -3,16 +3,17 @@
 //! Histories have at most 16 observations and run on a paused Tokio clock.
 //! This checks ordering and terminal errors; it is sampled evidence, not a proof.
 
-use std::collections::VecDeque;
-use std::future::ready;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    future::ready,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
 
 use proptest::prelude::*;
 
 use super::super::wait::{PollSettings, poll_for_public_ip, poll_until_gone};
-use crate::backend::InstanceNetworking;
-use crate::scaleway::ScalewayBackendError;
+use crate::{backend::InstanceNetworking, scaleway::ScalewayBackendError};
 
 #[derive(Clone, Debug)]
 enum Observation {

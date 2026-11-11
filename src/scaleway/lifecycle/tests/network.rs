@@ -6,11 +6,19 @@ use anyhow::{Context, Result};
 use rstest::rstest;
 use tokio::net::TcpListener;
 
-use super::http_stub::{Reply, StubApi};
-use super::{backend_fixture, handle};
-use crate::backend::{Backend, InstanceHandle};
-use crate::scaleway::types::{Action, Zone};
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use super::{
+    backend_fixture,
+    handle,
+    http_stub::{Reply, StubApi},
+};
+use crate::{
+    backend::{Backend, InstanceHandle},
+    scaleway::{
+        ScalewayBackend,
+        ScalewayBackendError,
+        types::{Action, Zone},
+    },
+};
 
 /// Represents a successful provider response with no listed instances.
 fn empty_list() -> Reply {

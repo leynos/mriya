@@ -56,8 +56,9 @@ pub(super) fn slugify(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     //! Unit tests for init helper functions.
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     #[test]
     fn volume_name_for_project_defaults_when_empty() {

@@ -11,9 +11,10 @@ use reqwest::{RequestBuilder, Response};
 use scaleway_rs::{ScalewayApiError, ScalewayError, ScalewayInstance};
 use serde::Deserialize;
 
-use crate::backend::InstanceHandle;
-use crate::scaleway::types::Zone;
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use crate::{
+    backend::InstanceHandle,
+    scaleway::{ScalewayBackend, ScalewayBackendError, types::Zone},
+};
 
 /// Response page from the list-servers call.
 #[derive(Deserialize)]
@@ -173,8 +174,7 @@ mod tests {
 
     use tokio::net::TcpListener;
 
-    use super::super::HTTP_TIMEOUT;
-    use super::checked_response;
+    use super::{super::HTTP_TIMEOUT, checked_response};
     use crate::scaleway::ScalewayBackendError;
 
     /// Ensures an accepted request returns at its deadline if no response
