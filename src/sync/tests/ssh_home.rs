@@ -33,8 +33,10 @@ fn env_with_undecodable_home() -> mockable::MockEnv {
     })
 }
 
-/// The three entry points that expand a `~/` identity, so the failure case
-/// below can prove each one propagates it rather than swallowing it.
+/// The three entry points that expand a `~/` identity: the shared option
+/// builder, the `ssh` argument list, and the rsync remote shell. Each is
+/// asserted on the message it produces, not only on the variant, because the
+/// message is what tells a user the environment, not the key, is at fault.
 #[rstest]
 #[case::common_options(
     |syncer: &Syncer<crate::test_support::ScriptedRunner>, env: &mockable::MockEnv| {
@@ -62,10 +64,22 @@ fn an_undecodable_home_reaches_every_expansion_site(
 
     let result = run(&syncer, &env);
 
-    assert!(
-        matches!(result, Err(SyncError::HomeUnavailable(_))),
-        "an unusable HOME should be reported at this boundary: {result:?}"
-    );
+    let rendered = match result {
+        Err(err @ SyncError::HomeUnavailable { .. }) => err.to_string(),
+        other => panic!("an unusable HOME should be reported at this boundary: {other:?}"),
+    };
+    // The configured file, the cause, and a remedy: without all three a reader
+    // would look for a missing key rather than an undecodable environment.
+    for expected in [
+        "~/keys/id",
+        "HOME is set to a value that is not valid UTF-8",
+        "configure an absolute ssh_identity_file",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "`{expected}` should appear in the diagnostic: {rendered}"
+        );
+    }
 }
 
 #[rstest]

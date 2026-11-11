@@ -44,12 +44,25 @@ export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 
 Production code no longer calls `std::env` directly: it reads through
 `mockable::Env`, and `DefaultEnv` is injected at each entry point. Library
-users see new injectable entry points beside the unchanged ones:
+users keep every existing entry point and gain injectable ones beside them:
 
+- `mriya::sync::expand_tilde(path)` is unchanged in name, signature and
+  arity, and still returns the path unchanged when `HOME` is absent. Its one
+  behaviour change is the undecodable case described below;
 - `mriya::sync::expand_tilde_with_home(path, home)` — the pure expansion, with
-  `home_from_env` supplying the value;
+  `home_from_env` supplying the value and reporting why it could not;
 - `mriya::cloud_init::resolve_cloud_init_user_data_with_env`;
 - `ScalewayBackend::new_with_env`.
+
+`SyncError::HomeUnavailable` is no longer a newtype over the expansion helper's
+error. It now carries the identity file that needed expanding:
+
+```rust
+SyncError::HomeUnavailable { path: String, source: sync::HomeUnavailable }
+```
+
+A caller that matched the tuple variant must match the struct variant. Code
+that only formats the error is unaffected: the message names the file.
 
 `mockable` 3.0.0 with default features off is now a regular and build
 dependency, and `temp-env` 0.3.6 is a dev-dependency. The decision and its
@@ -59,7 +72,10 @@ rationale are recorded in [ADR 002](adr-002-environment-access.md).
 
 - A `~/` path with a `HOME` that is not valid UTF-8 is now an error rather than
   a lossily converted path. The message names the file and suggests an absolute
-  path.
+  path: an absolute `--cloud-init-file`, or an absolute `ssh_identity_file`.
+- `expand_tilde`, the compatibility entry point, reports no error by design,
+  so for it the undecodable case returns the path unchanged, exactly as an
+  absent `HOME` does.
 - The test-support `EnvGuard` and `ENV_LOCK` are gone from the public
   `test_support` module. A test that needs the live environment should use
   `temp_env::with_var` for the process, or `Command::env` for a spawned child;

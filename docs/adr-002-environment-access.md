@@ -53,11 +53,19 @@ environment variables a function actually depended on.
   `ScalewayBackend::new_with_env`,
   `cloud_init::resolve_cloud_init_user_data_with_env`, and the build-standard
   sandbox's `find_on_path_with`. The public constructors keep their arity and
-  supply `DefaultEnv`.
+  supply `DefaultEnv`. The pre-existing `sync::expand_tilde` keeps its name,
+  signature and arity, and supplies `DefaultEnv` itself; its undecodable case
+  falls back to the unexpanded path, which is the documented behaviour of the
+  entry it has always been.
 - `Env::raw` is used where absent and undecodable must differ;
   `sync::util::home_from_env` is the reference case. It reports
   `HomeUnavailable` for an undecodable `HOME` and `Ok(None)` for an absent one,
   so only the first is an error.
+- A boundary that consumes `home_from_env`'s error names the value the user
+  configured and what will work instead. `SyncError::HomeUnavailable` gained a
+  `path` field for that reason, so the SSH diagnostic names the
+  `ssh_identity_file` and offers an absolute one as the remedy rather than
+  naming only the variable.
 - `Env::string` is used where a value that cannot be decoded is genuinely
   equivalent to none, as in the `MRIYA_FAKE_*` gates.
 - Tests inject `mockable::MockEnv`, built by `test_helpers::mock_env` (one

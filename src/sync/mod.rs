@@ -23,7 +23,7 @@ pub use types::{
     CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
     StreamingCommandRunner, SyncDestination,
 };
-pub use util::{HomeUnavailable, expand_tilde_with_home, home_from_env};
+pub use util::{HomeUnavailable, expand_tilde, expand_tilde_with_home, home_from_env};
 
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]
@@ -244,12 +244,17 @@ impl<R: CommandRunner> Syncer<R> {
     /// # Errors
     ///
     /// Returns [`SyncError::HomeUnavailable`] when the identity file needs a
-    /// `HOME` that `env` cannot decode.
+    /// `HOME` that `env` cannot decode; the error names the configured file
+    /// so an undecodable environment is not mistaken for a missing key.
     fn common_ssh_options(&self, port: u16, env: &impl Env) -> Result<Vec<OsString>, SyncError> {
         let mut args = vec![OsString::from("-p"), OsString::from(port.to_string())];
 
         if let Some(ref identity_file) = self.config.ssh_identity_file {
-            let home = home_from_env(env, identity_file)?;
+            let home =
+                home_from_env(env, identity_file).map_err(|source| SyncError::HomeUnavailable {
+                    path: identity_file.clone(),
+                    source,
+                })?;
             let expanded = expand_tilde_with_home(identity_file, home.as_deref());
             args.push(OsString::from("-i"));
             args.push(OsString::from(expanded));

@@ -119,8 +119,9 @@ mriya run --cloud-init-file ~/cloud-init.yml -- jq --version
 If `HOME` is absent the path is passed through unchanged, which is what a shell
 does for a path it cannot expand. If `HOME` is set but is not valid UTF-8, the
 run fails with an error naming the file and suggesting an absolute path, rather
-than silently reading a path that cannot exist. The same rule applies to
-`~/.ssh/...` identity paths, where the equivalent error names `HOME`.
+than silently reading a path that cannot exist. The same rule applies to a
+`~/.ssh/...` identity path: the error names the configured `ssh_identity_file`
+and says to use an absolute one.
 
 When cloud-init user-data is configured, Mriya:
 

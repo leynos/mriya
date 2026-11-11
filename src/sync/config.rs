@@ -160,10 +160,19 @@ pub enum SyncError {
     },
     /// Raised when a `~/` path needs a `HOME` the environment cannot decode.
     ///
-    /// The expansion helper reports this without a path, because each boundary
-    /// names the file it was expanding.
-    #[error("cannot expand a `~/` path: {0}")]
-    HomeUnavailable(#[from] super::util::HomeUnavailable),
+    /// The expansion helper reports the environment failure without a path,
+    /// because it does not know which value was being expanded; this variant
+    /// adds the identity file so the message names what the user configured
+    /// and says what will work instead.
+    #[error(
+        "cannot expand SSH identity file `{path}`: HOME is set to a value that is not valid UTF-8; set HOME to a UTF-8 directory or configure an absolute ssh_identity_file"
+    )]
+    HomeUnavailable {
+        /// Configured identity file that needed the expansion.
+        path: String,
+        /// Underlying environment failure.
+        source: super::util::HomeUnavailable,
+    },
     /// Raised when the source directory does not exist.
     #[error("sync source directory missing: {path}")]
     MissingSource {

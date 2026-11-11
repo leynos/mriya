@@ -43,6 +43,32 @@ pub fn expand_tilde_with_home(path: &str, home: Option<&str>) -> String {
     }
 }
 
+/// Expands a leading `~/` prefix using the process environment.
+///
+/// This is the compatibility entry point that shipped before environment
+/// access moved behind [`mockable::Env`], so an existing library caller needs
+/// no change. It keeps that entry's shape and its two documented outcomes: a
+/// path without a leading `~/` is returned unchanged, and an absent `HOME`
+/// leaves the tilde for `ssh` to resolve.
+///
+/// The one difference is the undecodable case. The previous entry converted a
+/// non-UTF-8 `HOME` lossily, producing a path that cannot exist; this one
+/// reads it through [`home_from_env`] and falls back to the path unchanged,
+/// which is the same result as an absent `HOME`. Production code calls
+/// [`home_from_env`] directly so it can report the real cause instead.
+///
+/// # Examples
+///
+/// ```
+/// # use mriya::sync::expand_tilde;
+/// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+/// ```
+#[must_use]
+pub fn expand_tilde(path: &str) -> String {
+    let home = home_from_env(&mockable::DefaultEnv, path).ok().flatten();
+    expand_tilde_with_home(path, home.as_deref())
+}
+
 /// Reads the home directory a `~/` path in `path` should expand to.
 ///
 /// A path without the `~/` prefix needs no home directory, so this returns

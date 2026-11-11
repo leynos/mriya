@@ -3,6 +3,7 @@
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use rstest_bdd_macros::{given, then, when};
+#[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 use tempfile::TempDir;
 
@@ -167,7 +168,13 @@ fn run_with_cloud_init_file_under_home(
     )
 }
 
+/// Steps the non-UTF-8 `HOME` scenario, which only Unix can express.
+///
+/// The binding needs a step per phrase either way, so the Windows build keeps
+/// the phrase and fails the assertion: a scenario that quietly stopped
+/// exercising the undecodable case would be worse than a named gap.
 #[when("I run mriya with a tilde cloud-init file and a non-UTF-8 HOME")]
+#[cfg(unix)]
 fn run_with_tilde_cloud_init_and_undecodable_home(
     cli_context: CliContext,
 ) -> Result<CliContext, StepError> {
@@ -180,6 +187,16 @@ fn run_with_tilde_cloud_init_and_undecodable_home(
         None,
         Some(undecodable_home),
     )
+}
+
+#[when("I run mriya with a tilde cloud-init file and a non-UTF-8 HOME")]
+#[cfg(not(unix))]
+fn run_with_tilde_cloud_init_and_undecodable_home_unix_only(
+    _cli_context: CliContext,
+) -> Result<CliContext, StepError> {
+    Err(StepError::Assertion(String::from(
+        "a non-UTF-8 HOME needs a Unix-style OsString and cannot be expressed on this platform",
+    )))
 }
 
 #[when("I run mriya with missing cloud-init file \"{path}\"")]

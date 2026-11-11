@@ -1,6 +1,12 @@
 //! Cases for the build-standard sandbox's `PATH` boundary: what an unset,
 //! undecodable, empty, or partial `PATH` reports, and that a usable directory is
 //! still searched. They inject the environment, so no case mutates the process.
+//!
+//! One case cannot inject: the injected boundary takes its answers as
+//! `String`, so a genuinely non-UTF-8 `PATH` cannot be expressed through it.
+//! That case re-executes this test binary with the value in its real
+//! environment, which is the only way the whole-path rejection can be proved
+//! against a path that decodes in part.
 
 use std::ffi::OsString;
 
@@ -69,6 +75,105 @@ fn an_empty_path_reports_the_program_as_missing() {
         err.contains("not on PATH"),
         "an empty PATH should read as no directories: {err}"
     );
+}
+
+#[cfg(unix)]
+mod undecodable_path {
+    //! Proves a genuinely non-UTF-8 `PATH` is rejected whole, not decoded in
+    //! part. The injected boundary answers with `String`, so this case cannot
+    //! use it: it re-executes the test binary with the value in the real
+    //! environment, which is the only way to reach the case at all.
+    //!
+    //! Only a platform with a byte-backed `OsString` can build the value, and
+    //! this workspace's allocator of such values is Unix.
+
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    use mockable::DefaultEnv;
+
+    use super::super::sandbox::{Sandbox, find_on_path_with};
+
+    /// The environment variable that makes this binary act as its own child.
+    const CHILD_PATH_VAR: &str = "MRIYA_SANDBOX_CHILD_UNDECODABLE_PATH";
+
+    /// The child half of the case below, selected by `--exact`.
+    ///
+    /// A separate test rather than a flag on the parent: selecting a module
+    /// prefix would match nothing and libtest would report success without
+    /// running an assertion, which is exactly the failure a probe like this
+    /// has to avoid. Returning early keeps it inert under the ordinary run.
+    #[test]
+    fn the_undecodable_path_report_child() {
+        if std::env::var_os(CHILD_PATH_VAR).is_none() {
+            return;
+        }
+        match find_on_path_with("bash", &DefaultEnv) {
+            Ok(found) => panic!(
+                "the child ran with a decodable PATH and found {found}, so it did not reproduce the case"
+            ),
+            Err(report) => assert_eq!(report, "PATH is set to a value that is not valid UTF-8"),
+        }
+    }
+
+    /// Runs the child probe, requiring that it actually ran and passed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when the child cannot be spawned, when it reports a
+    /// failure, or when it runs no test at all.
+    fn run_child(value: &OsString) -> Result<(), String> {
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("locating the test binary: {error}"))?;
+        let output = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                "sandbox_cases::undecodable_path::the_undecodable_path_report_child",
+                "--nocapture",
+            ])
+            .env(CHILD_PATH_VAR, "1")
+            .env("PATH", value)
+            .output()
+            .map_err(|error| format!("running the child probe: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            return Err(format!(
+                "the child probe failed ({}): {}",
+                output.status,
+                stdout.trim()
+            ));
+        }
+        if !stdout.contains("1 passed") {
+            return Err(format!(
+                "the child probe ran no test, so it proved nothing: {}",
+                stdout.trim()
+            ));
+        }
+        Ok(())
+    }
+
+    /// A `PATH` of `<valid bin>:/opt/\xff` decodes as far as its first entry,
+    /// and that entry holds a `bash` wrapper. If the boundary decoded what it
+    /// could, it would find the wrapper and report success; the assertion is
+    /// therefore that the undecodable report wins even though a usable
+    /// directory is present.
+    #[test]
+    fn a_non_utf8_path_is_rejected_even_when_a_later_entry_is_usable() {
+        if std::env::var_os(CHILD_PATH_VAR).is_some() {
+            // The child runs the dedicated child test; it must not spawn one.
+            return;
+        }
+
+        let sandbox = Sandbox::new().expect("sandbox should be created");
+        sandbox
+            .write_tool("bash", "exit 0")
+            .expect("the usable entry should be written");
+        let mut undecodable = sandbox.root().join("bin").into_os_string();
+        undecodable.push(OsString::from(":/opt/"));
+        undecodable.push(OsString::from_vec(b"\xff".to_vec()));
+
+        run_child(&undecodable).expect("the child should confirm the report");
+    }
 }
 
 #[test]
