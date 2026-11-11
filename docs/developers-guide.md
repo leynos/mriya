@@ -242,6 +242,27 @@ mutation testing against the current candidate before using counts as evidence.
 The loopback tests exercise the network-boundary survivors reported by the
 earlier run.
 
+### Internal module boundaries
+
+Two sibling modules exist to keep their parents inside the 400-line budget
+without changing behaviour, and each publishes only what its parent needs:
+
+- `src/janitor/scw.rs` holds the `scw` command runner, JSON list parsing, and
+  the four resource operations `list_servers`, `delete_server`, `list_volumes`,
+  and `delete_volume`, all `pub(super)`. `janitor/mod.rs` keeps the sweep
+  policy and re-exports nothing, so a caller still reaches a sweep only through
+  `Janitor`. The delete operations take their zone from the listed resource
+  rather than from configuration, which is what lets one sweep remove a server
+  and a volume that report different zones.
+- `src/test_backdoors.rs` holds `enable_fake_modes`, `fake_run_from_env`, and
+  `prefail_from_env`, all `pub(super)`. It is compiled for unit tests and for
+  the `test-backdoors` feature the CLI integration tests enable, and its
+  `MRIYA_FAKE_*` variables are read only after `enable_fake_modes` gates them,
+  so an ordinary run cannot be diverted by a stray variable. The module doubles
+  as a mutation-testing exclusion: `.cargo/mutants.toml` names it, so a
+  surviving mutant in scaffolding is a recorded exception rather than a silent
+  gap.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend
