@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted on 11 November 2026. Production code reads the process environment
-only through `mockable::Env`; a value the program cannot decode is reported as
-an error instead of being treated as absent.
+Accepted on 11 November 2026. Production code reads environment variables only
+through `mockable::Env`. A value the program cannot decode is reported as an
+error at the boundaries where it would otherwise act on the wrong path, and
+treated as absent only where absence and undecodability mean the same thing.
 
 ## Date
 
