@@ -96,10 +96,18 @@ impl<R: CommandRunner> Janitor<R> {
             })
     }
 
+    /// Lists the servers the janitor may sweep in its zone.
+    ///
+    /// A parse failure names `Servers`, so a caller reporting the error can
+    /// tell a malformed server list from a malformed volume list.
     pub(super) fn list_servers(&self) -> Result<Vec<ScwServer>, JanitorError> {
         self.list_scw_resources(&["instance", "server"], ResourceType::Servers)
     }
 
+    /// Deletes `server`, leaving its IP and volumes to the provider's sweep.
+    ///
+    /// The zone comes from the listed server rather than from config, so a
+    /// server discovered in another zone is still deleted in its own zone.
     pub(super) fn delete_server(&self, server: &ScwServer) -> Result<CommandOutput, JanitorError> {
         let zone_arg = format!("zone={}", server.zone);
         let args = [
@@ -116,10 +124,18 @@ impl<R: CommandRunner> Janitor<R> {
         self.run_scw(&args, ResourceType::Servers)
     }
 
+    /// Lists the Block Storage volumes the janitor may sweep in its zone.
+    ///
+    /// Volumes are listed separately from servers because a leaked volume can
+    /// outlive the instance that held it.
     pub(super) fn list_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
         self.list_scw_resources(&["block", "volume"], ResourceType::Volumes)
     }
 
+    /// Deletes `volume` in the zone the volume itself reports.
+    ///
+    /// Sending the volume's own zone is what lets a sweep remove a volume that
+    /// was attached to an instance before the instance was destroyed.
     pub(super) fn delete_volume(&self, volume: &ScwVolume) -> Result<CommandOutput, JanitorError> {
         let zone_arg = format!("zone={}", volume.zone);
         let args = [
