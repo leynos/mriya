@@ -32,8 +32,39 @@ fn scaleway_integration_enabled() -> bool {
     )
 }
 
+/// A live-test dependency that is either ready or unavailable for a reason.
+///
+/// rstest-bdd 0.6 unwraps `Result` fixtures in the scenario prelude, so an
+/// `Err` would fail the scenario before any step could call `skip!`. Live
+/// dependencies that are merely switched off therefore travel in this wrapper
+/// and the steps decide whether to skip.
+#[derive(Clone)]
+enum Gated<T> {
+    Ready(T),
+    Unavailable(String),
+}
+
+impl<T> Gated<T> {
+    /// Returns the dependency, or skips the running scenario with the reason.
+    fn ready_or_skip(self) -> T {
+        match self {
+            Self::Ready(value) => value,
+            Self::Unavailable(reason) => skip!("{}", reason),
+        }
+    }
+}
+
+impl<T> From<Result<T, String>> for Gated<T> {
+    fn from(result: Result<T, String>) -> Self {
+        result.map_or_else(Self::Unavailable, Self::Ready)
+    }
+}
+
+#[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-fn scaleway_backend() -> Result<ScalewayBackend, String> {
+fn scaleway_backend() -> Gated<ScalewayBackend> { Gated::from(build_backend()) }
+
+fn build_backend() -> Result<ScalewayBackend, String> {
     if !scaleway_integration_enabled() {
         return Err(String::from(
             "Scaleway integration tests disabled (set MRIYA_RUN_SCALEWAY_TESTS=1 to enable)",
@@ -57,8 +88,11 @@ fn scaleway_backend() -> Result<ScalewayBackend, String> {
     ScalewayBackend::new(config).map_err(|err| format!("failed to build backend: {err}"))
 }
 
+#[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
+fn syncer() -> Gated<Syncer<ProcessCommandRunner>> { Gated::from(build_syncer()) }
+
+fn build_syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
     if !scaleway_integration_enabled() {
         return Err(String::from(
             "Scaleway integration tests disabled (set MRIYA_RUN_SCALEWAY_TESTS=1 to enable)",
@@ -94,31 +128,28 @@ const CLOUD_INIT_JQ: &str = concat!(
 
 #[given("valid Scaleway credentials and SSH sync configuration")]
 fn valid_scaleway_credentials_and_sync(
-    scaleway_backend: Result<ScalewayBackend, String>,
-    syncer: Result<Syncer<ProcessCommandRunner>, String>,
+    scaleway_backend: Gated<ScalewayBackend>,
+    syncer: Gated<Syncer<ProcessCommandRunner>>,
 ) {
-    let _backend = scaleway_backend.unwrap_or_else(|err| skip!("{}", err));
-    let _syncer = syncer.unwrap_or_else(|err| skip!("{}", err));
+    let _backend = scaleway_backend.ready_or_skip();
+    let _syncer = syncer.ready_or_skip();
 }
 
 #[when("I provision an instance with cloud-init installing jq and run \"{command}\"")]
 fn provision_with_cloud_init_and_run(
-    scaleway_backend: Result<ScalewayBackend, String>,
-    syncer: Result<Syncer<ProcessCommandRunner>, String>,
-    #[from(temp_source_dir)] temp_source_dir_result: Result<std::sync::Arc<TempDir>, String>,
+    scaleway_backend: Gated<ScalewayBackend>,
+    syncer: Gated<Syncer<ProcessCommandRunner>>,
+    temp_source_dir: std::sync::Arc<TempDir>,
     command: String,
 ) -> Result<mriya::sync::RemoteCommandOutput, mriya::RunError<ScalewayBackendError>> {
-    let backend = scaleway_backend.unwrap_or_else(|err| skip!("{}", err));
-    let sync_pipeline = syncer.unwrap_or_else(|err| skip!("{}", err));
+    let backend = scaleway_backend.ready_or_skip();
+    let sync_pipeline = syncer.ready_or_skip();
 
     let mut request = backend
         .default_request()
         .map_err(mriya::RunError::Provision)?;
     request.cloud_init_user_data = Some(String::from(CLOUD_INIT_JQ));
 
-    let temp_source_dir = temp_source_dir_result.map_err(|message| {
-        mriya::RunError::Provision(ScalewayBackendError::Provider { message })
-    })?;
     let source = camino::Utf8PathBuf::from_path_buf(temp_source_dir.path().to_path_buf()).map_err(
         |path| {
             mriya::RunError::Provision(ScalewayBackendError::Provider {
@@ -162,9 +193,12 @@ fn jq_available(output: &mriya::sync::RemoteCommandOutput) {
     name = "Cloud-init installs packages before the command runs"
 )]
 fn scenario_cloud_init_install_jq(
-    scaleway_backend: Result<ScalewayBackend, String>,
-    syncer: Result<Syncer<ProcessCommandRunner>, String>,
-    temp_source_dir: Result<std::sync::Arc<TempDir>, String>,
-) {
-    drop((scaleway_backend, syncer, temp_source_dir));
+    _scaleway_backend: Gated<ScalewayBackend>,
+    _syncer: Gated<Syncer<ProcessCommandRunner>>,
+    _temp_source_dir: Result<std::sync::Arc<TempDir>, String>,
+) -> Result<(), String> {
+    // The macro unwraps `_temp_source_dir` with `?` before any step runs, so a
+    // failure to create the directory fails the scenario rather than being
+    // discarded. The steps do the real work.
+    Ok(())
 }
