@@ -33,27 +33,45 @@ use test_backdoors::fake_outcome;
 #[cfg(test)]
 mod main_tests;
 
+/// Failure modes of a CLI invocation, each rendered as one line on stderr.
+///
+/// Every variant leads to exit status 1; only a remote command's own exit
+/// code is passed through as the process status.
 #[derive(Debug, Error)]
 enum CliError {
+    /// Configuration could not be loaded, or the working directory could not be
+    /// determined as UTF-8.
     #[error("configuration error: {0}")]
     Config(String),
+    /// The backend could not be constructed or could not build a default request.
     #[error("backend error: {0}")]
     Backend(String),
+    /// The syncer could not be constructed from its configuration.
     #[error("sync error: {0}")]
     Sync(String),
+    /// The remote command finished without reporting an exit code, such as when
+    /// it was terminated by a signal.
     #[error("remote command terminated without an exit status")]
     MissingExitCode,
+    /// The run workflow failed after validation, from provisioning to teardown.
     #[error("remote run failed: {0}")]
     Run(#[from] RunError<ScalewayBackendError>),
+    /// The remote command contains control characters that cannot be passed
+    /// safely to the remote shell.
     #[error("invalid command argument: {0}")]
     InvalidCommand(String),
+    /// A command-line override was empty or whitespace.
     #[error("invalid override for {field}: {message}")]
     InvalidOverride {
+        /// Flag that was overridden, such as `--instance-type`.
         field: &'static str,
+        /// Why the value was rejected.
         message: String,
     },
+    /// The cloud-init flags were conflicting, empty, or named an unreadable file.
     #[error("invalid cloud-init configuration: {0}")]
     InvalidCloudInit(String),
+    /// The `init` workflow failed.
     #[error("init failed: {0}")]
     Init(#[from] InitError<ScalewayBackendError>),
 }
@@ -76,6 +94,10 @@ fn main() {
     process::exit(exit_code);
 }
 
+/// Parses arguments, dispatches the subcommand, and maps the outcome to a
+/// process exit status.
+///
+/// Errors are reported on stderr and become status 1.
 async fn async_main() -> i32 {
     let cli = Cli::parse();
     match cli {
@@ -88,6 +110,10 @@ async fn async_main() -> i32 {
     })
 }
 
+/// Runs the `run` subcommand.
+///
+/// In unit tests a hook installed in `RUN_COMMAND_HOOK` takes precedence, so
+/// the dispatch can be tested without provisioning anything.
 async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
     #[cfg(test)]
     if let Some(hook) = RUN_COMMAND_HOOK.lock().await.as_ref() {
@@ -97,10 +123,17 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
     run_command(command).await
 }
 
+/// Runs the `init` subcommand.
 async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
     init_command(command).await
 }
 
+/// Provisions an instance, syncs the workspace, runs the command remotely,
+/// and returns the remote exit code.
+///
+/// With the `test-backdoors` feature (or in unit tests), environment-selected
+/// fake modes can short-circuit everything below. Command arguments are
+/// validated after the backend and syncer have been constructed.
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     #[cfg(any(test, feature = "test-backdoors"))]
     {
@@ -130,6 +163,11 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     output.exit_code.ok_or(CliError::MissingExitCode)
 }
 
+/// Creates a cache volume for the current project and records it in the
+/// configuration, printing the volume ID and configuration path.
+///
+/// The project name is the working directory's final component, or `mriya`
+/// when there is none.
 async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     let scaleway_config =
         ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
@@ -166,6 +204,8 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// Builds the Scaleway backend and its default instance request, then
+/// applies the command-line overrides to that request.
 fn build_backend_and_request(
     args: &RunCommand,
 ) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
@@ -180,6 +220,10 @@ fn build_backend_and_request(
     Ok((backend, request))
 }
 
+/// Applies `--instance-type`, `--image`, and cloud-init flags to `request`.
+///
+/// Only flags that were supplied change the request. The cloud-init flags
+/// replace any user-data from configuration.
 fn apply_instance_overrides(
     request: &mut InstanceRequest,
     args: &RunCommand,
@@ -199,6 +243,8 @@ fn apply_instance_overrides(
     Ok(())
 }
 
+/// Resolves the cloud-init flags into user-data, rewording each failure in
+/// terms of the CLI flag names.
 fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliError> {
     mriya::cloud_init::resolve_cloud_init_user_data(
         args.cloud_init.as_deref(),
@@ -225,6 +271,10 @@ fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliEr
     })
 }
 
+/// Trims `value`, rejecting it when nothing remains.
+///
+/// For example, `" DEV1-M "` becomes `DEV1-M` and `"  "` is rejected for
+/// `field`.
 fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -236,6 +286,10 @@ fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> 
     Ok(trimmed.to_owned())
 }
 
+/// Joins `args` into one shell command, quoting each argument with
+/// `shell_escape` so the remote shell sees the original words.
+///
+/// For example, `["echo", "a b"]` becomes `echo 'a b'`.
 fn render_remote_command(args: &[String]) -> String {
     let mut result = String::new();
     let mut first = true;
@@ -254,6 +308,8 @@ fn render_remote_command(args: &[String]) -> String {
     result
 }
 
+/// Rejects arguments containing ASCII control characters (0x00-0x1F and
+/// 0x7F), which are not safe to send in the remote command line.
 fn validate_command_args(args: &[String]) -> Result<(), CliError> {
     for arg in args {
         if arg
@@ -269,10 +325,13 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Writes `err` to standard error.
 fn report_error(err: &CliError) {
     write_error(io::stderr(), err);
 }
 
+/// Writes `err` as a single line to `target`, ignoring write failures so a
+/// closed stream cannot mask the original error.
 fn write_error(mut target: impl Write, err: &CliError) {
     writeln!(target, "{err}").ok();
 }
