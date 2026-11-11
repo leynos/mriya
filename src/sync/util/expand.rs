@@ -21,10 +21,10 @@ pub struct HomeUnavailable;
 /// Expands a leading `~/` prefix in `path` to `home`.
 ///
 /// Returns `path` unchanged when it does not start with `~/`, or when `home`
-/// is `None`. The expansion is textual and never consults the filesystem, so a
-/// `home` that names nothing still produces an absolute path. A `~` elsewhere
-/// in the path is never expanded, which keeps the rule the same as a shell's
-/// leading-tilde rule.
+/// is `None`. The expansion is textual and never consults the filesystem, so
+/// whatever `home` holds is substituted as given; it is not validated and not
+/// required to be absolute. A `~` elsewhere in the path is never expanded,
+/// which keeps the rule the same as a shell's leading-tilde rule.
 ///
 /// # Examples
 ///
