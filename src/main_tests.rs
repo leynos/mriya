@@ -4,7 +4,6 @@
 //! and within the repository's file size limits.
 
 use super::*;
-use mriya::test_support::EnvGuard;
 use rstest::rstest;
 
 async fn dispatch_with_hook<F, Fut>(hook: F) -> Result<i32, CliError>
@@ -54,29 +53,39 @@ fn render_remote_command_escapes_arguments() {
     assert_eq!(rendered, "echo 'a b' 'c'\\''d'");
 }
 
-#[rstest]
-#[case::config("config", |err: &CliError| matches!(err, CliError::Config(_)))]
-#[case::sync("sync", |err: &CliError| matches!(err, CliError::Sync(_)))]
-#[case::backend("backend", |err: &CliError| matches!(err, CliError::Backend(_)))]
-#[case::run("run", |err: &CliError| matches!(err, CliError::Run(_)))]
-#[tokio::test(flavor = "current_thread")]
-async fn run_command_prefail_variants(
-    #[case] mode: &str,
-    #[case] predicate: fn(&CliError) -> bool,
-) {
-    let _guard = EnvGuard::set_vars(&[
-        ("MRIYA_FAKE_RUN_ENABLE", "1"),
-        ("MRIYA_FAKE_RUN_PREFAIL", mode),
-    ])
-    .await;
-    let result = run_command(RunCommand {
+fn mock_env(pairs: &[(&str, &str)]) -> mockable::MockEnv {
+    let table: std::collections::HashMap<String, String> = pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect();
+    let mut env = mockable::MockEnv::new();
+    env.expect_string()
+        .returning(move |key| table.get(key).cloned());
+    env
+}
+
+fn echo_command() -> RunCommand {
+    RunCommand {
         instance_type: None,
         image: None,
         cloud_init: None,
         cloud_init_file: None,
         command: vec![String::from("echo")],
-    })
-    .await;
+    }
+}
+
+#[rstest]
+#[case::config("config", |err: &CliError| matches!(err, CliError::Config(_)))]
+#[case::sync("sync", |err: &CliError| matches!(err, CliError::Sync(_)))]
+#[case::backend("backend", |err: &CliError| matches!(err, CliError::Backend(_)))]
+#[case::run("run", |err: &CliError| matches!(err, CliError::Run(_)))]
+fn fake_outcome_prefail_variants(#[case] mode: &str, #[case] predicate: fn(&CliError) -> bool) {
+    let env = mock_env(&[
+        ("MRIYA_FAKE_RUN_ENABLE", "1"),
+        ("MRIYA_FAKE_RUN_PREFAIL", mode),
+    ]);
+    let result = test_backdoors::fake_outcome(&echo_command(), &env)
+        .expect("prefail should select a fake outcome");
     let err = result.expect_err("prefail should error");
     assert!(
         predicate(&err),
@@ -84,26 +93,28 @@ async fn run_command_prefail_variants(
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn run_command_missing_exit_code_from_fake_mode() {
-    let _guard = EnvGuard::set_vars(&[
+#[test]
+fn fake_outcome_missing_exit_code_from_fake_mode() {
+    let env = mock_env(&[
         ("MRIYA_FAKE_RUN_ENABLE", "1"),
         ("MRIYA_FAKE_RUN_MODE", "missing-exit"),
-    ])
-    .await;
-    let result = run_command(RunCommand {
-        instance_type: None,
-        image: None,
-        cloud_init: None,
-        cloud_init_file: None,
-        command: vec![String::from("echo")],
-    })
-    .await;
+    ]);
+    let result = test_backdoors::fake_outcome(&echo_command(), &env)
+        .expect("missing-exit should select a fake outcome");
 
     assert!(
         matches!(result, Err(CliError::MissingExitCode)),
         "expected MissingExitCode, got {result:?}"
     );
+}
+
+#[rstest]
+#[case::disabled(&[("MRIYA_FAKE_RUN_MODE", "exit-0")])]
+#[case::enable_not_one(&[("MRIYA_FAKE_RUN_ENABLE", "0"), ("MRIYA_FAKE_RUN_MODE", "exit-0")])]
+#[case::no_mode(&[("MRIYA_FAKE_RUN_ENABLE", "1")])]
+fn fake_outcome_is_none_unless_enabled_and_selected(#[case] vars: &[(&str, &str)]) {
+    let env = mock_env(vars);
+    assert!(test_backdoors::fake_outcome(&echo_command(), &env).is_none());
 }
 
 #[tokio::test]

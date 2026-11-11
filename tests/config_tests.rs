@@ -224,11 +224,9 @@ fn config_errors_when_cloud_init_user_data_file_is_empty(valid_config: ScalewayC
 }
 
 #[rstest]
-#[tokio::test]
-async fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConfig) {
+fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConfig) {
     let tmp = TempDir::new().expect("temporary home directory should be created");
     let home = tmp.path().to_string_lossy().to_string();
-    let _guard = mriya::test_support::EnvGuard::set_vars(&[("HOME", home.as_str())]).await;
 
     let tmp_root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
         .expect("temporary home directory path should be valid UTF-8");
@@ -244,8 +242,9 @@ async fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: Scalew
         ..valid_config
     };
 
-    let request = cfg
-        .as_request()
+    // `as_request` reads the process `HOME`; `with_var` scopes the override
+    // and serializes it against other `temp_env` users.
+    let request = temp_env::with_var("HOME", Some(home.as_str()), || cfg.as_request())
         .expect("configuration with a tilde-expanded cloud-init file should produce a request");
 
     assert_eq!(

@@ -157,3 +157,32 @@ fn tags_include_test_run_tag_only_for_nonblank_id(#[case] case: TagCase) {
         case.test_run_id
     );
 }
+
+fn backend_config() -> crate::ScalewayConfig {
+    crate::ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("secret"),
+        default_organization_id: None,
+        default_project_id: String::from("11111111-2222-3333-4444-555555555555"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from("DEV1-S"),
+        default_image: String::from("ubuntu-22-04"),
+        default_architecture: String::from("x86_64"),
+        default_volume_id: None,
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
+    }
+}
+
+#[rstest]
+#[case::unset(&[], None)]
+#[case::set(&[(crate::TEST_RUN_ID_ENV, "run-9")], Some("run-9"))]
+fn new_with_env_reads_test_run_id_from_injected_environment(
+    #[case] vars: &[(&str, &str)],
+    #[case] expected: Option<&str>,
+) {
+    let env = crate::test_helpers::mock_env(vars);
+    let backend = ScalewayBackend::new_with_env(backend_config(), &env)
+        .expect("valid configuration should build a backend");
+    assert_eq!(backend.test_run_id.as_deref(), expected);
+}
