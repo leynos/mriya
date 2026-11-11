@@ -33,3 +33,9 @@ Feature: Cloud-init user-data configuration
     When I run mriya with cloud-init file "user-data.yml" relative to the temporary home
     Then the run request has cloud-init user-data present "true"
     And the run request has cloud-init user-data size "14"
+
+  Scenario: Report a tilde cloud-init path that HOME cannot decode
+    Given fake request dumping is enabled for cloud-init
+    When I run mriya with a tilde cloud-init file and a non-UTF-8 HOME
+    Then the run fails with error containing "HOME is set to a value that is not valid UTF-8"
+    And the run fails with error containing "~/user-data.yml"

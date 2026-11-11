@@ -51,3 +51,11 @@ fn scenario_cloud_init_missing_file(cli_context: CliContext) {
 fn scenario_cloud_init_tilde_file(cli_context: CliContext) {
     let _ = cli_context;
 }
+
+#[scenario(
+    path = "tests/features/cloud_init.feature",
+    name = "Report a tilde cloud-init path that HOME cannot decode"
+)]
+fn scenario_cloud_init_undecodable_home(cli_context: CliContext) {
+    let _ = cli_context;
+}

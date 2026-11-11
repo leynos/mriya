@@ -275,7 +275,16 @@ for the child — uses `temp_env::with_var` or `Command::env`, never `set_var`.
 
 The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
 test process, which is why the tilde cloud-init scenario can assert an expanded
-path without a guard or a lock.
+path without a guard or a lock. The undecodable-`HOME` scenario goes the same
+way, handing the child an `OsString` built from non-UTF-8 bytes; the child
+reports the failure, so no test process is ever left with an unusable `HOME`.
+
+The build-standard contract's sandbox reads `PATH` through the same boundary
+and with the same rule: `find_on_path` reports an unset `PATH` and an
+undecodable one as different failures, because "not set" would send a reader
+looking for a variable that is in fact present. `find_on_path_with` takes the
+`Env` so `sandbox_cases.rs` can prove both reports, and the partial-`PATH`
+case, without touching the process environment.
 
 ### Internal module boundaries
 
@@ -289,17 +298,20 @@ without changing behaviour, and each publishes only what its parent needs:
   `Janitor`. The delete operations take their zone from the listed resource
   rather than from configuration, which is what lets one sweep remove a server
   and a volume that report different zones.
-- `src/test_backdoors.rs` exposes one `pub(super)` entry point, `fake_outcome`,
-  which chains the private `enable_fake_modes`, `fake_run_from_env`, and
-  `prefail_from_env`. It is compiled for unit tests and for the
-  `test-backdoors` feature the CLI integration tests enable. Every helper takes
-  `&impl Env` rather than reading `std::env` directly, so a test injects the
-  variables it wants and the process environment stays untouched. The
-  `MRIYA_FAKE_*` variables are read only after `enable_fake_modes` gates them,
-  so an ordinary run cannot be diverted by a stray variable. The module doubles
-  as a mutation-testing exclusion: `.cargo/mutants.toml` names it, so a
-  surviving mutant in scaffolding is a recorded exception rather than a silent
-  gap.
+- `src/test_backdoors.rs` separates deciding from doing. `select_fake_outcome`
+  reads the injected environment and returns a `FakeOutcome` value; it has no
+  side effects, so the precedence rules and the `MRIYA_FAKE_RUN_ENABLE` gate
+  are testable on their own. `run_fake_outcome` is the command that performs
+  the selection, and it takes its stdout and stderr as arguments rather than
+  reaching for the process streams, so a unit test asserts exactly what a fake
+  run emits. `run_command` is the only caller that supplies the real streams.
+  The module is compiled for unit tests and for the `test-backdoors` feature
+  the CLI integration tests enable; every entry point takes `&impl Env` rather
+  than reading `std::env` directly. The `MRIYA_FAKE_*` variables are read only
+  after `enable_fake_modes` gates them, so an ordinary run cannot be diverted
+  by a stray variable. The module doubles as a mutation-testing exclusion:
+  `.cargo/mutants.toml` names it, so a surviving mutant in scaffolding is a
+  recorded exception rather than a silent gap.
 
 ## The build standard
 

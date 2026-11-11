@@ -55,6 +55,8 @@ mod reader_cases;
 mod repo_copy;
 #[path = "build_standard_support/sandbox.rs"]
 mod sandbox;
+#[path = "build_standard_support/sandbox_cases.rs"]
+mod sandbox_cases;
 #[path = "build_standard_support/shell.rs"]
 mod shell;
 #[path = "build_standard_support/workflow_exhaustive.rs"]

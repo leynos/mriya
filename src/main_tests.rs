@@ -84,9 +84,10 @@ fn fake_outcome_prefail_variants(#[case] mode: &str, #[case] predicate: fn(&CliE
         ("MRIYA_FAKE_RUN_ENABLE", "1"),
         ("MRIYA_FAKE_RUN_PREFAIL", mode),
     ]);
-    let result = test_backdoors::fake_outcome(&echo_command(), &env)
-        .expect("prefail should select a fake outcome");
-    let err = result.expect_err("prefail should error");
+    let outcome = test_backdoors::select_fake_outcome(&env).expect("prefail should be selected");
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let err = test_backdoors::run_fake_outcome(&echo_command(), outcome, &mut stdout, &mut stderr)
+        .expect_err("prefail should error");
     assert!(
         predicate(&err),
         "mode {mode} produced unexpected error: {err}"
@@ -99,8 +100,11 @@ fn fake_outcome_missing_exit_code_from_fake_mode() {
         ("MRIYA_FAKE_RUN_ENABLE", "1"),
         ("MRIYA_FAKE_RUN_MODE", "missing-exit"),
     ]);
-    let result = test_backdoors::fake_outcome(&echo_command(), &env)
-        .expect("missing-exit should select a fake outcome");
+    let outcome =
+        test_backdoors::select_fake_outcome(&env).expect("missing-exit should be selected");
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let result =
+        test_backdoors::run_fake_outcome(&echo_command(), outcome, &mut stdout, &mut stderr);
 
     assert!(
         matches!(result, Err(CliError::MissingExitCode)),
@@ -118,10 +122,33 @@ fn fake_outcome_prefers_a_run_mode_over_a_prefail_mode() {
         ("MRIYA_FAKE_RUN_PREFAIL", "backend"),
     ]);
 
-    let result = test_backdoors::fake_outcome(&echo_command(), &env)
+    let outcome = test_backdoors::select_fake_outcome(&env)
         .expect("a selected fake run should short-circuit the real path");
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let exit_code =
+        test_backdoors::run_fake_outcome(&echo_command(), outcome, &mut stdout, &mut stderr)
+            .expect("a selected fake run should report an exit code");
 
-    assert_eq!(result.ok(), Some(0), "the run mode should take precedence");
+    assert_eq!(exit_code, 0, "the run mode should take precedence");
+}
+
+#[test]
+fn fake_run_outcome_writes_the_streamed_output_it_simulates() {
+    // The outcome owns its streams, so a test can assert exactly what a fake
+    // run emits without capturing the harness's own stdout and stderr.
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+
+    let exit_code = test_backdoors::run_fake_outcome(
+        &echo_command(),
+        test_backdoors::FakeOutcome::Run(test_backdoors::FakeRunMode::Exit7),
+        &mut stdout,
+        &mut stderr,
+    )
+    .expect("exit-7 reports an exit code rather than an error");
+
+    assert_eq!(String::from_utf8_lossy(&stdout), "fake-stdout\n");
+    assert_eq!(String::from_utf8_lossy(&stderr), "fake-stderr\n");
+    assert_eq!(exit_code, 7);
 }
 
 #[rstest]
@@ -130,7 +157,7 @@ fn fake_outcome_prefers_a_run_mode_over_a_prefail_mode() {
 #[case::no_mode(&[("MRIYA_FAKE_RUN_ENABLE", "1")])]
 fn fake_outcome_is_none_unless_enabled_and_selected(#[case] vars: &[(&str, &str)]) {
     let env = mock_env(vars);
-    assert!(test_backdoors::fake_outcome(&echo_command(), &env).is_none());
+    assert!(test_backdoors::select_fake_outcome(&env).is_none());
 }
 
 #[tokio::test]

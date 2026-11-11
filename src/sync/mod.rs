@@ -276,6 +276,16 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(args)
     }
 
+    /// Builds the `--rsh` value rsync uses to reach the instance.
+    ///
+    /// The remote shell is one command string, so it shares the option set
+    /// `ssh` itself receives rather than growing a second copy of it; the
+    /// identity flag is therefore expanded here exactly as it is for `ssh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::HomeUnavailable`] for the same reason as
+    /// [`Syncer::common_ssh_options`], because this delegates to it.
     fn build_remote_shell(&self, port: u16, env: &impl Env) -> Result<String, SyncError> {
         let opts = self
             .common_ssh_options(port, env)?

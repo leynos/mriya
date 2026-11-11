@@ -250,6 +250,12 @@ provisioning) that will guide subsequent optimizations.
   endpoint then polls until the server disappears, failing the integration test
   if any residual resource remains. Integration coverage provisions the
   smallest shape (`DEV1-S`) to keep cost and blast radius low.
+- **Environment boundary:** Process-environment reads go through
+  `mockable::Env`, injected at each boundary and defaulting to `DefaultEnv` at
+  the entry points. The decision is recorded in
+  [ADR 002](adr-002-environment-access.md); its guiding rule is that a value
+  the program cannot decode is an error naming the file it was needed for, not
+  a silent pass-through.
 
 ### Scaleway HTTP boundary decision (15 October 2026)
 

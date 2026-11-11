@@ -28,7 +28,7 @@ use mriya::{
     SyncConfig, Syncer,
 };
 #[cfg(any(test, feature = "test-backdoors"))]
-use test_backdoors::fake_outcome;
+use test_backdoors::{run_fake_outcome, select_fake_outcome};
 
 #[cfg(test)]
 mod main_tests;
@@ -113,8 +113,10 @@ async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     #[cfg(any(test, feature = "test-backdoors"))]
     {
-        if let Some(result) = fake_outcome(&args, &mockable::DefaultEnv) {
-            return result;
+        if let Some(outcome) = select_fake_outcome(&mockable::DefaultEnv) {
+            let mut stdout = io::stdout();
+            let mut stderr = io::stderr();
+            return run_fake_outcome(&args, outcome, &mut stdout, &mut stderr);
         }
     }
 
