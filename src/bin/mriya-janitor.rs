@@ -7,6 +7,7 @@ use clap::Parser;
 use mriya::janitor::{DEFAULT_SCW_BIN, Janitor, JanitorConfig, TEST_RUN_ID_ENV};
 use std::io::Write as _;
 
+/// Command-line arguments for the janitor.
 #[derive(Debug, Parser)]
 #[command(
     name = "mriya-janitor",
