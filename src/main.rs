@@ -5,8 +5,6 @@
 //! tears the instance down. The `run` subcommand preserves remote exit codes
 //! locally and reports errors on stderr with meaningful exit statuses.
 
-#[cfg(any(test, feature = "test-backdoors"))]
-use std::env;
 use std::io::{self, Write};
 use std::process;
 #[cfg(test)]
@@ -20,6 +18,8 @@ use shell_escape::unix::escape;
 use thiserror::Error;
 
 mod cli;
+#[cfg(any(test, feature = "test-backdoors"))]
+mod test_backdoors;
 
 use cli::{Cli, InitCommand, RunCommand};
 use mriya::{
@@ -27,6 +27,8 @@ use mriya::{
     RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig, StreamingCommandRunner,
     SyncConfig, Syncer,
 };
+#[cfg(any(test, feature = "test-backdoors"))]
+use test_backdoors::{enable_fake_modes, fake_run_from_env, prefail_from_env};
 
 #[cfg(test)]
 mod main_tests;
@@ -287,67 +289,3 @@ type RunHook =
 
 #[cfg(test)]
 static RUN_COMMAND_HOOK: Mutex<Option<Box<RunHook>>> = Mutex::const_new(None);
-
-#[cfg(any(test, feature = "test-backdoors"))]
-fn enable_fake_modes() -> bool {
-    env::var("MRIYA_FAKE_RUN_ENABLE").is_ok_and(|val| val == "1")
-}
-
-#[cfg(any(test, feature = "test-backdoors"))]
-fn fake_run_from_env(args: &RunCommand) -> Option<Result<i32, CliError>> {
-    let mode = env::var("MRIYA_FAKE_RUN_MODE").ok()?;
-    match mode.as_str() {
-        "exit-0" => {
-            writeln!(io::stdout(), "fake-stdout").ok();
-            writeln!(io::stderr(), "fake-stderr").ok();
-            Some(Ok(0))
-        }
-        "exit-7" => {
-            writeln!(io::stdout(), "fake-stdout").ok();
-            writeln!(io::stderr(), "fake-stderr").ok();
-            Some(Ok(7))
-        }
-        "dump-request" => Some(fake_dump_request(args)),
-        "missing-exit" => {
-            writeln!(io::stdout(), "fake-stdout").ok();
-            writeln!(io::stderr(), "fake-stderr").ok();
-            Some(Err(CliError::MissingExitCode))
-        }
-        _ => None,
-    }
-}
-
-#[cfg(any(test, feature = "test-backdoors"))]
-fn fake_dump_request(args: &RunCommand) -> Result<i32, CliError> {
-    let (_backend, request) = build_backend_and_request(args)?;
-
-    writeln!(io::stdout(), "instance_type={}", request.instance_type).ok();
-    writeln!(io::stdout(), "image_label={}", request.image_label).ok();
-    writeln!(
-        io::stdout(),
-        "cloud_init_user_data_present={}",
-        request.cloud_init_user_data.is_some()
-    )
-    .ok();
-    writeln!(
-        io::stdout(),
-        "cloud_init_user_data_size={}",
-        request.cloud_init_user_data.as_deref().map_or(0, str::len)
-    )
-    .ok();
-    Ok(0)
-}
-
-#[cfg(any(test, feature = "test-backdoors"))]
-fn prefail_from_env() -> Option<CliError> {
-    let mode = env::var("MRIYA_FAKE_RUN_PREFAIL").ok()?;
-    match mode.as_str() {
-        "config" => Some(CliError::Config(String::from("fake"))),
-        "sync" => Some(CliError::Sync(String::from("fake"))),
-        "backend" => Some(CliError::Backend(String::from("fake"))),
-        "run" => Some(CliError::Run(RunError::Provision(
-            ScalewayBackendError::Config(String::from("fake")),
-        ))),
-        _ => None,
-    }
-}
