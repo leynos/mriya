@@ -254,9 +254,12 @@ without changing behaviour, and each publishes only what its parent needs:
   `Janitor`. The delete operations take their zone from the listed resource
   rather than from configuration, which is what lets one sweep remove a server
   and a volume that report different zones.
-- `src/test_backdoors.rs` holds `enable_fake_modes`, `fake_run_from_env`, and
-  `prefail_from_env`, all `pub(super)`. It is compiled for unit tests and for
-  the `test-backdoors` feature the CLI integration tests enable, and its
+- `src/test_backdoors.rs` exposes one `pub(super)` entry point, `fake_outcome`,
+  which chains the private `enable_fake_modes`, `fake_run_from_env`, and
+  `prefail_from_env`. It is compiled for unit tests and for the
+  `test-backdoors` feature the CLI integration tests enable. Every helper takes
+  `&impl Env` rather than reading `std::env` directly, so a test injects the
+  variables it wants and the process environment stays untouched. The
   `MRIYA_FAKE_*` variables are read only after `enable_fake_modes` gates them,
   so an ordinary run cannot be diverted by a stray variable. The module doubles
   as a mutation-testing exclusion: `.cargo/mutants.toml` names it, so a
