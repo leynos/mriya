@@ -117,8 +117,8 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Add regression tests for file shape, precedence, explicit CLI
   defaults, boolean `--flag=false`, discovery errors, and the `--` contract
   (`tests/config_sources.rs` and `tests/config_discovery.rs`, 18 tests;
-  `src/cli/mod.rs`, 4 tests). The store round-trip test was written first and
-  failed (`got None`) before the fix.
+  `src/cli/mod.rs`, 4 tests; `src/config_store/tests.rs`, 4 tests). The store
+  round-trip test was written first and failed (`got None`) before the fix.
 - [x] (2026-11-12) Fix `ConfigStore` to write and read the root-level volume
       key,
   with a legacy read fallback (`src/config_store/mod.rs`, 3 new tests).
@@ -130,15 +130,16 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Declare the compiler floor and document the
   application/development split (`Cargo.toml`, `docs/developers-guide.md`).
 - [x] (2026-11-12) Run all gates and compare test inventories. Baseline
-  `make test` ran 460 tests across 18 binaries; the migrated tree runs 485
+  `make test` ran 460 tests across 18 binaries; the migrated tree runs 486
   across 20 binaries, all passing. `make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make nixie`, and `make test-workflow-contracts` all exit
   0. Logs are under `/tmp/*-mriya-issue-159*.out`.
-- [x] (2026-11-12) Inspect the final dependency graph. `cargo tree -i
-  ortho_config` shows only `mriya`; all three `ortho_*` crates resolve 0.10.0;
-  `Cargo.lock` has no Git-sourced package. The remaining duplicates (`reqwest`
-  0.11/0.12, `thiserror` 1/2, `toml` 0.5/0.8/0.9/1.1, `cap-std` 3/4) are
-  transitive and predate this migration.
+- [x] (2026-11-12) Inspect the final dependency graph.
+      `cargo tree -i ortho_config` shows only `mriya`; all three `ortho_*`
+      crates resolve 0.10.0;
+      `Cargo.lock` has no Git-sourced package. The remaining duplicates
+      (`reqwest` 0.11/0.12, `thiserror` 1/2, `toml` 0.5/0.8/0.9/1.1, `cap-std`
+      3/4) are transitive and predate this migration.
 - [ ] Commit, push, open a draft pull request, and clear CodeRabbit concerns.
 
 ## Surprises & discoveries
@@ -187,6 +188,15 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - Decision: keep the existing nightly pin.
   Rationale: the pin already builds the workspace, and no evidence shows it is
   incompatible with 0.10.0. Date/Author: 2026-11-12, implementation agent.
+- Decision: apply the CodeRabbit finding that a blank `default_volume_id`
+  should count as unset, and reject its two findings that ask for edits inside
+  the imported upstream guides. Rationale: the imported files must stay
+  byte-for-byte identical to the upstream commit, so their sample code and
+  relative links are not ours to rewrite; the provenance document's link
+  mapping already redirects every relative link, including the reciprocal
+  `users-guide.md` and `v0-10-0-migration-guide.md` links. Mriya's own `main`
+  already exits with a non-zero status on failure. Date/Author: 2026-11-12,
+  implementation agent.
 
 ## Outcomes & retrospective
 
