@@ -120,6 +120,25 @@ fn read_volume_id_reads_legacy_section(
     Ok(())
 }
 
+/// Confirms an empty value records no volume, so `mriya init` may set one.
+#[rstest]
+fn read_volume_id_treats_empty_value_as_unset(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let value = parse_toml(&fixture.path, "default_volume_id = \"  \"\n")
+        .context("parse empty config should succeed")?;
+
+    let volume_id =
+        read_volume_id(&fixture.path, &value).context("read empty volume id should succeed")?;
+
+    ensure!(
+        volume_id.is_none(),
+        "a blank volume id should be treated as unset"
+    );
+    Ok(())
+}
+
 /// Confirms the root-level key wins when both shapes are present.
 #[rstest]
 fn read_volume_id_prefers_root_level_key(

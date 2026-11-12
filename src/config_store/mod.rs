@@ -279,12 +279,19 @@ fn parse_volume_id(
     raw: &toml::Value,
     label: &str,
 ) -> Result<Option<String>, ConfigStoreError> {
-    raw.as_str()
-        .map(|id| Some(id.trim().to_owned()))
+    let text = raw
+        .as_str()
         .ok_or_else(|| ConfigStoreError::InvalidStructure {
             path: path.to_path_buf(),
             message: format!("{label} must be a string"),
-        })
+        })?;
+    let trimmed = text.trim();
+    // An empty value records no usable volume, so `mriya init` may set one
+    // without `--force`.
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed.to_owned()))
 }
 
 fn write_volume_id_value(

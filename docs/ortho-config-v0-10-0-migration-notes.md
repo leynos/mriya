@@ -137,11 +137,11 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The migrated tree runs 485 tests across
+tests across 18 binaries, all passing. The migrated tree runs 486 tests across
 20 binaries, all passing. The two new binaries are `config_sources` and
-`config_discovery`; the 25 added tests are 12 integration tests in
+`config_discovery`; the 26 added tests are 12 integration tests in
 `tests/config_sources.rs`, 6 integration tests in `tests/config_discovery.rs`,
-4 parser tests in `src/cli/mod.rs`, and 3 store tests in
+4 parser tests in `src/cli/mod.rs`, and 4 store tests in
 `src/config_store/tests.rs`. One existing test,
 `src/sync/tests/config.rs::volume_mount_path_uses_default_when_unset`, was
 converted from process-environment loading to injected sources without changing
@@ -153,7 +153,7 @@ Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 
 $ make test   # migrated tree
-Summary [  91.262s] 485 tests run: 485 passed, 0 skipped
+Summary [   9.122s] 486 tests run: 486 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 ```
 
