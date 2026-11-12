@@ -52,7 +52,7 @@ toml = "0.9"
 # Nothing ties the two pins together, so check them against each other when
 # either moves.
 # Move this pin only when the builder's pin moves; see the developers' guide.
-typos-cli = "=1.50.2"
+typos-cli = "=1.52.0"
 
 [profile.dev]
 incremental = false
