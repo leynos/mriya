@@ -5,7 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETE (draft pull request
+[#239](https://github.com/leynos/mriya/pull/239) open; not merged)
 
 ## Purpose / big picture
 
@@ -140,7 +141,11 @@ The migration is observable by running the repository gates (`make check-fmt`,
       `Cargo.lock` has no Git-sourced package. The remaining duplicates
       (`reqwest` 0.11/0.12, `thiserror` 1/2, `toml` 0.5/0.8/0.9/1.1, `cap-std`
       3/4) are transitive and predate this migration.
-- [ ] Commit, push, open a draft pull request, and clear CodeRabbit concerns.
+- [x] (2026-11-12) Commit, push, open a draft pull request, and clear CodeRabbit
+  concerns. Draft pull request [#239](https://github.com/leynos/mriya/pull/239)
+  is open against `main`; five review rounds were answered, with the imported
+  guides' relative links left unedited by design and recorded as a known
+  limitation.
 
 ## Surprises & discoveries
 
@@ -225,8 +230,47 @@ The migration is observable by running the repository gates (`make check-fmt`,
 
 ## Outcomes & retrospective
 
-Pending. At completion this section will compare the delivered behaviour with
-the purpose, list any undischarged obligations, and record lessons.
+Delivered. The branch compiles against `ortho_config` 0.10.0 with the YAML and
+JSON5 features and default features intact, and the three observable outcomes
+in the purpose hold:
+
+1. `mriya run` and `mriya init` keep the documented precedence, including the
+   v0.10.0 rule that an explicit command-line value equal to the default still
+   wins (`tests/config_sources.rs`).
+2. `mriya.toml` is read from root-level keys, which is what the loader has
+   always read, and `mriya init` now writes a volume ID that `mriya run` reads
+   back (`src/config_store/mod.rs`, `tests/config_discovery.rs`).
+3. The imported guides match the release compiled against, with tag object,
+   peeled commit, byte counts, checksums, and a relative-link map recorded in
+   `docs/ortho-config-v0-10-0-migration-notes.md`.
+
+Undischarged or deliberately out-of-scope obligations:
+
+- The imported guides keep upstream relative links, so a handful of in-document
+  links point at names this repository does not use. The provenance notes' link
+  map and reader-navigation section give the working targets; the bytes stay
+  unedited to preserve provenance.
+- Named profiles, stacked scopes, localization runtimes, `cargo-orthohelp`, and
+  agent metadata are v0.10.0 capabilities the repository does not need, so they
+  were not adopted.
+- Validation that needs billable cloud resources or live remote commands was
+  not performed, as the migration manifest requires.
+
+Lessons:
+
+- The dependency bump had already landed through Dependabot, so the real work
+  was behavioural validation. Checking the declared and resolved versions
+  before editing any manifest avoided a pointless downgrade-and-rebump.
+- The most valuable finding was a pre-existing defect: documentation and
+  `ConfigStore` used `[section]` tables the loader never read. A migration is a
+  good moment to exercise the documented file shape end to end.
+- Blank values and legacy records interact. Treating a blank root key as unset
+  is right for the root key, but it must not short-circuit the legacy guard.
+- Destructuring a fixture with `..` silently drops the unbound fields at the
+  end of the `let` statement; bind a temporary-directory guard by name when the
+  test writes through it.
+- Review findings that ask for edits inside imported, checksum-pinned text are
+  not actionable. Record the limitation and map the links instead.
 
 ## Context and orientation
 
