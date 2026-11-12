@@ -59,6 +59,21 @@ commit, or to the local destination where an equivalent file exists.
 | `v0-9-0-migration-guide.md`                              | `https://github.com/leynos/ortho-config/blob/38812c563e3953a490e3efc202609f37e21a0517/docs/v0-9-0-migration-guide.md`                              |
 | `users-guide.md#...` (in the migration guide)            | Local: `docs/ortho-config-users-guide.md#...`                                                                                                      |
 
+### Reader navigation
+
+Because the imported files keep their upstream relative links, following one
+from inside this repository can open the wrong local file. Use these links
+instead:
+
+- [ortho_config v0.10.0 users' guide](ortho-config-users-guide.md)
+- [ortho_config v0.10.0 migration guide](ortho-config-v0-10-0-migration-guide.md)
+
+The imported users' guide's application example prints a configuration error
+and then returns from `main` without a failure status. That is upstream sample
+code and is left unedited. Mriya's own entry point does not copy it:
+`src/main.rs` computes an exit code and calls `process::exit`, so a
+configuration failure reaches the shell as a non-zero status.
+
 ## Dependency state
 
 The working tree already declared and resolved `ortho_config` 0.10.0 before
@@ -137,10 +152,10 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The migrated tree runs 486 tests across
+tests across 18 binaries, all passing. The migrated tree runs 485 tests across
 20 binaries, all passing. The two new binaries are `config_sources` and
-`config_discovery`; the 26 added tests are 12 integration tests in
-`tests/config_sources.rs`, 6 integration tests in `tests/config_discovery.rs`,
+`config_discovery`; the 25 added tests are 12 integration tests in
+`tests/config_sources.rs`, 5 integration tests in `tests/config_discovery.rs`,
 4 parser tests in `src/cli/mod.rs`, and 4 store tests in
 `src/config_store/tests.rs`. One existing test,
 `src/sync/tests/config.rs::volume_mount_path_uses_default_when_unset`, was
@@ -153,7 +168,7 @@ Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 
 $ make test   # migrated tree
-Summary [   9.122s] 486 tests run: 486 passed, 0 skipped
+Summary [  30.585s] 485 tests run: 485 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 ```
 

@@ -45,34 +45,21 @@ fn store_for(workspace: &Workspace) -> ConfigStore {
     ConfigStore::with_discovery(discovery)
 }
 
+/// Selecting an absent path suppresses project-file discovery, so the test
+/// never reads a `mriya.toml` that happens to sit in the working directory.
 #[test]
-fn missing_optional_config_file_is_not_an_error() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-    // No file is written, and no MRIYA_CONFIG_PATH is supplied.
-    let vars = [
-        ("HOME", workspace.home.as_str()),
-        ("XDG_CONFIG_HOME", workspace.home.as_str()),
-        ("XDG_CONFIG_DIRS", workspace.home.as_str()),
-    ];
-
-    let config = load_sync_with_env(&vars)
-        .context("an absent optional file should fall back to defaults")?;
-
-    ensure!(config.volume_mount_path == mriya::sync::DEFAULT_VOLUME_MOUNT_PATH);
-    Ok(())
-}
-
-#[test]
-fn missing_explicit_config_file_falls_back_to_defaults() -> anyhow::Result<()> {
+fn missing_selected_config_file_is_not_an_error() -> anyhow::Result<()> {
     let workspace = Workspace::new()?;
     let missing = path_text(&workspace.root.join("missing.toml"));
     let vars = [
         ("HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_DIRS", workspace.home.as_str()),
         ("MRIYA_CONFIG_PATH", missing.as_str()),
     ];
 
     let config = load_sync_with_env(&vars)
-        .context("a missing environment-selected file should fall back")?;
+        .context("an absent selected file should fall back to defaults")?;
 
     ensure!(config.volume_mount_path == mriya::sync::DEFAULT_VOLUME_MOUNT_PATH);
     Ok(())
