@@ -77,9 +77,14 @@ fn load_probe(
     extra_env: &[(&str, &str)],
     args: &[&str],
 ) -> anyhow::Result<ProbeConfig> {
+    // Selecting an absent path suppresses project-file discovery, so a stray
+    // `mriya-probe.toml` in the working directory cannot affect the result.
+    let missing = workspace.root.join("missing-probe.toml");
     let mut vars = vec![
         ("HOME", workspace.home.as_str()),
         ("XDG_CONFIG_HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_DIRS", workspace.home.as_str()),
+        ("MRIYA_PROBE_CONFIG_PATH", missing.as_str()),
     ];
     vars.extend_from_slice(extra_env);
     let (discovery, merge) = shared_env(&vars);

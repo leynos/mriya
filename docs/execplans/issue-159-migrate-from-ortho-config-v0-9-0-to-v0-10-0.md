@@ -130,7 +130,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Declare the compiler floor and document the
   application/development split (`Cargo.toml`, `docs/developers-guide.md`).
 - [x] (2026-11-12) Run all gates and compare test inventories. Baseline
-  `make test` ran 460 tests across 18 binaries; the migrated tree runs 486
+  `make test` ran 460 tests across 18 binaries; the migrated tree runs 485
   across 20 binaries, all passing. `make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make nixie`, and `make test-workflow-contracts` all exit
   0. Logs are under `/tmp/*-mriya-issue-159*.out`.
@@ -197,6 +197,13 @@ The migration is observable by running the repository gates (`make check-fmt`,
   `users-guide.md` and `v0-10-0-migration-guide.md` links. Mriya's own `main`
   already exits with a non-zero status on failure. Date/Author: 2026-11-12,
   implementation agent.
+- Decision: answer the second review round by adding a reader-navigation
+  section to the provenance notes, enabling `pipefail` in the recorded gate
+  commands, and making the default-value tests select an absent configuration
+  path so project-file discovery cannot read the working directory. Rationale:
+  these address the findings without editing the byte-identical imported text.
+  The two missing-file tests were merged because selecting an absent path makes
+  them the same scenario. Date/Author: 2026-11-12, implementation agent.
 
 ## Outcomes & retrospective
 
@@ -412,9 +419,11 @@ All commands run from the repository root
    cargo test --lib config_store
    ```
 
-2. Run the gates sequentially, logging each:
+2. Run the gates sequentially, logging each. Enable `pipefail` first so a
+   failing gate is not masked by a successful `tee`:
 
    ```console
+   set -o pipefail
    make check-fmt 2>&1 | tee /tmp/check-fmt-mriya-issue-159.out
    make lint 2>&1 | tee /tmp/lint-mriya-issue-159.out
    make test 2>&1 | tee /tmp/test-mriya-issue-159.out
