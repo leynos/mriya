@@ -263,6 +263,22 @@ without changing behaviour, and each publishes only what its parent needs:
   surviving mutant in scaffolding is a recorded exception rather than a silent
   gap.
 
+## Compiler floor
+
+`Cargo.toml` declares `rust-version = "1.89.0"`, the highest `rust-version` in
+the locked non-development graph (`ortho_config` 0.10.0, `ortho_config_macros`,
+`ortho_l10n`, and `uuid`). That covers the library, the `mriya` binary, and the
+build script: `RUSTFLAGS="" cargo +1.89.0 check --lib --bins` succeeds against
+the committed `Cargo.lock`.
+
+The full test suite has a higher floor. The exact-pinned
+`typos-cli = "=1.50.2"` dev-dependency requires Rust 1.95, so `cargo test` and
+`make test` need 1.95 or newer. The development build standard additionally
+uses the nightly pinned in `rust-toolchain.toml`, because `.cargo/config.toml`
+passes nightly-only flags (`-Zthreads=8` and `[unstable] embed-metadata`). A
+contributor building only the application with stable Rust must assign an empty
+`RUSTFLAGS` to leave the development flags, as the users' guide describes.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend
