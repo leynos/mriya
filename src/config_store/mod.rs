@@ -248,7 +248,12 @@ fn read_volume_id(
         })?;
 
     if let Some(raw) = table.get(VOLUME_KEY) {
-        return parse_volume_id(path, raw, VOLUME_KEY);
+        let root = parse_volume_id(path, raw, VOLUME_KEY)?;
+        if root.is_some() {
+            return Ok(root);
+        }
+        // A blank root value records nothing, but the legacy section may still
+        // hold an ID an earlier release recorded, so keep guarding that one.
     }
 
     // Earlier releases wrote the key under `[scaleway]`, which `ortho_config`

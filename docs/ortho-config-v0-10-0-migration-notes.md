@@ -150,7 +150,8 @@ The migration fixes this:
 - `ConfigStore` writes the root-level `default_volume_id` key and reads it back.
 - `ConfigStore` still detects a legacy `[scaleway] default_volume_id` value, so
   `mriya init` keeps refusing to replace a volume ID recorded by an earlier
-  release unless `--force` is supplied.
+  release unless `--force` is supplied. That guard holds even when a blank
+  root-level key is present, because a blank value records no volume of its own.
 - The users' guide and the validation error messages now name root-level keys.
 - `tests/config_discovery.rs` proves the store writes a file that
   `ScalewayConfig` reads, and that sectioned files are ignored.
@@ -158,11 +159,11 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The migrated tree runs 488 tests across
+tests across 18 binaries, all passing. The migrated tree runs 489 tests across
 20 binaries, all passing. The two new binaries are `config_sources` and
-`config_discovery`; the 28 added tests are 12 integration tests in
+`config_discovery`; the 29 added tests are 12 integration tests in
 `tests/config_sources.rs`, 5 integration tests in `tests/config_discovery.rs`,
-4 parser tests in `src/cli/mod.rs`, 4 store tests in
+4 parser tests in `src/cli/mod.rs`, 5 store tests in
 `src/config_store/tests.rs`, and 3 spelling-contract checks for the
 compiler-hash exemption (two probe cases in `tests/spelling_contract/probes.rs`
 and one engine test in `tests/spelling_contract/compiler_hash.rs`). One
@@ -177,7 +178,7 @@ Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 
 $ make test   # migrated tree
-Summary [   7.138s] 488 tests run: 488 passed, 0 skipped
+Summary [   7.693s] 489 tests run: 489 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 ```
 
