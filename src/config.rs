@@ -6,9 +6,6 @@ use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
 
-/// TOML section name for Scaleway configuration.
-const SCALEWAY_SECTION: &str = "scaleway";
-
 /// Scaleway specific configuration derived from environment variables,
 /// configuration files, and CLI flags.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -59,21 +56,14 @@ struct FieldMetadata {
     description: &'static str,
     env_var: &'static str,
     toml_key: &'static str,
-    section: &'static str,
 }
 
 impl FieldMetadata {
-    const fn new(
-        description: &'static str,
-        env_var: &'static str,
-        toml_key: &'static str,
-        section: &'static str,
-    ) -> Self {
+    const fn new(description: &'static str, env_var: &'static str, toml_key: &'static str) -> Self {
         Self {
             description,
             env_var,
             toml_key,
-            section,
         }
     }
 }
@@ -82,8 +72,8 @@ impl ScalewayConfig {
     fn require_field(value: &str, metadata: &FieldMetadata) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
             return Err(ConfigError::MissingField(format!(
-                "missing {}: set {} or add {} to [{}] in mriya.toml",
-                metadata.description, metadata.env_var, metadata.toml_key, metadata.section
+                "missing {}: set {} or add {} to mriya.toml",
+                metadata.description, metadata.env_var, metadata.toml_key
             )));
         }
         Ok(())
@@ -141,16 +131,16 @@ impl ScalewayConfig {
             CloudInitError::BothProvided => ConfigError::CloudInit(String::from(concat!(
                 "cloud-init user-data can be provided either inline or via a file, not both; ",
                 "set only one of SCW_CLOUD_INIT_USER_DATA or SCW_CLOUD_INIT_USER_DATA_FILE ",
-                "(or cloud_init_user_data / cloud_init_user_data_file in [scaleway])"
+                "(or cloud_init_user_data / cloud_init_user_data_file in mriya.toml)"
             ))),
             CloudInitError::InlineEmpty => ConfigError::CloudInit(String::from(concat!(
                 "cloud-init user-data must not be empty; set SCW_CLOUD_INIT_USER_DATA ",
-                "(or cloud_init_user_data in [scaleway])"
+                "(or cloud_init_user_data in mriya.toml)"
             ))),
             CloudInitError::FilePathEmpty | CloudInitError::FileEmpty => {
                 ConfigError::CloudInit(String::from(concat!(
                     "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
-                    "(or cloud_init_user_data_file in [scaleway])"
+                    "(or cloud_init_user_data_file in mriya.toml)"
                 )))
             }
             CloudInitError::FileRead { path, message } => ConfigError::CloudInitFileRead {
@@ -175,12 +165,7 @@ impl ScalewayConfig {
     fn validate_required_fields(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
-            &FieldMetadata::new(
-                "Scaleway API secret key",
-                "SCW_SECRET_KEY",
-                "secret_key",
-                SCALEWAY_SECTION,
-            ),
+            &FieldMetadata::new("Scaleway API secret key", "SCW_SECRET_KEY", "secret_key"),
         )?;
         Self::require_field(
             &self.default_project_id,
@@ -188,17 +173,11 @@ impl ScalewayConfig {
                 "Scaleway project ID",
                 "SCW_DEFAULT_PROJECT_ID",
                 "default_project_id",
-                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
             &self.default_image,
-            &FieldMetadata::new(
-                "VM image",
-                "SCW_DEFAULT_IMAGE",
-                "default_image",
-                SCALEWAY_SECTION,
-            ),
+            &FieldMetadata::new("VM image", "SCW_DEFAULT_IMAGE", "default_image"),
         )?;
         Self::require_field(
             &self.default_instance_type,
@@ -206,17 +185,11 @@ impl ScalewayConfig {
                 "instance type",
                 "SCW_DEFAULT_INSTANCE_TYPE",
                 "default_instance_type",
-                SCALEWAY_SECTION,
             ),
         )?;
         Self::require_field(
             &self.default_zone,
-            &FieldMetadata::new(
-                "availability zone",
-                "SCW_DEFAULT_ZONE",
-                "default_zone",
-                SCALEWAY_SECTION,
-            ),
+            &FieldMetadata::new("availability zone", "SCW_DEFAULT_ZONE", "default_zone"),
         )?;
         Self::require_field(
             &self.default_architecture,
@@ -224,7 +197,6 @@ impl ScalewayConfig {
                 "CPU architecture",
                 "SCW_DEFAULT_ARCHITECTURE",
                 "default_architecture",
-                SCALEWAY_SECTION,
             ),
         )?;
         Ok(())

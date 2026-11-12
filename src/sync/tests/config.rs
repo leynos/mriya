@@ -75,10 +75,26 @@ fn sync_config_validate_accepts_none_ssh_identity(base_config: SyncConfig) {
         .expect("None ssh_identity_file should be valid (SSH uses defaults)");
 }
 
+/// Loads through injected sources so the assertion does not depend on the
+/// process environment or a developer's real configuration files.
 #[test]
 fn volume_mount_path_uses_default_when_unset() {
-    let sync_config =
-        SyncConfig::load_without_cli_args().expect("SyncConfig should load with defaults");
+    use ortho_config::{MapEnv, OrthoConfig as _, SharedEnvSource, SharedScanEnvSource};
+    use std::sync::Arc;
+
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let home = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+        .expect("temp path should be utf8");
+    let environment = Arc::new(
+        MapEnv::new()
+            .with_var("HOME", home.as_str())
+            .with_var("XDG_CONFIG_HOME", home.as_str())
+            .with_var("XDG_CONFIG_DIRS", home.as_str()),
+    );
+    let discovery: SharedEnvSource = environment.clone();
+    let merge: SharedScanEnvSource = environment;
+    let sync_config = SyncConfig::load_from_iter_with_sources(["mriya"], discovery, merge)
+        .expect("SyncConfig should load with defaults");
 
     assert_eq!(
         sync_config.volume_mount_path, DEFAULT_VOLUME_MOUNT_PATH,
