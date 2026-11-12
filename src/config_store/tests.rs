@@ -70,6 +70,82 @@ fn write_volume_id_creates_config_file(
     Ok(())
 }
 
+/// Confirms the store writes the root-level key that `ortho_config` reads,
+/// rather than the `[scaleway]` section earlier releases used.
+#[rstest]
+fn write_volume_id_uses_root_level_key(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let ConfigFixture { path, store, .. } = config_fixture?;
+
+    store
+        .write_volume_id("vol-123", true)
+        .context("write volume id should succeed")?;
+
+    let contents = read_config(&path).context("read config should succeed")?;
+    let value = parse_toml(&path, &contents).context("parse config should succeed")?;
+    let table = value
+        .as_table()
+        .context("configuration root should be a table")?;
+    ensure!(
+        table.get(VOLUME_KEY).and_then(toml::Value::as_str) == Some("vol-123"),
+        "volume id should be a root-level key"
+    );
+    ensure!(
+        !table.contains_key(LEGACY_SCALEWAY_SECTION),
+        "the store must not write the legacy section"
+    );
+    Ok(())
+}
+
+/// Confirms a file written by an earlier release is still detected.
+#[rstest]
+fn read_volume_id_reads_legacy_section(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let value = parse_toml(
+        &fixture.path,
+        "[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
+    )
+    .context("parse legacy config should succeed")?;
+
+    let volume_id =
+        read_volume_id(&fixture.path, &value).context("read legacy volume id should succeed")?;
+
+    ensure!(
+        volume_id.as_deref() == Some("legacy-volume"),
+        "legacy section should still be detected"
+    );
+    Ok(())
+}
+
+/// Confirms the root-level key wins when both shapes are present.
+#[rstest]
+fn read_volume_id_prefers_root_level_key(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let value = parse_toml(
+        &fixture.path,
+        concat!(
+            "default_volume_id = \"root-volume\"\n",
+            "[scaleway]\n",
+            "default_volume_id = \"legacy-volume\"\n"
+        ),
+    )
+    .context("parse mixed config should succeed")?;
+
+    let volume_id =
+        read_volume_id(&fixture.path, &value).context("read volume id should succeed")?;
+
+    ensure!(
+        volume_id.as_deref() == Some("root-volume"),
+        "root-level key should take precedence"
+    );
+    Ok(())
+}
+
 #[rstest]
 fn write_volume_id_rejects_existing_without_force(
     config_fixture: anyhow::Result<ConfigFixture>,

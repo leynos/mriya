@@ -9,18 +9,24 @@ use thiserror::Error;
 
 /// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
+
 /// Environment variable that overrides the configuration file location.
 const CONFIG_ENV_VAR: &str = "MRIYA_CONFIG_PATH";
+
 /// File name searched for in the user and system configuration directories.
 const CONFIG_FILE_NAME: &str = "mriya.toml";
+
 /// Hidden file name searched for in the home directory.
 const DOTFILE_NAME: &str = ".mriya.toml";
+
 /// File name searched for in the project (working) directory.
 const PROJECT_FILE_NAME: &str = "mriya.toml";
-/// TOML table that holds the volume setting that this store reads and writes.
-const SCALEWAY_SECTION: &str = "scaleway";
-/// Key within the table that records the cache volume ID.
+
+/// Root-level key read by `ortho_config`'s file layer.
 const VOLUME_KEY: &str = "default_volume_id";
+
+/// Section written by earlier releases; read only for compatibility.
+const LEGACY_SCALEWAY_SECTION: &str = "scaleway";
 
 /// Errors raised while updating the configuration file.
 #[derive(Debug, Error)]
@@ -260,14 +266,15 @@ fn parse_toml(path: &Utf8Path, contents: &str) -> Result<toml::Value, ConfigStor
     })
 }
 
-/// Extracts `scaleway.default_volume_id`, trimmed, from the parsed document.
+/// Extracts the root-level `default_volume_id`, trimmed, from the parsed
+/// document, and still detects a legacy `scaleway.default_volume_id`.
 ///
-/// Returns `None` when the section or key is absent.
+/// Returns `None` when neither key holds a value.
 ///
 /// # Errors
 ///
-/// Returns `InvalidStructure` when the root or section is not a table or
-/// the key is not a string.
+/// Returns `InvalidStructure` when the root or legacy section is not a table,
+/// or a present key is not a string.
 fn read_volume_id(
     path: &Utf8Path,
     value: &toml::Value,
@@ -279,7 +286,14 @@ fn read_volume_id(
             message: String::from("configuration root is not a table"),
         })?;
 
-    let Some(section) = table.get(SCALEWAY_SECTION) else {
+    if let Some(raw) = table.get(VOLUME_KEY) {
+        return parse_volume_id(path, raw, VOLUME_KEY);
+    }
+
+    // Earlier releases wrote the key under `[scaleway]`, which `ortho_config`
+    // never read. Keep detecting it so `mriya init` still refuses to replace a
+    // volume ID that a previous run recorded.
+    let Some(section) = table.get(LEGACY_SCALEWAY_SECTION) else {
         return Ok(None);
     };
 
@@ -287,25 +301,37 @@ fn read_volume_id(
         .as_table()
         .ok_or_else(|| ConfigStoreError::InvalidStructure {
             path: path.to_path_buf(),
-            message: format!("[{SCALEWAY_SECTION}] must be a table"),
+            message: format!("[{LEGACY_SCALEWAY_SECTION}] must be a table"),
         })?;
 
     section_table.get(VOLUME_KEY).map_or(Ok(None), |raw| {
-        raw.as_str()
-            .map(|id| Some(id.trim().to_owned()))
-            .ok_or_else(|| ConfigStoreError::InvalidStructure {
-                path: path.to_path_buf(),
-                message: format!("{SCALEWAY_SECTION}.{VOLUME_KEY} must be a string"),
-            })
+        parse_volume_id(
+            path,
+            raw,
+            &format!("{LEGACY_SCALEWAY_SECTION}.{VOLUME_KEY}"),
+        )
     })
 }
 
-/// Sets `scaleway.default_volume_id` (trimmed) in `value`, creating the
-/// section when needed and leaving other keys alone.
+fn parse_volume_id(
+    path: &Utf8Path,
+    raw: &toml::Value,
+    label: &str,
+) -> Result<Option<String>, ConfigStoreError> {
+    raw.as_str()
+        .map(|id| Some(id.trim().to_owned()))
+        .ok_or_else(|| ConfigStoreError::InvalidStructure {
+            path: path.to_path_buf(),
+            message: format!("{label} must be a string"),
+        })
+}
+
+/// Sets the root-level `default_volume_id` (trimmed) in `value`, leaving other
+/// keys alone.
 ///
 /// # Errors
 ///
-/// Returns `InvalidStructure` when the root or section is not a table.
+/// Returns `InvalidStructure` when the root is not a table.
 fn write_volume_id_value(
     path: &Utf8Path,
     value: &mut toml::Value,
@@ -318,19 +344,7 @@ fn write_volume_id_value(
             message: String::from("configuration root is not a table"),
         })?;
 
-    let section = table
-        .entry(String::from(SCALEWAY_SECTION))
-        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-
-    let section_table =
-        section
-            .as_table_mut()
-            .ok_or_else(|| ConfigStoreError::InvalidStructure {
-                path: path.to_path_buf(),
-                message: format!("[{SCALEWAY_SECTION}] must be a table"),
-            })?;
-
-    section_table.insert(
+    table.insert(
         String::from(VOLUME_KEY),
         toml::Value::String(volume_id.trim().to_owned()),
     );
@@ -369,3 +383,4 @@ fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreE
 
 #[cfg(test)]
 mod tests;
+// weave: run 'weave explain src/config_store/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
