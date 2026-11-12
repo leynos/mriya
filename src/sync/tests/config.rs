@@ -85,11 +85,15 @@ fn volume_mount_path_uses_default_when_unset() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let home = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
         .expect("temp path should be utf8");
+    // Selecting an absent path suppresses project-file discovery, so a
+    // `mriya.toml` in the working directory cannot supply the value.
+    let missing = home.join("missing.toml");
     let environment = Arc::new(
         MapEnv::new()
             .with_var("HOME", home.as_str())
             .with_var("XDG_CONFIG_HOME", home.as_str())
-            .with_var("XDG_CONFIG_DIRS", home.as_str()),
+            .with_var("XDG_CONFIG_DIRS", home.as_str())
+            .with_var("MRIYA_CONFIG_PATH", missing.as_str()),
     );
     let discovery: SharedEnvSource = environment.clone();
     let merge: SharedScanEnvSource = environment;
