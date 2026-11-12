@@ -55,6 +55,8 @@ For configuration, credentials, and detailed usage:
 - [Migrating to 0.2.0](docs/migration-0.2.0.md) – Install the pinned build
   tools and put the prefix on `PATH`.
 - [Roadmap](docs/roadmap.md) – Phased development plan.
+- [Backend RFCs](docs/rfcs/README.md) – Proposed Boat, Hetzner Cloud, and
+  Ubicloud backends, with shared lifecycle and cost contracts.
 
 ## Requirements
 
