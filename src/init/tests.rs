@@ -56,6 +56,32 @@ fn format_failure_display_writes_the_message() {
     assert_eq!(failure.to_string(), "mkfs.ext4 exited with status 1");
 }
 
+/// Proves the `init` diagnostic keeps the cause and the remedy.
+///
+/// `write_error` prints only the outermost `Display` and no cause chain, so a
+/// message that stored the `SyncError` without rendering it would report a bare
+/// format failure. The three fragments are what a user needs to stop looking
+/// for a broken volume and fix `HOME` instead.
+#[test]
+fn format_failure_names_the_unusable_home() {
+    let failure = super::format_spawn_failure(SyncError::HomeUnavailable {
+        path: String::from("~/keys/id"),
+        source: crate::sync::HomeUnavailable,
+    });
+
+    let rendered = failure.to_string();
+    for expected in [
+        "~/keys/id",
+        "HOME is set to a value that is not valid UTF-8",
+        "configure an absolute ssh_identity_file",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "`{expected}` should appear in the diagnostic: {rendered}"
+        );
+    }
+}
+
 /// Ensures successful teardown leaves the original provisioning error intact.
 #[test]
 fn append_teardown_note_returns_message_unchanged_without_error() {

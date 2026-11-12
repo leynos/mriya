@@ -71,6 +71,16 @@ depended on.
   `ssh_identity_file` and offers an absolute one as the remedy rather than
   naming only the variable. `CloudInitError::HomeUnavailable` does the same for
   `--cloud-init-file`; neither variant existed before this decision.
+- `mriya init` reaches the same expansion, because its format command runs over
+  SSH with the configured identity. `FormatFailure` therefore renders the
+  `SyncError` into its message rather than only storing it as a source: the
+  binary prints the outermost `Display` and no cause chain, so a stored source
+  alone would report a bare volume-format failure.
+- Rejected: making `expand_tilde` return `Result<_, HomeUnavailable>`. It is a
+  published entry point whose signature this ADR exists to leave unchanged, and
+  the caller that can act on the error already has `home_from_env`. The pure
+  `expand_tilde_with_home` is the alternative the same finding suggests, and it
+  already exists; `expand_tilde` is what keeps an existing caller compiling.
 - `Env::string` is used where a value that cannot be decoded is genuinely
   equivalent to none, as in the `MRIYA_FAKE_*` gates.
 - Tests inject `mockable::MockEnv`, built by `test_helpers::mock_env` (one

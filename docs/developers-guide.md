@@ -266,6 +266,17 @@ the path in its own error: `Syncer::common_ssh_options` takes the `Env` it is
 handed, and `config.rs` and `main.rs` turn the cloud-init `HomeUnavailable`
 into a message naming the file the user asked for.
 
+Each boundary therefore has a default and an injected entry point. The default
+one supplies `DefaultEnv` and keeps the arity a caller already depends on; the
+injected one takes `&impl Env` and is what a test targets:
+
+| Default entry point                                                        | Injected counterpart                                                   | Reads                           |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| `ScalewayBackend::new(config)`                                             | `ScalewayBackend::new_with_env(config, env)`                           | the test-run identifier         |
+| `cloud_init::resolve_cloud_init_user_data(inline, file)`                   | `cloud_init::resolve_cloud_init_user_data_with_env(inline, file, env)` | `HOME` for a `~/` file path     |
+| `Syncer::build_ssh_args(..)` / `common_ssh_options` / `build_remote_shell` | the same methods with a trailing `&impl Env`                           | `HOME` for a `~/` identity path |
+| `expand_tilde(path)`                                                       | `home_from_env(env, path)` plus `expand_tilde_with_home`               | `HOME`                          |
+
 The public `expand_tilde(path)` entry point is kept for compatibility, so an
 existing library caller needs no change. It reads the live process environment
 through `DefaultEnv`; its undecodable case falls back to the path unchanged
@@ -280,8 +291,9 @@ test never mutates the process environment. `mock_env` answers both accessors
 from one decodable table; `mock_env_with_raw` takes a closure, which is the
 only way to express `NotUnicode` and therefore the way the undecodable-`HOME`
 cases are written. A test that genuinely needs the live process environment —
-`expand_tilde`'s own doctest, or a CLI behaviour scenario that sets `HOME` for
-the child — uses `temp_env::with_var` or `Command::env`, never `set_var`.
+`expand_tilde`'s own process-level cases, `config_tests`' `as_request` case, or
+a CLI behaviour scenario that sets `HOME` for the child — uses
+`temp_env::with_var` or `Command::env`, never `set_var`.
 
 The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
 test process, which is why the tilde cloud-init scenario can assert an expanded
@@ -323,10 +335,12 @@ without changing behaviour, and each publishes only what its parent needs:
   rather than reading `std::env` directly; `run_fake_outcome` takes the
   selected outcome and the two streams it writes to, and reads no environment
   at all. The `MRIYA_FAKE_*` variables are read only after `enable_fake_modes`
-  gates them, so an ordinary run cannot be diverted by a stray variable. The
-  module doubles as a mutation-testing exclusion: `.cargo/mutants.toml` names
-  it, so a surviving mutant in scaffolding is a recorded exception rather than
-  a silent gap.
+  gates them, so an ordinary run cannot be diverted by a stray variable.
+  `.cargo/mutants.toml` excludes this scaffolding from mutation testing by
+  function name, not by module: `exclude_re` lists each function whose mutants
+  are noise because no production path reaches it. Adding or renaming one of
+  these functions therefore means editing that list too, or its mutants start
+  surviving as unrecorded gaps rather than recorded exceptions.
 
 ## The build standard
 

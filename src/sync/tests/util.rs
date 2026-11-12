@@ -74,3 +74,38 @@ fn home_from_env_rejects_undecodable_home() {
 
     assert_eq!(err, HomeUnavailable);
 }
+
+/// Builds the non-UTF-8 `HOME` the process-level cases install.
+///
+/// `expand_tilde` reads the real environment rather than an injected one, so
+/// these cases cannot use `MockEnv`. `temp_env::with_var` is the workspace's
+/// serialized route to a process-level value; the bytes have to be assembled
+/// through `OsString`, which this workspace does only on Unix.
+#[cfg(unix)]
+fn undecodable_home() -> OsString {
+    use std::os::unix::ffi::OsStringExt;
+
+    OsString::from_vec(b"/home/\xff".to_vec())
+}
+
+/// Covers the three outcomes `expand_tilde` documents for the process
+/// environment, which the pure `expand_tilde_with_home` cases cannot reach.
+///
+/// The valid case asserts that expansion actually happened, so a no-op
+/// implementation fails it. The undecodable case asserts the path comes back
+/// unchanged rather than carrying a replacement character, which is the
+/// lossy conversion this entry point deliberately no longer performs.
+#[cfg(unix)]
+#[rstest]
+#[case::home_set(Some(OsString::from("/home/tester")), "/home/tester/.ssh/id_ed25519")]
+#[case::home_absent(None, "~/.ssh/id_ed25519")]
+#[case::home_undecodable(Some(undecodable_home()), "~/.ssh/id_ed25519")]
+fn expand_tilde_reads_the_process_home(#[case] home: Option<OsString>, #[case] expected: &str) {
+    let expanded = temp_env::with_var("HOME", home.as_ref(), || expand_tilde("~/.ssh/id_ed25519"));
+
+    assert_eq!(expanded, expected);
+    assert!(
+        !expanded.contains('\u{fffd}'),
+        "the lossy replacement character must not reach the path: {expanded}"
+    );
+}

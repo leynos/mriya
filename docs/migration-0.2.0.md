@@ -77,6 +77,8 @@ rationale are recorded in [ADR 002](adr-002-environment-access.md).
 - A `~/` path with a `HOME` that is not valid UTF-8 is now an error rather than
   a lossily converted path. The message names the file and suggests an absolute
   path: an absolute `--cloud-init-file`, or an absolute `ssh_identity_file`.
+  `mriya init` reports the same cause when its format command is reached,
+  rather than a bare volume-format failure.
 - `expand_tilde`, the compatibility entry point, reports no error by design,
   so for it the undecodable case returns the path unchanged, exactly as an
   absent `HOME` does.
