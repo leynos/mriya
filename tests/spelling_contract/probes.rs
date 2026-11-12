@@ -9,6 +9,7 @@ use rstest::rstest;
 
 use crate::{
     CARGO_KIND,
+    COMPILER_HASH,
     LINKER_NAME,
     RUNTIME_KEY,
     checks::{Probe, accepted, check, reported},
@@ -61,6 +62,18 @@ use crate::{
 #[case::linker_misspelling_bare(reported(
     LINKER_NAME,
     format!("The wheel was {LINKER_NAME}."),
+))]
+// The compiler-hash exemption covers one opaque identifier, so a different
+// hash that carries the same letter pair must still reach the gate.
+#[case::compiler_hash_code_span(accepted(
+    COMPILER_HASH,
+    format!(
+        "The pinned compiler is `rustc 1.102.0-nightly (ac8310{COMPILER_HASH}6 2026-11-09)`.\n"
+    ),
+))]
+#[case::other_hash_reported(reported(
+    COMPILER_HASH,
+    format!("A different hash is ac8310{COMPILER_HASH}7.\n"),
 ))]
 fn local_exemptions_accept_the_exact_name_and_reject_the_misspelling(
     #[case] probe: Probe,
@@ -220,3 +233,4 @@ fn tokio_runtime_attributes_are_masked_without_hiding_their_neighbours(
 ) -> Result<(), String> {
     check(&probe)
 }
+// weave: run 'weave explain tests/spelling_contract/probes.rs' for per-hunk detail, 'weave check' to verify your resolution

@@ -48,6 +48,7 @@ extend-ignore-re = [
     "(?m)^FORBIDDEN_SHORT = \"UPn\"$",
     "(?m)^LINKER_NAME = \"mold\"\\r?$",
     "(?m)^const CARGO_KIND: &str = \"artifact\";\\r?$",
+    "(?m)^const COMPILER_HASH: &str = \"ba\";\\r?$",
     "(?m)^const LINKER_NAME: &str = \"mold\";\\r?$",
     "(?m)^const RUNTIME_KEY: &str = \"flavor\";\\r?$",
     "(?m)^pub const LINKER_TOOL: &str = \"mold\";\\r?$",

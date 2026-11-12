@@ -130,7 +130,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Declare the compiler floor and document the
   application/development split (`Cargo.toml`, `docs/developers-guide.md`).
 - [x] (2026-11-12) Run all gates and compare test inventories. Baseline
-  `make test` ran 460 tests across 18 binaries; the migrated tree runs 485
+  `make test` ran 460 tests across 18 binaries; the migrated tree runs 488
   across 20 binaries, all passing. `make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make nixie`, and `make test-workflow-contracts` all exit
   0. Logs are under `/tmp/*-mriya-issue-159*.out`.
@@ -204,6 +204,15 @@ The migration is observable by running the repository gates (`make check-fmt`,
   these address the findings without editing the byte-identical imported text.
   The two missing-file tests were merged because selecting an absent path makes
   them the same scenario. Date/Author: 2026-11-12, implementation agent.
+- Decision: for the third review round, record the imported guides' stale
+  in-document links as a known limitation of keeping them byte-identical,
+  rather than editing them. Rationale: no edit is possible without breaking the
+  provenance requirement, and the reader-navigation section gives working
+  links. The round's other findings were applied: project-file discovery is
+  isolated in the sync default test, the imported feature guidance is corrected
+  in the provenance notes, and a spelling-contract probe now judges the
+  compiler-hash exemption in both the model and the real engine. Date/Author:
+  2026-11-12, implementation agent.
 
 ## Outcomes & retrospective
 

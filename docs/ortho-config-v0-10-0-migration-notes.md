@@ -74,6 +74,12 @@ code and is left unedited. Mriya's own entry point does not copy it:
 `src/main.rs` computes an exit code and calls `process::exit`, so a
 configuration failure reaches the shell as a non-zero status.
 
+The same guide notes that `yaml` requires `serde_json` and that both must be
+enabled explicitly if default features are disabled. Mriya keeps the default
+features enabled, because upstream issue leynos/ortho-config#627 records that
+the crate does not build with `default-features = false`. Do not follow the
+imported guide's conditional advice in this repository.
+
 ## Dependency state
 
 The working tree already declared and resolved `ortho_config` 0.10.0 before
@@ -152,12 +158,15 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The migrated tree runs 485 tests across
+tests across 18 binaries, all passing. The migrated tree runs 488 tests across
 20 binaries, all passing. The two new binaries are `config_sources` and
-`config_discovery`; the 25 added tests are 12 integration tests in
+`config_discovery`; the 28 added tests are 12 integration tests in
 `tests/config_sources.rs`, 5 integration tests in `tests/config_discovery.rs`,
-4 parser tests in `src/cli/mod.rs`, and 4 store tests in
-`src/config_store/tests.rs`. One existing test,
+4 parser tests in `src/cli/mod.rs`, 4 store tests in
+`src/config_store/tests.rs`, and 3 spelling-contract checks for the
+compiler-hash exemption (two probe cases in `tests/spelling_contract/probes.rs`
+and one engine test in `tests/spelling_contract/compiler_hash.rs`). One
+existing test,
 `src/sync/tests/config.rs::volume_mount_path_uses_default_when_unset`, was
 converted from process-environment loading to injected sources without changing
 its count. Documentation tests are unchanged at 2 passed and 5 ignored.
@@ -168,7 +177,7 @@ Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 
 $ make test   # migrated tree
-Summary [  30.585s] 485 tests run: 485 passed, 0 skipped
+Summary [   7.138s] 488 tests run: 488 passed, 0 skipped
 test result: ok. 2 passed; 0 failed; 5 ignored
 ```
 
