@@ -53,7 +53,8 @@ fn temp_config_path(tmp: &TempDir) -> anyhow::Result<Utf8PathBuf> {
 fn write_volume_id_creates_config_file(
     config_fixture: anyhow::Result<ConfigFixture>,
 ) -> anyhow::Result<()> {
-    let ConfigFixture { path, store, .. } = config_fixture?;
+    // Bind the guard so the temporary directory outlives the writes below.
+    let ConfigFixture { _tmp, path, store } = config_fixture?;
 
     let written_path = store
         .write_volume_id("vol-123", true)
@@ -76,7 +77,8 @@ fn write_volume_id_creates_config_file(
 fn write_volume_id_uses_root_level_key(
     config_fixture: anyhow::Result<ConfigFixture>,
 ) -> anyhow::Result<()> {
-    let ConfigFixture { path, store, .. } = config_fixture?;
+    // Bind the guard so the temporary directory outlives the writes below.
+    let ConfigFixture { _tmp, path, store } = config_fixture?;
 
     store
         .write_volume_id("vol-123", true)
@@ -135,6 +137,32 @@ fn read_volume_id_treats_empty_value_as_unset(
     ensure!(
         volume_id.is_none(),
         "a blank volume id should be treated as unset"
+    );
+    Ok(())
+}
+
+/// Confirms a blank root value does not hide an ID an earlier release recorded.
+#[rstest]
+fn read_volume_id_falls_back_to_legacy_when_root_is_blank(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    let fixture = config_fixture?;
+    let value = parse_toml(
+        &fixture.path,
+        concat!(
+            "default_volume_id = \"\"\n",
+            "[scaleway]\n",
+            "default_volume_id = \"legacy-volume\"\n"
+        ),
+    )
+    .context("parse mixed config should succeed")?;
+
+    let volume_id =
+        read_volume_id(&fixture.path, &value).context("read volume id should succeed")?;
+
+    ensure!(
+        volume_id.as_deref() == Some("legacy-volume"),
+        "a blank root value should fall back to the legacy record"
     );
     Ok(())
 }

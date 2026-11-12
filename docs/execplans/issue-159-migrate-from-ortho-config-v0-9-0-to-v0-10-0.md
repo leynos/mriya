@@ -130,7 +130,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Declare the compiler floor and document the
   application/development split (`Cargo.toml`, `docs/developers-guide.md`).
 - [x] (2026-11-12) Run all gates and compare test inventories. Baseline
-  `make test` ran 460 tests across 18 binaries; the migrated tree runs 488
+  `make test` ran 460 tests across 18 binaries; the migrated tree runs 489
   across 20 binaries, all passing. `make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make nixie`, and `make test-workflow-contracts` all exit
   0. Logs are under `/tmp/*-mriya-issue-159*.out`.
@@ -213,6 +213,15 @@ The migration is observable by running the repository gates (`make check-fmt`,
   in the provenance notes, and a spelling-contract probe now judges the
   compiler-hash exemption in both the model and the real engine. Date/Author:
   2026-11-12, implementation agent.
+- Decision: for the fourth review round, fall through to the legacy
+  `[scaleway]` value when a root-level volume key is present but blank, and
+  bind the `TempDir` guard in the two tests that matched it with `..`.
+  Rationale: the blank-key guard from round one otherwise skipped the legacy
+  check, so a blank root key could let `mriya init` replace an ID an earlier
+  release recorded; and an unbound `TempDir` field is dropped at the end of the
+  `let` statement, deleting the fixture directory before the write and leaking
+  its recreated replacement. Both fixes are minimal and covered by tests.
+  Date/Author: 2026-11-12, implementation agent.
 
 ## Outcomes & retrospective
 
