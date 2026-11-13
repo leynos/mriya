@@ -73,12 +73,16 @@ impl ScalewayBackend {
     /// # Examples
     ///
     /// ```ignore
-    /// // A port that accepts connections resolves to the networking details.
-    /// let networking = backend.wait_for_ssh_ready(&handle).await?;
-    /// assert_eq!(networking.ssh_port, 22);
+    /// // A port that accepts connections succeeds without returning details;
+    /// // the ready networking is already held by the caller.
+    /// let networking = backend.wait_for_public_ip(&handle).await?;
+    /// backend.wait_for_ssh_ready(&handle, &networking).await?;
     ///
     /// // A port that never accepts a connection reports a timeout.
-    /// let err = backend.wait_for_ssh_ready(&handle).await.unwrap_err();
+    /// let err = backend
+    ///     .wait_for_ssh_ready(&handle, &networking)
+    ///     .await
+    ///     .unwrap_err();
     /// assert!(matches!(err, ScalewayBackendError::Timeout { .. }));
     /// ```
     pub(in crate::scaleway) async fn wait_for_ssh_ready(
