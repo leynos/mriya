@@ -32,8 +32,8 @@ mockable = { version = "3.0.0", default-features = false }
 tokio = { version = "1.41", features = ["test-util"] }
 anyhow = "1.0"
 rstest = "0.28"
-rstest-bdd = "0.2.0"
-rstest-bdd-macros = "0.2.0"
+rstest-bdd = "0.6.0"
+rstest-bdd-macros = "0.6.0"
 assert_cmd = "2.0"
 tempfile = "3.14"
 predicates = "3.1.0"
