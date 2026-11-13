@@ -253,9 +253,9 @@ provisioning) that will guide subsequent optimizations.
 - **Environment boundary:** Process-environment reads go through
   `mockable::Env`, injected at each boundary and defaulting to `DefaultEnv` at
   the entry points. The decision is recorded in
-  [ADR 002](adr-002-environment-access.md); its guiding rule is that a value
-  the program cannot decode is an error naming the file it was needed for, not
-  a silent pass-through.
+  [ADR 002](adrs/adr-0002-environment-access.md); its guiding rule is that a
+  value the program cannot decode is an error naming the file it was needed
+  for, not a silent pass-through.
 
 ### Scaleway HTTP boundary decision (15 October 2026)
 

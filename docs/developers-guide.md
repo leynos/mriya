@@ -462,7 +462,7 @@ installer produced.
 
 The contract runs `make -n`, so a direct `cargo test` needs GNU make on the
 `PATH`; it fails when `make` is missing instead of skipping. The decision is
-recorded in [ADR 001](adr-001-rust-build-standard.md).
+recorded in [ADR 001](adrs/adr-0001-rust-build-standard.md).
 
 ### The development footprint
 
