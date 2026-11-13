@@ -70,7 +70,7 @@ formats the error is unaffected, and the message names the file.
 
 `mockable` 3.0.0 with default features off is now a regular and build
 dependency, and `temp-env` 0.3.6 is a dev-dependency. The decision and its
-rationale are recorded in [ADR 002](adr-002-environment-access.md).
+rationale are recorded in [ADR 002](adrs/adr-0002-environment-access.md).
 
 ### Behaviour changes
 
