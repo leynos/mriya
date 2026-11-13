@@ -7,6 +7,21 @@ use std::ops::Deref;
 ///
 /// Each generated type keeps provider identifiers and states from being
 /// mixed up as bare strings.
+///
+/// # Examples
+///
+/// ```ignore
+/// newtype!(InstanceId);
+///
+/// // Both conversions yield the same string, and the newtype derefs to it.
+/// let id = InstanceId::from("11111111-1111-1111-1111-111111111111");
+/// assert_eq!(id.as_str(), "11111111-1111-1111-1111-111111111111");
+/// assert_eq!(&*id, "11111111-1111-1111-1111-111111111111");
+///
+/// // The type prevents mixing an identifier into a field that wants a state.
+/// let state = InstanceState::from(String::from("running"));
+/// assert_eq!(state.as_str(), "running");
+/// ```
 macro_rules! newtype {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, PartialEq)]

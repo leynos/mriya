@@ -20,7 +20,22 @@ impl ScalewayBackend {
     ///
     /// Returns [`ScalewayBackendError::VolumeNotFound`] when the instance
     /// reports no root volume, and [`ScalewayBackendError::VolumeDetachFailed`]
-    /// when the API rejects the detachment request.
+    /// when the API rejects the detachment request. A request that fails before
+    /// producing a response, such as a connection error, returns
+    /// [`ScalewayBackendError::Provider`] instead, so a caller must not assume
+    /// every failure carries the detach variant.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // The instance read is preserved; a rejected PATCH reports both ids.
+    /// let err = backend.detach_volume(&handle, "vol-cache").await.unwrap_err();
+    /// assert!(matches!(err, ScalewayBackendError::VolumeDetachFailed { .. }));
+    ///
+    /// // An instance reporting no volume at index "0" is rejected up front.
+    /// let err = backend.detach_volume(&handle, "vol-cache").await.unwrap_err();
+    /// assert!(matches!(err, ScalewayBackendError::VolumeNotFound { .. }));
+    /// ```
     pub(in crate::scaleway) async fn detach_volume(
         &self,
         handle: &InstanceHandle,

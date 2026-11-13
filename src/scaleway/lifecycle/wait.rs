@@ -69,6 +69,18 @@ impl ScalewayBackend {
     ///
     /// Returns `Timeout` if no connection succeeds before the backend's wait
     /// deadline.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // A port that accepts connections resolves to the networking details.
+    /// let networking = backend.wait_for_ssh_ready(&handle).await?;
+    /// assert_eq!(networking.ssh_port, 22);
+    ///
+    /// // A port that never accepts a connection reports a timeout.
+    /// let err = backend.wait_for_ssh_ready(&handle).await.unwrap_err();
+    /// assert!(matches!(err, ScalewayBackendError::Timeout { .. }));
+    /// ```
     pub(in crate::scaleway) async fn wait_for_ssh_ready(
         &self,
         handle: &InstanceHandle,

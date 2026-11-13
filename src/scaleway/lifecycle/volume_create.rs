@@ -10,6 +10,24 @@ use super::super::{ScalewayBackend, ScalewayBackendError};
 const VOLUME_TYPE_BLOCK: &str = "b_ssd";
 
 /// JSON body for the create-volume call.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Untagged and organisation-less volumes omit those keys entirely.
+/// let body = CreateVolumeRequest {
+///     name: String::from("mriya-cache"),
+///     size: 20_000_000_000,
+///     volume_type: String::from(VOLUME_TYPE_BLOCK),
+///     project: String::from("proj-1"),
+///     organization: None,
+///     tags: Vec::new(),
+/// };
+/// let json = serde_json::to_value(&body)?;
+/// assert_eq!(json["volume_type"], "b_ssd");
+/// assert!(json.get("organization").is_none());
+/// assert!(json.get("tags").is_none());
+/// ```
 #[derive(Serialize)]
 struct CreateVolumeRequest {
     /// Volume name as supplied by the caller.
@@ -29,6 +47,15 @@ struct CreateVolumeRequest {
 }
 
 /// Wrapper for the volume object returned by a successful create call.
+///
+/// # Examples
+///
+/// ```ignore
+/// // The provider nests the volume under `volume`.
+/// let response: CreateVolumeResponse =
+///     serde_json::from_str(r#"{"volume":{"id":"vol-1"}}"#)?;
+/// assert_eq!(response.volume.id, "vol-1");
+/// ```
 #[derive(Deserialize)]
 struct CreateVolumeResponse {
     /// The created volume as reported by the provider.
@@ -36,6 +63,15 @@ struct CreateVolumeResponse {
 }
 
 /// The subset of the provider's volume object that mriya reads.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Unknown provider fields are ignored; only the identifier is kept.
+/// let volume: ScalewayVolume =
+///     serde_json::from_str(r#"{"id":"vol-1","extra":"ignored"}"#)?;
+/// assert_eq!(volume.id, "vol-1");
+/// ```
 #[derive(Deserialize)]
 struct ScalewayVolume {
     /// Provider identifier of the volume.
@@ -50,7 +86,21 @@ impl ScalewayBackend {
     /// # Errors
     ///
     /// Returns [`ScalewayBackendError::VolumeCreateFailed`] when the provider
-    /// rejects the creation request.
+    /// rejects the creation request. A request that fails before producing a
+    /// response, or whose response body cannot be parsed, returns
+    /// [`ScalewayBackendError::Provider`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // A successful create returns the provider's identifier for the volume.
+    /// let handle = backend.create_volume(&request).await?;
+    /// assert_eq!(handle.id, "vol-1");
+    ///
+    /// // A rejected create names the volume and the provider's message.
+    /// let err = backend.create_volume(&request).await.unwrap_err();
+    /// assert!(matches!(err, ScalewayBackendError::VolumeCreateFailed { .. }));
+    /// ```
     pub(in crate::scaleway) async fn create_volume(
         &self,
         request: &VolumeRequest,
