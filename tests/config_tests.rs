@@ -223,12 +223,47 @@ fn config_errors_when_cloud_init_user_data_file_is_empty(valid_config: ScalewayC
     );
 }
 
+/// Proves a non-UTF-8 `HOME` stops the request before any file is read.
+///
+/// This is the public entry point a real run takes, so it is the closest
+/// end-to-end evidence available without cloud access: the failure happens in
+/// `as_request`, which `run_command` calls before provisioning or syncing, so
+/// the remote command is never reached. The message must name both the path
+/// and the remedy, because `write_error` prints only the outermost `Display`.
+#[cfg(unix)]
 #[rstest]
-#[tokio::test]
-async fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConfig) {
+fn config_rejects_a_tilde_cloud_init_file_when_home_cannot_be_decoded(
+    mut valid_config: ScalewayConfig,
+) {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    valid_config.cloud_init_user_data_file = Some(String::from("~/user-data.txt"));
+
+    let err = temp_env::with_var(
+        "HOME",
+        Some(&OsString::from_vec(b"/home/\xff".to_vec())),
+        || valid_config.as_request(),
+    )
+    .expect_err("an undecodable HOME should be reported, not silently ignored");
+
+    let rendered = err.to_string();
+    for expected in [
+        "~/user-data.txt",
+        "HOME is set to a value that is not valid UTF-8",
+        "absolute",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "`{expected}` should appear in the diagnostic: {rendered}"
+        );
+    }
+}
+
+#[rstest]
+fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConfig) {
     let tmp = TempDir::new().expect("temporary home directory should be created");
     let home = tmp.path().to_string_lossy().to_string();
-    let _guard = mriya::test_support::EnvGuard::set_vars(&[("HOME", home.as_str())]).await;
 
     let tmp_root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
         .expect("temporary home directory path should be valid UTF-8");
@@ -244,8 +279,9 @@ async fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: Scalew
         ..valid_config
     };
 
-    let request = cfg
-        .as_request()
+    // `as_request` reads the process `HOME`; `with_var` scopes the override
+    // and serializes it against other `temp_env` users.
+    let request = temp_env::with_var("HOME", Some(home.as_str()), || cfg.as_request())
         .expect("configuration with a tilde-expanded cloud-init file should produce a request");
 
     assert_eq!(

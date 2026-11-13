@@ -43,3 +43,25 @@ fn scenario_cloud_init_empty(cli_context: CliContext) {
 fn scenario_cloud_init_missing_file(cli_context: CliContext) {
     let _ = cli_context;
 }
+
+#[scenario(
+    path = "tests/features/cloud_init.feature",
+    name = "Expand a tilde cloud-init file path through HOME"
+)]
+fn scenario_cloud_init_tilde_file(cli_context: CliContext) {
+    let _ = cli_context;
+}
+
+// The step assembles its non-UTF-8 `HOME` from bytes, which this workspace does
+// only on Unix, so the scenario is tagged `@unix` and filtered out elsewhere.
+// The filter is at registration rather than in the step, because a step that
+// only failed would report the platform gap as a product defect.
+#[cfg(unix)]
+#[scenario(
+    path = "tests/features/cloud_init.feature",
+    name = "Report a tilde cloud-init path that HOME cannot decode",
+    tags = "@unix"
+)]
+fn scenario_cloud_init_undecodable_home(cli_context: CliContext) {
+    let _ = cli_context;
+}

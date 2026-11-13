@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::LazyLock;
 
+use mockable::{DefaultEnv, Env};
 use mriya::{
     Backend, InstanceHandle, InstanceNetworking, InstanceRequest, ScalewayBackend,
     ScalewayBackendError, ScalewayConfig,
@@ -26,28 +27,41 @@ where
     }
 }
 
+/// Reports whether the live Scaleway suite was opted into.
+///
+/// Reads `MRIYA_RUN_SCALEWAY_TESTS` through `DefaultEnv`; the live suite skips
+/// itself rather than failing when it is unset.
 fn scaleway_integration_enabled() -> bool {
-    let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
+    let enabled = DefaultEnv
+        .raw("MRIYA_RUN_SCALEWAY_TESTS")
+        .unwrap_or_default();
     matches!(
         enabled.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes"
     )
 }
 
+/// Provides a loaded configuration, or `None` to skip the live suite.
+///
+/// # Example
+///
+/// A run with `MRIYA_RUN_SCALEWAY_TESTS` unset yields `None`, so each scenario
+/// can `skip!` without reaching the network.
 #[fixture]
 fn scaleway_config() -> Option<ScalewayConfig> {
     if !scaleway_integration_enabled() {
         return None;
     }
 
-    let secret = std::env::var("SCW_SECRET_KEY").ok()?;
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID").ok()?;
+    let secret = DefaultEnv.raw("SCW_SECRET_KEY").ok()?;
+    let project = DefaultEnv.raw("SCW_DEFAULT_PROJECT_ID").ok()?;
     if secret.trim().is_empty() || project.trim().is_empty() {
         return None;
     }
     ScalewayConfig::load_from_sources().ok()
 }
 
+/// Builds a backend from the live configuration, when one is available.
 #[fixture]
 fn scaleway_backend(scaleway_config: Option<ScalewayConfig>) -> Option<ScalewayBackend> {
     scaleway_config.and_then(|cfg| ScalewayBackend::new(cfg).ok())

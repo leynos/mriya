@@ -6,6 +6,7 @@
 
 use std::sync::LazyLock;
 
+use mockable::{DefaultEnv, Env};
 use mriya::sync::{ProcessCommandRunner, SyncConfig, Syncer};
 use mriya::{RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig};
 use rstest::fixture;
@@ -16,14 +17,21 @@ use tokio::runtime::Runtime;
 
 static RUNTIME: LazyLock<Result<Runtime, std::io::Error>> = LazyLock::new(Runtime::new);
 
+/// Reports whether the live Scaleway suite was opted into.
+///
+/// Each fixture returns its skip reason instead of panicking, so a run without
+/// `MRIYA_RUN_SCALEWAY_TESTS` reports why the scenario did not execute.
 fn scaleway_integration_enabled() -> bool {
-    let enabled = std::env::var("MRIYA_RUN_SCALEWAY_TESTS").unwrap_or_default();
+    let enabled = DefaultEnv
+        .raw("MRIYA_RUN_SCALEWAY_TESTS")
+        .unwrap_or_default();
     matches!(
         enabled.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes"
     )
 }
 
+/// Builds a live backend, or returns the reason the scenario must skip.
 #[fixture]
 fn scaleway_backend() -> Result<ScalewayBackend, String> {
     if !scaleway_integration_enabled() {
@@ -32,9 +40,11 @@ fn scaleway_backend() -> Result<ScalewayBackend, String> {
         ));
     }
 
-    let secret =
-        std::env::var("SCW_SECRET_KEY").map_err(|err| format!("missing SCW_SECRET_KEY: {err}"))?;
-    let project = std::env::var("SCW_DEFAULT_PROJECT_ID")
+    let secret = DefaultEnv
+        .raw("SCW_SECRET_KEY")
+        .map_err(|err| format!("missing SCW_SECRET_KEY: {err}"))?;
+    let project = DefaultEnv
+        .raw("SCW_DEFAULT_PROJECT_ID")
         .map_err(|err| format!("missing SCW_DEFAULT_PROJECT_ID: {err}"))?;
     if secret.trim().is_empty() || project.trim().is_empty() {
         return Err(String::from(
@@ -47,6 +57,7 @@ fn scaleway_backend() -> Result<ScalewayBackend, String> {
     ScalewayBackend::new(config).map_err(|err| format!("failed to build backend: {err}"))
 }
 
+/// Builds a syncer for the configured SSH identity, or the skip reason.
 #[fixture]
 fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
     if !scaleway_integration_enabled() {
@@ -55,7 +66,8 @@ fn syncer() -> Result<Syncer<ProcessCommandRunner>, String> {
         ));
     }
 
-    let identity = std::env::var("MRIYA_SYNC_SSH_IDENTITY_FILE")
+    let identity = DefaultEnv
+        .raw("MRIYA_SYNC_SSH_IDENTITY_FILE")
         .map_err(|err| format!("missing MRIYA_SYNC_SSH_IDENTITY_FILE: {err}"))?;
     if identity.trim().is_empty() {
         return Err(String::from("empty MRIYA_SYNC_SSH_IDENTITY_FILE"));

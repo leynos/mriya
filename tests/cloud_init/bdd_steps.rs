@@ -3,6 +3,8 @@
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use rstest_bdd_macros::{given, then, when};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use tempfile::TempDir;
 
 use super::test_helpers::CliContext;
@@ -37,13 +39,50 @@ string_newtype!(FilePath);
 /// directory that owns the file; the resulting context contains the captured
 /// status, stdout, and stderr.
 fn execute_run_command(
+    cli_context: CliContext,
+    additional_args: &[&str],
+    tmp_dir: Option<TempDir>,
+) -> Result<CliContext, StepError> {
+    run_with_home(cli_context, additional_args, tmp_dir, None)
+}
+
+/// Runs the CLI with an optional `HOME` override for one scenario.
+///
+/// The override matters only to tilde expansion, which the child binary reads
+/// through its own environment; every other scenario passes `None` and
+/// inherits the test process's own. Command construction and process-spawn
+/// failures become `StepError::Execution`.
+fn run_with_home(
+    cli_context: CliContext,
+    additional_args: &[&str],
+    tmp_dir: Option<TempDir>,
+    home: Option<&str>,
+) -> Result<CliContext, StepError> {
+    run_with_home_os(
+        cli_context,
+        additional_args,
+        tmp_dir,
+        home.map(std::ffi::OsString::from),
+    )
+}
+
+/// Runs the CLI with an optional `HOME` override, already in OS-string form.
+///
+/// The `OsString` form exists for a value that is deliberately not UTF-8: a
+/// `&str` could not express the case the expansion must report. Command
+/// construction and process-spawn failures become `StepError::Execution`.
+fn run_with_home_os(
     mut cli_context: CliContext,
     additional_args: &[&str],
     tmp_dir: Option<TempDir>,
+    home: Option<std::ffi::OsString>,
 ) -> Result<CliContext, StepError> {
     let mut cmd = cli_context
         .base_command()
         .map_err(|err| StepError::Execution(err.to_string()))?;
+    if let Some(directory) = home {
+        cmd.env("HOME", directory);
+    }
     cmd.arg("run");
     cmd.args(additional_args);
     cmd.args(["--", "echo", "ok"]);
@@ -100,6 +139,55 @@ fn run_with_cloud_init_file(
         cli_context,
         &["--cloud-init-file", file_path_string],
         Some(tmp_dir),
+    )
+}
+
+#[when("I run mriya with cloud-init file \"{path}\" relative to the temporary home")]
+fn run_with_cloud_init_file_under_home(
+    cli_context: CliContext,
+    path: FilePath,
+) -> Result<CliContext, StepError> {
+    let tmp_dir = TempDir::new().map_err(|err| StepError::TempFile(err.to_string()))?;
+    let home = Utf8PathBuf::from_path_buf(tmp_dir.path().to_path_buf())
+        .map_err(|raw| StepError::TempFile(format!("non-utf8 temp dir path: {}", raw.display())))?;
+    // The feature file names the file; its content is what the assertion
+    // measures, so the step writes a fixed payload and keeps the stated size
+    // from drifting if the scenario is reused for another path.
+    let content = "file-user-data";
+    Dir::open_ambient_dir(&home, ambient_authority())
+        .map_err(|err| StepError::TempFile(err.to_string()))?
+        .write(path.as_ref(), content)
+        .map_err(|err| StepError::TempFile(err.to_string()))?;
+    let tilde_path = format!("~/{path}");
+    let home_text = home.as_str();
+    run_with_home(
+        cli_context,
+        &["--cloud-init-file", &tilde_path],
+        Some(tmp_dir),
+        Some(home_text),
+    )
+}
+
+/// Steps the non-UTF-8 `HOME` scenario, which is built only on Unix.
+///
+/// The scenario carries `@unix` in the feature file and is filtered out at
+/// registration on other platforms, so neither this step nor the scenario
+/// exists there. A Windows build therefore has no binding for the phrase,
+/// which is visible in the registration rather than as a scenario that runs
+/// and fails.
+#[when("I run mriya with a tilde cloud-init file and a non-UTF-8 HOME")]
+#[cfg(unix)]
+fn run_with_tilde_cloud_init_and_undecodable_home(
+    cli_context: CliContext,
+) -> Result<CliContext, StepError> {
+    // The undecodable value rides on `OsStr` bytes, so the child — not the test
+    // process — carries it. That is the same path a user's environment takes.
+    let undecodable_home = std::ffi::OsString::from_vec(b"/home/\xff".to_vec());
+    run_with_home_os(
+        cli_context,
+        &["--cloud-init-file", "~/user-data.yml"],
+        None,
+        Some(undecodable_home),
     )
 }
 

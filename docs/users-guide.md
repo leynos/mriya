@@ -109,6 +109,26 @@ Or inline (handy for short scripts):
 mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 ```
 
+A file path starting with `~/` is expanded through `HOME` before the file is
+read:
+
+```bash
+mriya run --cloud-init-file '~/cloud-init.yml' -- jq --version
+```
+
+Quote the path. Unquoted, your shell expands `~` itself before Mriya sees it,
+so the path arrives already absolute; quoting hands Mriya the tilde and lets
+the rule below apply.
+
+If `HOME` is absent the path is passed through unchanged, which is what a shell
+does for a path it cannot expand. If `HOME` is set but is not valid UTF-8, the
+run fails with an error naming the file and suggesting an absolute path, rather
+than silently reading a path built from replacement characters that may name a
+different file. The same rule applies to a `~/.ssh/...` identity path: the
+error names the configured `ssh_identity_file` and says to use an absolute one.
+`mriya init` reaches the same expansion when it runs its format command over
+SSH, and reports the same cause rather than a bare volume-format failure.
+
 When cloud-init user-data is configured, Mriya:
 
 - syncs the workspace as usual
@@ -303,3 +323,37 @@ directly, assign an empty `RUSTFLAGS`:
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
+
+## Using Mriya as a library
+
+The crate exposes the same behaviour the binary uses, so a program can expand a
+`~/` path or resolve cloud-init user-data without going through the CLI. Every
+entry point that reads the environment has two forms: the default one reads the
+real process environment, and a `_with_env` counterpart takes any
+`mockable::Env` so your own tests can inject a value.
+
+```rust
+use mriya::sync::{expand_tilde, expand_tilde_with_home, home_from_env};
+use mockable::{DefaultEnv, Env};
+
+// The compatibility helper reads the live process environment.
+let expanded = expand_tilde("~/.ssh/id_ed25519");
+
+// The pure form does the string work with no I/O, so a test needs no environment.
+let explicit = expand_tilde_with_home("~/.ssh/id_ed25519", Some("/home/me"));
+assert_eq!(explicit, "/home/me/.ssh/id_ed25519");
+
+// `home_from_env` distinguishes an absent HOME from one that cannot be decoded.
+match home_from_env(&DefaultEnv, "~/key") {
+    Ok(Some(home)) => println!("home is {home}"),
+    Ok(None) => println!("HOME is unset; the tilde is left for ssh"),
+    Err(err) => eprintln!("HOME cannot be used: {err}"),
+}
+```
+
+`expand_tilde` returns the path unchanged when `HOME` is absent or cannot be
+decoded, because its signature carries no error. Prefer `home_from_env` when
+you need to tell those two cases apart or report the cause; the error type
+implements `std::error::Error`, so `?` propagates it in a program whose error
+type accepts it. Everything to change when upgrading a dependent is listed in
+[Migrating to 0.2.0](migration-0.2.0.md).

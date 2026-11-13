@@ -242,6 +242,75 @@ mutation testing against the current candidate before using counts as evidence.
 The loopback tests exercise the network-boundary survivors reported by the
 earlier run.
 
+### The environment boundary
+
+Production code reads environment *variables* through `mockable::Env`, never
+through `std::env`: `DefaultEnv` is the real process environment, and `MockEnv`
+is what the tests use, available only under the dev-dependency's `mock`
+feature. The one exception is not a variable: `std::env::current_dir` has no
+`Env` equivalent and `main.rs` still calls it. Two accessors matter:
+
+- `string` reports a variable as `None` when it is absent or not valid
+  Unicode. Code that only wants a value when one is usable, such as the
+  `MRIYA_FAKE_*` gates, uses it.
+- `raw` returns `VarError`, so it can tell an absent variable from one that
+  is present but undecodable. Code that must not silently fall back, such as
+  tilde expansion, uses it.
+
+`src/sync/util/expand.rs` is where the distinction is spent. `home_from_env`
+reads `HOME` only when the path it is given starts with `~/`, returns
+`Ok(None)` for an absent `HOME` (leaving the caller its own fallback), and
+reports `HomeUnavailable` for an undecodable one. `expand_tilde_with_home` then
+does the pure string work with no environment access at all. Each caller names
+the path in its own error: `Syncer::common_ssh_options` takes the `Env` it is
+handed, and `config.rs` and `main.rs` turn the cloud-init `HomeUnavailable`
+into a message naming the file the user asked for.
+
+Each boundary therefore has a default and an injected entry point. The default
+one supplies `DefaultEnv` and keeps the arity a caller already depends on; the
+injected one takes `&impl Env` and is what a test targets:
+
+| Default entry point                                                        | Injected counterpart                                                   | Reads                           |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| `ScalewayBackend::new(config)`                                             | `ScalewayBackend::new_with_env(config, env)`                           | the test-run identifier         |
+| `cloud_init::resolve_cloud_init_user_data(inline, file)`                   | `cloud_init::resolve_cloud_init_user_data_with_env(inline, file, env)` | `HOME` for a `~/` file path     |
+| `Syncer::build_ssh_args(..)` / `common_ssh_options` / `build_remote_shell` | the same methods with a trailing `&impl Env`                           | `HOME` for a `~/` identity path |
+| `expand_tilde(path)`                                                       | `home_from_env(env, path)` plus `expand_tilde_with_home`               | `HOME`                          |
+
+The public `expand_tilde(path)` entry point is kept for compatibility, so an
+existing library caller needs no change. It reads the live process environment
+through `DefaultEnv`; its undecodable case falls back to the path unchanged
+rather than reporting the cause, which is why production code takes
+`home_from_env` instead. The build-standard sandbox's non-UTF-8 `PATH` case
+cannot inject either: the injected boundary answers with `String`, so that case
+re-executes the test binary with the value in its real environment, and the
+child asserts the report rather than the parent parsing prose.
+
+`src/test_helpers.rs` builds the `MockEnv` cases from a variable table, so a
+test never mutates the process environment. `mock_env` answers both accessors
+from one decodable table; `mock_env_with_raw` takes a closure, which is the
+only way to express `NotUnicode` and therefore the way the undecodable-`HOME`
+cases are written. A test that genuinely needs the live process environment —
+`expand_tilde`'s own process-level cases, `config_tests`' `as_request` case, or
+a CLI behaviour scenario that sets `HOME` for the child — uses
+`temp_env::with_var` or `Command::env`, never `set_var`.
+
+The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
+test process, which is why the tilde cloud-init scenario can assert an expanded
+path without a guard or a lock. The undecodable-`HOME` scenario goes the same
+way, handing the child an `OsString` built from non-UTF-8 bytes; the child
+reports the failure, so no test process is ever left with an unusable `HOME`.
+That step assembles the value from bytes, which this workspace does only on
+Unix, so the scenario carries `@unix` and is filtered out at registration on
+other platforms.
+
+The build-standard contract's sandbox reads `PATH` through the same boundary
+and with the same rule: `find_on_path` reports an unset `PATH` and an
+undecodable one as different failures, because "not set" would send a reader
+looking for a variable that is in fact present. `find_on_path_with` takes the
+`Env` so `sandbox_cases.rs` can prove both reports, and the partial-`PATH`
+case, without touching the process environment.
+
 ### Internal module boundaries
 
 Two sibling modules exist to keep their parents inside the 400-line budget
@@ -254,14 +323,24 @@ without changing behaviour, and each publishes only what its parent needs:
   `Janitor`. The delete operations take their zone from the listed resource
   rather than from configuration, which is what lets one sweep remove a server
   and a volume that report different zones.
-- `src/test_backdoors.rs` holds `enable_fake_modes`, `fake_run_from_env`, and
-  `prefail_from_env`, all `pub(super)`. It is compiled for unit tests and for
-  the `test-backdoors` feature the CLI integration tests enable, and its
-  `MRIYA_FAKE_*` variables are read only after `enable_fake_modes` gates them,
-  so an ordinary run cannot be diverted by a stray variable. The module doubles
-  as a mutation-testing exclusion: `.cargo/mutants.toml` names it, so a
-  surviving mutant in scaffolding is a recorded exception rather than a silent
-  gap.
+- `src/test_backdoors.rs` separates deciding from doing. `select_fake_outcome`
+  reads the injected environment and returns a `FakeOutcome` value; it has no
+  side effects, so the precedence rules and the `MRIYA_FAKE_RUN_ENABLE` gate
+  are testable on their own. `run_fake_outcome` is the command that performs
+  the selection, and it takes its stdout and stderr as arguments rather than
+  reaching for the process streams, so a unit test asserts exactly what a fake
+  run emits. `run_command` is the only caller that supplies the real streams.
+  The module is compiled for unit tests and for the `test-backdoors` feature
+  the CLI integration tests enable. `select_fake_outcome` takes `&impl Env`
+  rather than reading `std::env` directly; `run_fake_outcome` takes the
+  selected outcome and the two streams it writes to, and reads no environment
+  at all. The `MRIYA_FAKE_*` variables are read only after `enable_fake_modes`
+  gates them, so an ordinary run cannot be diverted by a stray variable.
+  `.cargo/mutants.toml` excludes this scaffolding from mutation testing by
+  function name, not by module: `exclude_re` lists each function whose mutants
+  are noise because no production path reaches it. Adding or renaming one of
+  these functions therefore means editing that list too, or its mutants start
+  surviving as unrecorded gaps rather than recorded exceptions.
 
 ## The build standard
 

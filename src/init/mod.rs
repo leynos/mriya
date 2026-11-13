@@ -276,10 +276,7 @@ where
         let output = self
             .syncer
             .run_remote_raw(networking, &format_command(volume_id))
-            .map_err(|err| FormatFailure {
-                message: String::from("failed to execute format command"),
-                source: Some(err),
-            })?;
+            .map_err(format_spawn_failure)?;
 
         if output.exit_code == Some(0) {
             return Ok(());
@@ -294,6 +291,19 @@ where
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
+    }
+}
+
+/// Builds the failure for a format command that could not be started.
+///
+/// `write_error` prints only the outermost `Display` and no cause chain, so the
+/// cause and its remedy have to be in the message itself. A stored source
+/// alone would report "failed to execute format command", and a user whose
+/// `HOME` cannot be decoded would look for a broken volume instead.
+fn format_spawn_failure(err: SyncError) -> FormatFailure {
+    FormatFailure {
+        message: format!("failed to execute format command: {err}"),
+        source: Some(err),
     }
 }
 

@@ -10,6 +10,7 @@ use cap_std::{
     fs::{Permissions, PermissionsExt},
     fs_utf8::Dir,
 };
+use mockable::{DefaultEnv, Env};
 use tempfile::TempDir;
 
 /// Where the sandbox keeps tools and installed files, relative to its root.
@@ -146,11 +147,36 @@ pub fn is_tool(directory: &Utf8Path, name: impl AsRef<str>) -> Result<bool, Stri
 ///
 /// # Errors
 ///
-/// Returns the reason when the program is on no `PATH` directory, or when a `PATH` entry cannot be
-/// read for a reason other than absence.
+/// Returns the reason when `PATH` is unset or cannot be decoded, when the program is on no `PATH`
+/// directory, or when a `PATH` entry cannot be read for a reason other than absence. An undecodable
+/// `PATH` is reported as such rather than as unset: "not set" would send the reader looking for an
+/// environment that is in fact present but unusable.
 fn find_on_path(name: impl AsRef<str>) -> Result<Utf8PathBuf, String> {
+    find_on_path_with(name, &DefaultEnv)
+}
+
+/// Looks a program up on the `PATH` that `env` reports.
+///
+/// The host `PATH` and a test's injected `PATH` then take the same route, so a case can prove what
+/// an unset path and an undecodable one each report without touching the process environment.
+///
+/// # Errors
+///
+/// As [`find_on_path`].
+pub(super) fn find_on_path_with(
+    name: impl AsRef<str>,
+    env: &impl Env,
+) -> Result<Utf8PathBuf, String> {
     let program = name.as_ref();
-    let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
+    let path = match env.raw("PATH") {
+        Ok(path) => path,
+        Err(std::env::VarError::NotPresent) => return Err(String::from("PATH is not set")),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(String::from(
+                "PATH is set to a value that is not valid UTF-8",
+            ));
+        }
+    };
     let directories =
         std::env::split_paths(&path).filter_map(|entry| Utf8PathBuf::try_from(entry).ok());
     for directory in directories {
