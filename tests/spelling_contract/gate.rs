@@ -41,7 +41,7 @@ enum Outcome {
 
 /// One fixture file, the spelling it carries and the outcome it must get.
 #[derive(Debug)]
-struct Fixture {
+pub(crate) struct Fixture {
     /// A short name, used as the file name and in failure messages.
     name: &'static str,
     /// The spelling the dictionary reports, which the body may or may not mask.
@@ -53,21 +53,21 @@ struct Fixture {
 }
 
 /// A fixture whose text an exemption covers.
-fn accepted(name: &'static str, spelling: &'static str, body: impl Into<String>) -> Fixture {
+pub(crate) fn accepted(name: &'static str, spelling: &'static str, body: String) -> Fixture {
     Fixture {
         name,
         spelling,
-        body: body.into(),
+        body,
         outcome: Outcome::Clean,
     }
 }
 
 /// A fixture whose text carries the spelling unmasked.
-fn reported(name: &'static str, spelling: &'static str, body: impl Into<String>) -> Fixture {
+pub(crate) fn reported(name: &'static str, spelling: &'static str, body: String) -> Fixture {
     Fixture {
         name,
         spelling,
-        body: body.into(),
+        body,
         outcome: Outcome::Reported,
     }
 }
@@ -169,7 +169,7 @@ fn judge_one(
 }
 
 /// Every fixture gets the outcome its body calls for.
-fn assert_fixtures(fixtures: &[Fixture]) -> Result<(), String> {
+pub(crate) fn assert_fixtures(fixtures: &[Fixture]) -> Result<(), String> {
     let judged = judge(fixtures)?;
     let disagreements: Vec<String> = fixtures
         .iter()

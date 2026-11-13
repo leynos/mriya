@@ -72,4 +72,10 @@ ignore = [
   "(?m)^const CARGO_KIND: &str = \"artifact\";\\r?$",
   "(?m)^const LINKER_NAME: &str = \"mold\";\\r?$",
   "(?m)^const RUNTIME_KEY: &str = \"flavor\";\\r?$",
+  # The spelling contract declares the letter pair the dictionary reports
+  # inside the pinned nightly's hash, so that one declaration line is exempt.
+  "(?m)^const COMPILER_HASH: &str = \"ba\";\\r?$",
+  # The pinned nightly's compiler hash contains the letter pair "ba"; it is an
+  # opaque identifier, not prose.
+  '\bac8310ba6\b',
 ]

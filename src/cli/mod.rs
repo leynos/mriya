@@ -59,3 +59,70 @@ pub(crate) struct InitCommand {
     #[arg(long)]
     pub(crate) force: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    //! Parser tests for the handwritten `run` and `init` commands.
+
+    use clap::error::ErrorKind;
+
+    use super::*;
+
+    fn parse_run(args: &[&str]) -> RunCommand {
+        let cli = Cli::try_parse_from(args).expect("run command should parse");
+        let Cli::Run(command) = cli else {
+            panic!("expected the run subcommand");
+        };
+        command
+    }
+
+    /// Remote flags after `--` are the command, never Mriya options.
+    #[test]
+    fn run_captures_remote_flags_after_double_dash() {
+        let command = parse_run(&["mriya", "run", "--", "--instance-type", "REMOTE"]);
+
+        assert_eq!(command.instance_type, None);
+        assert_eq!(command.command, vec!["--instance-type", "REMOTE"]);
+    }
+
+    /// An override before `--` applies to Mriya; the same spelling after `--`
+    /// stays in the remote command.
+    #[test]
+    fn run_applies_override_before_double_dash_only() {
+        let command = parse_run(&[
+            "mriya",
+            "run",
+            "--instance-type",
+            "LOCAL",
+            "--",
+            "--instance-type",
+            "REMOTE",
+        ]);
+
+        assert_eq!(command.instance_type.as_deref(), Some("LOCAL"));
+        assert_eq!(command.command, vec!["--instance-type", "REMOTE"]);
+    }
+
+    /// `mriya init --force` parses, and an unknown flag is rejected.
+    #[test]
+    fn init_accepts_force_and_rejects_unknown_flags() {
+        let cli = Cli::try_parse_from(["mriya", "init", "--force"]).expect("init should parse");
+        let Cli::Init(command) = cli else {
+            panic!("expected the init subcommand");
+        };
+        assert!(command.force);
+
+        let error = Cli::try_parse_from(["mriya", "init", "--unknown"])
+            .expect_err("unknown flag should be rejected");
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    }
+
+    /// A run without a remote command is rejected.
+    #[test]
+    fn run_requires_a_remote_command() {
+        let error =
+            Cli::try_parse_from(["mriya", "run"]).expect_err("missing command should be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+}

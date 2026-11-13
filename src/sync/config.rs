@@ -153,7 +153,7 @@ pub enum SyncError {
     /// Raised when configuration is missing required values. The error message
     /// includes guidance on how to provide the value via environment variable
     /// or configuration file.
-    #[error("missing {field}: set MRIYA_SYNC_{env_suffix} or add {field} to [sync] in mriya.toml", env_suffix = field.to_uppercase())]
+    #[error("missing {field}: set MRIYA_SYNC_{env_suffix} or add {field} to mriya.toml", env_suffix = field.to_uppercase())]
     InvalidConfig {
         /// Configuration field that failed validation.
         field: String,

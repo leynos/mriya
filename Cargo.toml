@@ -2,6 +2,11 @@
 name = "mriya"
 version = "0.1.0"
 edition = "2024"
+# The application and its build script build on Rust 1.89.0, the highest
+# `rust-version` in the locked non-development graph. The full test suite needs
+# Rust 1.95 because the pinned `typos-cli` dev-dependency requires it; see
+# docs/developers-guide.md.
+rust-version = "1.89.0"
 
 [features]
 test-backdoors = []

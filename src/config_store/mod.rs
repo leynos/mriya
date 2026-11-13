@@ -14,8 +14,10 @@ const CONFIG_ENV_VAR: &str = "MRIYA_CONFIG_PATH";
 const CONFIG_FILE_NAME: &str = "mriya.toml";
 const DOTFILE_NAME: &str = ".mriya.toml";
 const PROJECT_FILE_NAME: &str = "mriya.toml";
-const SCALEWAY_SECTION: &str = "scaleway";
+/// Root-level key read by `ortho_config`'s file layer.
 const VOLUME_KEY: &str = "default_volume_id";
+/// Section written by earlier releases; read only for compatibility.
+const LEGACY_SCALEWAY_SECTION: &str = "scaleway";
 
 /// Errors raised while updating the configuration file.
 #[derive(Debug, Error)]
@@ -245,7 +247,19 @@ fn read_volume_id(
             message: String::from("configuration root is not a table"),
         })?;
 
-    let Some(section) = table.get(SCALEWAY_SECTION) else {
+    if let Some(raw) = table.get(VOLUME_KEY) {
+        let root = parse_volume_id(path, raw, VOLUME_KEY)?;
+        if root.is_some() {
+            return Ok(root);
+        }
+        // A blank root value records nothing, but the legacy section may still
+        // hold an ID an earlier release recorded, so keep guarding that one.
+    }
+
+    // Earlier releases wrote the key under `[scaleway]`, which `ortho_config`
+    // never read. Keep detecting it so `mriya init` still refuses to replace a
+    // volume ID that a previous run recorded.
+    let Some(section) = table.get(LEGACY_SCALEWAY_SECTION) else {
         return Ok(None);
     };
 
@@ -253,17 +267,36 @@ fn read_volume_id(
         .as_table()
         .ok_or_else(|| ConfigStoreError::InvalidStructure {
             path: path.to_path_buf(),
-            message: format!("[{SCALEWAY_SECTION}] must be a table"),
+            message: format!("[{LEGACY_SCALEWAY_SECTION}] must be a table"),
         })?;
 
     section_table.get(VOLUME_KEY).map_or(Ok(None), |raw| {
-        raw.as_str()
-            .map(|id| Some(id.trim().to_owned()))
-            .ok_or_else(|| ConfigStoreError::InvalidStructure {
-                path: path.to_path_buf(),
-                message: format!("{SCALEWAY_SECTION}.{VOLUME_KEY} must be a string"),
-            })
+        parse_volume_id(
+            path,
+            raw,
+            &format!("{LEGACY_SCALEWAY_SECTION}.{VOLUME_KEY}"),
+        )
     })
+}
+
+fn parse_volume_id(
+    path: &Utf8Path,
+    raw: &toml::Value,
+    label: &str,
+) -> Result<Option<String>, ConfigStoreError> {
+    let text = raw
+        .as_str()
+        .ok_or_else(|| ConfigStoreError::InvalidStructure {
+            path: path.to_path_buf(),
+            message: format!("{label} must be a string"),
+        })?;
+    let trimmed = text.trim();
+    // An empty value records no usable volume, so `mriya init` may set one
+    // without `--force`.
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed.to_owned()))
 }
 
 fn write_volume_id_value(
@@ -278,19 +311,7 @@ fn write_volume_id_value(
             message: String::from("configuration root is not a table"),
         })?;
 
-    let section = table
-        .entry(String::from(SCALEWAY_SECTION))
-        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-
-    let section_table =
-        section
-            .as_table_mut()
-            .ok_or_else(|| ConfigStoreError::InvalidStructure {
-                path: path.to_path_buf(),
-                message: format!("[{SCALEWAY_SECTION}] must be a table"),
-            })?;
-
-    section_table.insert(
+    table.insert(
         String::from(VOLUME_KEY),
         toml::Value::String(volume_id.trim().to_owned()),
     );
