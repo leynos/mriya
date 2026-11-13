@@ -18,8 +18,22 @@ use crate::backend::InstanceHandle;
 use crate::scaleway::types::Zone;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
+/// Response page from the list-servers call.
+///
+/// # Examples
+///
+/// ```ignore
+/// // A page carrying one server; an empty page ends pagination.
+/// let page: ListInstancesResponse =
+///     serde_json::from_str(r#"{"servers":[{"id":"srv-1"}]}"#)?;
+/// assert_eq!(page.servers.len(), 1);
+///
+/// let empty: ListInstancesResponse = serde_json::from_str(r#"{"servers":[]}"#)?;
+/// assert!(empty.servers.is_empty());
+/// ```
 #[derive(Deserialize)]
 struct ListInstancesResponse {
+    /// Instances on this page; an empty list marks the end of pagination.
     servers: Vec<ScalewayInstance>,
 }
 
