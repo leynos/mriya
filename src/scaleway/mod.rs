@@ -131,6 +131,18 @@ impl ScalewayBackend {
     /// IDs are compared after trimming whitespace. Attaching the root volume
     /// again as the cache volume would corrupt the volume map, so the request
     /// fails with `VolumeAttachmentFailed` instead.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Padding around the identifier is ignored when comparing.
+    /// let err = ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1")
+    ///     .unwrap_err();
+    /// assert!(matches!(err, ScalewayBackendError::VolumeAttachmentFailed { .. }));
+    ///
+    /// // Two different volumes pass, so the PATCH may proceed.
+    /// ScalewayBackend::validate_cache_volume_id("vol-cache", "vol-1")?;
+    /// ```
     fn validate_cache_volume_id(
         cache_volume_id: &str,
         root_volume_id: &str,
@@ -149,8 +161,19 @@ impl ScalewayBackend {
 
     /// Appends the test-run tag to `base_tags` when `test_run_id` is non-blank.
     ///
-    /// For example, `Some(" abc ")` adds `TEST_RUN_TAG_PREFIX` followed by
-    /// `abc`, while `None` or whitespace leaves the tags unchanged.
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // A blank identifier adds nothing; a real one is appended after a trim.
+    /// assert_eq!(
+    ///     ScalewayBackend::build_tags(vec![String::from("mriya")], None),
+    ///     vec![String::from("mriya")]
+    /// );
+    /// assert_eq!(
+    ///     ScalewayBackend::build_tags(vec![String::from("mriya")], Some(" abc ")),
+    ///     vec![String::from("mriya"), format!("{TEST_RUN_TAG_PREFIX}abc")]
+    /// );
+    /// ```
     fn build_tags(base_tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
         let mut tags = base_tags;
         let Some(id) = test_run_id else {
@@ -166,6 +189,15 @@ impl ScalewayBackend {
 
     /// Tags applied to created instances: `mriya`, `ephemeral`, and the
     /// optional test-run tag.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(
+    ///     ScalewayBackend::instance_tags(None),
+    ///     vec![String::from("mriya"), String::from("ephemeral")]
+    /// );
+    /// ```
     fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("ephemeral")],
@@ -175,6 +207,15 @@ impl ScalewayBackend {
 
     /// Tags applied to created cache volumes: `mriya`, `cache`, and the
     /// optional test-run tag.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(
+    ///     ScalewayBackend::volume_tags(None),
+    ///     vec![String::from("mriya"), String::from("cache")]
+    /// );
+    /// ```
     fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("cache")],
