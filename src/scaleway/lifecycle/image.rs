@@ -166,13 +166,17 @@ impl ScalewayBackend {
     /// # Examples
     ///
     /// ```ignore
-    /// // No project images: the public list supplies the candidate.
+    /// // No project images: the public image supplies the winner. Its ID is
+    /// // captured first because the vector takes ownership of the image.
+    /// let public_id = public.id.clone();
     /// let id = select_image_from_sources(Vec::new(), vec![public], &request)?;
-    /// assert_eq!(id, public.id);
+    /// assert_eq!(id, public_id);
     ///
-    /// // A non-empty project list wins even when the public list would match.
-    /// let id = select_image_from_sources(vec![project], vec![public], &request)?;
-    /// assert_eq!(id, project.id);
+    /// // A non-empty project list wins even when the public list would also
+    /// // match. Distinct IDs show which source actually supplied the winner.
+    /// let project_id = project.id.clone();
+    /// let id = select_image_from_sources(vec![project], vec![unrelated], &request)?;
+    /// assert_eq!(id, project_id);
     /// ```
     pub(in crate::scaleway) fn select_image_from_sources(
         project_images: Vec<ScalewayImage>,
