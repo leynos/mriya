@@ -290,10 +290,14 @@ child asserts the report rather than the parent parsing prose.
 test never mutates the process environment. `mock_env` answers both accessors
 from one decodable table; `mock_env_with_raw` takes a closure, which is the
 only way to express `NotUnicode` and therefore the way the undecodable-`HOME`
-cases are written. A test that genuinely needs the live process environment —
-`expand_tilde`'s own process-level cases, `config_tests`' `as_request` case, or
-a CLI behaviour scenario that sets `HOME` for the child — uses
-`temp_env::with_var` or `Command::env`, never `set_var`.
+cases are written. A test must not change the process environment or working
+directory: `clippy.toml` disallows `std::env::set_var`, `remove_var`,
+`set_current_dir` and `temp_env`'s four entry points, so a new site fails lint.
+The cases that still read the live process `HOME` — `expand_tilde`'s own
+process-level cases and `config_tests`' two `as_request` cases — are the only
+exceptions. Each carries `#[expect(clippy::disallowed_methods, reason = ...)]`,
+which reports itself once the site migrates to an injected environment. A CLI
+behaviour scenario that needs `HOME` sets it on the child with `Command::env`.
 
 The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
 test process, which is why the tilde cloud-init scenario can assert an expanded
