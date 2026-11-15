@@ -55,31 +55,42 @@ impl Toolset {
 pub fn sandbox_with(toolset: Toolset) -> Result<Sandbox, String> {
     let sandbox = Sandbox::new()?;
     sandbox.link_tools(UTILITIES)?;
-    if let Some(linker) = toolset.linker {
-        let version = match linker {
-            Linker::Pinned => pinned_linker(),
-            Linker::Drifted(version) => version,
-        };
-        sandbox.write_tool(
-            LINKER_TOOL,
-            format!("echo '{LINKER_TOOL} {version} (compatible with GNU ld)'"),
-        )?;
-    }
+    write_linker_fake(&sandbox, toolset.linker)?;
     if let Some(links) = toolset.cc_links {
         sandbox.write_tool("cc", fake_cc(links))?;
     }
-    let listed = if toolset.has_toolchain {
-        let channel = pinned_channel(TOOLCHAIN)?;
-        format!("echo '{channel}-x86_64-unknown-linux-gnu (active, default)'")
-    } else {
-        "echo 'stable-x86_64-unknown-linux-gnu (default)'".to_owned()
-    };
-    sandbox.write_tool("rustup", listed)?;
+    sandbox.write_tool("rustup", rustup_listing(toolset.has_toolchain)?)?;
     sandbox.write_tool("probe-cargo", "echo \"$*\" >> \"$CARGO_LOG\"")?;
     if !toolset.platform_answers {
         sandbox.pretend_uname_fails()?;
     }
     Ok(sandbox)
+}
+
+/// Writes the fake linker reporting the pinned or a drifted version, when the toolset has one.
+fn write_linker_fake(sandbox: &Sandbox, linker: Option<Linker>) -> Result<(), String> {
+    let Some(pinned_or_drifted) = linker else {
+        return Ok(());
+    };
+    let version = match pinned_or_drifted {
+        Linker::Pinned => pinned_linker(),
+        Linker::Drifted(version) => version,
+    };
+    sandbox.write_tool(
+        LINKER_TOOL,
+        format!("echo '{LINKER_TOOL} {version} (compatible with GNU ld)'"),
+    )
+}
+
+/// The fake `rustup toolchain list` output, with or without the pinned toolchain.
+fn rustup_listing(has_toolchain: bool) -> Result<String, String> {
+    if !has_toolchain {
+        return Ok("echo 'stable-x86_64-unknown-linux-gnu (default)'".to_owned());
+    }
+    let channel = pinned_channel(TOOLCHAIN)?;
+    Ok(format!(
+        "echo '{channel}-x86_64-unknown-linux-gnu (active, default)'"
+    ))
 }
 
 /// A `cc` whose link succeeds only when the preflight passes `-fuse-ld=mold`.

@@ -101,6 +101,10 @@ fn undecodable_home() -> OsString {
 #[case::home_absent(None, "~/.ssh/id_ed25519")]
 #[case::home_undecodable(Some(undecodable_home()), "~/.ssh/id_ed25519")]
 fn expand_tilde_reads_the_process_home(#[case] home: Option<OsString>, #[case] expected: &str) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "expand_tilde reads the process HOME; migrate when it takes an injected environment"
+    )]
     let expanded = temp_env::with_var("HOME", home.as_ref(), || expand_tilde("~/.ssh/id_ed25519"));
 
     assert_eq!(expanded, expected);

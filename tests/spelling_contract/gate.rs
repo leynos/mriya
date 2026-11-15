@@ -20,13 +20,13 @@ use camino::Utf8Path;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use tempfile::TempDir;
 use typos_cli::{
-    config::Config,
     file::{FileChecker, Typos},
     policy::{ConfigEngine, ConfigStorage},
     report::{Message, Report},
 };
 
 use crate::CONFIG;
+use crate::engine_setup::configure_engine;
 use crate::probes::tokio_attribute;
 use crate::{CARGO_KIND, LINKER_NAME, RUNTIME_KEY};
 
@@ -126,29 +126,28 @@ fn write_fixtures(directory: &Dir, fixtures: &[Fixture]) -> Result<(), String> {
 /// Runs the engine over every fixture, returning the findings per fixture.
 fn judge(fixtures: &[Fixture]) -> Result<Vec<Vec<String>>, String> {
     let temporary = TempDir::new().map_err(|error| format!("a work dir should exist: {error}"))?;
-    let root = Utf8Path::from_path(temporary.path())
-        .ok_or_else(|| format!("{:?} should be UTF-8", temporary.path()))?;
-    let directory = Dir::open_ambient_dir(root, ambient_authority())
-        .map_err(|error| format!("{root} should open: {error}"))?;
-    write_fixtures(&directory, fixtures)?;
-
+    let root = stage_fixtures(&temporary, fixtures)?;
     let storage = ConfigStorage::new();
     let mut engine = ConfigEngine::new(&storage);
-    // Isolated mode stops the engine walking up to this worktree's own
-    // configuration, so the fixture directory states the whole policy.
-    engine.set_isolated(true);
-    let overrides = Config::from_file(&root.join("typos.toml").into_std_path_buf())
-        .map_err(|error| format!("typos.toml should parse: {error}"))?
-        .ok_or_else(|| "typos.toml should carry a Typos configuration".to_owned())?;
-    engine.set_overrides(overrides);
-    engine
-        .init_dir(root.as_std_path())
-        .map_err(|error| format!("the work dir should initialize: {error}"))?;
+    configure_engine(&mut engine, root)?;
 
     fixtures
         .iter()
         .map(|fixture| judge_one(root, &engine, fixture))
         .collect()
+}
+
+/// Writes the configuration and fixtures into `temporary` and returns its UTF-8 root.
+fn stage_fixtures<'a>(
+    temporary: &'a TempDir,
+    fixtures: &[Fixture],
+) -> Result<&'a Utf8Path, String> {
+    let root = Utf8Path::from_path(temporary.path())
+        .ok_or_else(|| format!("{:?} should be UTF-8", temporary.path()))?;
+    let directory = Dir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("{root} should open: {error}"))?;
+    write_fixtures(&directory, fixtures)?;
+    Ok(root)
 }
 
 /// Runs the engine over one fixture and returns what it reported.
