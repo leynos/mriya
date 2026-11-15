@@ -146,30 +146,60 @@ fn a_release_command_is_accepted_only_when_it_keeps_the_callers_rustflags() -> R
 /// runner error reaches the caller.
 #[test]
 fn the_held_out_policy_runs_against_an_injected_runner() -> Result<(), String> {
+    ensure_runner_error_reaches_the_caller()?;
+    ensure_assigning_command_is_clean()?;
+    ensure_measuring_build_is_not_refused()?;
+    ensure_inspection_command_is_not_refused()?;
+    ensure_unassigned_command_is_refused()?;
+    ensure_listed_targets_are_run()
+}
+
+/// Checks that a runner error is returned rather than swallowed.
+fn ensure_runner_error_reaches_the_caller() -> Result<(), String> {
     ensure(
         held_out_problems_for(undefined_make, &["synthetic"]).is_err(),
         "a held-out runner error was swallowed",
-    )?;
+    )
+}
+
+/// Checks that a held-out command assigning `RUSTFLAGS` raises nothing and is read once.
+fn ensure_assigning_command_is_clean() -> Result<(), String> {
     let (clean, read) = held_out_problems_for(held_out_assigning_make, &["synthetic"])?;
     ensure(
         clean.is_empty() && read == 1,
         &format!("an assigning held-out command raised {clean:?}"),
-    )?;
+    )
+}
+
+/// Checks that a coverage build, a measurement, may ignore the caller's flags.
+fn ensure_measuring_build_is_not_refused() -> Result<(), String> {
     let (measuring, _) = held_out_problems_for(release_clearing_make, &["coverage"])?;
     ensure(
         measuring.is_empty(),
         &format!("a coverage build that ignores the caller's RUSTFLAGS raised {measuring:?}"),
-    )?;
+    )
+}
+
+/// Checks that an inspection command in a held-out target is not refused.
+fn ensure_inspection_command_is_not_refused() -> Result<(), String> {
     let (inspecting, _) = held_out_problems_for(held_out_inspecting_make, &["synthetic"])?;
     ensure(
         inspecting.is_empty(),
         &format!("an inspection command in a held-out target raised {inspecting:?}"),
-    )?;
+    )
+}
+
+/// Checks that a held-out command assigning no `RUSTFLAGS` is refused.
+fn ensure_unassigned_command_is_refused() -> Result<(), String> {
     let (unassigned, _) = held_out_problems_for(held_out_unassigned_make, &["synthetic"])?;
     ensure(
         !unassigned.is_empty(),
         "a held-out command that assigns no RUSTFLAGS passed",
-    )?;
+    )
+}
+
+/// Checks that the listed held-out targets were run, when any are listed.
+fn ensure_listed_targets_are_run() -> Result<(), String> {
     ensure(
         held_out_target_count() == 0 || held_out_problems(undefined_make).is_err(),
         "the listed held-out targets were not run",

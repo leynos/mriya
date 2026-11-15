@@ -240,6 +240,10 @@ fn config_rejects_a_tilde_cloud_init_file_when_home_cannot_be_decoded(
 
     valid_config.cloud_init_user_data_file = Some(String::from("~/user-data.txt"));
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "as_request reads the process HOME; migrate when it takes an injected environment"
+    )]
     let err = temp_env::with_var(
         "HOME",
         Some(&OsString::from_vec(b"/home/\xff".to_vec())),
@@ -281,6 +285,10 @@ fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConf
 
     // `as_request` reads the process `HOME`; `with_var` scopes the override
     // and serializes it against other `temp_env` users.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "as_request reads the process HOME; migrate when it takes an injected environment"
+    )]
     let request = temp_env::with_var("HOME", Some(home.as_str()), || cfg.as_request())
         .expect("configuration with a tilde-expanded cloud-init file should produce a request");
 

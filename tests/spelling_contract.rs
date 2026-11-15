@@ -40,6 +40,8 @@
 mod checks;
 #[path = "spelling_contract/configuration.rs"]
 mod configuration;
+#[path = "spelling_contract/engine_setup.rs"]
+mod engine_setup;
 #[path = "spelling_contract/gate.rs"]
 mod gate;
 #[path = "spelling_contract/probes.rs"]

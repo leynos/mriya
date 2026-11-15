@@ -122,15 +122,25 @@ fn load_ignores(source: &Utf8Path) -> Result<IgnoreRules, SyncError> {
         return Ok(IgnoreRules::empty());
     }
 
-    // This parser intentionally supports only top-level directory entries
-    // (for example `target/`) and file-name patterns (for example `.DS_Store`)
-    // to keep the simulator minimal. Nested `.gitignore` files, globbing, and
-    // negation rules are not implemented.
-    let content = Dir::open_ambient_dir("/", ambient_authority())
-        .map_err(|err| map_io_error(err.to_string()))?
-        .read_to_string(relative_to_root(&ignore_path))
-        .map_err(|err| map_io_error(err.to_string()))?;
+    let content = read_ignore_file(&ignore_path)?;
+    Ok(parse_ignore_rules(&content))
+}
 
+/// Reads the `.gitignore` at `ignore_path` through the filesystem root.
+fn read_ignore_file(ignore_path: &Utf8Path) -> Result<String, SyncError> {
+    Dir::open_ambient_dir("/", ambient_authority())
+        .map_err(|err| map_io_error(err.to_string()))?
+        .read_to_string(relative_to_root(ignore_path))
+        .map_err(|err| map_io_error(err.to_string()))
+}
+
+/// Sorts `.gitignore` lines into directory and file-name rules.
+///
+/// This parser intentionally supports only top-level directory entries
+/// (for example `target/`) and file-name patterns (for example `.DS_Store`)
+/// to keep the simulator minimal. Nested `.gitignore` files, globbing, and
+/// negation rules are not implemented.
+fn parse_ignore_rules(content: &str) -> IgnoreRules {
     let mut dirs = HashSet::new();
     let mut files = HashSet::new();
     for line in content.lines() {
@@ -145,7 +155,7 @@ fn load_ignores(source: &Utf8Path) -> Result<IgnoreRules, SyncError> {
         }
     }
 
-    Ok(IgnoreRules { dirs, files })
+    IgnoreRules { dirs, files }
 }
 
 fn should_ignore(relative: &Utf8Path, rules: &IgnoreRules) -> bool {
