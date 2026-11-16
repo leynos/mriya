@@ -45,23 +45,9 @@ fn walk_files(directory: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
     // child inherits the handle its parent opened rather than re-deriving one from a string.
     let mut pending = vec![(directory.to_owned(), Utf8PathBuf::new())];
     while let Some((handle_path, relative)) = pending.pop() {
-        let handle = Dir::open_ambient_dir(&handle_path, ambient_authority())
-            .map_err(|error| format!("opening {handle_path}: {error}"))?;
-        for result in handle
-            .entries()
-            .map_err(|error| format!("reading directory {handle_path}: {error}"))?
-        {
-            let entry =
-                result.map_err(|error| format!("reading an entry of {handle_path}: {error}"))?;
-            let name = entry
-                .file_name()
-                .map_err(|error| format!("naming an entry of {handle_path}: {error}"))?;
-            let path = directory.join(relative.join(&name));
-            let kind = entry
-                .file_type()
-                .map_err(|error| format!("statting {path}: {error}"))?;
+        for (path, child_relative, kind) in read_children(directory, &handle_path, &relative)? {
             if kind.is_dir() {
-                pending.push((path.clone(), relative.join(&name)));
+                pending.push((path, child_relative));
             } else if kind.is_file() {
                 files.push(path);
             }
@@ -69,6 +55,38 @@ fn walk_files(directory: &Utf8Path) -> Result<Vec<Utf8PathBuf>, String> {
     }
     files.sort();
     Ok(files)
+}
+
+/// Lists the entries of `handle_path` as `(path, path relative to root, file type)` triples.
+///
+/// # Errors
+///
+/// Returns the reason when the directory or one of its entries cannot be read.
+fn read_children(
+    root: &Utf8Path,
+    handle_path: &Utf8Path,
+    relative: &Utf8Path,
+) -> Result<Vec<(Utf8PathBuf, Utf8PathBuf, cap_std::fs::FileType)>, String> {
+    let handle = Dir::open_ambient_dir(handle_path, ambient_authority())
+        .map_err(|error| format!("opening {handle_path}: {error}"))?;
+    let entries = handle
+        .entries()
+        .map_err(|error| format!("reading directory {handle_path}: {error}"))?;
+    let mut children = Vec::new();
+    for result in entries {
+        let entry =
+            result.map_err(|error| format!("reading an entry of {handle_path}: {error}"))?;
+        let name = entry
+            .file_name()
+            .map_err(|error| format!("naming an entry of {handle_path}: {error}"))?;
+        let child_relative = relative.join(&name);
+        let path = root.join(&child_relative);
+        let kind = entry
+            .file_type()
+            .map_err(|error| format!("statting {path}: {error}"))?;
+        children.push((path, child_relative, kind));
+    }
+    Ok(children)
 }
 
 /// Opens the directory holding `path` as a capability, so the read it performs cannot reach
