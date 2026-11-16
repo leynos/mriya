@@ -211,24 +211,34 @@ fn copy_tree(
             context.kept.insert(relative.to_path_buf());
             copy_tree(context, &path, &destination_path)?;
         } else {
-            if let Some(parent) = destination_path.parent() {
-                context
-                    .fs
-                    .create_dir_all(relative_to_root(parent))
-                    .map_err(|err| map_io_error(err.to_string()))?;
-            }
-            context
-                .fs
-                .copy(
-                    relative_to_root(&path),
-                    context.fs,
-                    relative_to_root(&destination_path),
-                )
-                .map_err(|err| map_io_error(err.to_string()))?;
+            copy_file(context, &path, &destination_path)?;
             context.kept.insert(relative.to_path_buf());
         }
     }
 
+    Ok(())
+}
+
+/// Copies one file into the simulated destination, creating its parent directory first.
+fn copy_file(
+    context: &SimulationContext,
+    source_path: &Utf8Path,
+    destination_path: &Utf8Path,
+) -> Result<(), SyncError> {
+    if let Some(parent) = destination_path.parent() {
+        context
+            .fs
+            .create_dir_all(relative_to_root(parent))
+            .map_err(|err| map_io_error(err.to_string()))?;
+    }
+    context
+        .fs
+        .copy(
+            relative_to_root(source_path),
+            context.fs,
+            relative_to_root(destination_path),
+        )
+        .map_err(|err| map_io_error(err.to_string()))?;
     Ok(())
 }
 
