@@ -32,14 +32,16 @@ to override discovery.
 Example `mriya.toml`:
 
 ```toml
-[scaleway]
 secret_key = "scw-secret-key-here"
 default_project_id = "11111111-2222-3333-4444-555555555555"
-
-[sync]
 ssh_identity_file = "~/.ssh/id_ed25519"
 ssh_user = "ubuntu"
 ```
+
+Configuration file keys are root-level and use the Rust field names, matching
+`ortho-config`'s file layer. Do not wrap them in `[scaleway]`, `[sync]`, or
+`[init]` tables: those sections are not read, so their values are silently
+ignored.
 
 ## Configuration validation
 
@@ -47,7 +49,7 @@ Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
 ```text
-missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
+missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to mriya.toml
 ```
 
 Required fields for Scaleway credentials: `secret_key`, `default_project_id`,
@@ -142,7 +144,7 @@ Cloud-init settings use `ortho-config` layering with the `SCW_` prefix:
 - `SCW_CLOUD_INIT_USER_DATA_FILE` — path to a file containing cloud-init
   user-data (optional).
 
-In `mriya.toml`, configure one of the following under `[scaleway]`:
+In `mriya.toml`, configure one of the following root-level keys:
 
 - `cloud_init_user_data = "..."` (inline)
 - `cloud_init_user_data_file = "./cloud-init.yml"` (file-based)
@@ -206,7 +208,6 @@ To enable the cache volume:
    Or in `mriya.toml`:
 
    ```toml
-   [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
    ```
 
@@ -236,7 +237,6 @@ the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
 `mriya.toml`:
 
 ```toml
-[init]
 volume_size_gb = 50
 ```
 
