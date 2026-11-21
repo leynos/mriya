@@ -68,10 +68,12 @@ struct CreateServerRequest {
 /// # Examples
 ///
 /// ```ignore
-/// // The provider nests the instance under `server`.
-/// let response: CreateServerResponse =
-///     serde_json::from_str(r#"{"server":{"id":"srv-1","state":"stopped"}}"#)?;
-/// assert_eq!(response.server.id, "srv-1");
+/// // Schematic: the provider nests the instance under `server`. A real
+/// // `ScalewayInstance` carries about thirty required fields with no serde
+/// // defaults, so abbreviated JSON would fail to deserialize before any
+/// // assertion ran. The decodable fixture used by the tests is
+/// // `tests/fixtures/detach-instance.json`.
+/// {"server": {"id": "srv-1", "state": "stopped", ...}}
 /// ```
 #[derive(Deserialize)]
 struct CreateServerResponse {

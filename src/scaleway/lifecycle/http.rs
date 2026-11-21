@@ -23,13 +23,12 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 /// # Examples
 ///
 /// ```ignore
-/// // A page carrying one server; an empty page ends pagination.
-/// let page: ListInstancesResponse =
-///     serde_json::from_str(r#"{"servers":[{"id":"srv-1"}]}"#)?;
-/// assert_eq!(page.servers.len(), 1);
-///
-/// let empty: ListInstancesResponse = serde_json::from_str(r#"{"servers":[]}"#)?;
-/// assert!(empty.servers.is_empty());
+/// // Schematic: page 1 carries one server and page 2 is empty, which ends
+/// // pagination. A real `ScalewayInstance` has about thirty required fields
+/// // with no serde defaults, so abbreviated JSON is not decodable; the tests
+/// // use `tests/fixtures/detach-instance.json` as a complete server.
+/// {"servers": [{ ... }]}   // page 1: one server
+/// {"servers": []}          // page 2: empty, so polling stops
 /// ```
 #[derive(Deserialize)]
 struct ListInstancesResponse {

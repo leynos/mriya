@@ -51,10 +51,13 @@ struct CreateVolumeRequest {
 /// # Examples
 ///
 /// ```ignore
-/// // The provider nests the volume under `volume`.
-/// let response: CreateVolumeResponse =
-///     serde_json::from_str(r#"{"volume":{"id":"vol-1"}}"#)?;
+/// // The provider nests the volume under `volume`. Both `id` and `zone` are
+/// // required, so both must be present for this to deserialize.
+/// let response: CreateVolumeResponse = serde_json::from_str(
+///     r#"{"volume":{"id":"vol-1","zone":"fr-par-1"}}"#,
+/// )?;
 /// assert_eq!(response.volume.id, "vol-1");
+/// assert_eq!(response.volume.zone, "fr-par-1");
 /// ```
 #[derive(Deserialize)]
 struct CreateVolumeResponse {
@@ -67,10 +70,12 @@ struct CreateVolumeResponse {
 /// # Examples
 ///
 /// ```ignore
-/// // Unknown provider fields are ignored; only the identifier is kept.
-/// let volume: ScalewayVolume =
-///     serde_json::from_str(r#"{"id":"vol-1","extra":"ignored"}"#)?;
+/// // Unknown provider fields are ignored; the identifier and zone are kept.
+/// let volume: ScalewayVolume = serde_json::from_str(
+///     r#"{"id":"vol-1","zone":"fr-par-1","extra":"ignored"}"#,
+/// )?;
 /// assert_eq!(volume.id, "vol-1");
+/// assert_eq!(volume.zone, "fr-par-1");
 /// ```
 #[derive(Deserialize)]
 struct ScalewayVolume {

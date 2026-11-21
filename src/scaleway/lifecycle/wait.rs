@@ -73,14 +73,17 @@ impl ScalewayBackend {
     /// # Examples
     ///
     /// ```ignore
-    /// // A port that accepts connections succeeds without returning details;
-    /// // the ready networking is already held by the caller.
+    /// // A reachable port succeeds without returning details; the ready
+    /// // networking is already held by the caller.
     /// let networking = backend.wait_for_public_ip(&handle).await?;
     /// backend.wait_for_ssh_ready(&handle, &networking).await?;
     ///
-    /// // A port that never accepts a connection reports a timeout.
+    /// // An unreachable port reports a timeout. This is a separate attempt
+    /// // against details whose port does not accept connections; reusing the
+    /// // reachable `networking` above would simply succeed again.
+    /// let unreachable = InstanceNetworking { .. };
     /// let err = backend
-    ///     .wait_for_ssh_ready(&handle, &networking)
+    ///     .wait_for_ssh_ready(&handle, &unreachable)
     ///     .await
     ///     .unwrap_err();
     /// assert!(matches!(err, ScalewayBackendError::Timeout { .. }));

@@ -136,12 +136,12 @@ impl ScalewayBackend {
     ///
     /// ```ignore
     /// // Padding around the identifier is ignored when comparing.
-    /// let err = ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1")
-    ///     .unwrap_err();
+    /// let err =
+    ///     ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1", &handle).unwrap_err();
     /// assert!(matches!(err, ScalewayBackendError::VolumeAttachmentFailed { .. }));
     ///
     /// // Two different volumes pass, so the PATCH may proceed.
-    /// ScalewayBackend::validate_cache_volume_id("vol-cache", "vol-1")?;
+    /// ScalewayBackend::validate_cache_volume_id("vol-cache", "vol-1", &handle)?;
     /// ```
     fn validate_cache_volume_id(
         cache_volume_id: &str,

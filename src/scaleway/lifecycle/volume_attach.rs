@@ -122,13 +122,18 @@ impl ScalewayBackend {
     /// response, such as a connection error, returns
     /// [`ScalewayBackendError::Provider`] instead, so a caller must not assume
     /// every failure carries the attachment variant. Returns
-    /// [`ScalewayBackendError::VolumeNotFound`] when the root volume is missing
-    /// from the instance snapshot used to build the attachment payload.
+    /// [`ScalewayBackendError::VolumeNotFound`] only when `root_volume_id` is
+    /// blank; that check runs before any request is made.
+    ///
+    /// A non-blank root volume identifier is always sent, so the literal
+    /// `"0"` is *not* rejected here. Volume indices and volume identifiers are
+    /// different things: `"0"` is the map key the PATCH uses, and a provider
+    /// identifier incidentally equal to `"0"` would be forwarded unchanged.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// // A literal "0" placeholder or a blank root volume is rejected up front.
+    /// // A blank root volume is rejected before any request is sent.
     /// let err = backend
     ///     .attach_volume(&handle, "vol-1", String::from("  "))
     ///     .await
