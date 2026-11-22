@@ -98,6 +98,9 @@ fn main() {
 /// process exit status.
 ///
 /// Errors are reported on stderr and become status 1.
+///
+/// For example, a command that exits 7 yields 7, while an `init` failure
+/// prints its message and yields 1.
 async fn async_main() -> i32 {
     let cli = Cli::parse();
     match cli {
@@ -114,6 +117,9 @@ async fn async_main() -> i32 {
 ///
 /// In unit tests a hook installed in `RUN_COMMAND_HOOK` takes precedence, so
 /// the dispatch can be tested without provisioning anything.
+///
+/// For example, with no hook installed the command is handed to
+/// [`run_command`], whose exit status becomes the process status.
 async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
     #[cfg(test)]
     if let Some(hook) = RUN_COMMAND_HOOK.lock().await.as_ref() {
@@ -124,6 +130,9 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 }
 
 /// Runs the `init` subcommand.
+///
+/// For example, a successful init yields 0, while an invalid configuration
+/// yields [`CliError::Config`] for the caller to report.
 async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
     init_command(command).await
 }
@@ -143,6 +152,9 @@ async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
 /// With the `test-backdoors` feature (or in unit tests), environment-selected
 /// fake modes can short-circuit everything below. Command arguments are
 /// validated after the backend and syncer have been constructed.
+///
+/// For example, a remote command exiting 7 yields 7, so the caller can pass
+/// the remote status straight through as the process exit code.
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     #[cfg(any(test, feature = "test-backdoors"))]
     {
@@ -179,6 +191,10 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
 ///
 /// The project name is the working directory's final component, or `mriya`
 /// when there is none.
+///
+/// For example, running in `/home/ada/work` creates a cache volume named
+/// `work` and reports success, while a provider rejection becomes the
+/// corresponding [`CliError`].
 async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     let scaleway_config =
         ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
@@ -217,6 +233,9 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
 
 /// Builds the Scaleway backend and its default instance request, then
 /// applies the command-line overrides to that request.
+///
+/// For example, with no overrides the request carries the configured defaults,
+/// while `--instance-type DEV1-M` replaces only the instance type.
 fn build_backend_and_request(
     args: &RunCommand,
 ) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
@@ -235,6 +254,10 @@ fn build_backend_and_request(
 ///
 /// Only flags that were supplied change the request. The cloud-init flags
 /// replace any user-data from configuration.
+///
+/// For example, passing only `--image` changes the image label and leaves the
+/// instance type untouched, while `--instance-type "  "` returns
+/// [`CliError::InvalidOverride`] naming that flag.
 fn apply_instance_overrides(
     request: &mut InstanceRequest,
     args: &RunCommand,
@@ -256,6 +279,10 @@ fn apply_instance_overrides(
 
 /// Resolves the cloud-init flags into user-data, rewording each failure in
 /// terms of the CLI flag names.
+///
+/// For example, `--cloud-init "#cloud-config"` yields that payload, while
+/// passing both `--cloud-init` and `--cloud-init-file` returns
+/// [`CliError::InvalidCloudInit`] naming both flags.
 fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliError> {
     mriya::cloud_init::resolve_cloud_init_user_data(
         args.cloud_init.as_deref(),
@@ -330,6 +357,10 @@ fn render_remote_command(args: &[String]) -> String {
 
 /// Rejects arguments containing ASCII control characters (0x00-0x1F and
 /// 0x7F), which are not safe to send in the remote command line.
+///
+/// For example, `["echo", "ok"]` passes while `["echo", "a\nb"]` returns
+/// [`CliError::InvalidCommand`], because a newline would let a caller inject a
+/// second command into the remote shell line.
 fn validate_command_args(args: &[String]) -> Result<(), CliError> {
     for arg in args {
         if arg
@@ -346,12 +377,19 @@ fn validate_command_args(args: &[String]) -> Result<(), CliError> {
 }
 
 /// Writes `err` to standard error.
+///
+/// For example, a configuration failure appears on stderr as one line and the
+/// process then exits 1, so a script can detect the failure from the status.
 fn report_error(err: &CliError) {
     write_error(io::stderr(), err);
 }
 
 /// Writes `err` as a single line to `target`, ignoring write failures so a
 /// closed stream cannot mask the original error.
+///
+/// For example, writing to an open buffer appends `"<message>\n"`, while a
+/// writer that fails consumes the error instead of panicking, so the caller
+/// still reports the original failure and exits 1.
 fn write_error(mut target: impl Write, err: &CliError) {
     writeln!(target, "{err}").ok();
 }

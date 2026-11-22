@@ -176,6 +176,10 @@ where
     /// if that fails.
     ///
     /// The teardown outcome is appended to the error message.
+    ///
+    /// For example, an SSH timeout returns its own error with
+    /// `(teardown also failed: ...)` appended when the destroy also fails, so
+    /// the caller sees both problems rather than only the first.
     async fn wait_for_ready_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -193,6 +197,10 @@ where
     }
 
     /// Mounts the cache volume only when the request attached one.
+    ///
+    /// For example, a request carrying a `volume_id` mounts it, while one
+    /// without an attached volume returns `Ok(())` without contacting the
+    /// instance at all.
     async fn mount_volume_if_needed(
         &self,
         handle: &InstanceHandle,
@@ -206,6 +214,10 @@ where
     }
 
     /// Syncs the workspace to `dest`, destroying the instance if that fails.
+    ///
+    /// For example, a failed rsync returns the sync error with the teardown
+    /// outcome appended, so a leaked instance is never reported as a plain
+    /// sync failure.
     async fn sync_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -226,6 +238,10 @@ where
     /// started.
     ///
     /// A non-zero exit code from the command is a successful result here.
+    ///
+    /// For example, a command exiting 7 returns that status in
+    /// [`RemoteCommandOutput`], while a failure to start the command destroys
+    /// the instance and returns the error text.
     async fn run_remote_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -254,6 +270,10 @@ where
     /// When `create_cache_directories` is enabled in the sync configuration,
     /// the cache subdirectories are created after mounting so that language
     /// toolchains can write immediately.
+    ///
+    /// For example, with cache directories enabled, `/mnt/mriya-cache/npm` and
+    /// its siblings exist before the remote command runs, so a toolchain never
+    /// has to create them itself.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
@@ -299,6 +319,10 @@ where
     /// timeout elapses.
     ///
     /// A failure to run the check, or a timeout, destroys the instance.
+    ///
+    /// For example, the marker `/var/lib/cloud/instance/boot-finished`
+    /// appearing ends the wait successfully, while the deadline passing
+    /// destroys the instance and reports the timeout.
     async fn wait_for_cloud_init(
         &self,
         handle: &InstanceHandle,
@@ -339,6 +363,9 @@ where
 
     /// Destroys the instance and returns `err` as text, with a note appended
     /// when the teardown also fails.
+    ///
+    /// For example, `destroy` failing yields `"<err> (teardown also failed:
+    /// ...)"` rather than discarding the original error.
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
@@ -347,6 +374,10 @@ where
 
 /// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
 /// is present, and otherwise returns `message` unchanged.
+///
+/// For example, `"ssh timeout"` with `Some("network down")` becomes
+/// `"ssh timeout (teardown also failed: network down)"`, while `None` leaves
+/// it as `"ssh timeout"`.
 fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
     if let Some(teardown) = teardown_error {
         format!("{message} (teardown also failed: {teardown})")
