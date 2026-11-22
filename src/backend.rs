@@ -78,13 +78,21 @@ impl InstanceRequest {
 /// construction.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InstanceRequestBuilder {
+    /// Image label; trimmed on build.
     image_label: String,
+    /// Instance type; trimmed on build.
     instance_type: String,
+    /// Availability zone; trimmed on build.
     zone: String,
+    /// Project identifier; trimmed on build.
     project_id: String,
+    /// Optional organization identifier; trimmed on build when present.
     organisation_id: Option<String>,
+    /// CPU architecture; trimmed on build.
     architecture: String,
+    /// Optional cache volume ID; trimmed on build when present.
     volume_id: Option<String>,
+    /// Optional cloud-init payload; kept verbatim, with no trimming.
     cloud_init_user_data: Option<String>,
 }
 
