@@ -6,6 +6,9 @@ mod test_constants;
 #[path = "common/test_binary.rs"]
 mod test_binary;
 
+#[path = "common/isolated_cli.rs"]
+mod isolated_cli;
+
 #[path = "common/cli_support.rs"]
 mod cli_support;
 

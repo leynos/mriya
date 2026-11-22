@@ -1,8 +1,9 @@
-//! Environment-driven fake run modes used by CLI behavioural tests.
+//! Environment-driven fake run modes used by the binary's unit tests.
 //!
-//! Compiled only for unit tests and the `test-backdoors` feature, these
-//! helpers let the binary short-circuit provisioning so tests can observe exit
-//! codes, streamed output, and request construction without cloud access.
+//! Compiled only under `cfg(test)`. No Cargo feature, profile or build flag
+//! enables this module, so a released `mriya` binary contains no branch that
+//! the `MRIYA_FAKE_*` variables can divert: a stray variable in a production
+//! environment cannot bypass provisioning, sync or the remote command.
 //!
 //! Selection and execution are separate. [`select_fake_outcome`] reads the
 //! injected environment and returns a value describing what was chosen, with

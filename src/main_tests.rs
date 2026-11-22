@@ -1,7 +1,9 @@
 //! Unit tests for the `mriya` CLI binary implementation.
 //!
 //! Keeping these tests in a separate module helps keep `src/main.rs` focused
-//! and within the repository's file size limits.
+//! and within the repository's file size limits. The request-construction
+//! tests live in the sibling [`main_request_tests`](super::main_request_tests)
+//! module, which keeps both files inside the module-size budget.
 
 use rstest::rstest;
 
@@ -95,21 +97,50 @@ fn fake_outcome_prefail_variants(#[case] mode: &str, #[case] predicate: fn(&CliE
     );
 }
 
-#[test]
-fn fake_outcome_missing_exit_code_from_fake_mode() {
+/// Selects the fake mode `mode` through an injected environment.
+///
+/// The environment is injected, so no case mutates the process environment.
+/// The helper returns the outcome rather than a `Result`, which keeps the
+/// selection assertion out of [`run_selected_fake_mode`] where a panic macro
+/// would trip `clippy::panic_in_result_fn`, and it expects the selection
+/// rather than panicking from an `unwrap_or_else` closure, which Whitaker's
+/// `no_unwrap_or_else_panic` forbids. The calling test's name identifies the
+/// mode.
+fn selected_fake_mode(mode: &str) -> test_backdoors::FakeOutcome {
     let env = mock_env(&[
         ("MRIYA_FAKE_RUN_ENABLE", "1"),
-        ("MRIYA_FAKE_RUN_MODE", "missing-exit"),
+        ("MRIYA_FAKE_RUN_MODE", mode),
     ]);
-    let outcome =
-        test_backdoors::select_fake_outcome(&env).expect("missing-exit should be selected");
+    test_backdoors::select_fake_outcome(&env).expect("the fake mode should be selected")
+}
+
+/// Runs the selected fake mode through the command that performs it.
+///
+/// `tests/cli_run.rs` is the counterpart that drives the ordinary binary with
+/// the same variables and requires it to ignore them.
+fn run_selected_fake_mode(mode: &str) -> Result<i32, CliError> {
+    let outcome = selected_fake_mode(mode);
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let result =
-        test_backdoors::run_fake_outcome(&echo_command(), outcome, &mut stdout, &mut stderr);
+    test_backdoors::run_fake_outcome(&echo_command(), outcome, &mut stdout, &mut stderr)
+}
+
+#[test]
+fn fake_outcome_missing_exit_code_from_fake_mode() {
+    let result = run_selected_fake_mode("missing-exit");
 
     assert!(
         matches!(result, Err(CliError::MissingExitCode)),
         "expected MissingExitCode, got {result:?}"
+    );
+}
+
+#[test]
+fn fake_outcome_reports_the_selected_exit_status() {
+    let result = run_selected_fake_mode("exit-7");
+
+    assert!(
+        matches!(result, Ok(7)),
+        "expected exit status 7, got {result:?}"
     );
 }
 
@@ -208,7 +239,8 @@ fn apply_instance_overrides_updates_request() {
         command: vec![String::from("echo"), String::from("ok")],
     };
 
-    apply_instance_overrides(&mut request, &args).expect("valid instance overrides should apply");
+    apply_instance_overrides_with(&mut request, &args, &mock_env(&[]))
+        .expect("valid instance overrides should apply");
 
     assert_eq!(request.instance_type, "DEV1-M");
     assert_eq!(request.image_label, "ubuntu-22-04");

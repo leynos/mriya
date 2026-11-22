@@ -1,4 +1,8 @@
-//! Builds and exposes the feature-enabled binary used by CLI tests.
+//! Builds and exposes the ordinary binary used by CLI tests.
+//!
+//! The build enables no features, so the binary under test is the one a
+//! release packs: a test cannot pass by exercising a test-only code path that
+//! production never compiles.
 
 use std::{
     process::{Command, ExitStatus, Output},
@@ -66,8 +70,8 @@ pub(crate) fn mriya_cmd() -> Result<assert_cmd::Command, &'static BuildError> {
     MRIYA_BIN.as_ref().map(TestBinary::command)
 }
 
-/// Builds the test binary using the Cargo executable and environment inherited
-/// by the integration-test process.
+/// Builds the ordinary `mriya` binary using the Cargo executable and
+/// environment inherited by the integration-test process.
 ///
 /// Cargo's configured target directory and shared cache remain in effect, so
 /// the reported executable is the one Cargo actually produced for this build.
@@ -89,12 +93,13 @@ fn build_test_binary() -> Result<TestBinary, BuildError> {
 }
 
 /// The arguments of the CLI-test build request.
-const BUILD_ARGS: [&str; 6] = [
+///
+/// No feature is enabled: the tests must exercise the same binary a user
+/// receives.
+const BUILD_ARGS: [&str; 4] = [
     "build",
     "--bin",
     "mriya",
-    "--features",
-    "test-backdoors",
     "--message-format=json-render-diagnostics",
 ];
 

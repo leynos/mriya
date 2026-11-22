@@ -125,7 +125,27 @@ impl ScalewayBackend {
     /// Returns [`ScalewayBackendError::Config`] when configuration validation
     /// fails.
     pub fn default_request(&self) -> Result<InstanceRequest, ScalewayBackendError> {
-        self.config.as_request().map_err(ScalewayBackendError::from)
+        self.default_request_with_env(&mockable::DefaultEnv)
+    }
+
+    /// Builds an instance request using the backend's defaults, reading `HOME`
+    /// for a `~/` cloud-init file path through `env`.
+    ///
+    /// This is [`ScalewayBackend::default_request`] with an injectable
+    /// environment, so a caller or test can resolve a tilde path without
+    /// reading the process environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::Config`] when configuration validation
+    /// fails.
+    pub fn default_request_with_env(
+        &self,
+        env: &impl mockable::Env,
+    ) -> Result<InstanceRequest, ScalewayBackendError> {
+        self.config
+            .as_request_with_env(env)
+            .map_err(ScalewayBackendError::from)
     }
 
     /// Rejects a cache volume that is the instance's root volume.
