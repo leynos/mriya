@@ -68,6 +68,11 @@ struct FieldMetadata {
 
 impl FieldMetadata {
     /// Bundles the four strings that make up a missing-field message.
+    ///
+    /// For example, the metadata for the secret key describes it as the
+    /// "Scaleway API secret key", names `SCW_SECRET_KEY` and the `secret_key`
+    /// TOML key, and places both in the `[scaleway]` section, so a later
+    /// `MissingField` message can tell the user both ways to supply it.
     const fn new(
         description: &'static str,
         env_var: &'static str,

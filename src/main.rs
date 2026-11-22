@@ -14,7 +14,6 @@ use tokio::sync::Mutex;
 
 use camino::Utf8PathBuf;
 use clap::Parser;
-use shell_escape::unix::escape;
 use thiserror::Error;
 
 mod cli;
@@ -30,8 +29,11 @@ use mriya::{
 #[cfg(any(test, feature = "test-backdoors"))]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
 
+mod cli_args;
 #[cfg(test)]
 mod main_tests;
+
+use cli_args::{parse_override, render_remote_command, validate_command_args};
 
 /// Failure modes of a CLI invocation, each rendered as one line on stderr.
 ///
@@ -316,64 +318,6 @@ fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliEr
             ))
         }
     })
-}
-
-/// Trims `value`, rejecting it when nothing remains.
-///
-/// For example, `" DEV1-M "` becomes `DEV1-M` and `"  "` is rejected for
-/// `field`.
-fn parse_override(field: &'static str, value: &str) -> Result<String, CliError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(CliError::InvalidOverride {
-            field,
-            message: String::from("must not be empty or whitespace"),
-        });
-    }
-    Ok(trimmed.to_owned())
-}
-
-/// Joins `args` into one shell command, quoting each argument with
-/// `shell_escape` so the remote shell sees the original words.
-///
-/// For example, `["echo", "a b"]` becomes `echo 'a b'`.
-fn render_remote_command(args: &[String]) -> String {
-    let mut result = String::new();
-    let mut first = true;
-
-    for arg in args {
-        if first {
-            first = false;
-        } else {
-            result.push(' ');
-        }
-
-        let escaped = escape(arg.as_str().into());
-        result.push_str(escaped.as_ref());
-    }
-
-    result
-}
-
-/// Rejects arguments containing ASCII control characters (0x00-0x1F and
-/// 0x7F), which are not safe to send in the remote command line.
-///
-/// For example, `["echo", "ok"]` passes while `["echo", "a\nb"]` returns
-/// [`CliError::InvalidCommand`], because a newline would let a caller inject a
-/// second command into the remote shell line.
-fn validate_command_args(args: &[String]) -> Result<(), CliError> {
-    for arg in args {
-        if arg
-            .chars()
-            .any(|ch| matches!(ch, '\u{0000}'..='\u{001F}' | '\u{007F}'))
-        {
-            return Err(CliError::InvalidCommand(String::from(concat!(
-                "command arguments must not contain control characters (ASCII ",
-                "0x00-0x1F or 0x7F, e.g. newline, carriage return, tab, NUL)"
-            ))));
-        }
-    }
-    Ok(())
 }
 
 /// Writes `err` to standard error.
