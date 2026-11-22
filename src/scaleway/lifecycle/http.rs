@@ -26,7 +26,8 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 /// // Schematic: page 1 carries one server and page 2 is empty, which ends
 /// // pagination. A real `ScalewayInstance` has about thirty required fields
 /// // with no serde defaults, so abbreviated JSON is not decodable; the tests
-/// // use `tests/fixtures/detach-instance.json` as a complete server.
+/// // use `src/scaleway/lifecycle/tests/fixtures/detach-instance.json` as a
+/// // complete server.
 /// {"servers": [{ ... }]}   // page 1: one server
 /// {"servers": []}          // page 2: empty, so polling stops
 /// ```

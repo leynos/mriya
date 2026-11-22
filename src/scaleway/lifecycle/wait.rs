@@ -70,6 +70,12 @@ impl ScalewayBackend {
     /// Returns `Timeout` if no connection succeeds before the backend's wait
     /// deadline.
     ///
+    /// The deadline is checked only before each attempt, not while one is in
+    /// flight. A connection that starts just before the deadline and completes
+    /// after it still returns `Ok(())`, so the wait can overrun the configured
+    /// budget by up to the per-attempt connection timeout. Do not treat the
+    /// deadline as a hard upper bound on how long this call can take.
+    ///
     /// # Examples
     ///
     /// ```ignore

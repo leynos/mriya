@@ -72,7 +72,7 @@ struct CreateServerRequest {
 /// // `ScalewayInstance` carries about thirty required fields with no serde
 /// // defaults, so abbreviated JSON would fail to deserialize before any
 /// // assertion ran. The decodable fixture used by the tests is
-/// // `tests/fixtures/detach-instance.json`.
+/// // `src/scaleway/lifecycle/tests/fixtures/detach-instance.json`.
 /// {"server": {"id": "srv-1", "state": "stopped", ...}}
 /// ```
 #[derive(Deserialize)]
