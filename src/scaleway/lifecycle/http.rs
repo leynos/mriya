@@ -18,8 +18,22 @@ use crate::backend::InstanceHandle;
 use crate::scaleway::types::Zone;
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
+/// Response page from the list-servers call.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Schematic: page 1 carries one server and page 2 is empty, which ends
+/// // pagination. A real `ScalewayInstance` has about thirty required fields
+/// // with no serde defaults, so abbreviated JSON is not decodable; the tests
+/// // use `src/scaleway/lifecycle/tests/fixtures/detach-instance.json` as a
+/// // complete server.
+/// {"servers": [{ ... }]}   // page 1: one server
+/// {"servers": []}          // page 2: empty, so polling stops
+/// ```
 #[derive(Deserialize)]
 struct ListInstancesResponse {
+    /// Instances on this page; an empty list marks the end of pagination.
     servers: Vec<ScalewayInstance>,
 }
 
