@@ -70,9 +70,14 @@ impl FieldMetadata {
     /// Bundles the four strings that make up a missing-field message.
     ///
     /// For example, the metadata for the secret key describes it as the
-    /// "Scaleway API secret key", names `SCW_SECRET_KEY` and the `secret_key`
-    /// TOML key, and places both in the `[scaleway]` section, so a later
-    /// `MissingField` message can tell the user both ways to supply it.
+    /// "Scaleway API secret key" and names `SCW_SECRET_KEY` and the
+    /// `secret_key` TOML key. A later `MissingField` message therefore names
+    /// the environment variable and tells the user to add `secret_key` to
+    /// `[scaleway]`.
+    ///
+    /// The message wording promises that section, but the loader does not yet
+    /// read it; issue #195 tracks that gap, so the environment variable is the
+    /// route that currently works.
     const fn new(
         description: &'static str,
         env_var: &'static str,
