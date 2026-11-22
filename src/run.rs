@@ -271,9 +271,14 @@ where
     /// the cache subdirectories are created after mounting so that language
     /// toolchains can write immediately.
     ///
-    /// For example, with cache directories enabled, `/mnt/mriya-cache/npm` and
-    /// its siblings exist before the remote command runs, so a toolchain never
-    /// has to create them itself.
+    /// For example, with cache directories enabled and the mount succeeding,
+    /// `/mnt/mriya-cache/npm` and its siblings exist before the remote command
+    /// runs, so a toolchain does not have to create them itself.
+    ///
+    /// The directories are created only after a *successful* mount. Because
+    /// the mount is best-effort, a failed mount leaves `mountpoint -q` false
+    /// and skips directory creation, so the remote command can then run with no
+    /// cache directories at all. A toolchain must still cope with that case.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
