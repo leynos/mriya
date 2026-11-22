@@ -275,10 +275,13 @@ where
     /// `/mnt/mriya-cache/npm` and its siblings exist before the remote command
     /// runs, so a toolchain does not have to create them itself.
     ///
-    /// The directories are created only after a *successful* mount. Because
-    /// the mount is best-effort, a failed mount leaves `mountpoint -q` false
-    /// and skips directory creation, so the remote command can then run with no
-    /// cache directories at all. A toolchain must still cope with that case.
+    /// Directory creation is guarded by `mountpoint -q`, so it tests whether
+    /// the path *is* a mount point rather than whether this mount attempt
+    /// succeeded. Those differ: the mount is best-effort, so an attempt can
+    /// fail while the path is already a mount point from an earlier mount, in
+    /// which case the directories are still created. When the path is not a
+    /// mount point at all, no directories are created and the remote command
+    /// runs without them, so a toolchain must still cope with that case.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
