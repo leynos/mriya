@@ -317,8 +317,21 @@ case, without touching the process environment.
 
 ### Internal module boundaries
 
-Two sibling modules exist to keep their parents inside the 400-line budget
+Three sibling modules exist to keep their parents inside the 400-line budget
 without changing behaviour, and each publishes only what its parent needs:
+
+- `src/cli_args.rs` holds the three pure helpers that prepare a remote command:
+  `parse_override` trims a command-line override and rejects a blank one,
+  `validate_command_args` rejects arguments containing ASCII control
+  characters, and `render_remote_command` quotes each argument with
+  `shell_escape` and joins them into one line. None of them holds state or
+  performs I/O, which is what makes the boundary clean: each is a function of
+  its arguments alone, so the unit tests in `main_tests` exercise them without
+  constructing a backend. `main.rs` declares the module and re-exports the
+  three names it calls, rather than reaching into the module by path. These
+  helpers are reachable from the real run path, unlike the test-backdoor
+  scaffolding below, so they are **not** listed in `.cargo/mutants.toml`: an
+  exclusion there would hide mutants a production path can reach.
 
 - `src/janitor/scw.rs` holds the `scw` command runner, JSON list parsing, and
   the four resource operations `list_servers`, `delete_server`, `list_volumes`,
