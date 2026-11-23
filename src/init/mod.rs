@@ -137,8 +137,11 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     /// Backend that creates the volume and destroys the helper instance.
     ///
     /// The volume is deliberately not destroyed on failure: no method bound
-    /// here can delete one, so a failed run leaves it for the janitor to sweep
-    /// (issue #154).
+    /// here can delete one, so a failed run leaves it in place (issue #154).
+    /// Janitor cleanup is not a safety net for it in general: the janitor
+    /// sweeps only volumes carrying an `mriya-test-run-<id>` tag, and this
+    /// volume carries one only when `MRIYA_TEST_RUN_ID` holds a non-blank
+    /// value. Without that variable a leaked volume is left permanently.
     backend: B,
     /// Runs the format command on the helper instance over SSH.
     syncer: Syncer<R>,
