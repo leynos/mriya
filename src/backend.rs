@@ -78,13 +78,21 @@ impl InstanceRequest {
 /// construction.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InstanceRequestBuilder {
+    /// Image label; trimmed on build.
     image_label: String,
+    /// Instance type; trimmed on build.
     instance_type: String,
+    /// Availability zone; trimmed on build.
     zone: String,
+    /// Project identifier; trimmed on build.
     project_id: String,
+    /// Optional organization identifier; trimmed on build when present.
     organisation_id: Option<String>,
+    /// CPU architecture; trimmed on build.
     architecture: String,
+    /// Optional cache volume ID; trimmed on build when present.
     volume_id: Option<String>,
+    /// Optional cloud-init payload; kept verbatim, with no trimming.
     cloud_init_user_data: Option<String>,
 }
 
@@ -207,17 +215,29 @@ pub trait Backend {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Creates a new instance and returns a handle used for subsequent calls.
+    ///
+    /// For example, a valid request yields a handle whose identifier and zone
+    /// are then passed to every later call, while an unavailable instance type
+    /// returns the backend's error instead of a handle.
     fn create<'a>(
         &'a self,
         request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error>;
 
     /// Blocks until the instance is ready for SSH and returns networking info.
+    ///
+    /// For example, an instance that becomes reachable yields its public IP
+    /// and SSH port, while one that never does returns the backend's timeout
+    /// error.
     fn wait_for_ready<'a>(
         &'a self,
         handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error>;
 
     /// Destroys the instance and ensures no provider resources remain.
+    ///
+    /// For example, a successful teardown resolves once the instance is gone
+    /// from the provider's listing, while a provider rejection returns its
+    /// error so the caller can report a possible leak.
     fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error>;
 }

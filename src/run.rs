@@ -18,7 +18,9 @@ use crate::sync::{
     CommandRunner, RemoteCommandOutput, SyncError, Syncer, create_cache_directories_command,
 };
 
+/// Delay between checks for the cloud-init completion marker.
 const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Total time to wait for cloud-init to finish (ten minutes).
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Errors surfaced while performing a remote run.
@@ -80,9 +82,13 @@ where
 /// Executes the remote run flow using the provided backend and syncer.
 #[derive(Debug)]
 pub struct RunOrchestrator<B, R: CommandRunner> {
+    /// Backend that creates, waits for, and destroys the instance.
     backend: B,
+    /// Syncer used for workspace transfer and remote command execution.
     syncer: Syncer<R>,
+    /// Delay between cloud-init completion checks.
     cloud_init_poll_interval: Duration,
+    /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
     cloud_init_wait_timeout: Duration,
 }
 
@@ -166,6 +172,14 @@ where
         Ok(output)
     }
 
+    /// Waits for the backend to report SSH readiness, destroying the instance
+    /// if that fails.
+    ///
+    /// The teardown outcome is appended to the error message.
+    ///
+    /// For example, an SSH timeout returns its own error with
+    /// `(teardown also failed: ...)` appended when the destroy also fails, so
+    /// the caller sees both problems rather than only the first.
     async fn wait_for_ready_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -182,6 +196,11 @@ where
         }
     }
 
+    /// Mounts the cache volume only when the request attached one.
+    ///
+    /// For example, a request carrying a `volume_id` mounts it, while one
+    /// without an attached volume returns `Ok(())` without contacting the
+    /// instance at all.
     async fn mount_volume_if_needed(
         &self,
         handle: &InstanceHandle,
@@ -194,6 +213,11 @@ where
         Ok(())
     }
 
+    /// Syncs the workspace to `dest`, destroying the instance if that fails.
+    ///
+    /// For example, a failed rsync returns the sync error with the teardown
+    /// outcome appended, so a leaked instance is never reported as a plain
+    /// sync failure.
     async fn sync_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -210,6 +234,14 @@ where
         Ok(())
     }
 
+    /// Runs `remote_command`, destroying the instance only if it could not be
+    /// started.
+    ///
+    /// A non-zero exit code from the command is a successful result here.
+    ///
+    /// For example, a command exiting 7 returns that status in
+    /// [`RemoteCommandOutput`], while a failure to start the command destroys
+    /// the instance and returns the error text.
     async fn run_remote_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -238,6 +270,19 @@ where
     /// When `create_cache_directories` is enabled in the sync configuration,
     /// the cache subdirectories are created after mounting so that language
     /// toolchains can write immediately.
+    ///
+    /// For example, with cache directories enabled and the path already a
+    /// mount point, `/mnt/mriya-cache/npm` and its siblings are created before
+    /// the remote command runs, so a toolchain usually does not have to create
+    /// them itself.
+    ///
+    /// Creation is only *attempted*, never guaranteed. The guard
+    /// `mountpoint -q` tests whether the path *is* a mount point rather than
+    /// whether this mount attempt succeeded, so an earlier mount can satisfy
+    /// it; when the path is not a mount point at all, nothing is attempted.
+    /// The creation command itself ends in `2>/dev/null || true`, so a
+    /// read-only or full filesystem also leaves no directories without failing
+    /// the run. A toolchain must therefore cope with their absence.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
@@ -279,6 +324,14 @@ where
         }
     }
 
+    /// Polls for cloud-init's `boot-finished` marker until it appears or the
+    /// timeout elapses.
+    ///
+    /// A failure to run the check, or a timeout, destroys the instance.
+    ///
+    /// For example, the marker `/var/lib/cloud/instance/boot-finished`
+    /// appearing ends the wait successfully, while the deadline passing
+    /// destroys the instance and reports the timeout.
     async fn wait_for_cloud_init(
         &self,
         handle: &InstanceHandle,
@@ -317,12 +370,23 @@ where
         })
     }
 
+    /// Destroys the instance and returns `err` as text, with a note appended
+    /// when the teardown also fails.
+    ///
+    /// For example, `destroy` failing yields `"<err> (teardown also failed:
+    /// ...)"` rather than discarding the original error.
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }
 
+/// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
+/// is present, and otherwise returns `message` unchanged.
+///
+/// For example, `"ssh timeout"` with `Some("network down")` becomes
+/// `"ssh timeout (teardown also failed: network down)"`, while `None` leaves
+/// it as `"ssh timeout"`.
 fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
     if let Some(teardown) = teardown_error {
         format!("{message} (teardown also failed: {teardown})")

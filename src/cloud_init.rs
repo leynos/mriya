@@ -110,6 +110,10 @@ pub fn resolve_cloud_init_user_data_with_env(
 }
 
 /// Validates that a user-data payload is not empty/whitespace.
+///
+/// For example, `"#cloud-config\n"` is accepted while `"   "` returns
+/// [`CloudInitError::InlineEmpty`], because a blank payload would otherwise be
+/// sent to the provider as if the caller had supplied one.
 pub(crate) fn validate_payload(payload: &str) -> Result<(), CloudInitError> {
     if payload.trim().is_empty() {
         return Err(CloudInitError::InlineEmpty);
@@ -117,6 +121,15 @@ pub(crate) fn validate_payload(payload: &str) -> Result<(), CloudInitError> {
     Ok(())
 }
 
+/// Reads a UTF-8 file through ambient filesystem authority.
+///
+/// Absolute paths are split into parent directory and file name so the
+/// file is read relative to an opened directory; relative paths are read
+/// from the current directory. Errors are returned as text.
+///
+/// For example, `/etc/mriya/user-data.yaml` is opened as `user-data.yaml`
+/// inside a handle to `/etc/mriya`, so the read cannot escape that directory,
+/// while `user-data.yaml` is read from the current directory.
 fn read_to_string_ambient(path: &str) -> Result<String, String> {
     let path_buf = Utf8Path::new(path);
 
@@ -147,6 +160,10 @@ fn read_to_string_ambient(path: &str) -> Result<String, String> {
 ///
 /// Returns [`CloudInitError::HomeUnavailable`] when `path` starts with `~/`
 /// and `HOME` is set to a value that is not valid Unicode.
+///
+/// For example, `~/user-data.yaml` with `HOME=/home/ada` expands to
+/// `/home/ada/user-data.yaml`, while a `HOME` that is not valid Unicode
+/// reports the error naming `~/user-data.yaml` rather than `HOME`.
 fn expand_cloud_init_path(path: &str, env: &impl mockable::Env) -> Result<String, CloudInitError> {
     let home = home_from_env(env, path).map_err(|_| CloudInitError::HomeUnavailable {
         path: path.to_owned(),

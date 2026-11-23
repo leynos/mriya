@@ -56,13 +56,28 @@ pub struct ScalewayConfig {
 
 /// Metadata for a configuration field, used to generate actionable error messages.
 struct FieldMetadata {
+    /// Phrase naming the setting in the error message.
     description: &'static str,
+    /// Environment variable the message tells the user to set.
     env_var: &'static str,
+    /// TOML key the message tells the user to add.
     toml_key: &'static str,
+    /// Section name quoted in the message, in `[section]` form.
     section: &'static str,
 }
 
 impl FieldMetadata {
+    /// Bundles the four strings that make up a missing-field message.
+    ///
+    /// For example, the metadata for the secret key describes it as the
+    /// "Scaleway API secret key" and names `SCW_SECRET_KEY` and the
+    /// `secret_key` TOML key. A later `MissingField` message therefore names
+    /// the environment variable and tells the user to add `secret_key` to
+    /// `[scaleway]`.
+    ///
+    /// The message wording promises that section, but the loader does not yet
+    /// read it; issue #195 tracks that gap, so the environment variable is the
+    /// route that currently works.
     const fn new(
         description: &'static str,
         env_var: &'static str,
@@ -79,6 +94,11 @@ impl FieldMetadata {
 }
 
 impl ScalewayConfig {
+    /// Fails with `MissingField`, using `metadata` for the message, when `value`
+    /// is empty or only whitespace.
+    ///
+    /// For example, `" eu-west-1 "` passes while `"  "` reports the field's
+    /// description together with its environment variable and TOML key.
     fn require_field(value: &str, metadata: &FieldMetadata) -> Result<(), ConfigError> {
         if value.trim().is_empty() {
             return Err(ConfigError::MissingField(format!(
@@ -132,6 +152,12 @@ impl ScalewayConfig {
             .map_err(|err| ConfigError::Parse(err.to_string()))
     }
 
+    /// Resolves the inline and file settings into user-data, rewording each
+    /// failure in terms of the `SCW_` variables and configuration keys.
+    ///
+    /// For example, setting only the inline value yields that value, while
+    /// setting both the inline value and a file reports
+    /// [`ConfigError::CloudInit`] instead of silently preferring one.
     fn resolve_cloud_init_user_data(&self) -> Result<Option<String>, ConfigError> {
         resolve_cloud_init_user_data(
             self.cloud_init_user_data.as_deref(),
@@ -179,6 +205,14 @@ impl ScalewayConfig {
         Ok(())
     }
 
+    /// Checks the secret key, project ID, image, instance type, zone, and
+    /// architecture are non-blank, reporting the first that is not.
+    ///
+    /// The optional settings are not checked here.
+    ///
+    /// For example, a configuration with a blank secret key and a valid
+    /// project ID reports only the secret key, because the first failure
+    /// returns immediately rather than collecting every problem.
     fn validate_required_fields(&self) -> Result<(), ConfigError> {
         Self::require_field(
             &self.secret_key,
