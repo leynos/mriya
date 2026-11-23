@@ -327,11 +327,12 @@ without changing behaviour, and each publishes only what its parent needs:
   `shell_escape` and joins them into one line. None of them holds state or
   performs I/O, which is what makes the boundary clean: each is a function of
   its arguments alone, so the unit tests in `main_tests` exercise them without
-  constructing a backend. `main.rs` declares the module and re-exports the
-  three names it calls, rather than reaching into the module by path. These
-  helpers are reachable from the real run path, unlike the test-backdoor
-  scaffolding below, so they are **not** listed in `.cargo/mutants.toml`: an
-  exclusion there would hide mutants a production path can reach.
+  constructing a backend. `main.rs` declares the module and imports the three
+  names it calls with a private `use`, rather than reaching into the module by
+  path; nothing is re-exported, so the boundary stays one-way. These helpers
+  are reachable from the real run path, unlike the test-backdoor scaffolding
+  below, so they are **not** listed in `.cargo/mutants.toml`: an exclusion
+  there would hide mutants a production path can reach.
 
 - `src/janitor/scw.rs` holds the `scw` command runner, JSON list parsing, and
   the four resource operations `list_servers`, `delete_server`, `list_volumes`,

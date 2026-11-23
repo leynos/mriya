@@ -271,17 +271,18 @@ where
     /// the cache subdirectories are created after mounting so that language
     /// toolchains can write immediately.
     ///
-    /// For example, with cache directories enabled and the mount succeeding,
-    /// `/mnt/mriya-cache/npm` and its siblings exist before the remote command
-    /// runs, so a toolchain does not have to create them itself.
+    /// For example, with cache directories enabled and the path already a
+    /// mount point, `/mnt/mriya-cache/npm` and its siblings are created before
+    /// the remote command runs, so a toolchain usually does not have to create
+    /// them itself.
     ///
-    /// Directory creation is guarded by `mountpoint -q`, so it tests whether
-    /// the path *is* a mount point rather than whether this mount attempt
-    /// succeeded. Those differ: the mount is best-effort, so an attempt can
-    /// fail while the path is already a mount point from an earlier mount, in
-    /// which case the directories are still created. When the path is not a
-    /// mount point at all, no directories are created and the remote command
-    /// runs without them, so a toolchain must still cope with that case.
+    /// Creation is only *attempted*, never guaranteed. The guard
+    /// `mountpoint -q` tests whether the path *is* a mount point rather than
+    /// whether this mount attempt succeeded, so an earlier mount can satisfy
+    /// it; when the path is not a mount point at all, nothing is attempted.
+    /// The creation command itself ends in `2>/dev/null || true`, so a
+    /// read-only or full filesystem also leaves no directories without failing
+    /// the run. A toolchain must therefore cope with their absence.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
