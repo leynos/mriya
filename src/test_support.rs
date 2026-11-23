@@ -180,7 +180,9 @@ impl crate::sync::CommandRunner for ScriptedRunner {
 /// Renders `(id, zone, tags)` triples as comma-separated JSON objects.
 ///
 /// Values are inserted without JSON escaping, so they must not contain
-/// quotes or backslashes.
+/// quotes, backslashes, or any JSON control character. A newline is the easy
+/// one to miss: it needs no quote or backslash, yet inserting it unescaped
+/// yields invalid JSON rather than the ID the script meant.
 fn json_tagged_resources(items: &[(&str, &str, &[&str])]) -> String {
     items
         .iter()

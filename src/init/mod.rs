@@ -134,7 +134,11 @@ pub struct InitOutcome {
 /// Coordinates volume creation, formatting, and configuration updates.
 #[derive(Debug)]
 pub struct InitOrchestrator<B, R: CommandRunner, W> {
-    /// Backend that creates and destroys the volume and the helper instance.
+    /// Backend that creates the volume and destroys the helper instance.
+    ///
+    /// The volume is deliberately not destroyed on failure: no method bound
+    /// here can delete one, so a failed run leaves it for the janitor to sweep
+    /// (issue #154).
     backend: B,
     /// Runs the format command on the helper instance over SSH.
     syncer: Syncer<R>,
