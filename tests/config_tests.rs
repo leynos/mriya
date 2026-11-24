@@ -13,14 +13,20 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 
 use test_constants::DEFAULT_INSTANCE_TYPE;
 
-/// An environment whose `HOME` answers `home` and whose other variables are
-/// unset, so `as_request_with_env` never reads the process environment.
+/// An environment whose `HOME` answers `home`, so `as_request_with_env` never
+/// reads the process environment. A lookup of any other key fails the test, so
+/// an accidental extra read cannot pass unnoticed.
 fn env_with_home(home: Result<String, std::env::VarError>) -> MockEnv {
     let for_string = home.clone();
     let mut env = MockEnv::new();
-    env.expect_raw().returning(move |_| home.clone());
-    env.expect_string()
-        .returning(move |_| for_string.clone().ok());
+    env.expect_raw().returning(move |key| {
+        assert_eq!(key, "HOME", "only HOME may be read");
+        home.clone()
+    });
+    env.expect_string().returning(move |key| {
+        assert_eq!(key, "HOME", "only HOME may be read");
+        for_string.clone().ok()
+    });
     env
 }
 
