@@ -5,7 +5,10 @@
 # crates/weaver-test-macros/src/lib.rs (last changed in commit
 # cc9397eec1921dbfef951bcf4c9f650915c7f4b9; main was
 # abc7c3809332cc756a0e9c79021f518d39a02dc7 when copied). Do not edit it; take
-# upstream changes by copying again from a recorded revision.
+# upstream changes by copying again from a recorded revision. Because the macro
+# body is not ours to modify, `tests/ui.rs` covers it from the outside with
+# `trybuild`: one pass case and one compile-fail case with a committed
+# `.stderr` snapshot.
 [package]
 name = "mriya-test-macros"
 version = "0.1.0"
@@ -21,3 +24,6 @@ syn = { version = "3.0", features = ["full"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+trybuild = "1.0.125"
