@@ -23,7 +23,9 @@ pub use types::{
     CommandOutput, CommandRunner, ProcessCommandRunner, RemoteCommandOutput,
     StreamingCommandRunner, SyncDestination,
 };
-pub use util::{HomeUnavailable, expand_tilde, expand_tilde_with_home, home_from_env};
+pub use util::{
+    HomeUnavailable, expand_tilde, expand_tilde_with_env, expand_tilde_with_home, home_from_env,
+};
 
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]

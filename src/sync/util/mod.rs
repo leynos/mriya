@@ -2,4 +2,6 @@
 
 mod expand;
 
-pub use expand::{HomeUnavailable, expand_tilde, expand_tilde_with_home, home_from_env};
+pub use expand::{
+    HomeUnavailable, expand_tilde, expand_tilde_with_env, expand_tilde_with_home, home_from_env,
+};

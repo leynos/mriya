@@ -293,11 +293,10 @@ only way to express `NotUnicode` and therefore the way the undecodable-`HOME`
 cases are written. A test must not change the process environment or working
 directory: `clippy.toml` disallows `std::env::set_var`, `remove_var`,
 `set_current_dir` and `temp_env`'s four entry points, so a new site fails lint.
-The cases that still read the live process `HOME` — `expand_tilde`'s own
-process-level cases and `config_tests`' two `as_request` cases — are the only
-exceptions. Each carries `#[expect(clippy::disallowed_methods, reason = ...)]`,
-which reports itself once the site migrates to an injected environment. A CLI
-behaviour scenario that needs `HOME` sets it on the child with `Command::env`.
+No test is an exception: `expand_tilde` and `ScalewayConfig::as_request`
+delegate to `expand_tilde_with_env` and `ScalewayConfig::as_request_with_env`,
+which take the environment, and their cases inject a `MockEnv`. A CLI behaviour
+scenario that needs `HOME` sets it on the child with `Command::env`.
 
 The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
 test process, which is why the tilde cloud-init scenario can assert an expanded

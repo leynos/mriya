@@ -3,6 +3,7 @@
 #[path = "common/test_constants.rs"]
 mod test_constants;
 
+use mockable::MockEnv;
 use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
 use tempfile::TempDir;
@@ -11,6 +12,23 @@ use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 
 use test_constants::DEFAULT_INSTANCE_TYPE;
+
+/// An environment whose `HOME` answers `home`, so `as_request_with_env` never
+/// reads the process environment. A lookup of any other key fails the test, so
+/// an accidental extra read cannot pass unnoticed.
+fn env_with_home(home: Result<String, std::env::VarError>) -> MockEnv {
+    let for_string = home.clone();
+    let mut env = MockEnv::new();
+    env.expect_raw().returning(move |key| {
+        assert_eq!(key, "HOME", "only HOME may be read");
+        home.clone()
+    });
+    env.expect_string().returning(move |key| {
+        assert_eq!(key, "HOME", "only HOME may be read");
+        for_string.clone().ok()
+    });
+    env
+}
 
 #[fixture]
 fn valid_config() -> ScalewayConfig {
@@ -230,26 +248,20 @@ fn config_errors_when_cloud_init_user_data_file_is_empty(valid_config: ScalewayC
 /// `as_request`, which `run_command` calls before provisioning or syncing, so
 /// the remote command is never reached. The message must name both the path
 /// and the remedy, because `write_error` prints only the outermost `Display`.
-#[cfg(unix)]
 #[rstest]
 fn config_rejects_a_tilde_cloud_init_file_when_home_cannot_be_decoded(
     mut valid_config: ScalewayConfig,
 ) {
     use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
 
     valid_config.cloud_init_user_data_file = Some(String::from("~/user-data.txt"));
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "as_request reads the process HOME; migrate when it takes an injected environment"
-    )]
-    let err = temp_env::with_var(
-        "HOME",
-        Some(&OsString::from_vec(b"/home/\xff".to_vec())),
-        || valid_config.as_request(),
-    )
-    .expect_err("an undecodable HOME should be reported, not silently ignored");
+    let env = env_with_home(Err(std::env::VarError::NotUnicode(OsString::from(
+        "/home/\u{fffd}",
+    ))));
+    let err = valid_config
+        .as_request_with_env(&env)
+        .expect_err("an undecodable HOME should be reported, not silently ignored");
 
     let rendered = err.to_string();
     for expected in [
@@ -283,13 +295,10 @@ fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConf
         ..valid_config
     };
 
-    // `as_request` reads the process `HOME`; `with_var` scopes the override
-    // and serializes it against other `temp_env` users.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "as_request reads the process HOME; migrate when it takes an injected environment"
-    )]
-    let request = temp_env::with_var("HOME", Some(home.as_str()), || cfg.as_request())
+    // `as_request_with_env` reads `HOME` from the injected environment.
+    let env = env_with_home(Ok(home.clone()));
+    let request = cfg
+        .as_request_with_env(&env)
         .expect("configuration with a tilde-expanded cloud-init file should produce a request");
 
     assert_eq!(
