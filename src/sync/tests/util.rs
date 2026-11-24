@@ -94,7 +94,10 @@ fn expand_tilde_reads_the_injected_home(
     #[case] home: Result<String, std::env::VarError>,
     #[case] expected: &str,
 ) {
-    let env = mock_env_with_raw(move |_| home.clone());
+    let env = mock_env_with_raw(move |key| {
+        assert_eq!(key, "HOME", "only HOME may be read");
+        home.clone()
+    });
     let expanded = expand_tilde_with_env("~/.ssh/id_ed25519", &env);
 
     assert_eq!(expanded, expected);
