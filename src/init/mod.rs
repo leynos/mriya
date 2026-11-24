@@ -141,7 +141,8 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     /// Janitor cleanup is not a safety net for it in general: the janitor
     /// sweeps only volumes carrying an `mriya-test-run-<id>` tag, and this
     /// volume carries one only when `MRIYA_TEST_RUN_ID` holds a non-blank
-    /// value. Without that variable a leaked volume is left permanently.
+    /// value. Without that variable the janitor will not remove a leaked
+    /// volume, and it remains until an operator deletes it manually.
     backend: B,
     /// Runs the format command on the helper instance over SSH.
     syncer: Syncer<R>,
