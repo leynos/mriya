@@ -1,8 +1,15 @@
 //! Helper utilities for init configuration and formatting.
 
+/// Bytes in one gigabyte as used for volume sizes (binary, 1024^3).
 const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+/// Device path prefix under which Scaleway exposes an attached Block Storage
+/// volume; the volume ID completes it.
 const DISK_BY_ID_PREFIX: &str = "/dev/disk/by-id/scsi-0SCW_BSSD_";
 
+/// Builds the remote command that formats the volume as ext4.
+///
+/// The `-F` flag forces formatting without prompting. For example, `abc`
+/// yields `sudo mkfs.ext4 -F /dev/disk/by-id/scsi-0SCW_BSSD_abc`.
 pub(super) fn format_command(volume_id: &str) -> String {
     format!(
         "sudo mkfs.ext4 -F {}{}",
@@ -11,10 +18,13 @@ pub(super) fn format_command(volume_id: &str) -> String {
     )
 }
 
+/// Converts a size in gigabytes to bytes, or `None` on overflow.
 pub(super) fn volume_size_bytes(size_gb: u32) -> Option<u64> {
     u64::from(size_gb).checked_mul(BYTES_PER_GB)
 }
 
+/// Derives the cache volume name `mriya-<slug>-cache` from the project name,
+/// falling back to `mriya-cache` when the slug is empty.
 pub(super) fn volume_name_for_project(project_name: &str) -> String {
     let slug = slugify(project_name);
     if slug.is_empty() {
@@ -23,6 +33,11 @@ pub(super) fn volume_name_for_project(project_name: &str) -> String {
     format!("mriya-{slug}-cache")
 }
 
+/// Lowercases ASCII alphanumerics and collapses every other run of
+/// characters into a single dash, trimming dashes from both ends.
+///
+/// Non-ASCII characters are dropped to dashes, so `Fancy Project!` becomes
+/// `fancy-project`.
 pub(super) fn slugify(value: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;

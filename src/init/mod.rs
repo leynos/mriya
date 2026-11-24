@@ -15,6 +15,7 @@ use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
 use helpers::{format_command, volume_name_for_project, volume_size_bytes};
 
 mod error;
+
 mod helpers;
 
 pub use error::{InitConfigError, InitError, InitRequestError};
@@ -133,8 +134,19 @@ pub struct InitOutcome {
 /// Coordinates volume creation, formatting, and configuration updates.
 #[derive(Debug)]
 pub struct InitOrchestrator<B, R: CommandRunner, W> {
+    /// Backend that creates the volume and destroys the helper instance.
+    ///
+    /// The volume is deliberately not destroyed on failure: no method bound
+    /// here can delete one, so a failed run leaves it in place (issue #154).
+    /// Janitor cleanup is not a safety net for it in general: the janitor
+    /// sweeps only volumes carrying an `mriya-test-run-<id>` tag, and this
+    /// volume carries one only when `MRIYA_TEST_RUN_ID` holds a non-blank
+    /// value. Without that variable the janitor will not remove a leaked
+    /// volume, and it remains until an operator deletes it manually.
     backend: B,
+    /// Runs the format command on the helper instance over SSH.
     syncer: Syncer<R>,
+    /// Records the new volume ID in the configuration file.
     config_writer: W,
 }
 
@@ -202,6 +214,8 @@ where
         })
     }
 
+    /// Fails before creating anything when a volume ID is already configured
+    /// and overwriting was not requested.
     fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
         if let Some(existing) = self.config_writer.current_volume_id()?
             && !request.overwrite_existing_volume_id
@@ -215,6 +229,10 @@ where
         Ok(())
     }
 
+    /// Creates a helper instance with the new volume attached and waits for it
+    /// to be reachable.
+    ///
+    /// Cloud-init user-data is cleared so the helper boots with defaults.
     async fn prepare_instance(
         &self,
         request: &InitRequest,
@@ -234,6 +252,7 @@ where
         Ok((handle, networking))
     }
 
+    /// Waits for SSH readiness, destroying the instance if that fails.
     async fn wait_for_ready_or_destroy(
         &self,
         handle: &InstanceHandle,
@@ -250,6 +269,8 @@ where
         }
     }
 
+    /// Passes `Ok` through. On failure, destroys the instance and builds the
+    /// error with `make_error` from the message and original error.
     async fn handle_failure_or_destroy<E>(
         &self,
         handle: &InstanceHandle,
@@ -268,6 +289,8 @@ where
         }
     }
 
+    /// Formats the volume on the helper instance, failing when the command
+    /// cannot be run or exits with anything other than 0.
     fn format_volume(
         &self,
         networking: &InstanceNetworking,
@@ -288,6 +311,8 @@ where
         })
     }
 
+    /// Destroys the instance and returns `err` as text, with a note appended
+    /// when the teardown also fails.
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
@@ -307,9 +332,12 @@ fn format_spawn_failure(err: SyncError) -> FormatFailure {
     }
 }
 
+/// Why formatting failed, kept so the error can carry its cause.
 #[derive(Debug)]
 struct FormatFailure {
+    /// Description of the failure, shown to the user.
     message: String,
+    /// Underlying SSH error, absent when the command ran but exited non-zero.
     source: Option<SyncError>,
 }
 
@@ -319,6 +347,8 @@ impl Display for FormatFailure {
     }
 }
 
+/// Describes a non-zero or missing exit status from `mkfs.ext4`, including
+/// trimmed stderr when there is any.
 fn format_failure_message(output: &RemoteCommandOutput) -> String {
     let stderr = output.stderr.trim();
     match output.exit_code {
@@ -329,6 +359,8 @@ fn format_failure_message(output: &RemoteCommandOutput) -> String {
     }
 }
 
+/// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
+/// is present, and otherwise returns `message` unchanged.
 fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
     if let Some(teardown) = teardown_error {
         format!("{message} (teardown also failed: {teardown})")
