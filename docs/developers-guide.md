@@ -410,6 +410,14 @@ without the fast flags:
   it in preference to `RUSTFLAGS`), and names neither `-Zthreads=8` nor the
   `mold` flag. The Concordat rule checks its isolation.
 
+Cognitive complexity is not gated by Clippy. Clippy's `cognitive_complexity`
+scores code after macro expansion, so it counts branching a macro generated,
+and neither `Cargo.toml` nor `clippy.toml` enables it. Whitaker's experimental
+`macro_aware_cognitive_complexity` gates it at `max_complexity = 9`,
+CodeScene's ceiling. `dylint.toml` opts in with
+`[whitaker] experimental = ["macro_aware_cognitive_complexity"]`. Fix a finding
+by extracting named helpers, never by raising the threshold.
+
 ### Installed tooling and the preflight
 
 On Linux the configuration names `mold`, and rustc reaches it through
