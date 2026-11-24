@@ -55,7 +55,6 @@ toml = "1.1"
 # either moves.
 # Move this pin only when the builder's pin moves; see the developers' guide.
 typos-cli = "=1.52.2"
-temp-env = "0.3.6"
 mockable = { version = "3.0.0", default-features = false, features = ["mock"] }
 
 [profile.dev]

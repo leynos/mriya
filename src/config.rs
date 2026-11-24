@@ -1,7 +1,7 @@
 //! Configuration loading via `ortho-config`.
 
 use crate::backend::InstanceRequest;
-use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data};
+use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data_with_env};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
@@ -137,8 +137,25 @@ impl ScalewayConfig {
     ///
     /// Returns [`ConfigError`] when validation fails.
     pub fn as_request(&self) -> Result<InstanceRequest, ConfigError> {
+        self.as_request_with_env(&mockable::DefaultEnv)
+    }
+
+    /// Builds an [`InstanceRequest`], reading `HOME` for `~/` expansion of the
+    /// cloud-init file path through `env`.
+    ///
+    /// Identical to [`Self::as_request`] except for where `HOME` comes from, so
+    /// a caller or test can supply its own without changing the process
+    /// environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when validation fails.
+    pub fn as_request_with_env(
+        &self,
+        env: &impl mockable::Env,
+    ) -> Result<InstanceRequest, ConfigError> {
         self.validate_required_fields()?;
-        let cloud_init_user_data = self.resolve_cloud_init_user_data()?;
+        let cloud_init_user_data = self.resolve_cloud_init_user_data(env)?;
         InstanceRequest::builder()
             .image_label(&self.default_image)
             .instance_type(&self.default_instance_type)
@@ -158,10 +175,14 @@ impl ScalewayConfig {
     /// For example, setting only the inline value yields that value, while
     /// setting both the inline value and a file reports
     /// [`ConfigError::CloudInit`] instead of silently preferring one.
-    fn resolve_cloud_init_user_data(&self) -> Result<Option<String>, ConfigError> {
-        resolve_cloud_init_user_data(
+    fn resolve_cloud_init_user_data(
+        &self,
+        env: &impl mockable::Env,
+    ) -> Result<Option<String>, ConfigError> {
+        resolve_cloud_init_user_data_with_env(
             self.cloud_init_user_data.as_deref(),
             self.cloud_init_user_data_file.as_deref(),
+            env,
         )
         .map_err(|err| match err {
             CloudInitError::BothProvided => ConfigError::CloudInit(String::from(concat!(

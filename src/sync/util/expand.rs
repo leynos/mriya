@@ -69,7 +69,28 @@ pub fn expand_tilde_with_home(path: &str, home: Option<&str>) -> String {
 /// ```
 #[must_use]
 pub fn expand_tilde(path: &str) -> String {
-    let home = home_from_env(&mockable::DefaultEnv, path).ok().flatten();
+    expand_tilde_with_env(path, &mockable::DefaultEnv)
+}
+
+/// Expands a leading `~/` prefix using `env` for `HOME`.
+///
+/// This is [`expand_tilde`] with the environment injected, so a caller or test
+/// can supply its own `HOME`, including an absent or undecodable one, without
+/// changing the process environment. An absent or undecodable `HOME` leaves
+/// the path unchanged.
+///
+/// # Examples
+///
+/// ```
+/// # use mriya::sync::expand_tilde_with_env;
+/// assert_eq!(
+///     expand_tilde_with_env("/absolute/path", &mockable::DefaultEnv),
+///     "/absolute/path"
+/// );
+/// ```
+#[must_use]
+pub fn expand_tilde_with_env(path: &str, env: &impl Env) -> String {
+    let home = home_from_env(env, path).ok().flatten();
     expand_tilde_with_home(path, home.as_deref())
 }
 
