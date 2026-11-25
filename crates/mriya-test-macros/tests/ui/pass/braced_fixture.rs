@@ -1,8 +1,15 @@
-//! The attribute must suppress `unused_braces` on a fixture body.
+//! The attribute must suppress `unused_braces` on the item it decorates.
 //!
-//! The body below is deliberately wrapped in an extra block. Without the
-//! attribute that block is `unused_braces`, which this crate denies, so the
-//! case fails to compile if the attribute stops emitting its allowance.
+//! The fixture body is deliberately wrapped in an extra block. Without the
+//! attribute that block is `unused_braces`, which this crate denies; the
+//! negative control shows the same body without it. So this case fails if the
+//! macro's allowance is removed or replaced with an identity pass-through.
+//!
+//! The body is a plain `fn` rather than an `#[fixture]` on purpose.
+//! `#[fixture]` was measured not to trip `unused_braces` on this toolchain
+//! (its expansion does not emit the extra braces this lint reports), so a
+//! fixture-based case would pass with or without the attribute and prove
+//! nothing.
 #![deny(unused_braces)]
 
 use mriya_test_macros::allow_fixture_expansion_lints;
