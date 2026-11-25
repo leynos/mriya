@@ -13,6 +13,7 @@ pub mod janitor;
 pub mod run;
 pub mod scaleway;
 pub mod sync;
+mod teardown;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod test_support;

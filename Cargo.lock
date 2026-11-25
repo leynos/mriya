@@ -1908,8 +1908,7 @@ name = "mriya-test-macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "rstest",
- "syn 3.0.6",
+ "syn 3.0.10",
  "trybuild",
 ]
 
