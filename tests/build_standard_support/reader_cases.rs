@@ -5,24 +5,57 @@
 
 use rstest::rstest;
 
-use super::fixtures::{
-    BARE_NIGHTLY, BUILD_LOSES_THREADS, COMMENT_AFTER_CHANNEL, COMMENT_NAMING_THE_ACTION,
-    COMMENTED_OK, COVERAGE_BORROWING_A_SIBLING, COVERAGE_COMMENTED_POLICY,
-    COVERAGE_DENYING_WITH_COMMENT, COVERAGE_EMPTY_POLICY, COVERAGE_LOOKALIKE_POLICY, COVERAGE_OK,
-    COVERAGE_OTHER_POLICY, COVERAGE_UNASSIGNED, COVERAGE_WITH_LINKER, COVERAGE_WITH_THREADS,
-    LINKER_IN_BUILD, LINUX_LOSES_LINKER, NIGHTLY, NIGHTLY_OK, NIGHTLY_SPELLED_APART,
-    NO_BUILD_SOURCE, NO_CHANNEL, SHORT_DATED_NIGHTLY, SIBLING_KEY_OK, SPREAD_ARRAY, STABLE,
-    STABLE_OK, STABLE_WITH_THREADS, STEP_BEFORE_A_SIBLING_THAT_INSTALLS, STEP_INPUT_OFF,
-    STEP_INSTALLS, STEP_INSTALLS_BARE, STEP_MISSING_INPUT, TRAILING_CONTENT, TRIPLE_ONLY,
-    TWO_CHANNELS, UNCLOSED_CHANNEL, UNDATED_NIGHTLY, UNKNOWN_CHANNEL, UNQUOTED_BESIDE_VALID,
-};
-
 use super::{
     ci_steps::{
-        COVERAGE_DENIES_WARNINGS, Workflow, coverage_presence_problem, coverage_problems,
+        COVERAGE_DENIES_WARNINGS,
+        Workflow,
+        coverage_presence_problem,
+        coverage_problems,
         linker_install_problems,
     },
     config::{Flags, Pin, Problems, THREADS_FLAG, config_problems},
+    fixtures::{
+        BARE_NIGHTLY,
+        BUILD_LOSES_THREADS,
+        COMMENT_AFTER_CHANNEL,
+        COMMENT_NAMING_THE_ACTION,
+        COMMENTED_OK,
+        COVERAGE_BORROWING_A_SIBLING,
+        COVERAGE_COMMENTED_POLICY,
+        COVERAGE_DENYING_WITH_COMMENT,
+        COVERAGE_EMPTY_POLICY,
+        COVERAGE_LOOKALIKE_POLICY,
+        COVERAGE_OK,
+        COVERAGE_OTHER_POLICY,
+        COVERAGE_UNASSIGNED,
+        COVERAGE_WITH_LINKER,
+        COVERAGE_WITH_THREADS,
+        LINKER_IN_BUILD,
+        LINUX_LOSES_LINKER,
+        NIGHTLY,
+        NIGHTLY_OK,
+        NIGHTLY_SPELLED_APART,
+        NO_BUILD_SOURCE,
+        NO_CHANNEL,
+        SHORT_DATED_NIGHTLY,
+        SIBLING_KEY_OK,
+        SPREAD_ARRAY,
+        STABLE,
+        STABLE_OK,
+        STABLE_WITH_THREADS,
+        STEP_BEFORE_A_SIBLING_THAT_INSTALLS,
+        STEP_INPUT_OFF,
+        STEP_INSTALLS,
+        STEP_INSTALLS_BARE,
+        STEP_MISSING_INPUT,
+        TRAILING_CONTENT,
+        TRIPLE_ONLY,
+        TWO_CHANNELS,
+        UNCLOSED_CHANNEL,
+        UNDATED_NIGHTLY,
+        UNKNOWN_CHANNEL,
+        UNQUOTED_BESIDE_VALID,
+    },
     make::{Assignment, assigned_rustflags, commands_from},
 };
 
@@ -271,8 +304,8 @@ fn a_coverage_step_keeps_the_repository_warning_policy(
 
 /// Scenario: the number of coverage steps found against the number recorded.
 ///
-/// Invariant: a removed or an added coverage step is a complaint, and a match is not, so a repository
-/// with no coverage step records none and passes.
+/// Invariant: a removed or an added coverage step is a complaint, and a match is not, so a
+/// repository with no coverage step records none and passes.
 #[test]
 fn the_coverage_step_count_is_pinned_both_ways() {
     assert!(coverage_presence_problem(1, 1).is_none());

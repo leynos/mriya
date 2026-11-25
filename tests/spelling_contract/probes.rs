@@ -7,10 +7,12 @@
 
 use rstest::rstest;
 
-use crate::CARGO_KIND;
-use crate::LINKER_NAME;
-use crate::RUNTIME_KEY;
-use crate::checks::{Probe, accepted, check, reported};
+use crate::{
+    CARGO_KIND,
+    LINKER_NAME,
+    RUNTIME_KEY,
+    checks::{Probe, accepted, check, reported},
+};
 
 /// The external names this repository exempts, accepted where they belong and
 /// exposed as ordinary prose elsewhere.
@@ -122,9 +124,7 @@ fn declaration_exemptions_are_anchored_to_their_exact_lines(
 }
 
 /// A complete Tokio runtime attribute carrying `body`.
-pub fn tokio_attribute(body: &str) -> String {
-    format!("#[tokio::{body}]\n")
-}
+pub fn tokio_attribute(body: &str) -> String { format!("#[tokio::{body}]\n") }
 
 /// The Tokio runtime attributes the shared base masks.
 ///

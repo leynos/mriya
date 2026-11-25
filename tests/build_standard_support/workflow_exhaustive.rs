@@ -49,7 +49,8 @@ impl StepKind {
         Self::CommentNamingBoth,
     ];
 
-    /// Returns the step's lines, with `@FLAGS@` standing for a coverage policy the repository accepts.
+    /// Returns the step's lines, with `@FLAGS@` standing for a coverage policy the repository
+    /// accepts.
     const fn template(self) -> &'static [&'static str] {
         match self {
             Self::SetupInstalling => &[SETUP, "  with:", "    install-mold: 'true'"],

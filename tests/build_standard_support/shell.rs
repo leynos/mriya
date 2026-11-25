@@ -36,8 +36,8 @@ pub fn compiles(command: &str) -> bool {
     cargo_subcommand || words.iter().any(|word| names_program(word, "whitaker"))
 }
 
-/// Returns whether a word names a program: its final path component, with or without `.exe`, matches
-/// (`cargo`, `/usr/bin/cargo`, `C:\\tools\\cargo.exe`).
+/// Returns whether a word names a program: its final path component, with or without `.exe`,
+/// matches (`cargo`, `/usr/bin/cargo`, `C:\\tools\\cargo.exe`).
 pub fn names_program(word: &str, program: &str) -> bool {
     word.rsplit(['/', '\\'])
         .next()

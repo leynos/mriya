@@ -1,9 +1,10 @@
 //! Tests for `StreamingCommandRunner` output forwarding and capture.
 
-use super::super::*;
+use std::{ffi::OsString, fmt::Write as _};
+
 use rstest::rstest;
-use std::ffi::OsString;
-use std::fmt::Write as _;
+
+use super::super::*;
 
 /// Run a shell script via `StreamingCommandRunner` and assert its output.
 ///

@@ -8,8 +8,10 @@ use std::ffi::OsString;
 
 use rstest::rstest;
 
-use super::super::*;
-use super::fixtures::{base_config, networking};
+use super::{
+    super::*,
+    fixtures::{base_config, networking},
+};
 use crate::test_helpers::{mock_env, mock_env_with_raw};
 
 /// Builds a syncer whose identity file is `identity`.

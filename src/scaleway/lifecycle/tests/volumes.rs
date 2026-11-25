@@ -10,11 +10,16 @@
 use anyhow::{Context, Result};
 use rstest::rstest;
 
-use super::http_stub::{Reply, only_request, request_body, request_url, with_stub};
-use super::{backend_fixture, handle};
-use crate::backend::InstanceHandle;
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
-use crate::volume::{VolumeHandle, VolumeRequest};
+use super::{
+    backend_fixture,
+    handle,
+    http_stub::{Reply, only_request, request_body, request_url, with_stub},
+};
+use crate::{
+    backend::InstanceHandle,
+    scaleway::{ScalewayBackend, ScalewayBackendError},
+    volume::{VolumeHandle, VolumeRequest},
+};
 
 /// A provider response confirming a volume patch.
 fn patched() -> Reply {

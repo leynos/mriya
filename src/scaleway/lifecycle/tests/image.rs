@@ -1,7 +1,6 @@
 //! Tests for image resolution and selection logic.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use scaleway_rs::ScalewayImage;
 

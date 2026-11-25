@@ -2,9 +2,7 @@
 
 use thiserror::Error;
 
-use crate::config::ConfigError;
-use crate::config_store::ConfigStoreError;
-use crate::sync::SyncError;
+use crate::{config::ConfigError, config_store::ConfigStoreError, sync::SyncError};
 
 /// Errors raised while loading init configuration.
 #[derive(Debug, Error, Eq, PartialEq)]

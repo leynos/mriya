@@ -1,13 +1,19 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::sync::Syncer;
-use mriya::{InitError, InitOrchestrator};
+use mriya::{InitError, InitOrchestrator, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
-use super::test_doubles::MemoryConfigStore;
-use super::test_helpers::{
-    InitContext, InitContextResult, InitFailure, InitFailureKind, InitResult, InitTestError,
+use super::{
+    test_doubles::MemoryConfigStore,
+    test_helpers::{
+        InitContext,
+        InitContextResult,
+        InitFailure,
+        InitFailureKind,
+        InitResult,
+        InitTestError,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]

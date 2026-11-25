@@ -1,10 +1,13 @@
 //! Configuration loading via `ortho-config`.
 
-use crate::backend::InstanceRequest;
-use crate::cloud_init::{CloudInitError, resolve_cloud_init_user_data_with_env};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::{
+    backend::InstanceRequest,
+    cloud_init::{CloudInitError, resolve_cloud_init_user_data_with_env},
+};
 
 /// TOML section name for Scaleway configuration.
 const SCALEWAY_SECTION: &str = "scaleway";
@@ -316,7 +319,5 @@ pub enum ConfigError {
 }
 
 impl From<ortho_config::OrthoError> for ConfigError {
-    fn from(value: ortho_config::OrthoError) -> Self {
-        Self::Parse(value.to_string())
-    }
+    fn from(value: ortho_config::OrthoError) -> Self { Self::Parse(value.to_string()) }
 }

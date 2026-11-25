@@ -1,8 +1,7 @@
 //! Behavioural smoke test for the CLI entrypoint.
 
 use assert_cmd::cargo::cargo_bin_cmd;
-use predicates::prelude::*;
-use predicates::str::contains;
+use predicates::{prelude::*, str::contains};
 
 #[test]
 fn cli_displays_help() {

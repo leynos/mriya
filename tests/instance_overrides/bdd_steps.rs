@@ -18,9 +18,7 @@ string_newtype!(ImageLabel);
 string_newtype!(ErrorSnippet);
 
 #[given("fake request dumping is enabled")]
-fn fake_dumping_enabled(cli_context: CliContext) -> CliContext {
-    cli_context
-}
+fn fake_dumping_enabled(cli_context: CliContext) -> CliContext { cli_context }
 
 /// Runs the default `mriya run` path and retains its output for the following
 /// behavioural assertions.

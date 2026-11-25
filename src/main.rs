@@ -5,16 +5,18 @@
 //! tears the instance down. The `run` subcommand preserves remote exit codes
 //! locally and reports errors on stderr with meaningful exit statuses.
 
-use std::io::{self, Write};
-use std::process;
 #[cfg(test)]
 use std::{future::Future, pin::Pin};
-#[cfg(test)]
-use tokio::sync::Mutex;
+use std::{
+    io::{self, Write},
+    process,
+};
 
 use camino::Utf8PathBuf;
 use clap::Parser;
 use thiserror::Error;
+#[cfg(test)]
+use tokio::sync::Mutex;
 
 mod cli;
 #[cfg(any(test, feature = "test-backdoors"))]
@@ -22,9 +24,20 @@ mod test_backdoors;
 
 use cli::{Cli, InitCommand, RunCommand};
 use mriya::{
-    ConfigStore, InitConfig, InitError, InitOrchestrator, InitRequest, InstanceRequest, RunError,
-    RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig, StreamingCommandRunner,
-    SyncConfig, Syncer,
+    ConfigStore,
+    InitConfig,
+    InitError,
+    InitOrchestrator,
+    InitRequest,
+    InstanceRequest,
+    RunError,
+    RunOrchestrator,
+    ScalewayBackend,
+    ScalewayBackendError,
+    ScalewayConfig,
+    StreamingCommandRunner,
+    SyncConfig,
+    Syncer,
 };
 #[cfg(any(test, feature = "test-backdoors"))]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
@@ -135,9 +148,7 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 ///
 /// For example, a successful init yields 0, while an invalid configuration
 /// yields [`CliError::Config`] for the caller to report.
-async fn exec_init(command: InitCommand) -> Result<i32, CliError> {
-    init_command(command).await
-}
+async fn exec_init(command: InitCommand) -> Result<i32, CliError> { init_command(command).await }
 
 /// Provisions an instance, runs the requested command, and tears it down.
 ///
@@ -324,9 +335,7 @@ fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliEr
 ///
 /// For example, a configuration failure appears on stderr as one line and the
 /// process then exits 1, so a script can detect the failure from the status.
-fn report_error(err: &CliError) {
-    write_error(io::stderr(), err);
-}
+fn report_error(err: &CliError) { write_error(io::stderr(), err); }
 
 /// Writes `err` as a single line to `target`, ignoring write failures so a
 /// closed stream cannot mask the original error.
@@ -334,9 +343,7 @@ fn report_error(err: &CliError) {
 /// For example, writing to an open buffer appends `"<message>\n"`, while a
 /// writer that fails consumes the error instead of panicking, so the caller
 /// still reports the original failure and exits 1.
-fn write_error(mut target: impl Write, err: &CliError) {
-    writeln!(target, "{err}").ok();
-}
+fn write_error(mut target: impl Write, err: &CliError) { writeln!(target, "{err}").ok(); }
 
 #[cfg(test)]
 type RunHook =

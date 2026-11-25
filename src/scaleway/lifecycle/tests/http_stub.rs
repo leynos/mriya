@@ -8,9 +8,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
 
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 

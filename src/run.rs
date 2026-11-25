@@ -5,17 +5,26 @@
 //! using the system `ssh` client, and tears the instance down. Remote exit
 //! codes are preserved so callers observe the same status locally.
 
-use std::fmt::Display;
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
 use thiserror::Error;
 use tokio::time::sleep;
 
-use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::sync::{
-    CommandRunner, RemoteCommandOutput, SyncError, Syncer, create_cache_directories_command,
+use crate::{
+    backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    sync::{
+        CommandRunner,
+        RemoteCommandOutput,
+        SyncError,
+        Syncer,
+        create_cache_directories_command,
+    },
+    teardown::append_teardown_note,
 };
 
 /// Delay between checks for the cloud-init completion marker.
@@ -378,19 +387,5 @@ where
     async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
         let teardown_error = self.backend.destroy(handle.clone()).await.err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
-    }
-}
-
-/// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
-/// is present, and otherwise returns `message` unchanged.
-///
-/// For example, `"ssh timeout"` with `Some("network down")` becomes
-/// `"ssh timeout (teardown also failed: network down)"`, while `None` leaves
-/// it as `"ssh timeout"`.
-fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
-    if let Some(teardown) = teardown_error {
-        format!("{message} (teardown also failed: {teardown})")
-    } else {
-        message
     }
 }

@@ -5,22 +5,26 @@
 //! closures, so mutations to the loop bodies are observable. Kills the
 //! wait-loop survivors tracked in #58.
 
-use std::collections::VecDeque;
-use std::future::{Ready, ready};
-use std::net::IpAddr;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    future::{Ready, ready},
+    net::IpAddr,
+    str::FromStr,
+    time::Duration,
+};
 
 use rstest::rstest;
 use scaleway_rs::ScalewayApi;
 
-use crate::backend::{InstanceHandle, InstanceNetworking};
-use crate::scaleway::DEFAULT_SSH_PORT;
-use crate::scaleway::types::Action;
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
-
-use super::super::wait::{PollSettings, poll_for_public_ip, poll_until_gone};
-use super::{InstanceSnapshot, handle};
+use super::{
+    super::wait::{PollSettings, poll_for_public_ip, poll_until_gone},
+    InstanceSnapshot,
+    handle,
+};
+use crate::{
+    backend::{InstanceHandle, InstanceNetworking},
+    scaleway::{DEFAULT_SSH_PORT, ScalewayBackend, ScalewayBackendError, types::Action},
+};
 
 type FetchResult = Result<Option<InstanceSnapshot>, ScalewayBackendError>;
 

@@ -4,10 +4,8 @@ use std::io;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
-use ortho_config::ConfigDiscovery;
+use ortho_config::{ConfigDiscovery, toml};
 use thiserror::Error;
-
-use ortho_config::toml;
 
 /// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
@@ -110,9 +108,7 @@ impl ConfigStore {
 
     /// Builds a config store using an explicit discovery configuration.
     #[must_use]
-    pub const fn with_discovery(discovery: ConfigDiscovery) -> Self {
-        Self { discovery }
-    }
+    pub const fn with_discovery(discovery: ConfigDiscovery) -> Self { Self { discovery } }
 
     /// Picks the first discovered candidate that exists, or the last candidate
     /// (marked as not existing) when none do.
@@ -143,9 +139,7 @@ impl ConfigStore {
 }
 
 impl Default for ConfigStore {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl ConfigWriter for ConfigStore {

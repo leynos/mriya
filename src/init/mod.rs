@@ -1,18 +1,20 @@
 //! Volume initialization orchestration for `mriya init`.
 
-use std::ffi::OsString;
-use std::fmt::Display;
+use std::{ffi::OsString, fmt::Display};
 
 use camino::Utf8PathBuf;
+use helpers::{format_command, volume_name_for_project, volume_size_bytes};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 
-use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::config::ScalewayConfig;
-use crate::config_store::{ConfigStoreError, ConfigWriter};
-use crate::sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer};
-use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
-use helpers::{format_command, volume_name_for_project, volume_size_bytes};
+use crate::{
+    backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    config::ScalewayConfig,
+    config_store::{ConfigStoreError, ConfigWriter},
+    sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
+    teardown::append_teardown_note,
+    volume::{VolumeBackend, VolumeHandle, VolumeRequest},
+};
 
 mod error;
 
@@ -356,16 +358,6 @@ fn format_failure_message(output: &RemoteCommandOutput) -> String {
         Some(code) => format!("mkfs.ext4 exited with status {code}: {stderr}"),
         None if stderr.is_empty() => String::from("mkfs.ext4 terminated without an exit status"),
         None => format!("mkfs.ext4 terminated without an exit status: {stderr}"),
-    }
-}
-
-/// Appends `(teardown also failed: ...)` to `message` when `teardown_error`
-/// is present, and otherwise returns `message` unchanged.
-fn append_teardown_note<E: Display>(message: String, teardown_error: Option<&E>) -> String {
-    if let Some(teardown) = teardown_error {
-        format!("{message} (teardown also failed: {teardown})")
-    } else {
-        message
     }
 }
 

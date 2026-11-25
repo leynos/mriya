@@ -88,8 +88,7 @@ mod undecodable_path {
     //! Unix. Windows can also hold an unpaired surrogate through
     //! `OsString::from_wide`, but nothing here builds one.
 
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
     use mockable::DefaultEnv;
 

@@ -6,8 +6,10 @@
 use rstest::rstest;
 
 use super::ScalewayBackend;
-use crate::backend::{InstanceHandle, InstanceRequest};
-use crate::scaleway::ScalewayBackendError;
+use crate::{
+    backend::{InstanceHandle, InstanceRequest},
+    scaleway::ScalewayBackendError,
+};
 
 /// Builds a provider error with the supplied classification fields.
 fn api_error(

@@ -1,12 +1,19 @@
 //! Behavioural tests for the Scaleway backend lifecycle.
 
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::LazyLock;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::LazyLock,
+};
 
 use mockable::{DefaultEnv, Env};
 use mriya::{
-    Backend, InstanceHandle, InstanceNetworking, InstanceRequest, ScalewayBackend,
-    ScalewayBackendError, ScalewayConfig,
+    Backend,
+    InstanceHandle,
+    InstanceNetworking,
+    InstanceRequest,
+    ScalewayBackend,
+    ScalewayBackendError,
+    ScalewayConfig,
 };
 use rstest::fixture;
 use rstest_bdd::skip;
