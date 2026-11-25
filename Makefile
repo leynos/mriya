@@ -111,8 +111,9 @@ test: check-build-tools ## Run tests with warnings treated as errors
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run --no-run --all-targets $(WARM_FLAGS) $(BUILD_JOBS)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run --test ui $(WARM_FLAGS) $(BUILD_JOBS)
 	# The CLI tests build the binary themselves (tests/common/test_binary.rs,
-	# BUILD_ARGS): the mriya binary with the test-backdoors feature, which no
-	# other line shares because it enables a feature the workspace build does not.
+	# BUILD_ARGS): the mriya binary with the test-backdoors feature, a binary-only
+	# build whose dependency features differ from the workspace test build, so
+	# no other line produces it.
 	# Build exactly that here, with the flags the tests inherit, so the timed
 	# allowance does not pay for it. Keep the two in step.
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) build --bin mriya --features test-backdoors $(BUILD_JOBS)
