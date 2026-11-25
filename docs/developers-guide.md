@@ -3,6 +3,30 @@
 This guide records development practices specific to maintaining mriya. Follow
 the project-wide guidance in `AGENTS.md` first.
 
+## Workspace layout
+
+The root `Cargo.toml` is both the `mriya` package and a Cargo workspace root.
+The one other member is `crates/mriya-test-macros`, a private
+(`publish = false`) proc-macro crate. The lint tables live in
+`[workspace.lints.*]` and both members inherit them with
+`[lints] workspace = true`, so a new member must do the same. `make` passes
+`--workspace` to Cargo because, with a root package, Cargo otherwise selects
+only that package and a member escapes every gate.
+
+The crate exists for one reason: `#[allow_fixture_expansion_lints]`. When the
+formatting layer enables rustfmt's `fn_single_line`, rstest's expansion of a
+one-line `#[fixture]` function trips rustc's `unused_braces`, a known rstest
+false positive that cannot be fixed at source. This attribute is the only
+sanctioned workaround: do not hand-write `#[allow]` or `#[expect]` for it.
+Place it immediately above `#[fixture]`, and only on a fixture that triggers
+the diagnostic. `crates/mriya-test-macros/src/lib.rs` is copied verbatim from
+`leynos/weaver` (`crates/weaver-test-macros/src/lib.rs`, last changed in commit
+`cc9397eec1921dbfef951bcf4c9f650915c7f4b9`); do not edit it.
+
+The root crate lists the macro crate as a path-only dev-dependency, which
+`cargo package` removes from the packaged manifest, so no distributed manifest
+needs the private crate.
+
 ## Spelling policy
 
 Run `make spelling` to enforce en-GB-oxendict spelling across every tracked

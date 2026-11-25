@@ -130,6 +130,7 @@ pub fn build_scripted_context(
 pub type WorkspaceResult = Result<Workspace, SyncError>;
 pub type ScriptedContextResult = Result<ScriptedContext, SyncError>;
 
+#[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
 pub fn workspace_result() -> WorkspaceResult {
     Workspace::new()

@@ -65,6 +65,7 @@ pub enum RunTestError {
 
 pub type RunContextResult = Result<RunContext, RunTestError>;
 
+#[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
 pub fn run_context_result() -> RunContextResult {
     build_run_context()

@@ -54,6 +54,7 @@ pub enum InitTestError {
 
 pub type InitContextResult = Result<InitContext, InitTestError>;
 
+#[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
 pub fn init_context_result() -> InitContextResult {
     build_init_context()

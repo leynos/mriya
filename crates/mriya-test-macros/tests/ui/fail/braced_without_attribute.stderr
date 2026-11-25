@@ -1,0 +1,16 @@
+error: unnecessary braces around block return value
+  --> tests/ui/fail/braced_without_attribute.rs:11:30
+   |
+11 | fn braced_fixture() -> u32 { { build() } }
+   |                              ^         ^
+   |
+note: the lint level is defined here
+  --> tests/ui/fail/braced_without_attribute.rs:5:9
+   |
+ 5 | #![deny(unused_braces)]
+   |         ^^^^^^^^^^^^^
+help: remove these braces
+   |
+11 - fn braced_fixture() -> u32 { { build() } }
+11 + fn braced_fixture() -> u32 { build() }
+   |
