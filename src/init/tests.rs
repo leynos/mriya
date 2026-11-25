@@ -6,7 +6,10 @@
 use rstest::rstest;
 
 use super::{InitConfig, InitConfigError, format_failure_message};
-use crate::sync::{RemoteCommandOutput, SyncError};
+use crate::{
+    sync::{RemoteCommandOutput, SyncError},
+    teardown::append_teardown_note,
+};
 
 /// Checks that zero-sized volumes return `InvalidVolumeSize`.
 #[test]
@@ -85,7 +88,7 @@ fn format_failure_names_the_unusable_home() {
 /// Ensures successful teardown leaves the original provisioning error intact.
 #[test]
 fn append_teardown_note_returns_message_unchanged_without_error() {
-    let note = super::append_teardown_note::<SyncError>(String::from("provision failed"), None);
+    let note = append_teardown_note::<SyncError>(String::from("provision failed"), None);
     assert_eq!(note, "provision failed");
 }
 
