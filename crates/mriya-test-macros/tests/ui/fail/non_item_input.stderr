@@ -1,14 +1,14 @@
 error[E0658]: macro attributes on statements are unstable
-  --> tests/ui/fail/non_item_input.rs:11:5
+  --> tests/ui/fail/non_item_input.rs:13:5
    |
-11 |     #[allow_fixture_expansion_lints]
+13 |     #[allow_fixture_expansion_lints]
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: see issue #54727 <https://github.com/rust-lang/rust/issues/54727> for more information
    = help: add `#![feature(proc_macro_hygiene)]` to the crate attributes to enable
 
 error: expected one of: `fn`, `extern`, `use`, `static`, `const`, `unsafe`, `mod`, `type`, `struct`, `enum`, `union`, `impl`, `trait`, `auto`, `default`, `macro`, identifier, `self`, `super`, `crate`, `::`
-  --> tests/ui/fail/non_item_input.rs:12:5
+  --> tests/ui/fail/non_item_input.rs:14:5
    |
-12 |     let _not_an_item = 7_u32;
+14 |     let not_an_item = 7_u32;
    |     ^^^
