@@ -109,10 +109,9 @@ mod undecodable_path {
             return;
         }
         match find_on_path_with("bash", &DefaultEnv) {
-            Ok(found) => panic!(
-                "the child ran with a decodable PATH and found {found}, so it did not reproduce \
-                 the case"
-            ),
+            Ok(found) => {
+                panic!("the child ran with a decodable PATH and found {found}, not the case")
+            }
             Err(report) => assert_eq!(report, "PATH is set to a value that is not valid UTF-8"),
         }
     }

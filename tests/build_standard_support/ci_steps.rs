@@ -284,10 +284,7 @@ pub fn workflow_problems() -> Problems {
 /// one recorded, so a removed step cannot take its own assertions with it.
 pub fn coverage_presence_problem(found: usize, recorded: usize) -> Option<String> {
     (found != recorded).then(|| {
-        format!(
-            "the listed workflows hold {found} coverage step(s), but the contract records \
-             {recorded}"
-        )
+        format!("workflows hold {found} coverage step(s); the contract records {recorded}")
     })
 }
 

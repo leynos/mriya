@@ -32,8 +32,7 @@ pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
 )]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "configuration struct with user-facing toggle settings that are naturally expressed \
-              as booleans"
+    reason = "configuration struct with natural user-facing toggle booleans"
 )]
 pub struct SyncConfig {
     /// Path to the `rsync` executable.
@@ -167,10 +166,7 @@ pub enum SyncError {
     /// because it does not know which value was being expanded; this variant
     /// adds the identity file so the message names what the user configured
     /// and says what will work instead.
-    #[error(
-        "cannot expand SSH identity file `{path}`: HOME is set to a value that is not valid \
-         UTF-8; set HOME to a UTF-8 directory or configure an absolute ssh_identity_file"
-    )]
+    #[error("cannot expand SSH identity file `{path}`: HOME is not UTF-8; set a UTF-8 HOME")]
     HomeUnavailable {
         /// Configured identity file that needed the expansion.
         path: String,

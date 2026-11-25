@@ -139,8 +139,7 @@ pub fn route_problems(
             "`make {route}` never reaches the {PREFLIGHT} preflight"
         )),
         (true, Some(preflight), Some(cargo)) if cargo < preflight => problems.push(format!(
-            "`make {route}` runs {PROBE} (command {cargo}) before the preflight (command \
-             {preflight})"
+            "`make {route}` runs {PROBE} before the preflight, {cargo} and then {preflight}"
         )),
         (false, Some(_), _) => problems.push(format!(
             "`make {route}` reaches the {PREFLIGHT} preflight, which this route must not require"
