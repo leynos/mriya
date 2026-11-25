@@ -7,14 +7,16 @@ mod volume;
 
 use std::time::Duration;
 
-use crate::backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::config::ScalewayConfig;
-use crate::volume::{VolumeBackend, VolumeHandle, VolumeRequest};
 use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
 use types::{Action, Zone};
 
-use crate::janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX};
+use crate::{
+    backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest},
+    config::ScalewayConfig,
+    janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
+    volume::{VolumeBackend, VolumeHandle, VolumeRequest},
+};
 
 /// Port assumed for SSH readiness probes and the returned networking details.
 const DEFAULT_SSH_PORT: u16 = 22;

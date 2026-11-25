@@ -1,12 +1,14 @@
 //! Tests for remote command wrapping and cache routing.
 
-use super::super::*;
-use crate::backend::InstanceNetworking;
-use crate::test_support::ScriptedRunner;
-use rstest::rstest;
 use std::ffi::OsString;
 
-use super::fixtures::{base_config, networking};
+use rstest::rstest;
+
+use super::{
+    super::*,
+    fixtures::{base_config, networking},
+};
+use crate::{backend::InstanceNetworking, test_support::ScriptedRunner};
 
 const CACHE_ROUTING_VARS: &[&str] = &[
     "CARGO_HOME=",

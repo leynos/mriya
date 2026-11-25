@@ -1,9 +1,10 @@
 //! Tests for `StreamingCommandRunner` output forwarding and capture.
 
-use super::super::*;
+use std::{ffi::OsString, fmt::Write as _};
+
 use rstest::rstest;
-use std::ffi::OsString;
-use std::fmt::Write as _;
+
+use super::super::*;
 
 /// Run a shell script via `StreamingCommandRunner` and assert its output.
 ///
@@ -71,7 +72,8 @@ fn streaming_runner_captures_large_interleaved_output() {
             &[
                 OsString::from("-c"),
                 OsString::from(
-                    "for i in $(seq 1 50); do printf \"out-%03d\\n\" $i; printf \"err-%03d\\n\" $i 1>&2; done",
+                    "for i in $(seq 1 50); do printf \"out-%03d\\n\" $i; printf \"err-%03d\\n\" \
+                     $i 1>&2; done",
                 ),
             ],
         )

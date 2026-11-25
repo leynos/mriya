@@ -2,9 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::volume::{VolumeHandle, VolumeRequest};
-
 use super::super::{ScalewayBackend, ScalewayBackendError};
+use crate::volume::{VolumeHandle, VolumeRequest};
 
 /// Volume type requested for cache volumes (Scaleway Block Storage SSD).
 const VOLUME_TYPE_BLOCK: &str = "b_ssd";

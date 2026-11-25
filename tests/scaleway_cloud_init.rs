@@ -7,8 +7,13 @@
 use std::sync::LazyLock;
 
 use mockable::{DefaultEnv, Env};
-use mriya::sync::{ProcessCommandRunner, SyncConfig, Syncer};
-use mriya::{RunOrchestrator, ScalewayBackend, ScalewayBackendError, ScalewayConfig};
+use mriya::{
+    RunOrchestrator,
+    ScalewayBackend,
+    ScalewayBackendError,
+    ScalewayConfig,
+    sync::{ProcessCommandRunner, SyncConfig, Syncer},
+};
 use rstest::fixture;
 use rstest_bdd::skip;
 use rstest_bdd_macros::{given, scenario, then, when};

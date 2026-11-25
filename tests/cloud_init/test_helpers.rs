@@ -3,8 +3,10 @@
 use rstest::fixture;
 use tempfile::TempDir;
 
-use crate::cli_support::{CliOutput, DEFAULT_IMAGE_LABEL, fake_run_command};
-use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+use crate::{
+    cli_support::{CliOutput, DEFAULT_IMAGE_LABEL, fake_run_command},
+    test_constants::DEFAULT_INSTANCE_TYPE,
+};
 
 #[derive(Clone, Debug)]
 pub struct CliContext {

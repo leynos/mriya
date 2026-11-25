@@ -1,15 +1,21 @@
 //! Shared fixtures for init BDD scenarios.
 
-use mriya::sync::{SyncConfig, SyncError};
-use mriya::test_support::ScriptedRunner;
-use mriya::{InitRequest, InstanceRequestBuilder, VolumeRequest};
+use mriya::{
+    InitRequest,
+    InstanceRequestBuilder,
+    VolumeRequest,
+    sync::{SyncConfig, SyncError},
+    test_support::ScriptedRunner,
+};
 use rstest::fixture;
 use thiserror::Error;
 
 use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
-use crate::size_constants::BYTES_PER_GB;
-use crate::sync_config::sync_config;
-use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+use crate::{
+    size_constants::BYTES_PER_GB,
+    sync_config::sync_config,
+    test_constants::DEFAULT_INSTANCE_TYPE,
+};
 
 #[derive(Clone, Debug)]
 pub struct InitContext {
@@ -56,9 +62,7 @@ pub type InitContextResult = Result<InitContext, InitTestError>;
 
 #[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-pub fn init_context_result() -> InitContextResult {
-    build_init_context()
-}
+pub fn init_context_result() -> InitContextResult { build_init_context() }
 
 fn build_init_context() -> Result<InitContext, InitTestError> {
     let sync_config = sync_config();

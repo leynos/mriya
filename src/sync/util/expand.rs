@@ -34,8 +34,14 @@ pub struct HomeUnavailable;
 ///     expand_tilde_with_home("~/.ssh/id_ed25519", Some("/home/me")),
 ///     "/home/me/.ssh/id_ed25519"
 /// );
-/// assert_eq!(expand_tilde_with_home("/absolute", Some("/home/me")), "/absolute");
-/// assert_eq!(expand_tilde_with_home("~/.ssh/id_ed25519", None), "~/.ssh/id_ed25519");
+/// assert_eq!(
+///     expand_tilde_with_home("/absolute", Some("/home/me")),
+///     "/absolute"
+/// );
+/// assert_eq!(
+///     expand_tilde_with_home("~/.ssh/id_ed25519", None),
+///     "~/.ssh/id_ed25519"
+/// );
 /// ```
 #[must_use]
 pub fn expand_tilde_with_home(path: &str, home: Option<&str>) -> String {
@@ -68,9 +74,7 @@ pub fn expand_tilde_with_home(path: &str, home: Option<&str>) -> String {
 /// assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
 /// ```
 #[must_use]
-pub fn expand_tilde(path: &str) -> String {
-    expand_tilde_with_env(path, &mockable::DefaultEnv)
-}
+pub fn expand_tilde(path: &str) -> String { expand_tilde_with_env(path, &mockable::DefaultEnv) }
 
 /// Expands a leading `~/` prefix using `env` for `HOME`.
 ///
@@ -121,7 +125,10 @@ pub fn expand_tilde_with_env(path: &str, env: &impl Env) -> String {
 ///     Some(String::from("/home/me"))
 /// );
 /// // A path that needs no home directory never reads the variable.
-/// assert_eq!(home_from_env(&env, "/opt/key").expect("no lookup needed"), None);
+/// assert_eq!(
+///     home_from_env(&env, "/opt/key").expect("no lookup needed"),
+///     None
+/// );
 /// ```
 pub fn home_from_env(env: &impl Env, path: &str) -> Result<Option<String>, HomeUnavailable> {
     if !path.starts_with("~/") {

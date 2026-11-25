@@ -6,8 +6,10 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::sync::{SyncConfig, SyncDestination, SyncError, Syncer};
 use rstest_bdd_macros::{given, then, when};
 
-use super::test_doubles::LocalCopyRunner;
-use super::test_helpers::{ScriptedContextResult, StepError, Workspace, WorkspaceResult};
+use super::{
+    test_doubles::LocalCopyRunner,
+    test_helpers::{ScriptedContextResult, StepError, Workspace, WorkspaceResult},
+};
 
 fn workspace(workspace_result: &WorkspaceResult) -> Result<&Workspace, StepError> {
     workspace_result

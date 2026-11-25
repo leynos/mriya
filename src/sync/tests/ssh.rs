@@ -1,12 +1,13 @@
 //! Tests for SSH option construction and identity forwarding.
 
-use super::super::*;
-use crate::backend::InstanceNetworking;
-use crate::test_support::ScriptedRunner;
 use rstest::rstest;
 use tempfile::TempDir;
 
-use super::fixtures::{base_config, networking};
+use super::{
+    super::*,
+    fixtures::{base_config, networking},
+};
+use crate::{backend::InstanceNetworking, test_support::ScriptedRunner};
 
 #[rstest]
 fn common_ssh_options_includes_identity_flag(

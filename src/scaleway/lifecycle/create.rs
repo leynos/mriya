@@ -7,11 +7,11 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::backend::InstanceRequest;
-use crate::scaleway::types::Zone;
-
-use super::super::{ScalewayBackend, ScalewayBackendError};
-use super::InstanceSnapshot;
+use super::{
+    super::{ScalewayBackend, ScalewayBackendError},
+    InstanceSnapshot,
+};
+use crate::{backend::InstanceRequest, scaleway::types::Zone};
 
 /// JSON body for the create-server call.
 ///

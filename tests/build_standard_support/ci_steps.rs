@@ -76,9 +76,7 @@ struct Step<'a> {
 
 impl Step<'_> {
     /// Returns where the step is, for a complaint.
-    fn location(&self) -> String {
-        format!("{}:{}", self.file, self.line)
-    }
+    fn location(&self) -> String { format!("{}:{}", self.file, self.line) }
 
     /// Returns whether the step passes `install-mold: 'true'` (quoted or bare).
     fn passes_the_install_input(&self) -> bool {
@@ -102,7 +100,8 @@ impl Step<'_> {
             .any(|line| squeezed(line) == "cranelift:true")
     }
 
-    /// Returns the complaint about an `install-whitaker` step that provisions no Cranelift component.
+    /// Returns the complaint about an `install-whitaker` step that provisions no Cranelift
+    /// component.
     fn cranelift_problem(&self) -> Option<String> {
         (!self.passes_the_cranelift_input()).then(|| {
             format!(
@@ -164,14 +163,10 @@ fn squeezed(line: &str) -> String {
 }
 
 /// Returns the number of leading spaces on a line.
-fn indent(line: &str) -> usize {
-    line.len() - line.trim_start().len()
-}
+fn indent(line: &str) -> usize { line.len() - line.trim_start().len() }
 
 /// Returns whether a line opens a step: a `- ` list item.
-fn opens_step(line: &str) -> bool {
-    line.trim_start().starts_with("- ")
-}
+fn opens_step(line: &str) -> bool { line.trim_start().starts_with("- ") }
 
 /// Returns the lines of the step holding the line at `at`: from the step's own
 /// list item to the line before the next step, or to the end of the job.
@@ -289,7 +284,10 @@ pub fn workflow_problems() -> Problems {
 /// one recorded, so a removed step cannot take its own assertions with it.
 pub fn coverage_presence_problem(found: usize, recorded: usize) -> Option<String> {
     (found != recorded).then(|| {
-        format!("the listed workflows hold {found} coverage step(s), but the contract records {recorded}")
+        format!(
+            "the listed workflows hold {found} coverage step(s), but the contract records \
+             {recorded}"
+        )
     })
 }
 

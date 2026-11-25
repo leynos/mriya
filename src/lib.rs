@@ -19,18 +19,35 @@ pub mod test_support;
 pub mod volume;
 
 pub use backend::{
-    Backend, InstanceHandle, InstanceNetworking, InstanceRequest, InstanceRequestBuilder,
+    Backend,
+    InstanceHandle,
+    InstanceNetworking,
+    InstanceRequest,
+    InstanceRequestBuilder,
 };
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};
 pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest};
 pub use janitor::{
-    Janitor, JanitorConfig, JanitorError, SweepSummary, TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX,
+    Janitor,
+    JanitorConfig,
+    JanitorError,
+    SweepSummary,
+    TEST_RUN_ID_ENV,
+    TEST_RUN_TAG_PREFIX,
 };
 pub use run::{RunError, RunOrchestrator};
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
 pub use sync::{
-    CommandOutput, DEFAULT_REMOTE_PATH, ProcessCommandRunner, RemoteCommandOutput,
-    StreamingCommandRunner, SyncConfig, SyncConfigLoadError, SyncDestination, SyncError, Syncer,
+    CommandOutput,
+    DEFAULT_REMOTE_PATH,
+    ProcessCommandRunner,
+    RemoteCommandOutput,
+    StreamingCommandRunner,
+    SyncConfig,
+    SyncConfigLoadError,
+    SyncDestination,
+    SyncError,
+    Syncer,
 };
 pub use volume::{VolumeBackend, VolumeHandle, VolumeRequest};

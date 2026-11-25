@@ -1,10 +1,11 @@
 //! BDD step definitions for cloud-init user-data CLI handling.
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
+
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use rstest_bdd_macros::{given, then, when};
-#[cfg(unix)]
-use std::os::unix::ffi::OsStringExt;
 use tempfile::TempDir;
 
 use super::test_helpers::CliContext;
@@ -99,9 +100,7 @@ fn run_with_home_os(
 }
 
 #[given("fake request dumping is enabled for cloud-init")]
-fn fake_dumping_enabled(cli_context: CliContext) -> CliContext {
-    cli_context
-}
+fn fake_dumping_enabled(cli_context: CliContext) -> CliContext { cli_context }
 
 #[when("I run mriya without cloud-init user-data")]
 fn run_without_cloud_init(cli_context: CliContext) -> Result<CliContext, StepError> {

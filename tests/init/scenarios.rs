@@ -8,17 +8,13 @@ use super::test_helpers::{InitContextResult, init_context_result};
     path = "tests/features/init.feature",
     name = "Prepare a cache volume and update configuration"
 )]
-fn scenario_prepare_volume(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_prepare_volume(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
     name = "Surface formatting failures and still teardown"
 )]
-fn scenario_format_failure(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_format_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
@@ -48,30 +44,22 @@ fn scenario_volume_create_failure(init_context_result: InitContextResult) {
     path = "tests/features/init.feature",
     name = "Surface provisioning failures"
 )]
-fn scenario_provision_failure(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_provision_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
     name = "Surface readiness failures and still teardown"
 )]
-fn scenario_wait_failure(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_wait_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
     name = "Surface detachment failures and still teardown"
 )]
-fn scenario_detach_failure(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_detach_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
     name = "Surface teardown failures after success"
 )]
-fn scenario_teardown_failure(init_context_result: InitContextResult) {
-    drop(init_context_result);
-}
+fn scenario_teardown_failure(init_context_result: InitContextResult) { drop(init_context_result); }

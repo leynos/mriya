@@ -1,9 +1,9 @@
 //! The development half of the Makefile reader: the commands `make -n` prints for each development
 //! target, judged against a toolchain pin and a host. Each command must assign `RUSTFLAGS` with the
-//! standard flags and keep the caller's own, the commands that run tests must keep `-D warnings`, and
-//! each target must run the tools the contract recorded for it. A direct Whitaker command is the
-//! exception: it runs on an installer-managed toolchain and takes none of the standard's flags, so it
-//! is exempt here and the Concordat rule checks its isolation.
+//! standard flags and keep the caller's own, the commands that run tests must keep `-D warnings`,
+//! and each target must run the tools the contract recorded for it. A direct Whitaker command is
+//! the exception: it runs on an installer-managed toolchain and takes none of the standard's flags,
+//! so it is exempt here and the Concordat rule checks its isolation.
 
 use super::{
     config::{Pin, Problems},
@@ -24,9 +24,9 @@ const DEVELOPMENT_TARGETS: &[&str] = &[
     "scaleway-janitor",
 ];
 /// The tools each development target runs, as recorded when the contract was written: for example
-/// `cargo build`, `cargo clippy`, `cargo nextest run`, `whitaker`. A target that stops running one of
-/// them fails the contract, so a version probe cannot replace `cargo build` and one lint command cannot
-/// replace the other required ones.
+/// `cargo build`, `cargo clippy`, `cargo nextest run`, `whitaker`. A target that stops running one
+/// of them fails the contract, so a version probe cannot replace `cargo build` and one lint command
+/// cannot replace the other required ones.
 const EXPECTED_TOOLS: &[Tools] = &[
     Tools {
         target: "test",
@@ -93,8 +93,8 @@ pub fn development_problem(
     Some(format!("`make {target}` on {} {reason}", host.make_value()))
 }
 
-/// Returns whether a command line runs tests: `cargo test` or `cargo nextest run`, past any `+toolchain`
-/// and option words. A version probe (`cargo nextest --version`) and a build run none.
+/// Returns whether a command line runs tests: `cargo test` or `cargo nextest run`, past any
+/// `+toolchain` and option words. A version probe (`cargo nextest --version`) and a build run none.
 ///
 /// ```text
 /// runs_tests("cargo nextest run --all-targets") == true
@@ -114,9 +114,9 @@ pub fn runs_tests(command: &str) -> bool {
     subcommand == Some("test")
 }
 
-/// Returns the complaints about the `test` target's commands: it must run tests, and every command that
-/// runs tests must keep `-D warnings`. A version probe or a prerequisite build is not held to it, and
-/// the probe keeping the policy cannot stand in for a test command that dropped it.
+/// Returns the complaints about the `test` target's commands: it must run tests, and every command
+/// that runs tests must keep `-D warnings`. A version probe or a prerequisite build is not held to
+/// it, and the probe keeping the policy cannot stand in for a test command that dropped it.
 pub fn test_policy_problems(target: Target<'_>, host: Host, commands: &[Command]) -> Problems {
     if target.name() != "test" {
         return Vec::new();
@@ -139,7 +139,8 @@ pub fn test_policy_problems(target: Target<'_>, host: Host, commands: &[Command]
 }
 
 /// Returns the tool a command runs, as a short key such as `cargo build`, `cargo nextest run` or
-/// `whitaker`, or `None` for a command that builds, tests and lints nothing (a version probe, a formatter).
+/// `whitaker`, or `None` for a command that builds, tests and lints nothing (a version probe, a
+/// formatter).
 ///
 /// ```text
 /// tool_key("RUSTFLAGS=\"-D warnings\" cargo +nightly build --release") == Some("cargo build")
@@ -222,8 +223,8 @@ pub fn development_problems(
     development_problems_expecting(runner, host, pin, EXPECTED_TOOLS)
 }
 
-/// Like [`development_problems`], against a given record of the tools each target runs, so a test can
-/// name a synthetic record for a fake runner.
+/// Like [`development_problems`], against a given record of the tools each target runs, so a test
+/// can name a synthetic record for a fake runner.
 ///
 /// # Errors
 ///

@@ -3,14 +3,12 @@
 #[path = "common/test_constants.rs"]
 mod test_constants;
 
+use camino::Utf8PathBuf;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use mockable::MockEnv;
 use mriya::{ScalewayConfig, config::ConfigError};
 use rstest::*;
 use tempfile::TempDir;
-
-use camino::Utf8PathBuf;
-use cap_std::{ambient_authority, fs_utf8::Dir};
-
 use test_constants::DEFAULT_INSTANCE_TYPE;
 
 /// An environment whose `HOME` answers `home`, so `as_request_with_env` never

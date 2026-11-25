@@ -1,7 +1,9 @@
 //! Shared fixtures and helpers for janitor BDD scenarios.
 
-use mriya::janitor::{DEFAULT_SCW_BIN, JanitorConfig, JanitorError, SweepSummary};
-use mriya::test_support::ScriptedRunner;
+use mriya::{
+    janitor::{DEFAULT_SCW_BIN, JanitorConfig, JanitorError, SweepSummary},
+    test_support::ScriptedRunner,
+};
 use rstest::fixture;
 
 #[derive(Clone, Debug)]

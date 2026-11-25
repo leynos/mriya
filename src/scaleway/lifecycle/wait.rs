@@ -4,19 +4,21 @@
 //! tests can drive the production loop bodies with scripted snapshots
 //! instead of duplicating the algorithm against a fake backend.
 
-use std::future::Future;
-use std::net::IpAddr;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{future::Future, net::IpAddr, str::FromStr, time::Duration};
 
-use tokio::net::TcpStream;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::{
+    net::TcpStream,
+    time::{Instant, sleep, timeout},
+};
 
-use crate::backend::{InstanceHandle, InstanceNetworking};
-use crate::scaleway::types::Action;
-
-use super::super::{ScalewayBackend, ScalewayBackendError};
-use super::InstanceSnapshot;
+use super::{
+    super::{ScalewayBackend, ScalewayBackendError},
+    InstanceSnapshot,
+};
+use crate::{
+    backend::{InstanceHandle, InstanceNetworking},
+    scaleway::types::Action,
+};
 
 /// Limit for a single TCP connection attempt when probing SSH readiness.
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);

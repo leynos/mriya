@@ -1,11 +1,16 @@
-//! The held-out half of the injected-runner checks: canned `make -n` text for the release and coverage
-//! targets fed through the injected runner, so no process runs, and a synthetic held-out target so the
-//! check fires in a repository that defines none.
+//! The held-out half of the injected-runner checks: canned `make -n` text for the release and
+//! coverage targets fed through the injected runner, so no process runs, and a synthetic held-out
+//! target so the check fires in a repository that defines none.
 
 use super::{
     injected::{canned, ensure, fake_make, undefined_make},
     make::{
-        Host, MakeRunner, Target, held_out_problems, held_out_problems_for, held_out_target_count,
+        Host,
+        MakeRunner,
+        Target,
+        held_out_problems,
+        held_out_problems_for,
+        held_out_target_count,
     },
 };
 
@@ -120,8 +125,8 @@ const RELEASE_FORMS: [ReleaseForm; 8] = [
 
 /// Scenario: a release command in each form it can take, fed through the injected runner.
 ///
-/// Invariant: a release command is accepted exactly when it assigns `RUSTFLAGS` in a form that keeps
-/// the caller's value, with or without flags of its own; an empty, unquoted, standard-only or
+/// Invariant: a release command is accepted exactly when it assigns `RUSTFLAGS` in a form that
+/// keeps the caller's value, with or without flags of its own; an empty, unquoted, standard-only or
 /// own-flags-only assignment is refused, whether as a complaint or as an unreadable line.
 #[test]
 fn a_release_command_is_accepted_only_when_it_keeps_the_callers_rustflags() -> Result<(), String> {

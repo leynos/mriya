@@ -1,7 +1,6 @@
 //! Instance lifecycle helpers for the Scaleway backend.
 
-use std::sync::LazyLock;
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
 mod create;
 mod http;

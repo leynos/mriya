@@ -3,10 +3,12 @@
 //! These fixtures are used across multiple sync test modules. Keeping them in
 //! one place avoids duplication and ensures the test suite stays consistent.
 
+use std::net::{IpAddr, Ipv4Addr};
+
+use rstest::fixture;
+
 use super::super::*;
 use crate::backend::InstanceNetworking;
-use rstest::fixture;
-use std::net::{IpAddr, Ipv4Addr};
 
 #[fixture]
 pub fn base_config() -> SyncConfig {

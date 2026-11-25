@@ -1,8 +1,6 @@
 //! Backend abstraction for provisioning disposable compute instances.
 
-use std::future::Future;
-use std::net::IpAddr;
-use std::pin::Pin;
+use std::{future::Future, net::IpAddr, pin::Pin};
 
 use thiserror::Error;
 
@@ -37,9 +35,7 @@ pub struct InstanceRequest {
 impl InstanceRequest {
     /// Starts a builder for an [`InstanceRequest`].
     #[must_use]
-    pub fn builder() -> InstanceRequestBuilder {
-        InstanceRequestBuilder::new()
-    }
+    pub fn builder() -> InstanceRequestBuilder { InstanceRequestBuilder::new() }
 
     /// Validates the request, returning a descriptive error when a required
     /// field is missing.
@@ -99,9 +95,7 @@ pub struct InstanceRequestBuilder {
 impl InstanceRequestBuilder {
     /// Creates an empty builder; fields must be populated before build.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     /// Sets the image label.
     #[must_use]

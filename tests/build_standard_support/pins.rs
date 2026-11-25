@@ -1,7 +1,7 @@
 //! The pins the build standard follows: the linker release in `tools/mold/VERSION`, the toolchain
 //! channel in `rust-toolchain.toml`, and the component list the installer reads from the same file.
-//! Everything here is read as text and a malformed file is an error rather than a fallback, so cases
-//! that need the pin derive it from the file the gates use instead of copying the literal.
+//! Everything here is read as text and a malformed file is an error rather than a fallback, so
+//! cases that need the pin derive it from the file the gates use instead of copying the literal.
 
 pub const TOOLCHAIN: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/rust-toolchain.toml"));
@@ -17,9 +17,7 @@ const LINKER_PIN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tool
 /// ```text
 /// pinned_linker() == "2.41.0"   // while tools/mold/VERSION holds it
 /// ```
-pub fn pinned_linker() -> &'static str {
-    LINKER_PIN.trim()
-}
+pub fn pinned_linker() -> &'static str { LINKER_PIN.trim() }
 
 /// Returns the channel `rust-toolchain.toml` names, for cases that need its
 /// text rather than its kind.

@@ -88,8 +88,7 @@ mod undecodable_path {
     //! Unix. Windows can also hold an unpaired surrogate through
     //! `OsString::from_wide`, but nothing here builds one.
 
-    use std::ffi::OsString;
-    use std::os::unix::ffi::OsStringExt;
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
     use mockable::DefaultEnv;
 
@@ -111,7 +110,8 @@ mod undecodable_path {
         }
         match find_on_path_with("bash", &DefaultEnv) {
             Ok(found) => panic!(
-                "the child ran with a decodable PATH and found {found}, so it did not reproduce the case"
+                "the child ran with a decodable PATH and found {found}, so it did not reproduce \
+                 the case"
             ),
             Err(report) => assert_eq!(report, "PATH is set to a value that is not valid UTF-8"),
         }

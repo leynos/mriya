@@ -1,15 +1,25 @@
-//! Cases for the preflight half of the build-tools contract: the routing reader against text it must
-//! accept and refuse, the preflight against each tool a developer may lack, and the real Make routes
-//! run with a missing or complete toolset. Case names are distinct, so a run can list and count them.
+//! Cases for the preflight half of the build-tools contract: the routing reader against text it
+//! must accept and refuse, the preflight against each tool a developer may lack, and the real Make
+//! routes run with a missing or complete toolset. Case names are distinct, so a run can list and
+//! count them.
 
 use camino::Utf8Path;
 use rstest::rstest;
 
+#[cfg(target_os = "linux")]
+use super::build_tools_scripts::Linker;
+#[cfg(target_os = "linux")]
+use super::pins::pinned_linker;
 use super::{
     build_tools_routes::{EXCLUDED_ROUTES, PREFLIGHT_ROUTES, route_problems, routing_problems},
     build_tools_scripts::{
-        Toolset, cargo_calls, expect_actionable_failure, run_preflight, run_preflight_script,
-        run_route, sandbox_with,
+        Toolset,
+        cargo_calls,
+        expect_actionable_failure,
+        run_preflight,
+        run_preflight_script,
+        run_route,
+        sandbox_with,
     },
     make::{Host, Target},
     process::probe_make,
@@ -17,15 +27,11 @@ use super::{
     sandbox::{LINKER_TOOL, Sandbox, is_tool},
 };
 
-#[cfg(target_os = "linux")]
-use super::build_tools_scripts::Linker;
-#[cfg(target_os = "linux")]
-use super::pins::pinned_linker;
-
 /// Scenario: the evaluated Make invocation for every route, on a Linux and a macOS host.
 ///
-/// Invariant: each development route prints the preflight before its first Cargo command, the release
-/// route prints none, no command hard-codes `cargo`, and the count proves the routes were read.
+/// Invariant: each development route prints the preflight before its first Cargo command, the
+/// release route prints none, no command hard-codes `cargo`, and the count proves the routes were
+/// read.
 #[rstest]
 #[case::linux(Host::Linux)]
 #[case::darwin(Host::Darwin)]
@@ -46,9 +52,9 @@ fn every_route_is_ordered_by_the_evaluated_make_invocation(
 
 /// Scenario: dry-run text a route must be refused for.
 ///
-/// Invariant: a missing preflight, a preflight after Cargo, a hard-coded `cargo` (also inside a quoted
-/// `trap`), a route that prints no Cargo command, and a release route that demands the preflight each
-/// name their fault; the well-formed text names none.
+/// Invariant: a missing preflight, a preflight after Cargo, a hard-coded `cargo` (also inside a
+/// quoted `trap`), a route that prints no Cargo command, and a release route that demands the
+/// preflight each name their fault; the well-formed text names none.
 #[rstest]
 #[case::well_formed(
     "scripts/check-build-tools.sh\nprobe-cargo fetch\nRUSTFLAGS=\"-D warnings\" probe-cargo test\n",
@@ -89,8 +95,8 @@ fn the_route_reader_accepts_and_refuses(
 
 /// Scenario: the preflight script run against a toolset missing something.
 ///
-/// Invariant: a gap fails with a message that names the gap and the command that fixes it, and never
-/// falls back; a complete toolset passes.
+/// Invariant: a gap fails with a message that names the gap and the command that fixes it, and
+/// never falls back; a complete toolset passes.
 #[cfg(target_os = "linux")]
 #[rstest]
 #[case::complete(Toolset::COMPLETE, &[])]
@@ -224,8 +230,9 @@ fn expect_only_absence_reads_as_missing<T>(
 
 /// Scenario: a sandbox read of a path that is absent and one that exists but is not a file.
 ///
-/// Invariant: only a genuinely missing path reads as absent; any other failure is an error naming the
-/// path, so a contract cannot pass by mistaking an unreadable file for one that was never written.
+/// Invariant: only a genuinely missing path reads as absent; any other failure is an error naming
+/// the path, so a contract cannot pass by mistaking an unreadable file for one that was never
+/// written.
 #[test]
 fn a_sandbox_read_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(), String> {
     let sandbox = Sandbox::new()?;
@@ -239,8 +246,8 @@ fn a_sandbox_read_reports_a_failure_it_cannot_attribute_to_absence() -> Result<(
 
 /// Scenario: the release route with no `mold` at all.
 ///
-/// Invariant: a shipped artefact needs none of the development tools, so it neither runs the preflight
-/// nor fails for their absence.
+/// Invariant: a shipped artefact needs none of the development tools, so it neither runs the
+/// preflight nor fails for their absence.
 #[test]
 fn the_release_route_needs_no_development_tool() -> Result<(), String> {
     let sandbox = sandbox_with(Toolset {

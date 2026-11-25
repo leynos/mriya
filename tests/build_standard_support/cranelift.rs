@@ -10,9 +10,11 @@
 //! Whether the repository selects Cranelift is recorded in [`SELECTED`] and pinned both ways, so
 //! adding or dropping the selection is a deliberate edit of this contract.
 
-use super::ci_steps::{Workflow, cranelift_workflow_problems, whitaker_cranelift_problems};
-use super::config::{CONFIG, Problems};
-use super::pins::TOOLCHAIN;
+use super::{
+    ci_steps::{Workflow, cranelift_workflow_problems, whitaker_cranelift_problems},
+    config::{CONFIG, Problems},
+    pins::TOOLCHAIN,
+};
 
 /// Whether this repository selects Cranelift for the development profile.
 pub const SELECTED: bool = false;
@@ -230,8 +232,8 @@ fn the_toolchain_reader_wants_the_component() {
 
 /// Scenario: `install-whitaker` steps with and without the input.
 ///
-/// Invariant: a step must pass `cranelift: 'true'` itself; a sibling step's input does not count and
-/// a comment naming the action is not a step.
+/// Invariant: a step must pass `cranelift: 'true'` itself; a sibling step's input does not count
+/// and a comment naming the action is not a step.
 #[test]
 fn the_whitaker_reader_wants_the_input_on_each_step() {
     assert_eq!(whitaker_count(WHITAKER_OK), 0);

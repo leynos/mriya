@@ -3,13 +3,17 @@
 //! Provides workspace setup, temporary directory management, and fixture
 //! utilities for testing the rsync synchronization layer.
 
-use cap_std::{ambient_authority, fs_utf8::Dir};
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::Arc,
+};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use mriya::InstanceNetworking;
-use mriya::sync::{RemoteCommandOutput, SyncConfig, SyncError};
+use cap_std::{ambient_authority, fs_utf8::Dir};
+use mriya::{
+    InstanceNetworking,
+    sync::{RemoteCommandOutput, SyncConfig, SyncError},
+};
 use rstest::fixture;
 use tempfile::TempDir;
 use thiserror::Error;
@@ -132,9 +136,7 @@ pub type ScriptedContextResult = Result<ScriptedContext, SyncError>;
 
 #[mriya_test_macros::allow_fixture_expansion_lints]
 #[fixture]
-pub fn workspace_result() -> WorkspaceResult {
-    Workspace::new()
-}
+pub fn workspace_result() -> WorkspaceResult { Workspace::new() }
 
 #[fixture]
 pub fn scripted_context_result() -> ScriptedContextResult {

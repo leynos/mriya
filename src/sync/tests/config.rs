@@ -1,11 +1,14 @@
 //! Sync configuration validation and destination construction tests.
 
-use super::super::*;
-use crate::backend::InstanceNetworking;
-use rstest::rstest;
 use std::net::Ipv4Addr;
 
-use super::fixtures::{base_config, networking};
+use rstest::rstest;
+
+use super::{
+    super::*,
+    fixtures::{base_config, networking},
+};
+use crate::backend::InstanceNetworking;
 
 /// Helper to assert validation rejects empty or whitespace values for a given field.
 fn assert_validation_rejects_field<F>(mut cfg: SyncConfig, field_name: &str, set_field: F)
@@ -42,21 +45,13 @@ fn assert_ssh_identity_validation_fails(
     assert_eq!(field, "ssh_identity_file");
 }
 
-fn set_rsync_bin(cfg: &mut SyncConfig, val: String) {
-    cfg.rsync_bin = val;
-}
+fn set_rsync_bin(cfg: &mut SyncConfig, val: String) { cfg.rsync_bin = val; }
 
-fn set_ssh_bin(cfg: &mut SyncConfig, val: String) {
-    cfg.ssh_bin = val;
-}
+fn set_ssh_bin(cfg: &mut SyncConfig, val: String) { cfg.ssh_bin = val; }
 
-fn set_ssh_user(cfg: &mut SyncConfig, val: String) {
-    cfg.ssh_user = val;
-}
+fn set_ssh_user(cfg: &mut SyncConfig, val: String) { cfg.ssh_user = val; }
 
-fn set_remote_path(cfg: &mut SyncConfig, val: String) {
-    cfg.remote_path = val;
-}
+fn set_remote_path(cfg: &mut SyncConfig, val: String) { cfg.remote_path = val; }
 
 #[rstest]
 fn sync_config_validate_accepts_defaults(base_config: SyncConfig) {

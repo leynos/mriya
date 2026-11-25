@@ -9,10 +9,15 @@
 use anyhow::{Context, Result};
 use rstest::rstest;
 
-use super::http_stub::{Reply, only_request, request_body, request_url, with_stub};
-use super::{backend_fixture, base_request};
-use crate::backend::InstanceRequest;
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use super::{
+    backend_fixture,
+    base_request,
+    http_stub::{Reply, only_request, request_body, request_url, with_stub},
+};
+use crate::{
+    backend::InstanceRequest,
+    scaleway::{ScalewayBackend, ScalewayBackendError},
+};
 
 /// A successful creation, reusing the single-server fixture the detach path
 /// also decodes.

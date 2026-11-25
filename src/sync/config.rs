@@ -9,9 +9,8 @@ use ortho_config::OrthoConfig;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::backend::InstanceNetworking;
-
 use super::types::SyncDestination;
+use crate::backend::InstanceNetworking;
 
 /// Default remote working directory used for rsync.
 pub const DEFAULT_REMOTE_PATH: &str = "/home/ubuntu/project";
@@ -33,7 +32,8 @@ pub const DEFAULT_VOLUME_MOUNT_PATH: &str = "/mriya";
 )]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "configuration struct with user-facing toggle settings that are naturally expressed as booleans"
+    reason = "configuration struct with user-facing toggle settings that are naturally expressed \
+              as booleans"
 )]
 pub struct SyncConfig {
     /// Path to the `rsync` executable.
@@ -168,7 +168,8 @@ pub enum SyncError {
     /// adds the identity file so the message names what the user configured
     /// and says what will work instead.
     #[error(
-        "cannot expand SSH identity file `{path}`: HOME is set to a value that is not valid UTF-8; set HOME to a UTF-8 directory or configure an absolute ssh_identity_file"
+        "cannot expand SSH identity file `{path}`: HOME is set to a value that is not valid \
+         UTF-8; set HOME to a UTF-8 directory or configure an absolute ssh_identity_file"
     )]
     HomeUnavailable {
         /// Configured identity file that needed the expansion.

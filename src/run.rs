@@ -5,17 +5,25 @@
 //! using the system `ssh` client, and tears the instance down. Remote exit
 //! codes are preserved so callers observe the same status locally.
 
-use std::fmt::Display;
-use std::time::{Duration, Instant};
+use std::{
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
 use thiserror::Error;
 use tokio::time::sleep;
 
-use crate::backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest};
-use crate::sync::{
-    CommandRunner, RemoteCommandOutput, SyncError, Syncer, create_cache_directories_command,
+use crate::{
+    backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    sync::{
+        CommandRunner,
+        RemoteCommandOutput,
+        SyncError,
+        Syncer,
+        create_cache_directories_command,
+    },
 };
 
 /// Delay between checks for the cloud-init completion marker.
