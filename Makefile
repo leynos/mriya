@@ -14,6 +14,13 @@ RUSTDOC_FLAGS ?= -D warnings
 CARGO_FLAGS ?= --workspace --all-targets --all-features
 CLIPPY_FLAGS ?= $(CARGO_FLAGS) -- $(RUST_FLAGS)
 TEST_FLAGS ?= $(CARGO_FLAGS)
+# What the nested-build warm-up builds with: CARGO_FLAGS, the build shape every
+# cargo gate here shares (packages, features, profile, target), without
+# `--all-targets`, which would select every test target. Build options belong in
+# CARGO_FLAGS. TEST_FLAGS only selects tests (`-E`, `--no-fail-fast`, a name,
+# `--`), and a selection must not reach the warm-up: it would fail it or select
+# nothing.
+WARM_FLAGS ?= $(filter-out --all-targets,$(CARGO_FLAGS))
 MDLINT ?= markdownlint-cli2
 # `make fmt` and `make check-fmt` call mdtablefix directly. `--git` selects the
 # Markdown files Git tracks and `--include-untracked` adds the untracked files
@@ -97,6 +104,12 @@ check-build-tools: ## Check the `mold` linker, C compiler and toolchain prerequi
 
 test: check-build-tools ## Run tests with warnings treated as errors
 	$(CARGO) fetch --locked
+	# Pay for the nested builds before the timed run: build the test binaries with
+	# the same flags as the run, then run the trybuild binary once under nextest, so
+	# the per-test limits still bound it, because a plain `--no-run` leaves the
+	# trybuild build tree (target/tests/trybuild) empty.
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run --no-run --all-targets $(WARM_FLAGS) $(BUILD_JOBS)
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run --test ui $(WARM_FLAGS) $(BUILD_JOBS)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) nextest run $(TEST_FLAGS) $(BUILD_JOBS)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" RUSTDOCFLAGS="$(RUSTDOC_FLAGS)" $(CARGO) test --doc --workspace --all-features $(BUILD_JOBS)
 

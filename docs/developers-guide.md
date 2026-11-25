@@ -148,6 +148,16 @@ minutes. The fix is to fetch once, before any test starts, and to run the
 nested build offline:
 
 - `make test` runs `cargo fetch --locked` first. A failed fetch stops the run.
+- `make test` then pays for the `trybuild` build before the timed pass. It
+  builds the test binaries with `WARM_FLAGS` (`--no-run`) and runs the `ui`
+  binary once under nextest, so the per-test limits still bound it, because
+  `--no-run` leaves `trybuild`'s own build tree (`target/tests/trybuild`) empty.
+  `WARM_FLAGS` is `CARGO_FLAGS` without `--all-targets`: build options belong
+  in `CARGO_FLAGS` and follow into the warm-up, while test filters and runner
+  options in `TEST_FLAGS` never reach it. A `TEST_FLAGS` override replaces the
+  timed run's flags wholesale, so one that changes the build shape needs the
+  same options in `CARGO_FLAGS` or `WARM_FLAGS`. On a cold target the warm-up
+  pays about 8 s for the `ui` test and the timed test then takes about 1.2 s.
 - `ci.yml` and `coverage-main.yml` run `cargo fetch --locked` as an
   unconditional step before the coverage step, with no `|| true`.
 - The test binary build sets `CARGO_NET_OFFLINE=true`. Prepare a direct or
