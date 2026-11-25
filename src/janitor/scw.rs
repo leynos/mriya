@@ -9,6 +9,7 @@ use super::{Janitor, JanitorError, ResourceType, ScwServer, ScwVolume};
 use crate::sync::{CommandOutput, CommandRunner};
 
 impl<R: CommandRunner> Janitor<R> {
+    /// Runs `scw` with `args`, blaming `resource` when it cannot be started.
     fn run_scw(
         &self,
         args: &[&str],
@@ -32,10 +33,12 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
+    /// Runs `scw` with `args` and returns only its standard output.
     fn run_scw_json(&self, args: &[&str], resource: ResourceType) -> Result<String, JanitorError> {
         self.run_scw(args, resource).map(|out| out.stdout)
     }
 
+    /// Parses a `scw ... list -o json` payload into typed items.
     fn parse_scw_list<T>(stdout: &str, resource: ResourceType) -> Result<Vec<T>, JanitorError>
     where
         T: serde::de::DeserializeOwned,
@@ -74,6 +77,7 @@ impl<R: CommandRunner> Janitor<R> {
         Self::parse_scw_list(&stdout, resource)
     }
 
+    /// Accepts either a bare array or the object that wraps one.
     fn unwrap_scw_list_items(payload: Value, resource_name: &str) -> Result<Value, JanitorError> {
         match payload {
             Value::Array(items) => Ok(Value::Array(items)),
@@ -85,6 +89,7 @@ impl<R: CommandRunner> Janitor<R> {
         }
     }
 
+    /// Removes and returns the `resource_name` field of a list object.
     fn extract_scw_list_field(
         mut map: serde_json::Map<String, Value>,
         resource_name: &str,

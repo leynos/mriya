@@ -38,8 +38,10 @@ struct ListInstancesResponse {
     servers: Vec<ScalewayInstance>,
 }
 
+/// Wrapper for the server object returned by a single-instance read.
 #[derive(Deserialize)]
 struct GetInstanceResponse {
+    /// The instance as the provider reports it.
     server: ScalewayInstance,
 }
 

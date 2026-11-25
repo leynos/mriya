@@ -42,7 +42,9 @@ pub use util::{
 /// Orchestrates rsync plus remote execution.
 #[derive(Clone, Debug)]
 pub struct Syncer<R: CommandRunner> {
+    /// Values controlling the binary paths and rsync options.
     config: SyncConfig,
+    /// Process runner used for every rsync and ssh invocation.
     runner: R,
 }
 
@@ -167,6 +169,7 @@ impl<R: CommandRunner> Syncer<R> {
         self.execute_ssh(networking, remote_command)
     }
 
+    /// Runs `command` over ssh and captures its output.
     fn execute_ssh(
         &self,
         networking: &InstanceNetworking,
@@ -182,6 +185,7 @@ impl<R: CommandRunner> Syncer<R> {
         })
     }
 
+    /// Builds the rsync argument list for one transfer.
     fn build_rsync_args(
         &self,
         source: &Utf8Path,
@@ -313,6 +317,7 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(format!("{} {}", self.config.ssh_bin, opts))
     }
 
+    /// Wraps `remote_command` in the configured shell invocation.
     fn build_remote_command(&self, remote_command: &str) -> String {
         remote_command::build_remote_command(&self.config, remote_command)
     }
