@@ -199,14 +199,14 @@ impl ScalewayConfig {
             ))),
             CloudInitError::FilePathEmpty | CloudInitError::FileEmpty => {
                 ConfigError::CloudInit(String::from(concat!(
-                    "cloud-init user-data file must not be empty; set \
-                     SCW_CLOUD_INIT_USER_DATA_FILE ",
+                    "cloud-init user-data file must not be empty; set SCW_CLOUD_INIT_USER_DATA_FILE ",
                     "(or cloud_init_user_data_file in [scaleway])"
                 )))
             }
-            CloudInitError::FileRead { path, message } => {
-                ConfigError::CloudInitFileRead { path, message }
-            }
+            CloudInitError::FileRead { path, message } => ConfigError::CloudInitFileRead {
+                path,
+                message,
+            },
             CloudInitError::HomeUnavailable { path } => ConfigError::CloudInit(format!(
                 concat!(
                     "cannot expand `{path}`: HOME is set to a value that is not valid UTF-8; ",

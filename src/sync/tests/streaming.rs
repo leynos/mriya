@@ -72,8 +72,7 @@ fn streaming_runner_captures_large_interleaved_output() {
             &[
                 OsString::from("-c"),
                 OsString::from(
-                    "for i in $(seq 1 50); do printf \"out-%03d\\n\" $i; printf \"err-%03d\\n\" \
-                     $i 1>&2; done",
+                    "for i in $(seq 1 50); do printf \"out-%03d\\n\" $i; printf \"err-%03d\\n\" $i 1>&2; done",
                 ),
             ],
         )

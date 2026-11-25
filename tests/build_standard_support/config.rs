@@ -242,8 +242,7 @@ fn shape_problems(found: &[Source], pin: Pin) -> Problems {
         ),
         (
             found.iter().any(Source::is_linux) && !found.iter().any(Source::is_all_linux),
-            "no `cfg(target_os = \"linux\")` table carries rustflags, so `mold` reaches one Linux \
-             architecture only",
+            "no `cfg(target_os = \"linux\")` table carries rustflags, so `mold` reaches one Linux architecture only",
         ),
         (
             pin.takes_threads() && !found.iter().any(|source| source.table == "build"),

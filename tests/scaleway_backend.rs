@@ -100,7 +100,7 @@ fn provision_and_cleanup(
             (Ok(_), Err(destroy_err)) => Err(destroy_err),
             (Err(wait_err), Err(destroy_err)) => Err(ScalewayBackendError::Provider {
                 message: format!(
-                    "wait_for_ready failed with '{wait_err}'; destroy with '{destroy_err}'"
+                    "wait_for_ready failed with '{wait_err}' before destroy failed with '{destroy_err}'"
                 ),
             }),
         }

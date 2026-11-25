@@ -7,7 +7,12 @@ wrap_comments = true
 group_imports = "StdExternalCrate"
 use_try_shorthand = true
 hex_literal_case = "Lower"
-format_strings = true
+# Leave string literals alone. With this enabled, rustfmt rewrites long
+# literals as backslash-newline continuations, which `AGENTS.md` forbids in
+# favour of `concat!()`; and for the `format!` and `#[error]` strings that
+# cannot use `concat!`, the contortions needed to avoid the rewrite are worse
+# than the wrapping it prevents.
+format_strings = false
 format_macro_matchers = true
 fn_single_line = true
 condense_wildcard_suffixes = true

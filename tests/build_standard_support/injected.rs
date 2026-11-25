@@ -80,8 +80,7 @@ compliant_make!(
 // A fake runner with commands that run no compiled code under test, beside one that assigns.
 compliant_make!(
     exempt_commands_make,
-    "cargo test\ncargo fmt --all --check\ncargo metadata --format-version 1\nRUSTDOCFLAGS=\"-D \
-     warnings\" cargo doc"
+    "cargo test\ncargo fmt --all --check\ncargo metadata --format-version 1\nRUSTDOCFLAGS=\"-D warnings\" cargo doc"
 );
 
 /// A fake runner whose `lint` target runs Clippy and not Whitaker, and whose other targets run
@@ -102,10 +101,7 @@ fn lint_without_whitaker_make(target: Target<'_>, host: Host) -> Result<String, 
 fn chained_bare_make(_target: Target<'_>, host: Host) -> Result<String, String> {
     let linker = linker_flag(host);
     canned(format_args!(
-        "if RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo \
-         nextest --version; then cargo nextest run; else echo \"falling back to cargo test\"; \
-         RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test; \
-         fi\n"
+        "if RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo nextest --version; then cargo nextest run; else echo \"falling back to cargo test\"; RUSTFLAGS=\"${{RUSTFLAGS:+$RUSTFLAGS }}-D warnings {THREADS_FLAG}{linker}\" cargo test; fi\n"
     ))
 }
 

@@ -132,7 +132,7 @@ fn mount_command_does_not_create_cache_subdirectories(
         let path = format!("/mriya/{subdir}");
         if mount_command.contains(&path) {
             return Err(StepError::Assertion(format!(
-                "expected no cache directory '{path}' in: {mount_command}"
+                "expected mount command to NOT create cache directory '{path}', got: {mount_command}"
             )));
         }
     }

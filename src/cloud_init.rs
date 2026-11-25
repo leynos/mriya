@@ -31,8 +31,7 @@ pub enum CloudInitError {
     /// unexpanded, because reading the literal path `~/…` would fail with an
     /// error that does not name the real cause.
     #[error(
-        "cannot expand `{path}`: HOME is set to a value that is not valid UTF-8; set HOME to a \
-         UTF-8 directory or pass an absolute --cloud-init-file path"
+        "cannot expand `{path}`: HOME is set to a value that is not valid UTF-8; set HOME to a UTF-8 directory or pass an absolute --cloud-init-file path"
     )]
     HomeUnavailable {
         /// File path that needed the expansion.
