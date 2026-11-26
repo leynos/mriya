@@ -54,6 +54,15 @@ fn last_arg(invocation: &CommandInvocation) -> Option<String> {
         .map(|arg| arg.to_string_lossy().into_owned())
 }
 
+/// Reports whether `payload` is the generated cache-release command.
+///
+/// Matching the exact shape, rather than any payload containing `umount`,
+/// keeps a scenario that runs `command -v umount` from being mistaken for the
+/// release step.
+fn is_cache_release(payload: &str) -> bool {
+    payload.starts_with("sync; if mountpoint -q ") && payload.contains("; then sudo umount ")
+}
+
 /// Classifies one invocation given the command the scenario requested.
 ///
 /// Matching the payload rather than "anything that is not the mount" is what
@@ -72,10 +81,10 @@ fn classify_invocation(
     };
     if payload.contains("mount /dev/vdb") {
         InvocationRole::Mount
-    } else if payload.contains("umount") {
-        InvocationRole::Release
     } else if payload.contains(command) {
         InvocationRole::RemoteCommand
+    } else if is_cache_release(payload.as_str()) {
+        InvocationRole::Release
     } else {
         InvocationRole::OtherSsh
     }
@@ -98,16 +107,20 @@ fn classify_invocations(run_context: &RunContext) -> Result<Vec<InvocationRole>,
         .invocations()
         .iter()
         .map(|invocation| classify_invocation(invocation, ssh_bin, command))
-        // The cache release runs after the requested command and is not part
-        // of the provisioning/sync/run sequence under assertion.
-        .filter(|role| *role != InvocationRole::Release)
         .collect())
 }
 
 #[then("the cache volume is mounted before files are synced")]
 fn mount_precedes_sync(run_context_result: &RunContextResult) -> Result<(), StepError> {
     let roles = classify_invocations(context(run_context_result)?)?;
-    if roles
+    // The cache release runs after the requested command. Remove exactly one
+    // trailing release, so a release *before* the mount would still fail the
+    // ordering assertion.
+    let sequence = match roles.split_last() {
+        Some((InvocationRole::Release, rest)) => rest,
+        _ => roles.as_slice(),
+    };
+    if sequence
         == [
             InvocationRole::Mount,
             InvocationRole::Rsync,
@@ -117,7 +130,7 @@ fn mount_precedes_sync(run_context_result: &RunContextResult) -> Result<(), Step
         Ok(())
     } else {
         Err(StepError::Assertion(format!(
-            "expected mount, rsync, requested remote command in that order, got {roles:?}"
+            "expected mount, rsync, requested remote command (and at most one trailing              release) in that order, got {roles:?}"
         )))
     }
 }
@@ -154,6 +167,9 @@ fn cloud_init_checked_before_remote_command(
         .invocations()
         .into_iter()
         .filter(|invocation| invocation.program == ssh_bin)
+        // The cache release can follow the remote command; it is not the
+        // invocation under assertion.
+        .filter(|invocation| last_arg(invocation).is_none_or(|payload| !is_cache_release(&payload)))
         .collect::<Vec<_>>();
 
     if ssh_invocations.len() < 2 {

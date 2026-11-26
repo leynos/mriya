@@ -24,10 +24,13 @@ pub(in crate::scaleway) struct ServerResponse {
 }
 
 /// Response wrapper for a server list page.
+///
+/// `servers` is required: a 200 body without it is not a listing, and
+/// defaulting it to empty would let the presence check report a server as
+/// confirmed absent from a response that never listed anything.
 #[derive(Clone, Debug, Deserialize)]
 pub(in crate::scaleway) struct ServerList {
     /// Servers on this page.
-    #[serde(default)]
     pub(in crate::scaleway) servers: Vec<ServerModel>,
 }
 
@@ -79,14 +82,19 @@ impl ServerModel {
         }
     }
 
-    /// Returns the first usable public IPv4 address, if any.
+    /// Returns the first parseable public IPv4 address, if any.
+    ///
+    /// A response may carry IPv6 entries alongside IPv4 ones, and the field
+    /// this feeds is documented as IPv4, so each candidate is parsed rather
+    /// than merely checked for emptiness. The legacy single-IP field is
+    /// consulted after the list.
     #[must_use]
     pub(in crate::scaleway) fn public_ip_address(&self) -> Option<String> {
         self.public_ips
             .iter()
             .chain(self.public_ip.iter())
             .map(|ip| ip.address.trim())
-            .find(|address| !address.is_empty())
+            .find(|address| address.parse::<std::net::Ipv4Addr>().is_ok())
             .map(str::to_owned)
     }
 
@@ -204,10 +212,11 @@ pub(in crate::scaleway) struct InstanceVolumeResponse {
 }
 
 /// Response wrapper for an Instances API volume list page.
+///
+/// `volumes` is required for the same reason as `ServerList::servers`.
 #[derive(Clone, Debug, Deserialize)]
 pub(in crate::scaleway) struct InstanceVolumeList {
     /// Volumes on this page.
-    #[serde(default)]
     pub(in crate::scaleway) volumes: Vec<VolumeModel>,
 }
 
@@ -237,18 +246,12 @@ impl BlockVolumeModel {
     pub(in crate::scaleway) fn is_in_use(&self) -> bool { self.status == "in_use" }
 }
 
-/// Response wrapper for a single Block Storage volume.
-#[derive(Clone, Debug, Deserialize)]
-pub(in crate::scaleway) struct BlockVolumeResponse {
-    /// The volume object.
-    pub(in crate::scaleway) volume: BlockVolumeModel,
-}
-
 /// Response wrapper for a Block Storage volume list page.
+///
+/// `volumes` is required for the same reason as `ServerList::servers`.
 #[derive(Clone, Debug, Deserialize)]
 pub(in crate::scaleway) struct BlockVolumeList {
     /// Volumes on this page.
-    #[serde(default)]
     pub(in crate::scaleway) volumes: Vec<BlockVolumeModel>,
 }
 
@@ -261,4 +264,10 @@ pub(in crate::scaleway) enum Presence<T> {
     ConfirmedAbsent,
 }
 
-impl<T> Presence<T> {}
+impl<T> Presence<T> {
+    /// Reports whether a successful listing confirmed the resource is gone.
+    #[must_use]
+    pub(in crate::scaleway) const fn is_absent(&self) -> bool {
+        matches!(self, Self::ConfirmedAbsent)
+    }
+}

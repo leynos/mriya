@@ -31,6 +31,7 @@ to override discovery.
 
 Example `mriya.toml`:
 
+<!-- tested-example: config-example -->
 ```toml
 [scaleway]
 secret_key = "scw-secret-key-here"
@@ -46,6 +47,7 @@ ssh_user = "ubuntu"
 Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
+<!-- tested-example: missing-field-message -->
 ```text
 missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
 ```
@@ -82,6 +84,7 @@ missing status.
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
 
+<!-- tested-example: instance-overrides -->
 ```bash
 mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo test
 ```
@@ -99,12 +102,14 @@ first-boot provisioning before the remote command starts.
 
 Provide user-data either inline or via a local file:
 
+<!-- tested-example: cloud-init-file -->
 ```bash
 mriya run --cloud-init-file ./cloud-init.yml -- jq --version
 ```
 
 Or inline (handy for short scripts):
 
+<!-- tested-example: cloud-init-inline -->
 ```bash
 mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 ```
@@ -112,6 +117,7 @@ mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 A file path starting with `~/` is expanded through `HOME` before the file is
 read:
 
+<!-- tested-example: cloud-init-tilde-path -->
 ```bash
 mriya run --cloud-init-file '~/cloud-init.yml' -- jq --version
 ```
@@ -202,6 +208,7 @@ To enable the cache volume:
    configuration write then fails, the error names the volume ID and zone and
    prints the exact setting to add:
 
+   <!-- tested-example: init-retained-setting -->
    ```text
    [scaleway]
    default_volume_id = "<volume-id>"
@@ -212,12 +219,14 @@ To enable the cache volume:
    failed run does not leave a VM billing.
 2. (Optional) override the volume ID explicitly via configuration:
 
+   <!-- tested-example: cache-volume-env -->
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
    ```
 
    Or in `mriya.toml`:
 
+   <!-- tested-example: cache-volume-setting -->
    ```toml
    [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
@@ -225,6 +234,7 @@ To enable the cache volume:
 
 3. Configure the build tool to use the mounted volume. For Cargo:
 
+   <!-- tested-example: run-with-cache -->
    ```bash
    mriya run -- cargo build
    ```
@@ -248,6 +258,7 @@ setups.
 the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
 `mriya.toml`:
 
+<!-- tested-example: init-volume-size -->
 ```toml
 [init]
 volume_size_gb = 50
@@ -317,6 +328,7 @@ the command fails with `allocation outcome unknown` and keeps the journal, so
 
 ## Recovering an interrupted run
 
+<!-- tested-example: recover-command -->
 ```bash
 mriya recover
 ```
@@ -358,6 +370,7 @@ after each scenario, so it proves create → wait → cleanup works end to end a
 that ownership-aware cleanup leaves no residue. Ensure the `SCW_*` variables
 are set, then run:
 
+<!-- tested-example: scaleway-test -->
 ```bash
 make scaleway-test
 ```
@@ -399,6 +412,7 @@ prefix's `bin` first on `PATH`, so every Make target uses the pinned release; a
 bare `cargo build` outside Make needs the same directory on `PATH`. The example
 reads the variable the Makefile reads, so it follows an override:
 
+<!-- tested-example: build-tools-path -->
 ```bash
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
@@ -408,6 +422,7 @@ assigns its own `RUSTFLAGS`, which displaces the configuration's flags, so a
 shipped artefact keeps the platform linker. To build with the platform linker
 directly, assign an empty `RUSTFLAGS`:
 
+<!-- tested-example: release-platform-linker -->
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
@@ -420,6 +435,7 @@ entry point that reads the environment has two forms: the default one reads the
 real process environment, and a `_with_env` counterpart takes any
 `mockable::Env` so your own tests can inject a value.
 
+<!-- tested-example: library-example -->
 ```rust
 use mriya::sync::{expand_tilde, expand_tilde_with_home, home_from_env};
 use mockable::{DefaultEnv, Env};

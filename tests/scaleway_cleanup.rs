@@ -19,7 +19,6 @@ use mriya::{
     Cancellation,
     CleanupFailure,
     Disposition,
-    InstanceHandle,
     InstanceRequest,
     ResourceInventory,
     ResourceKind,
@@ -129,62 +128,106 @@ fn default_request(backend: &ScalewayBackend) -> Result<InstanceRequest, String>
         .map_err(|error| format!("default request unavailable: {error}"))
 }
 
-/// Runs `scenario`, then requires the project inventory to be unchanged.
+/// Why a live scenario could not run, or the residue it detected.
 ///
-/// A scenario that returns `Err` reports why it could not run (for example,
-/// credentials that lack create permission); the inventory is then not
-/// compared, because nothing was exercised.
+/// The two are deliberately distinct: an unavailable prerequisite (no opt-in,
+/// no credentials, a token without create permission) skips the scenario, while
+/// anything the scenario exercised and then failed to clean up fails it.
+enum LiveOutcome {
+    /// The scenario completed and the inventory was restored.
+    Passed,
+    /// A prerequisite was unavailable, so nothing was exercised.
+    Skip(String),
+    /// The scenario ran and detected a defect.
+    Failed(String),
+}
+
+impl LiveOutcome {
+    /// Reports a skip or fails the test accordingly.
+    fn enforce(self, scenario: &str) {
+        match self {
+            Self::Passed => {}
+            Self::Skip(reason) => skip_live!("{scenario}: {reason}"),
+            Self::Failed(reason) => panic!("{scenario}: {reason}"),
+        }
+    }
+}
+
+/// Runs `scenario`, then requires the project inventory to be unchanged.
 fn with_inventory(
     backend: &ScalewayBackend,
     scope: &AllocationScope,
-    scenario: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    let before: ResourceInventory = block_on(backend.inventory(scope))
-        .map_err(|error| format!("inventory before the scenario failed: {error}"))?;
-    scenario()?;
-    let after = block_on(backend.inventory(scope))
-        .map_err(|error| format!("inventory after the scenario failed: {error}"))?;
-    if before.all() != after.all() {
-        return Err(format!(
-            "cleanup did not restore the project inventory: before {before:?}, after {after:?}"
-        ));
+    scenario: impl FnOnce() -> Result<(), LiveOutcome>,
+) -> LiveOutcome {
+    let before: ResourceInventory = match block_on(backend.inventory(scope)) {
+        Ok(before) => before,
+        Err(error) => return LiveOutcome::Failed(format!("inventory before the run: {error}")),
+    };
+    match scenario() {
+        Ok(()) => {}
+        Err(outcome) => return outcome,
     }
-    Ok(())
+    let after = match block_on(backend.inventory(scope)) {
+        Ok(after) => after,
+        Err(error) => return LiveOutcome::Failed(format!("inventory after the run: {error}")),
+    };
+    if before.all() == after.all() {
+        return LiveOutcome::Passed;
+    }
+    LiveOutcome::Failed(format!(
+        "cleanup did not restore the project inventory: before {before:?}, after {after:?}"
+    ))
 }
 
 /// Returns why `error` means the live scenario cannot run, if it does.
-fn permission_reason(error: &ScalewayBackendError) -> Option<String> {
+fn permission_reason(error: &ScalewayBackendError) -> Option<LiveOutcome> {
     let denied = error.to_string().contains("permissions_denied")
         || matches!(error, ScalewayBackendError::AccessDenied { .. });
-    denied.then(|| format!("permissions denied during the live scenario: {error}"))
+    denied.then(|| LiveOutcome::Skip(format!("permissions denied: {error}")))
 }
 
 /// Classifies a backend failure as a skip reason or a scenario failure.
-fn classify_backend_error(error: &ScalewayBackendError) -> String {
-    permission_reason(error).unwrap_or_else(|| format!("live scenario failed: {error}"))
+fn classify_backend_error(error: &ScalewayBackendError) -> LiveOutcome {
+    permission_reason(error)
+        .unwrap_or_else(|| LiveOutcome::Failed(format!("backend failure: {error}")))
 }
 
 /// Classifies a run failure as a skip reason, if it reports missing permission.
-fn run_permission_reason<T>(
-    result: &Result<T, mriya::RunError<ScalewayBackendError>>,
-) -> Option<String> {
+fn run_permission_reason(
+    result: &Result<RunOutcome, mriya::RunError<ScalewayBackendError>>,
+) -> Option<LiveOutcome> {
     match result {
-        Err(error) if error.to_string().contains("permissions_denied") => Some(format!(
-            "permissions denied during the live scenario: {error}"
-        )),
+        Err(error) if error.to_string().contains("permissions_denied") => {
+            Some(LiveOutcome::Skip(format!("permissions denied: {error}")))
+        }
         _ => None,
     }
 }
 
-/// Cleans up `ledger`, turning a failure into the scenario's error.
+/// Cleans up `ledger`, turning a failure into the scenario's outcome.
 fn expect_cleanup(
     backend: &ScalewayBackend,
     ledger: &ResourceLedger,
     label: &str,
-) -> Result<(), String> {
+) -> Result<(), LiveOutcome> {
     block_on(backend.cleanup(ledger))
         .map(|_| ())
-        .map_err(|failure| format!("{label} cleanup failed: {failure}"))
+        .map_err(|failure| LiveOutcome::Failed(format!("{label} cleanup failed: {failure}")))
+}
+
+/// Removes a cache on every path, including after a failed assertion.
+fn always_remove_cache(
+    backend: &ScalewayBackend,
+    cache: &VolumeHandle,
+    ledger: &ResourceLedger,
+) -> Result<(), String> {
+    ledger.record(
+        ResourceRef::instance_volume(&cache.id, &cache.zone),
+        Disposition::Owned,
+    );
+    block_on(backend.cleanup(ledger))
+        .map(|_| ())
+        .map_err(|failure| format!("cache removal failed: {failure}"))
 }
 
 /// Creates a volume or reports why the scenario cannot run.
@@ -208,19 +251,6 @@ fn create_cache(
     Ok((volume, ledger))
 }
 
-/// Removes a cache the scenario created, so the inventory is restored.
-fn remove_cache(
-    backend: &ScalewayBackend,
-    cache: &VolumeHandle,
-    ledger: &ResourceLedger,
-) -> Result<(), String> {
-    ledger.record(
-        ResourceRef::instance_volume(&cache.id, &cache.zone),
-        Disposition::Owned,
-    );
-    expect_cleanup(backend, ledger, "cache removal")
-}
-
 #[test]
 fn cleanup_after_a_successful_run_leaves_no_residue() {
     let backend = require_live!(backend());
@@ -229,15 +259,23 @@ fn cleanup_after_a_successful_run_leaves_no_residue() {
     let ledger = ResourceLedger::in_memory(scope.clone());
 
     let outcome = with_inventory(&backend, &scope, || {
-        let handle: InstanceHandle = block_on(backend.create(&request, &ledger))
-            .map_err(|error| classify_backend_error(&error))?;
-        block_on(backend.wait_for_ready(&handle))
-            .map_err(|error| classify_backend_error(&error))?;
-        expect_cleanup(&backend, &ledger, "run")
+        let created = block_on(backend.create(&request, &ledger))
+            .map_err(|error| classify_backend_error(&error));
+        let handle = match created {
+            Ok(handle) => handle,
+            Err(outcome) => return Err(outcome),
+        };
+        // A readiness failure must still be followed by cleanup; propagating
+        // it with `?` would leave the server allocated.
+        let ready = block_on(backend.wait_for_ready(&handle));
+        let cleanup = expect_cleanup(&backend, &ledger, "run");
+        match (ready, cleanup) {
+            (_, Err(outcome)) => Err(outcome),
+            (Err(error), Ok(())) => Err(classify_backend_error(&error)),
+            (Ok(_), Ok(())) => Ok(()),
+        }
     });
-    if let Err(reason) = outcome {
-        skip_live!("{}", reason);
-    }
+    outcome.enforce("successful run");
 }
 
 #[test]
@@ -251,18 +289,17 @@ fn a_nonexistent_cache_id_is_rejected_without_leaving_a_server() {
     let outcome = with_inventory(&backend, &scope, || {
         let error = block_on(backend.create(&request, &ledger))
             .expect_err("a nonexistent cache volume must be rejected");
-        if let Some(reason) = permission_reason(&error) {
-            return Err(reason);
+        if let Some(outcome) = permission_reason(&error) {
+            return Err(outcome);
         }
-        assert!(
-            matches!(error, ScalewayBackendError::VolumeNotFound { .. }),
-            "{error:?}"
-        );
+        if !matches!(error, ScalewayBackendError::VolumeNotFound { .. }) {
+            return Err(LiveOutcome::Failed(format!(
+                "expected VolumeNotFound, got {error:?}"
+            )));
+        }
         expect_cleanup(&backend, &ledger, "run")
     });
-    if let Err(reason) = outcome {
-        skip_live!("{}", reason);
-    }
+    outcome.enforce("nonexistent cache id");
 }
 
 #[test]
@@ -278,9 +315,7 @@ fn repeated_cleanup_treats_absence_as_success() {
         expect_cleanup(&backend, &ledger, "first")?;
         expect_cleanup(&backend, &ledger, "repeated")
     });
-    if let Err(reason) = outcome {
-        skip_live!("{}", reason);
-    }
+    outcome.enforce("repeated cleanup");
 }
 
 #[test]
@@ -301,16 +336,21 @@ fn a_retained_cache_survives_cleanup() {
         let disposition = run_ledger
             .find(ResourceKind::InstanceVolume, &cache.id)
             .map(|entry| entry.disposition);
-        assert_eq!(
-            disposition,
-            Some(Disposition::Retained),
-            "the cache must be recorded as retained"
-        );
+        if disposition != Some(Disposition::Retained) {
+            return Err(LiveOutcome::Failed(format!(
+                "the cache must be recorded as retained, got {disposition:?}"
+            )));
+        }
         Ok(())
     });
-    let removal = outcome.and_then(|()| remove_cache(&backend, &cache, &cache_ledger));
-    if let Err(reason) = removal {
-        skip_live!("{}", reason);
+    // The cache outlives the scenario, so it is removed on every path.
+    let removal = always_remove_cache(&backend, &cache, &cache_ledger);
+    match (outcome, removal) {
+        (LiveOutcome::Failed(reason), _) | (_, Err(reason)) => {
+            LiveOutcome::Failed(reason).enforce("retained cache");
+        }
+        (LiveOutcome::Skip(reason), Ok(())) => LiveOutcome::Skip(reason).enforce("retained cache"),
+        (LiveOutcome::Passed, Ok(())) => {}
     }
 }
 
@@ -367,8 +407,9 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
 
     let (first, first_cleanup) =
         run_with_cache(&backend, &syncer, &request_with_cache, &write_command);
-    if let Some(reason) = run_permission_reason(&first) {
-        skip_live!("{}", reason);
+    if let Some(outcome) = run_permission_reason(&first) {
+        let removal = always_remove_cache(&backend, &cache, &cache_ledger);
+        outcome.enforce(&format!("marker write (cache removal: {removal:?})"));
     }
     let written = first.expect("the first run must write the marker");
     assert_eq!(
@@ -390,7 +431,7 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
     );
     assert!(second_cleanup.is_none(), "{second_cleanup:?}");
 
-    if let Err(reason) = remove_cache(&backend, &cache, &cache_ledger) {
-        skip_live!("{}", reason);
+    if let Err(reason) = always_remove_cache(&backend, &cache, &cache_ledger) {
+        LiveOutcome::Failed(reason).enforce("marker cache removal");
     }
 }

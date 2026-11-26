@@ -176,6 +176,9 @@ pub(super) fn server_action(state: &mut FakeState, id: &str, request: &Request) 
 }
 
 /// Replaces the server's volume map.
+///
+/// Validation finishes before any attachment state changes, so a rejected
+/// request leaves the provider untouched.
 pub(super) fn patch_server(state: &mut FakeState, id: &str, request: &Request) -> Response {
     if state.knobs.deny_volume_attach {
         return Response::error(403, "denied");
@@ -183,24 +186,42 @@ pub(super) fn patch_server(state: &mut FakeState, id: &str, request: &Request) -
     let Some(volumes) = request.body.get("volumes").and_then(Value::as_object) else {
         return Response::error(400, "volumes missing");
     };
-    let mut replacement = BTreeMap::new();
+    if !state.servers.contains_key(id) {
+        return Response::error(404, "no such server");
+    }
+    let mut replacement: BTreeMap<String, FakeVolume> = BTreeMap::new();
     for (index, entry) in volumes {
         let Some(volume_id) = entry.get("id").and_then(Value::as_str) else {
             return Response::error(400, "volume id missing");
         };
-        let Some(volume) = state.instance_volumes.get_mut(volume_id) else {
+        let Some(volume) = state.instance_volumes.get(volume_id) else {
             return Response::error(404, "no such volume");
         };
-        volume.attached_to = Some(id.to_owned());
         replacement.insert(index.clone(), volume.clone());
     }
+
     let Some(server) = state.servers.get_mut(id) else {
         return Response::error(404, "no such server");
     };
+    // Clear the attachment only for volumes the replacement drops; a volume
+    // still present keeps its server reference.
+    let kept = replacement
+        .values()
+        .map(|volume| volume.id.as_str())
+        .collect::<Vec<_>>();
     for previous in server.volumes.values() {
+        if kept.contains(&previous.id.as_str()) {
+            continue;
+        }
         if let Some(volume) = state.instance_volumes.get_mut(&previous.id) {
             volume.attached_to = None;
         }
+    }
+    for volume in replacement.values_mut() {
+        volume.attached_to = Some(id.to_owned());
+        state
+            .instance_volumes
+            .insert(volume.id.clone(), volume.clone());
     }
     server.volumes = replacement;
     Response::json(200, &json!({}))

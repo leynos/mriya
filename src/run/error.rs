@@ -69,9 +69,10 @@ where
     },
     /// Raised when ownership-aware cleanup cannot verify its postconditions.
     ///
-    /// The wrapper is not marked `#[source]`: its message already contains the
-    /// primary error, and pointing the source chain back at it would make a
-    /// chain walker loop between the two types.
+    /// The wrapper is not marked `#[source]`: its `Display` already renders the
+    /// primary error, so exposing it again through the source chain would make
+    /// a chain walker print the same text twice. The chain continues at the
+    /// typed cleanup failure instead.
     #[error("{0}")]
     Cleanup(Box<RunCleanupFailure<BackendError>>),
     /// Raised when a signal interrupted the run.
@@ -97,6 +98,10 @@ where
     pub journal: Option<Utf8PathBuf>,
     /// Whether a second signal stopped cleanup early.
     pub interrupted: bool,
+    /// A signal that arrived while cleanup was running.
+    pub signal: Option<Signal>,
+    /// Non-fatal notes gathered before and during cleanup.
+    pub warnings: Vec<String>,
 }
 
 impl<BackendError> RunCleanupFailure<BackendError>
@@ -142,7 +147,14 @@ where
         if let Some(journal) = self.journal.as_ref() {
             parts.push(format!("journal: {journal}"));
         }
-        formatter.write_str(&parts.join("; "))
+        if let Some(signal) = self.signal {
+            parts.push(format!("{} arrived during cleanup", signal.as_str()));
+        }
+        formatter.write_str(&parts.join("; "))?;
+        for warning in &self.warnings {
+            write!(formatter, "; note: {warning}")?;
+        }
+        Ok(())
     }
 }
 
@@ -167,8 +179,10 @@ where
     pub signal: Signal,
     /// Cleanup outcome, absent when cleanup completed.
     pub cleanup: Option<Box<RunCleanupFailure<BackendError>>>,
-    /// Journal that `mriya recover` can replay.
+    /// Journal that `mriya recover` can replay, when one remains.
     pub journal: Option<Utf8PathBuf>,
+    /// Non-fatal notes gathered before and during cleanup.
+    pub warnings: Vec<String>,
 }
 
 impl<BackendError> fmt::Display for RunCancellation<BackendError>
@@ -190,6 +204,9 @@ where
                 formatter,
                 "; run `mriya recover` to finish cleanup recorded in {journal}"
             )?;
+        }
+        for warning in &self.warnings {
+            write!(formatter, "; note: {warning}")?;
         }
         Ok(())
     }
@@ -245,6 +262,8 @@ mod tests {
             cleanup: Some(cleanup),
             journal: Some(Utf8PathBuf::from("/var/state/mriya/runs/a.json")),
             interrupted: false,
+            signal: None,
+            warnings: Vec::new(),
         };
         let rendered = failure.to_string();
         assert!(
@@ -273,6 +292,8 @@ mod tests {
             cleanup: None,
             journal: Some(Utf8PathBuf::from("/tmp/journal.json")),
             interrupted: true,
+            signal: None,
+            warnings: Vec::new(),
         };
         assert!(failure.to_string().contains("mriya recover"));
     }
@@ -283,6 +304,7 @@ mod tests {
             signal: Signal::Interrupt,
             cleanup: None,
             journal: None,
+            warnings: Vec::new(),
         };
         assert_eq!(
             cancellation.to_string(),

@@ -24,7 +24,13 @@ use crate::{
     cancel::{Cancellation, until_cancelled},
     cleanup::{CleanupFailure, CleanupReport},
     ownership::ResourceLedger,
-    sync::{CommandRunner, RemoteCommandOutput, Syncer, create_cache_directories_command},
+    sync::{
+        CommandRunner,
+        RemoteCommandOutput,
+        SyncError,
+        Syncer,
+        create_cache_directories_command,
+    },
 };
 
 /// Delay between checks for the cloud-init completion marker.
@@ -274,22 +280,39 @@ where
             String::new()
         };
 
+        // Only the mount itself is best-effort: an unformatted or absent
+        // volume must not fail the run. Creating the mount point is not, and
+        // a non-zero status is reported rather than swallowed.
         let mount_command = format!(
             concat!(
                 "sudo mkdir -p {path} && ",
-                "sudo mount /dev/vdb {path} 2>/dev/null || true"
+                "(sudo mount /dev/vdb {path} 2>/dev/null || true)"
             ),
             path = escaped_mount_path
         );
         let full_command = format!("{mount_command}{mkdir_cache_dirs}");
 
-        self.syncer
+        let output = self
+            .syncer
             .run_remote_raw(networking, &full_command)
-            .map(|_| ())
             .map_err(|error| RunError::Sync {
                 message: error.to_string(),
                 source: error,
-            })
+            })?;
+        if output.exit_code == Some(0) {
+            return Ok(());
+        }
+        Err(RunError::Sync {
+            message: remote_status_detail(&output),
+            source: SyncError::CommandFailure {
+                program: self.syncer.config().ssh_bin.clone(),
+                status: output.exit_code,
+                status_text: output
+                    .exit_code
+                    .map_or_else(|| String::from("unknown"), |code| code.to_string()),
+                stderr: output.stderr,
+            },
+        })
     }
 
     /// Polls for cloud-init's `boot-finished` marker until it appears or the
@@ -318,8 +341,14 @@ where
                 return Ok(());
             }
 
+            let now = Instant::now();
+            if now > deadline {
+                break;
+            }
+            // Never sleep past the deadline: a two-second interval with a
+            // one-second budget must not extend the wait to two seconds.
             tokio::select! {
-                () = sleep(self.cloud_init_poll_interval) => {}
+                () = sleep(self.cloud_init_poll_interval.min(deadline - now)) => {}
                 _signal = cancellation.cancelled() => {
                     return Err(StepFailure::Cancelled);
                 }

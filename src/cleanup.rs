@@ -47,11 +47,17 @@ pub struct CleanupReport {
 }
 
 impl CleanupReport {
-    /// Reports whether every retained or borrowed resource preserved by this
-    /// cleanup is already recorded outside the journal.
+    /// Returns the identifiers of every preserved resource.
     ///
-    /// A retained volume recorded only in the journal must keep the journal
-    /// alive until the caller has written its identifier to configuration.
+    /// The list is exactly the resources in `preserved`; it does not check
+    /// whether an identifier is recorded outside the journal. A caller that
+    /// removes the journal must first confirm each retained volume's ID is in
+    /// configuration, or recovery can no longer name the volume.
+    ///
+    /// # Returns
+    ///
+    /// The provider identifiers of the retained and borrowed resources this
+    /// cleanup verified, in the order they were verified.
     #[must_use]
     pub fn preserved_ids(&self) -> Vec<&str> {
         self.preserved

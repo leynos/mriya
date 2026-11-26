@@ -52,6 +52,8 @@ struct State {
     fail_after_allocation: bool,
     /// Number of cleanup attempts.
     cleanup_calls: u32,
+    /// Resources a successful cleanup reported as removed.
+    removed: Vec<ResourceRef>,
 }
 
 impl ScriptedBackend {
@@ -87,8 +89,20 @@ impl ScriptedBackend {
     /// Makes create record its allocations and then never resolve.
     pub fn block_create_until_cancelled(&self) { self.lock().block_create = true; }
 
+    /// Reports whether cleanup is scripted to fail.
+    pub fn cleanup_is_scripted_to_fail(&self) -> bool { self.lock().fail_cleanup }
+
     /// Returns how many cleanup attempts were made.
     pub fn cleanup_calls(&self) -> u32 { self.lock().cleanup_calls }
+
+    /// Returns the identifiers a successful cleanup reported as removed.
+    pub fn removed_ids(&self) -> Vec<String> {
+        self.lock()
+            .removed
+            .iter()
+            .map(|resource| resource.id().to_owned())
+            .collect()
+    }
 
     /// Locks the state, recovering a poisoned lock.
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -200,11 +214,15 @@ impl Backend for ScriptedBackend {
         ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, CleanupReport, CleanupFailure> {
         Box::pin(async move {
+            let report = cleanup_report(ledger);
             if self.lock().fail_cleanup {
                 return Err(self.cleanup_failure());
             }
-            self.lock().cleanup_calls += 1;
-            Ok(cleanup_report(ledger))
+            let mut state = self.lock();
+            state.cleanup_calls += 1;
+            state.removed = report.removed.clone();
+            drop(state);
+            Ok(report)
         })
     }
 }

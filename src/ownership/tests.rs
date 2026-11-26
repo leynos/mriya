@@ -125,9 +125,27 @@ fn entries_with_filters_by_disposition(scope: AllocationScope) {
         ResourceRef::instance_volume("vol-cache", "fr-par-1"),
         Disposition::Retained,
     );
-    assert_eq!(ledger.entries_with(Disposition::Retained).len(), 1);
-    assert_eq!(ledger.entries_with(Disposition::Owned).len(), 1);
-    assert_eq!(ledger.entries_of(ResourceKind::Server).len(), 1);
+    assert_eq!(
+        ledger
+            .entries_with(Disposition::Retained)
+            .first()
+            .map(|entry| entry.resource.id()),
+        Some("vol-cache")
+    );
+    assert_eq!(
+        ledger
+            .entries_with(Disposition::Owned)
+            .first()
+            .map(|entry| entry.resource.id()),
+        Some("srv-1")
+    );
+    assert_eq!(
+        ledger
+            .entries_of(ResourceKind::Server)
+            .first()
+            .map(|entry| entry.resource.id()),
+        Some("srv-1")
+    );
 }
 
 #[rstest]

@@ -13,7 +13,7 @@ use super::super::*;
 /// where a failure is the verdict.
 macro_rules! assert_streaming_runner_output {
     ($script:expr, $expected_code:expr, $expected_stdout:expr, $expected_stderr:expr $(,)?) => {{
-        let runner = StreamingCommandRunner;
+        let runner = StreamingCommandRunner::default();
         let output = runner
             .run("sh", &[OsString::from("-c"), OsString::from($script)])
             .expect("command should execute successfully");
@@ -41,7 +41,7 @@ fn streaming_runner_captures_output_on_failure() {
 
 #[rstest]
 fn streaming_runner_propagates_non_zero_exit_code() {
-    let runner = StreamingCommandRunner;
+    let runner = StreamingCommandRunner::default();
     let output = runner
         .run("sh", &[OsString::from("-c"), OsString::from("exit 7")])
         .expect("command should execute successfully");
@@ -53,7 +53,7 @@ fn streaming_runner_propagates_non_zero_exit_code() {
 
 #[rstest]
 fn streaming_runner_handles_no_output() {
-    let runner = StreamingCommandRunner;
+    let runner = StreamingCommandRunner::default();
     let output = runner
         .run("sh", &[OsString::from("-c"), OsString::from("")])
         .expect("command should execute successfully");
@@ -65,7 +65,7 @@ fn streaming_runner_handles_no_output() {
 
 #[rstest]
 fn streaming_runner_captures_large_interleaved_output() {
-    let runner = StreamingCommandRunner;
+    let runner = StreamingCommandRunner::default();
     let output = runner
         .run(
             "sh",
@@ -92,7 +92,7 @@ fn streaming_runner_captures_large_interleaved_output() {
 
 #[rstest]
 fn streaming_runner_failed_spawn_returns_spawn_error() {
-    let runner = StreamingCommandRunner;
+    let runner = StreamingCommandRunner::default();
     let result = runner.run("definitely-not-a-real-binary-xyz", &[]);
 
     match result {

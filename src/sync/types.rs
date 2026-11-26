@@ -180,6 +180,8 @@ const CHILD_WAIT_INTERVAL: Duration = Duration::from_millis(10);
 struct RegisteredChild {
     /// Identifier of this registration.
     id: u64,
+    /// Operation scope this child belongs to.
+    scope: Option<u64>,
     /// The running child process.
     child: Child,
 }
@@ -190,16 +192,69 @@ static NEXT_CHILD_ID: AtomicU64 = AtomicU64::new(1);
 /// Streaming children that are currently running.
 static ACTIVE_CHILDREN: Mutex<Vec<RegisteredChild>> = Mutex::new(Vec::new());
 
-/// Terminates every streaming child process currently running.
+/// Operation scopes for which cancellation has already been requested.
+///
+/// A child spawned just before the sweep, but registered just after it, checks
+/// this set at registration time and is terminated immediately. Without it,
+/// that window would let a command outlive the cancellation that was meant to
+/// stop it.
+static CANCELLED_SCOPES: Mutex<Vec<Option<u64>>> = Mutex::new(Vec::new());
+
+/// Terminates the streaming children belonging to `scope`.
 ///
 /// A child that is already gone is ignored: the registry keeps the entry until
 /// its own waiter reaps it, so a signal that races a natural exit is harmless.
-pub fn kill_active_children() {
+/// Children registered for another operation are left alone.
+pub fn kill_active_children(scope: Option<u64>) {
+    {
+        let mut cancelled = CANCELLED_SCOPES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !cancelled.contains(&scope) {
+            cancelled.push(scope);
+        }
+    }
+
     let mut children = lock_children();
-    for registered in children.iter_mut() {
+    for registered in children.iter_mut().filter(|entry| entry.scope == scope) {
         // A child may have exited between the signal and this call; its own
         // waiter still observes and reports the exit status.
-        drop(registered.child.kill());
+        kill_process_group(&registered.child);
+    }
+}
+
+/// Requests termination of `child` and every process in its group.
+///
+/// A launcher can start descendants that inherit stdout or stderr; killing only
+/// the launcher would leave those descendants holding the pipes open, and the
+/// output forwarders would wait for EOF forever.
+fn kill_process_group(child: &Child) {
+    #[cfg(unix)]
+    {
+        // SAFETY: `child` is a running child this process spawned into its own
+        // process group, so its pid is a valid process-group id, and `killpg`
+        // only sends a signal. `child.id()` cannot exceed a `pid_t` because it
+        // came from `fork`.
+        let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+            return;
+        };
+        // SAFETY: the pid is a positive process-group id owned by this
+        // process, and `killpg` only sends a signal.
+        unsafe {
+            libc::killpg(pid, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        drop(child.kill());
+    }
+}
+
+/// Terminates the registered child `id`, if it is still registered.
+fn kill_registered_child(id: u64) {
+    let mut children = lock_children();
+    if let Some(entry) = children.iter_mut().find(|entry| entry.id == id) {
+        kill_process_group(&entry.child);
     }
 }
 
@@ -215,53 +270,89 @@ fn lock_children() -> MutexGuard<'static, Vec<RegisteredChild>> {
 }
 
 /// Registers `child` so a signal can terminate it.
-fn register_child(child: Child) -> u64 {
+///
+/// Returns the registration id and whether cancellation had already been
+/// requested for `scope`. The caller kills and reaps the child in that case
+/// instead of entering the normal wait.
+fn register_child(scope: Option<u64>, child: Child) -> (u64, bool) {
     let id = NEXT_CHILD_ID.fetch_add(1, Ordering::Relaxed);
-    lock_children().push(RegisteredChild { id, child });
-    id
+    let cancelled = CANCELLED_SCOPES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&scope);
+    lock_children().push(RegisteredChild { id, scope, child });
+    (id, cancelled)
 }
 
 /// Waits until the registered child exits, allowing cancellation to kill it
 /// meanwhile.
 fn wait_for_registered_child(id: u64) -> io::Result<ExitStatus> {
     loop {
-        let observed = {
-            let mut children = lock_children();
-            match children.iter_mut().find(|entry| entry.id == id) {
-                Some(entry) => entry.child.try_wait()?,
-                None => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "streaming child disappeared from the registry",
-                    ));
-                }
-            }
-        };
-
-        if let Some(status) = observed {
-            lock_children().retain(|entry| entry.id != id);
+        if let Some(status) = try_wait_registered_child(id)? {
             return Ok(status);
         }
-
         thread::sleep(CHILD_WAIT_INTERVAL);
     }
 }
 
+/// Polls the registered child once, dropping its registration when it is gone.
+///
+/// A failed wait leaves the child's state unknown, so the registration is
+/// removed rather than left for a later signal to act on.
+fn try_wait_registered_child(id: u64) -> io::Result<Option<ExitStatus>> {
+    let observed = {
+        let mut children = lock_children();
+        let Some(entry) = children.iter_mut().find(|entry| entry.id == id) else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "streaming child disappeared from the registry",
+            ));
+        };
+        entry.child.try_wait()
+    };
+    let finished = match observed {
+        Ok(None) => return Ok(None),
+        Ok(Some(status)) => Ok(status),
+        Err(error) => Err(error),
+    };
+    lock_children().retain(|entry| entry.id != id);
+    finished.map(Some)
+}
+
 /// Command runner that streams subprocess stdout/stderr while capturing them.
+///
+/// The optional scope ties the runner's children to one cancellation channel,
+/// so terminating one operation cannot stop a child another operation started.
 #[derive(Clone, Debug, Default)]
-pub struct StreamingCommandRunner;
+pub struct StreamingCommandRunner {
+    /// Scope this runner's children register under.
+    scope: Option<u64>,
+}
+
+impl StreamingCommandRunner {
+    /// Creates a runner whose children belong to `scope`.
+    #[must_use]
+    pub const fn new(scope: Option<u64>) -> Self { Self { scope } }
+}
 
 impl CommandRunner for StreamingCommandRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| SyncError::Spawn {
-                program: program.to_owned(),
-                message: err.to_string(),
-            })?;
+            .stderr(Stdio::piped());
+        // Put the child in its own process group, so cancellation can stop the
+        // launcher and any descendants it started.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.process_group(0);
+        }
+        let mut child = command.spawn().map_err(|err| SyncError::Spawn {
+            program: program.to_owned(),
+            message: err.to_string(),
+        })?;
 
         let stdout_handle = child
             .stdout
@@ -272,7 +363,11 @@ impl CommandRunner for StreamingCommandRunner {
             .take()
             .map(|stderr| forward_stream(stderr, true, program));
 
-        let id = register_child(child);
+        let (id, already_cancelled) = register_child(self.scope, child);
+        if already_cancelled {
+            // Cancellation won the race between spawn and registration.
+            kill_registered_child(id);
+        }
         let status = wait_for_registered_child(id).map_err(|err| SyncError::Spawn {
             program: program.to_owned(),
             message: err.to_string(),

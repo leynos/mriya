@@ -78,6 +78,10 @@ struct State {
     cleanup_calls: u32,
     /// Resources cleanup reports as residual when it fails.
     residue: Vec<ResourceRef>,
+    /// Resources a successful cleanup reported as removed.
+    removed: Vec<ResourceRef>,
+    /// Resources a successful cleanup reported as preserved.
+    preserved: Vec<ResourceRef>,
 }
 
 impl ScriptedVolumeBackend {
@@ -111,6 +115,24 @@ impl ScriptedVolumeBackend {
 
     /// Returns how many cleanup attempts were made.
     pub fn cleanup_calls(&self) -> u32 { self.lock().cleanup_calls }
+
+    /// Returns the identifiers a successful cleanup reported as removed.
+    pub fn removed_ids(&self) -> Vec<String> {
+        self.lock()
+            .removed
+            .iter()
+            .map(|resource| resource.id().to_owned())
+            .collect()
+    }
+
+    /// Returns the identifiers a successful cleanup reported as preserved.
+    pub fn preserved_ids(&self) -> Vec<String> {
+        self.lock()
+            .preserved
+            .iter()
+            .map(|resource| resource.id().to_owned())
+            .collect()
+    }
 
     /// Locks the state, recovering a poisoned lock.
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -200,8 +222,13 @@ impl Backend for ScriptedVolumeBackend {
             if self.has(FailureMode::Cleanup) {
                 return Err(self.cleanup_failure());
             }
-            self.lock().cleanup_calls += 1;
-            Ok(cleanup_report(ledger))
+            let report = cleanup_report(ledger);
+            let mut state = self.lock();
+            state.cleanup_calls += 1;
+            state.removed = report.removed.clone();
+            state.preserved = report.preserved.clone();
+            drop(state);
+            Ok(report)
         })
     }
 }

@@ -45,14 +45,13 @@ Feature: Remote execution via mriya run
     And the cache volume is mounted before files are synced
     And the instance is cleaned up
 
-  Scenario: Continue execution when volume mount fails
+  Scenario: Surface a cache mount failure and still clean up
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
     And the mount command fails
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
-    Then the run result exit code is "0"
-    And files are still synced and the remote command still runs after the failed mount
+    Then the run error mentions sync failure
     And the instance is cleaned up
 
   Scenario: Route Cargo caches to the mounted cache volume

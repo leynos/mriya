@@ -92,14 +92,15 @@ impl ScalewayBackend {
 
         self.server_action(zone, snapshot.id.as_str(), "poweroff")
             .await?;
-        self.wait_until_stopped(zone, snapshot.id.as_str()).await
+        self.wait_until_stopped(zone, snapshot.id.as_str(), &self.config.default_project_id)
+            .await
     }
 
-    /// Polls until the server reports `stopped` or has disappeared.
+    /// Polls until the server reports `stopped` or is confirmed absent.
     ///
-    /// A disappeared server counts as stopped: deletion is the stronger
-    /// postcondition, and a concurrent deletion must not be mistaken for a
-    /// failure to shut down.
+    /// A 404 alone is not proof: as everywhere else, absence is confirmed by a
+    /// successful, identity-checked listing. Without that check a transient
+    /// 404 would let cleanup detach volumes from a guest that is still running.
     ///
     /// # Errors
     ///
@@ -109,14 +110,21 @@ impl ScalewayBackend {
         &self,
         zone: &str,
         server_id: &str,
+        project_id: &str,
     ) -> Result<(), ScalewayBackendError> {
         let deadline = Instant::now() + self.wait_timeout;
         loop {
-            match self.get_server(zone, server_id).await {
-                Ok(server) if server.state == "stopped" => return Ok(()),
-                Ok(_) => {}
-                Err(ScalewayBackendError::NotFound { .. }) => return Ok(()),
+            let finished = match self.get_server(zone, server_id).await {
+                Ok(server) => server.state == "stopped",
+                // A listing that still finds the server keeps the loop going;
+                // only confirmed absence ends it.
+                Err(ScalewayBackendError::NotFound { .. }) => {
+                    self.confirmed_absent(zone, server_id, project_id).await?
+                }
                 Err(error) => return Err(error),
+            };
+            if finished {
+                return Ok(());
             }
 
             if Instant::now() > deadline {
@@ -127,5 +135,19 @@ impl ScalewayBackend {
             }
             sleep(self.poll_interval).await;
         }
+    }
+
+    /// Confirms a server's absence with an identity-checked listing.
+    async fn confirmed_absent(
+        &self,
+        zone: &str,
+        server_id: &str,
+        project_id: &str,
+    ) -> Result<bool, ScalewayBackendError> {
+        let resource = crate::ownership::ResourceRef::server(server_id, zone);
+        Ok(self
+            .server_presence(&resource, project_id)
+            .await?
+            .is_absent())
     }
 }

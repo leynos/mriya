@@ -130,6 +130,30 @@ impl<R: CommandRunner> Janitor<R> {
         self.run_scw(&args, ResourceType::Servers)
     }
 
+    /// Lists the Instances API volumes in the project, across zones.
+    ///
+    /// The root volume recorded from a deleted server is untagged, so it is
+    /// found by identifier rather than by the tag sweep.
+    pub(super) fn list_instance_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
+        self.list_scw_resources(&["instance", "volume"], ResourceType::Volumes)
+    }
+
+    /// Deletes an Instances API volume in the zone it reports.
+    pub(super) fn delete_instance_volume(
+        &self,
+        volume: &ScwVolume,
+    ) -> Result<CommandOutput, JanitorError> {
+        let zone_arg = format!("zone={}", volume.zone);
+        let args = [
+            "instance",
+            "volume",
+            "delete",
+            volume.id.as_str(),
+            zone_arg.as_str(),
+        ];
+        self.run_scw(&args, ResourceType::Volumes)
+    }
+
     /// Lists the Block Storage volumes the janitor may sweep in its zone.
     ///
     /// Volumes are listed separately from servers because a leaked volume can

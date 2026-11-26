@@ -25,6 +25,10 @@ pub struct ResourceInventory {
 
 impl ResourceInventory {
     /// Reports whether the scope holds no resources at all.
+    ///
+    /// # Returns
+    ///
+    /// `true` when no server, volume, or IP was listed.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.servers.is_empty()
@@ -34,6 +38,10 @@ impl ResourceInventory {
     }
 
     /// Returns the total number of resources.
+    ///
+    /// # Returns
+    ///
+    /// The sum of the four per-kind counts.
     #[must_use]
     pub const fn len(&self) -> usize {
         self.servers.len()
@@ -42,7 +50,12 @@ impl ResourceInventory {
             + self.public_ips.len()
     }
 
-    /// Returns every resource reference, sorted for deterministic comparison.
+    /// Returns every resource reference, sorted so two inventories compare
+    /// equal when they hold the same resources.
+    ///
+    /// # Returns
+    ///
+    /// All references from the four lists, ordered by kind and then identifier.
     #[must_use]
     pub fn all(&self) -> Vec<ResourceRef> {
         let mut resources = Vec::with_capacity(self.len());
@@ -62,6 +75,14 @@ impl ResourceInventory {
 
 impl ScalewayBackend {
     /// Lists every server, volume, and public IP in `scope`.
+    ///
+    /// # Parameters
+    ///
+    /// - `scope`: the zone and project to inventory.
+    ///
+    /// # Returns
+    ///
+    /// A [`ResourceInventory`] holding one reference per listed resource.
     ///
     /// The four listings are independent reads, so a resource created or
     /// deleted between them can make the result inconsistent with any single

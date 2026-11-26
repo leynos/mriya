@@ -7,11 +7,17 @@
 //! separately, because it asks mriya to stop cleaning and leave the rest to
 //! `mriya recover`.
 
-use std::future::{Future, pending};
+use std::{
+    future::{Future, pending},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use tokio::sync::watch;
 
 use crate::sync::kill_active_children;
+
+/// Identifier source for operation scopes, unique within the process.
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 /// Signal that requested cancellation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +69,8 @@ impl CancelState {
 pub struct Cancellation {
     /// Channel receiver; `None` produces a cancellation that never fires.
     receiver: Option<watch::Receiver<CancelState>>,
+    /// Operation scope children register under.
+    scope: Option<u64>,
 }
 
 impl Cancellation {
@@ -86,6 +94,16 @@ impl Cancellation {
     /// Returns the signal that requested cancellation, if any.
     #[must_use]
     pub fn signal(&self) -> Option<Signal> { self.state().signal }
+
+    /// Returns the operation scope this cancellation controls.
+    ///
+    /// A streaming runner registers its children under this scope, so a sweep
+    /// for one operation leaves another operation's children alone.
+    #[must_use]
+    pub const fn scope(&self) -> Option<u64> {
+        // `never()` has no channel, so it has no scope.
+        self.scope
+    }
 
     /// Resolves with the first signal, or never resolves when no channel is
     /// attached.
@@ -130,6 +148,8 @@ async fn wait_for_signal(mut receiver: watch::Receiver<CancelState>) -> Signal {
 pub struct CancelHandle {
     /// Channel sender.
     sender: watch::Sender<CancelState>,
+    /// Operation scope children register under.
+    scope: u64,
 }
 
 impl CancelHandle {
@@ -137,10 +157,12 @@ impl CancelHandle {
     #[must_use]
     pub fn channel() -> (Self, Cancellation) {
         let (sender, receiver) = watch::channel(CancelState::default());
+        let scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
         (
-            Self { sender },
+            Self { sender, scope },
             Cancellation {
                 receiver: Some(receiver),
+                scope: Some(scope),
             },
         )
     }
@@ -150,6 +172,7 @@ impl CancelHandle {
     pub fn cancellation(&self) -> Cancellation {
         Cancellation {
             receiver: Some(self.sender.subscribe()),
+            scope: Some(self.scope),
         }
     }
 
@@ -163,7 +186,7 @@ impl CancelHandle {
             state.signal = Some(signal);
             state.count = state.count.saturating_add(1);
         });
-        kill_active_children();
+        kill_active_children(Some(self.scope));
     }
 
     /// Installs SIGINT and SIGTERM handlers that cancel this channel.
@@ -225,8 +248,11 @@ where
     F: Future<Output = T>,
 {
     tokio::select! {
-        output = future => Some(output),
+        // Check cancellation first: if a signal has already arrived, an
+        // immediately ready future must not run its side effect.
+        biased;
         _signal = cancellation.cancelled() => None,
+        output = future => Some(output),
     }
 }
 

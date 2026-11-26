@@ -138,9 +138,11 @@ impl AllocationScope {
 ///
 /// The tag is written to the provider before the first create request, so an
 /// interrupted allocation can be rediscovered from the provider's own
-/// metadata.
+/// metadata. A tag is always one filename component: it names the journal
+/// file, so a value containing a path separator would write the journal
+/// somewhere the recovery listing never scans.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
+#[serde(try_from = "String", into = "String")]
 pub struct AllocationTag(String);
 
 impl AllocationTag {
@@ -154,26 +156,55 @@ impl AllocationTag {
     }
 
     /// Parses a tag that carries the expected prefix and a non-empty suffix.
+    ///
+    /// The value must be a single filename component: path separators and
+    /// `..` are rejected.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         let trimmed = value.trim();
         let suffix = trimmed.strip_prefix(ALLOCATION_TAG_PREFIX)?;
-        if suffix.is_empty() {
+        let has_path_syntax = suffix.contains(['/', '\\']) || suffix == "..";
+        if suffix.is_empty() || has_path_syntax {
             return None;
         }
         Some(Self(trimmed.to_owned()))
     }
 
     /// Returns the tag text as written to provider metadata.
+    ///
+    /// # Returns
+    ///
+    /// The whole tag, including its prefix.
     #[must_use]
     pub const fn as_str(&self) -> &str { self.0.as_str() }
 
-    /// Returns the part of the tag after its prefix.
+    /// Returns the part of the tag after exactly one prefix.
     ///
     /// The suffix is used in resource names, so a server and its allocation
     /// tag share one identifier.
+    ///
+    /// # Returns
+    ///
+    /// The remainder of the tag once the leading `mriya-alloc-` is removed,
+    /// exactly as `parse` accepted it.
     #[must_use]
-    pub fn suffix(&self) -> &str { self.0.trim_start_matches(ALLOCATION_TAG_PREFIX) }
+    pub fn suffix(&self) -> &str {
+        self.0
+            .strip_prefix(ALLOCATION_TAG_PREFIX)
+            .unwrap_or(self.0.as_str())
+    }
+}
+
+impl TryFrom<String> for AllocationTag {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value).ok_or_else(|| format!("invalid allocation tag: {value}"))
+    }
+}
+
+impl From<AllocationTag> for String {
+    fn from(value: AllocationTag) -> Self { value.0 }
 }
 
 impl fmt::Display for AllocationTag {
@@ -326,4 +357,7 @@ pub struct LedgerSnapshot {
     pub scope: AllocationScope,
     /// Resources recorded so far.
     pub entries: Vec<LedgerEntry>,
+    /// Whether an allocation may exist without a recorded identifier.
+    #[serde(default)]
+    pub outcome_unknown: bool,
 }

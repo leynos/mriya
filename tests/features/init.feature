@@ -7,6 +7,7 @@ Feature: mriya init prepares a cache volume
     Then the init result is successful
     And the volume is formatted
     And the config is updated
+    And the formatted volume is retained
     And the instance is cleaned up
 
   Scenario: Surface formatting failures and still clean up
@@ -31,6 +32,7 @@ Feature: mriya init prepares a cache volume
     When I prepare the cache volume
     Then the init result is successful
     And the config is updated
+    And the formatted volume is retained
 
   Scenario: Surface volume creation failures
     Given a ready init workflow
@@ -66,4 +68,5 @@ Feature: mriya init prepares a cache volume
     When I prepare the cache volume
     Then the init error kind is "config"
     And the retained volume is named with configuration instructions
+    And the formatted volume is retained
     And the instance is cleaned up

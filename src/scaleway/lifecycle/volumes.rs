@@ -114,7 +114,10 @@ impl ScalewayBackend {
     ) -> Result<Presence<VolumeModel>, ScalewayBackendError> {
         let zone = resource.zone();
         match self.get_instance_volume(zone, resource.id()).await {
-            Ok(volume) if volume.id == resource.id() => Ok(Presence::Present(volume)),
+            Ok(volume) if volume.id == resource.id() => {
+                ensure_volume_zone(&volume, zone)?;
+                Ok(Presence::Present(volume))
+            }
             Ok(volume) => Err(ScalewayBackendError::Provider {
                 message: format!(
                     "get volume returned {}, but {} was requested",
@@ -123,14 +126,39 @@ impl ScalewayBackend {
                 ),
             }),
             Err(ScalewayBackendError::NotFound { .. }) => {
-                let volumes = self.list_instance_volumes(zone, project_id, None).await?;
-                Ok(volumes
+                // Unfiltered on purpose: a row whose ID matches but whose zone
+                // contradicts the record must be an error, not silently gone.
+                let volumes = self
+                    .list_instance_volumes_unfiltered(zone, project_id)
+                    .await?;
+                let Some(volume) = volumes
                     .into_iter()
                     .find(|volume| volume.id == resource.id())
-                    .map_or(Presence::ConfirmedAbsent, Presence::Present))
+                else {
+                    return Ok(Presence::ConfirmedAbsent);
+                };
+                ensure_volume_zone(&volume, zone)?;
+                Ok(Presence::Present(volume))
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Lists Instances API volumes without the local zone or tag filters.
+    async fn list_instance_volumes_unfiltered(
+        &self,
+        zone: &str,
+        project_id: &str,
+    ) -> Result<Vec<VolumeModel>, ScalewayBackendError> {
+        let query = ListQuery {
+            zone,
+            project_id,
+            tag: None,
+        };
+        collect_pages("list volumes", |page| {
+            self.fetch_instance_volume_page(query, page)
+        })
+        .await
     }
 
     /// Attaches a volume to a stopped instance, preserving its root volume.
@@ -233,4 +261,24 @@ impl ScalewayBackend {
 
         Ok(())
     }
+}
+
+/// Rejects a volume whose reported zone contradicts the record.
+///
+/// An omitted zone is accepted, because the request URL already scopes the
+/// call; a contradicting one means the identifier names a different volume.
+fn ensure_volume_zone(
+    volume: &VolumeModel,
+    expected_zone: &str,
+) -> Result<(), ScalewayBackendError> {
+    if volume.zone.trim().is_empty() || volume.zone == expected_zone {
+        return Ok(());
+    }
+    Err(ScalewayBackendError::Provider {
+        message: format!(
+            "volume {} is in zone {zone}, but {expected_zone} was requested",
+            volume.id,
+            zone = volume.zone
+        ),
+    })
 }

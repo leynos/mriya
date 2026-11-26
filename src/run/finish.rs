@@ -6,6 +6,8 @@
 
 use std::fmt::Display;
 
+use camino::Utf8PathBuf;
+
 use super::{
     CleanupOutcome,
     RunOrchestrator,
@@ -39,7 +41,17 @@ where
         match self.cleanup(ledger, cancellation).await {
             CleanupOutcome::Completed(report) => {
                 collect_report_notes(&report, &mut warnings);
-                clear_journal(ledger, &mut warnings);
+                let kept = clear_journal(ledger, &mut warnings);
+                // A signal that arrived while cleanup ran still makes this an
+                // interrupted run, even though every postcondition verified.
+                if let Some(signal) = cancellation.signal() {
+                    return Err(RunError::Cancelled(Box::new(RunCancellation {
+                        signal,
+                        cleanup: None,
+                        journal: kept,
+                        warnings,
+                    })));
+                }
                 Ok(RunOutcome { output, warnings })
             }
             CleanupOutcome::Failed(error) => Err(RunError::Cleanup(Box::new(RunCleanupFailure {
@@ -48,6 +60,8 @@ where
                 cleanup: Some(error),
                 journal: ledger.journal_path(),
                 interrupted: false,
+                signal: cancellation.signal(),
+                warnings,
             }))),
             CleanupOutcome::Interrupted => Err(RunError::Cleanup(Box::new(RunCleanupFailure {
                 primary: None,
@@ -55,6 +69,8 @@ where
                 cleanup: None,
                 journal: ledger.journal_path(),
                 interrupted: true,
+                signal: cancellation.signal(),
+                warnings,
             }))),
         }
     }
@@ -66,13 +82,27 @@ where
         primary: RunError<B::Error>,
         cancellation: &Cancellation,
     ) -> RunError<B::Error> {
+        let mut warnings = Vec::new();
         match self.cleanup(ledger, cancellation).await {
-            CleanupOutcome::Completed(_) => {
+            CleanupOutcome::Completed(report) => {
                 // Cleanup verified every postcondition, so the journal has
                 // nothing left to recover; leaving it would make every later
                 // `mriya recover` replay a settled allocation.
-                let mut warnings = Vec::new();
-                clear_journal(ledger, &mut warnings);
+                warnings.extend(report.warnings);
+                let kept = clear_journal(ledger, &mut warnings);
+                if cancellation.signal().is_some() || kept.is_some() {
+                    // The primary failure remains the reported error, but the
+                    // notes gathered here must not be lost with it.
+                    return RunError::Cleanup(Box::new(RunCleanupFailure {
+                        primary: Some(Box::new(primary)),
+                        output: None,
+                        cleanup: None,
+                        journal: kept,
+                        interrupted: false,
+                        signal: cancellation.signal(),
+                        warnings,
+                    }));
+                }
                 primary
             }
             CleanupOutcome::Failed(error) => RunError::Cleanup(Box::new(RunCleanupFailure {
@@ -81,6 +111,8 @@ where
                 cleanup: Some(error),
                 journal: ledger.journal_path(),
                 interrupted: false,
+                signal: cancellation.signal(),
+                warnings,
             })),
             CleanupOutcome::Interrupted => RunError::Cleanup(Box::new(RunCleanupFailure {
                 primary: Some(Box::new(primary)),
@@ -88,6 +120,8 @@ where
                 cleanup: None,
                 journal: ledger.journal_path(),
                 interrupted: true,
+                signal: cancellation.signal(),
+                warnings,
             })),
         }
     }
@@ -99,14 +133,16 @@ where
         cancellation: &Cancellation,
     ) -> RunError<B::Error> {
         let signal = cancellation.signal().unwrap_or(Signal::Interrupt);
+        let mut warnings = Vec::new();
         match self.cleanup(ledger, cancellation).await {
             CleanupOutcome::Completed(report) => {
-                let mut warnings = report.warnings;
-                clear_journal(ledger, &mut warnings);
+                warnings.extend(report.warnings);
+                let kept = clear_journal(ledger, &mut warnings);
                 RunError::Cancelled(Box::new(RunCancellation {
                     signal,
                     cleanup: None,
-                    journal: ledger.journal_path(),
+                    journal: kept,
+                    warnings,
                 }))
             }
             CleanupOutcome::Failed(error) => RunError::Cancelled(Box::new(RunCancellation {
@@ -117,8 +153,11 @@ where
                     cleanup: Some(error),
                     journal: ledger.journal_path(),
                     interrupted: false,
+                    signal: Some(signal),
+                    warnings,
                 })),
                 journal: ledger.journal_path(),
+                warnings: Vec::new(),
             })),
             CleanupOutcome::Interrupted => RunError::Cancelled(Box::new(RunCancellation {
                 signal,
@@ -128,8 +167,11 @@ where
                     cleanup: None,
                     journal: ledger.journal_path(),
                     interrupted: true,
+                    signal: Some(signal),
+                    warnings,
                 })),
                 journal: ledger.journal_path(),
+                warnings: Vec::new(),
             })),
         }
     }
@@ -151,7 +193,10 @@ where
 }
 
 /// Removes the journal after verified cleanup, noting a failure.
-fn clear_journal(ledger: &ResourceLedger, warnings: &mut Vec<String>) {
+///
+/// Returns the journal path when it remains on disk: either the outcome is
+/// unknown (so recovery must reconcile the tag first) or the removal failed.
+fn clear_journal(ledger: &ResourceLedger, warnings: &mut Vec<String>) -> Option<Utf8PathBuf> {
     if ledger.has_unknown_outcome() {
         let note = ledger
             .journal_path()
@@ -160,14 +205,16 @@ fn clear_journal(ledger: &ResourceLedger, warnings: &mut Vec<String>) {
             "an allocation outcome is unknown; kept the recovery journal{note}; \
              run `mriya recover` to reconcile it"
         ));
-        return;
+        return ledger.journal_path();
     }
     if let Err(error) = ledger.clear_journal() {
         warnings.push(format!(
             "could not remove the recovery journal: {message}",
             message = error.message
         ));
+        return ledger.journal_path();
     }
+    None
 }
 
 /// A completed remote command and the notes gathered before cleanup.

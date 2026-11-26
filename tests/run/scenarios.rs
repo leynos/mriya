@@ -46,9 +46,9 @@ fn scenario_mount_cache_volume(run_context_result: RunContextResult) { drop(run_
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Continue execution when volume mount fails"
+    name = "Surface a cache mount failure and still clean up"
 )]
-fn scenario_volume_mount_failure_continues(run_context_result: RunContextResult) {
+fn scenario_volume_mount_failure_surfaces(run_context_result: RunContextResult) {
     drop(run_context_result);
 }
 

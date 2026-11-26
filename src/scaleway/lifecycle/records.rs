@@ -39,11 +39,18 @@ pub(in crate::scaleway) fn record_server_creation(server: &ServerModel, ledger: 
     }
 }
 
-/// Marks attachments and IPs the ledger has never seen as borrowed.
+/// Records resources an owned server reports that the ledger never saw.
 ///
 /// This runs at cleanup, after the server has been refreshed. A resource
 /// already recorded keeps its disposition: an owned allocation is never
 /// downgraded, and a retained cache volume stays retained.
+///
+/// An unrecorded public IP on a run-owned server is recorded as `Owned`, not
+/// borrowed: mriya only ever creates servers with a routed dynamic address,
+/// so such an address was allocated for this run, and it can appear after the
+/// single post-power-on refresh. Recording it as borrowed would leak it.
+/// An unrecorded *volume* stays `Borrowed`: it may be a user's, attached after
+/// mriya read the server.
 pub(in crate::scaleway) fn classify_unrecorded(server: &ServerModel, ledger: &ResourceLedger) {
     let zone = ledger.scope().zone;
     for volume in server.volumes.values() {
@@ -56,7 +63,7 @@ pub(in crate::scaleway) fn classify_unrecorded(server: &ServerModel, ledger: &Re
         if ledger.find(ResourceKind::PublicIp, &ip.id).is_none() {
             ledger.record(
                 ResourceRef::public_ip(&ip.id, &zone, ip.dynamic),
-                Disposition::Borrowed,
+                Disposition::Owned,
             );
         }
     }

@@ -99,42 +99,58 @@ impl ScalewayBackend {
         let zone = resource.zone();
         match self.get_server(zone, resource.id()).await {
             Ok(server) => {
-                ensure_identity(
-                    FetchedIdentity {
-                        operation: "get server",
-                        id: &server.id,
-                        zone: &server.zone,
-                        project: &server.project,
+                verify_server_identity(
+                    &server,
+                    "get server",
+                    ExpectedServer {
+                        id: resource.id(),
+                        zone,
+                        project: project_id,
                     },
-                    zone,
-                    project_id,
                 )?;
                 Ok(Presence::Present(server))
             }
             Err(ScalewayBackendError::NotFound { .. }) => {
-                let servers = self.list_servers(zone, project_id, None).await?;
-                match servers
+                // The unfiltered listing is deliberate: a row whose ID matches
+                // but whose scope contradicts the record must be an error, and
+                // the filtered listing would have dropped it before the check.
+                let servers = self.list_servers_unfiltered(zone, project_id).await?;
+                let Some(server) = servers
                     .into_iter()
                     .find(|server| server.id == resource.id())
-                {
-                    Some(server) => {
-                        ensure_identity(
-                            FetchedIdentity {
-                                operation: "list servers",
-                                id: &server.id,
-                                zone: &server.zone,
-                                project: &server.project,
-                            },
-                            zone,
-                            project_id,
-                        )?;
-                        Ok(Presence::Present(server))
-                    }
-                    None => Ok(Presence::ConfirmedAbsent),
-                }
+                else {
+                    return Ok(Presence::ConfirmedAbsent);
+                };
+                verify_server_identity(
+                    &server,
+                    "list servers",
+                    ExpectedServer {
+                        id: resource.id(),
+                        zone,
+                        project: project_id,
+                    },
+                )?;
+                Ok(Presence::Present(server))
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Lists servers in `zone` without applying the local scope or tag filters.
+    ///
+    /// The presence check uses this so a row that contradicts the recorded
+    /// scope is still visible to the identity check.
+    async fn list_servers_unfiltered(
+        &self,
+        zone: &str,
+        project_id: &str,
+    ) -> Result<Vec<ServerModel>, ScalewayBackendError> {
+        let query = ListQuery {
+            zone,
+            project_id,
+            tag: None,
+        };
+        collect_pages("list servers", |page| self.fetch_server_page(query, page)).await
     }
 
     /// Deletes a server and leaves verification to the caller.
@@ -166,6 +182,48 @@ pub(in crate::scaleway) struct FetchedIdentity<'a> {
     pub(in crate::scaleway) zone: &'a str,
     /// Project the provider reported, possibly empty.
     pub(in crate::scaleway) project: &'a str,
+}
+
+/// The server a read was asked for, as recorded by the run.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct ExpectedServer<'a> {
+    /// Identifier the run recorded.
+    pub(in crate::scaleway) id: &'a str,
+    /// Zone the run recorded.
+    pub(in crate::scaleway) zone: &'a str,
+    /// Project the run recorded.
+    pub(in crate::scaleway) project: &'a str,
+}
+
+/// Rejects a fetched server whose identifier or scope contradicts the record.
+///
+/// The identifier check matters because a zone- and project-scoped read that
+/// returns a different server would otherwise let cleanup power off, detach
+/// from, and delete a server the run never created.
+pub(in crate::scaleway) fn verify_server_identity(
+    server: &ServerModel,
+    operation: &str,
+    expected: ExpectedServer<'_>,
+) -> Result<(), ScalewayBackendError> {
+    if server.id != expected.id {
+        return Err(ScalewayBackendError::Provider {
+            message: format!(
+                "{operation} returned {}, but {expected_id} was requested",
+                server.id,
+                expected_id = expected.id
+            ),
+        });
+    }
+    ensure_identity(
+        FetchedIdentity {
+            operation,
+            id: &server.id,
+            zone: &server.zone,
+            project: &server.project,
+        },
+        expected.zone,
+        expected.project,
+    )
 }
 
 /// Rejects a fetched resource whose zone or project contradicts the request.

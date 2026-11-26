@@ -37,21 +37,30 @@ fn write_file(path: &camino::Utf8Path, contents: &str) {
 }
 
 /// Returns the names in `root` whose extension is `tmp`, case-insensitively.
-fn temporary_entries(root: &camino::Utf8Path) -> Vec<String> {
+///
+/// A directory that cannot be inspected is an error, not an empty list: the
+/// caller uses the result as proof that no staging file remains.
+fn temporary_entries(root: &camino::Utf8Path) -> Result<Vec<String>, String> {
     use cap_std::{ambient_authority, fs_utf8::Dir};
-    let Ok(dir) = Dir::open_ambient_dir(root, ambient_authority()) else {
-        return Vec::new();
-    };
-    dir.read_dir(".")
-        .expect("the journal directory must be readable")
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().ok())
-        .filter(|name| {
-            camino::Utf8Path::new(name)
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("tmp"))
-        })
-        .collect()
+    let dir = Dir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("the journal directory must open: {error}"))?;
+    let mut names = Vec::new();
+    for entry in dir
+        .read_dir(".")
+        .map_err(|error| format!("the journal directory must be readable: {error}"))?
+    {
+        let dir_entry = entry.map_err(|error| format!("an entry must be readable: {error}"))?;
+        let name = dir_entry
+            .file_name()
+            .map_err(|error| format!("a name must be valid UTF-8: {error}"))?;
+        if camino::Utf8Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tmp"))
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 /// Writes a staged temporary file, which a journal listing must ignore.
@@ -86,36 +95,44 @@ fn scope() -> AllocationScope {
     }
 }
 
+/// One environment table and the journal root it must select.
+#[derive(Clone, Copy)]
+struct ScopeCase {
+    /// Variable/value pairs supplied to the loader.
+    vars: &'static [(&'static str, &'static str)],
+    /// Expected journal root.
+    expected: &'static str,
+}
+
 #[rstest]
-fn state_dir_override_wins_over_xdg_and_home() {
-    let env = mock_env(&[
+#[case::override_wins(ScopeCase {
+    vars: &[
         (STATE_DIR_ENV, "/var/lib/mriya"),
         ("XDG_STATE_HOME", "/xdg"),
         ("HOME", "/home/ada"),
-    ]);
-    let store = JournalStore::from_env(&env).expect("the override must resolve");
-    assert_eq!(store.root(), Utf8PathBuf::from("/var/lib/mriya/mriya/runs"));
-}
-
-#[rstest]
-fn xdg_state_home_is_used_when_the_override_is_blank() {
-    let env = mock_env(&[
+    ],
+    expected: "/var/lib/mriya/mriya/runs",
+})]
+#[case::xdg_when_override_blank(ScopeCase {
+    vars: &[
         (STATE_DIR_ENV, "   "),
         ("XDG_STATE_HOME", "/xdg"),
         ("HOME", "/home/ada"),
-    ]);
-    let store = JournalStore::from_env(&env).expect("XDG must resolve");
-    assert_eq!(store.root(), Utf8PathBuf::from("/xdg/mriya/runs"));
-}
-
-#[rstest]
-fn home_supplies_the_default_state_directory() {
-    let env = mock_env(&[("HOME", "/home/ada")]);
-    let store = JournalStore::from_env(&env).expect("HOME must resolve");
-    assert_eq!(
-        store.root(),
-        Utf8PathBuf::from("/home/ada/.local/state/mriya/runs")
-    );
+    ],
+    expected: "/xdg/mriya/runs",
+})]
+#[case::home_default(ScopeCase {
+    vars: &[("HOME", "/home/ada")],
+    expected: "/home/ada/.local/state/mriya/runs",
+})]
+#[case::trailing_space_preserved(ScopeCase {
+    vars: &[(STATE_DIR_ENV, "/var/lib/mriya ")],
+    expected: "/var/lib/mriya /mriya/runs",
+})]
+fn the_state_directory_is_resolved_in_precedence_order(#[case] case: ScopeCase) {
+    let env = mock_env(case.vars);
+    let store = JournalStore::from_env(&env).expect("the environment must resolve");
+    assert_eq!(store.root(), Utf8PathBuf::from(case.expected));
 }
 
 #[rstest]
@@ -179,7 +196,8 @@ fn persist_then_load_round_trips_and_restricts_permissions(
         assert_eq!(mode, 0o600, "journals must not be group- or world-readable");
     }
 
-    let leftovers = temporary_entries(journal_dir.store.root());
+    let leftovers =
+        temporary_entries(journal_dir.store.root()).expect("the staging check must run");
     assert_eq!(
         leftovers.len(),
         0,
@@ -266,7 +284,15 @@ fn removing_a_journal_is_idempotent(journal_dir: JournalDir, scope: AllocationSc
     ledger
         .persist_initial()
         .expect("the initial journal must persist");
+    assert!(
+        journal.path().exists(),
+        "the journal must exist before the first removal"
+    );
     journal.remove().expect("the first removal must succeed");
+    assert!(
+        !journal.path().exists(),
+        "the first removal must delete the journal"
+    );
     journal
         .remove()
         .expect("removing an absent journal must still succeed");

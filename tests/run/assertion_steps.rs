@@ -37,13 +37,24 @@ fn run_exit_code(run_context_result: &RunContextResult, code: i32) -> Result<(),
 #[then("the instance is cleaned up")]
 fn instance_cleaned_up(run_context_result: &RunContextResult) -> Result<(), StepError> {
     let run_context = context(run_context_result)?;
-    if run_context.backend.cleanup_calls() > 0 {
-        Ok(())
-    } else {
-        Err(StepError::Assertion(String::from(
+    if run_context.backend.cleanup_calls() == 0 {
+        return Err(StepError::Assertion(String::from(
             "backend.cleanup should be invoked",
-        )))
+        )));
     }
+    // A call alone would pass for an empty ledger; the allocated server must
+    // appear in the report the cleanup verified. When the scenario scripts
+    // cleanup to fail, it cannot report a removal, and the failure note is
+    // asserted separately.
+    let removed = run_context.backend.removed_ids();
+    if removed.iter().any(|id| id == "scripted-id")
+        || run_context.backend.cleanup_is_scripted_to_fail()
+    {
+        return Ok(());
+    }
+    Err(StepError::Assertion(format!(
+        "cleanup must report the allocated server as removed, got {removed:?}"
+    )))
 }
 
 pub(super) fn assert_failure_contains(

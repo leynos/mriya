@@ -18,7 +18,7 @@ use crate::{
     scaleway::{
         ScalewayBackend,
         ScalewayBackendError,
-        cleanup_support::{CleanupAccumulator, DetachSet, VolumeState, owned_ids},
+        cleanup_support::{CleanupAccumulator, DetachOutcome, DetachSet, VolumeState, owned_ids},
         lifecycle::{
             models::{Presence, ServerModel},
             records::{classify_unrecorded, record_server_creation, volume_ref},
@@ -117,8 +117,32 @@ impl ScalewayBackend {
             return;
         }
 
-        let detach = DetachSet::for_server(server, ledger, &zone);
-        if !self.detach_preserved(&handle, &detach, acc).await {
+        // The detach set is derived from a fresh read taken after power-off:
+        // a volume attached between the first read and now would otherwise be
+        // missing from the set and still attached when the server is deleted.
+        let refreshed = match self.get_server(&zone, &server.id).await {
+            Ok(refreshed) => refreshed,
+            Err(ScalewayBackendError::NotFound { .. }) => {
+                // The server disappeared on its own; the caller's absence check
+                // records that, and there is nothing left to detach.
+                self.delete_and_verify_server(&server_ref, acc).await;
+                return;
+            }
+            Err(error) => {
+                acc.add(server_ref, format!("refresh before delete failed: {error}"));
+                return;
+            }
+        };
+        let detach = DetachSet::for_server(&refreshed, ledger, &zone);
+        let still_attached = match self.detach_preserved(&handle, &detach, acc).await {
+            DetachOutcome::Detached => false,
+            DetachOutcome::ServerGone => {
+                self.delete_and_verify_server(&server_ref, acc).await;
+                return;
+            }
+            DetachOutcome::Failed => true,
+        };
+        if still_attached {
             acc.add(
                 server_ref,
                 "not deleted while a preserved volume may remain attached",
@@ -130,25 +154,28 @@ impl ScalewayBackend {
     }
 
     /// Detaches `detach` and reports any failure.
-    ///
-    /// Returns `false` when a preserved volume may remain attached, which is
-    /// the condition that forbids deleting the server.
     async fn detach_preserved(
         &self,
         handle: &InstanceHandle,
         detach: &DetachSet<'_>,
         acc: &mut CleanupAccumulator,
-    ) -> bool {
-        let Err(error) = self.detach_volumes(handle, &detach.volume_ids).await else {
-            return true;
-        };
-        for volume in detach.attached_volumes() {
-            acc.add(
-                volume_ref(volume, detach.zone),
-                format!("detach failed: {error}"),
-            );
+    ) -> DetachOutcome {
+        match self.detach_volumes(handle, &detach.volume_ids).await {
+            Ok(()) => DetachOutcome::Detached,
+            // The server vanished between the refresh and the patch, so no
+            // preserved volume remains attached to it; the caller verifies the
+            // absence and records it as removed.
+            Err(ScalewayBackendError::NotFound { .. }) => DetachOutcome::ServerGone,
+            Err(error) => {
+                for volume in detach.attached_volumes() {
+                    acc.add(
+                        volume_ref(volume, detach.zone),
+                        format!("detach failed: {error}"),
+                    );
+                }
+                DetachOutcome::Failed
+            }
         }
-        false
     }
 
     /// Deletes the server and confirms its absence.

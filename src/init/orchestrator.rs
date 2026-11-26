@@ -13,7 +13,7 @@ use super::{
 use crate::{
     backend::{Backend, InstanceNetworking},
     cancel::{Cancellation, until_cancelled},
-    cleanup::CleanupFailure,
+    cleanup::{CleanupFailure, CleanupReport},
     config_store::{ConfigStoreError, ConfigWriter},
     ownership::ResourceLedger,
     sync::{CommandRunner, Syncer},
@@ -45,7 +45,7 @@ where
 /// How ownership-aware cleanup ended.
 pub(super) enum CleanupOutcome {
     /// Cleanup verified every postcondition.
-    Completed,
+    Completed(CleanupReport),
     /// Cleanup ran but could not verify its postconditions.
     Failed(CleanupFailure),
     /// A second signal stopped cleanup before it finished.
@@ -166,8 +166,13 @@ where
             return Err(StepFailure::Cancelled);
         }
 
-        self.format_volume(&networking, &volume.id)
-            .map_err(StepFailure::Error)
+        match self.format_volume(&networking, &volume.id) {
+            Ok(()) => Ok(()),
+            // A signal kills the format child, so a non-zero status is an
+            // interruption rather than a formatting defect.
+            Err(_) if cancellation.is_cancelled() => Err(StepFailure::Cancelled),
+            Err(error) => Err(StepFailure::Error(error)),
+        }
     }
 
     /// Formats the volume, failing when the command cannot be run or exits

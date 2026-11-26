@@ -5,7 +5,7 @@ use tokio::time::{Instant, sleep};
 use super::{
     HTTP_CLIENT,
     http::{LIST_PAGE_SIZE, ListQuery, checked_json, checked_response, collect_pages},
-    models::{BlockVolumeList, BlockVolumeModel, BlockVolumeResponse, Presence},
+    models::{BlockVolumeList, BlockVolumeModel, Presence},
 };
 use crate::{
     ownership::ResourceRef,
@@ -25,9 +25,9 @@ impl ScalewayBackend {
         volume_id: &str,
     ) -> Result<BlockVolumeModel, ScalewayBackendError> {
         let url = self.block_url(zone, &format!("volumes/{volume_id}"));
-        let response: BlockVolumeResponse =
-            checked_json("get block volume", self.authorized(HTTP_CLIENT.get(&url))).await?;
-        Ok(response.volume)
+        // The Block Storage v1 endpoint returns the volume object at the top
+        // level; there is no `volume` wrapper to unwrap.
+        checked_json("get block volume", self.authorized(HTTP_CLIENT.get(&url))).await
     }
 
     /// Lists Block Storage volumes in `zone`, optionally keeping only those
@@ -103,9 +103,15 @@ impl ScalewayBackend {
 
     /// Checks whether a recorded Block Storage volume still exists.
     ///
+    /// Absence is confirmed only by a successful listing, and the volume's
+    /// zone and project must agree with the recorded scope. A row whose ID
+    /// matches but whose scope contradicts the record is an error rather than a
+    /// reason to report the volume gone.
+    ///
     /// # Errors
     ///
-    /// Returns the provider failure that prevented the check.
+    /// Returns the provider failure that prevented the check, including a
+    /// scope contradiction.
     pub(in crate::scaleway) async fn block_volume_presence(
         &self,
         resource: &ResourceRef,
@@ -113,7 +119,10 @@ impl ScalewayBackend {
     ) -> Result<Presence<BlockVolumeModel>, ScalewayBackendError> {
         let zone = resource.zone();
         match self.get_block_volume(zone, resource.id()).await {
-            Ok(volume) if volume.id == resource.id() => Ok(Presence::Present(volume)),
+            Ok(volume) if volume.id == resource.id() => {
+                ensure_block_scope(&volume, zone, project_id)?;
+                Ok(Presence::Present(volume))
+            }
             Ok(volume) => Err(ScalewayBackendError::Provider {
                 message: format!(
                     "get block volume returned {}, but {} was requested",
@@ -122,14 +131,36 @@ impl ScalewayBackend {
                 ),
             }),
             Err(ScalewayBackendError::NotFound { .. }) => {
-                let volumes = self.list_block_volumes(zone, project_id, None).await?;
-                Ok(volumes
+                let volumes = self.list_block_volumes_unfiltered(zone, project_id).await?;
+                let Some(matching) = volumes
                     .into_iter()
                     .find(|volume| volume.id == resource.id())
-                    .map_or(Presence::ConfirmedAbsent, Presence::Present))
+                else {
+                    return Ok(Presence::ConfirmedAbsent);
+                };
+                ensure_block_scope(&matching, zone, project_id)?;
+                Ok(Presence::Present(matching))
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Lists Block Storage volumes without applying the local zone or project
+    /// filters, so a contradicting row is still visible to the presence check.
+    async fn list_block_volumes_unfiltered(
+        &self,
+        zone: &str,
+        project_id: &str,
+    ) -> Result<Vec<BlockVolumeModel>, ScalewayBackendError> {
+        let query = ListQuery {
+            zone,
+            project_id,
+            tag: None,
+        };
+        collect_pages("list block volumes", |page| {
+            self.fetch_block_volume_page(query, page)
+        })
+        .await
     }
 
     /// Waits until a Block Storage volume is no longer `in_use`.
@@ -157,13 +188,44 @@ impl ScalewayBackend {
                 Err(error) => return Err(error),
             }
 
-            if Instant::now() > deadline {
+            let now = Instant::now();
+            if now > deadline {
                 return Err(ScalewayBackendError::VolumeTimeout {
                     action: String::from("wait for the volume to leave in_use"),
                     volume_id: volume_id.to_owned(),
                 });
             }
-            sleep(self.poll_interval).await;
+            // Never sleep past the deadline: the loop then re-checks it before
+            // issuing another GET, so no probe starts outside the window.
+            sleep(self.poll_interval.min(deadline - now)).await;
         }
     }
+}
+
+/// Rejects a Block Storage volume whose reported scope contradicts the record.
+///
+/// The Block Storage API reports both fields, so an omitted value is accepted
+/// (and the request query already scopes the call), while a contradicting one
+/// is a hard error: deleting a same-identifier volume from another project
+/// would be catastrophic.
+fn ensure_block_scope(
+    volume: &BlockVolumeModel,
+    expected_zone: &str,
+    expected_project: &str,
+) -> Result<(), ScalewayBackendError> {
+    let zone_mismatch = !volume.zone.trim().is_empty() && volume.zone != expected_zone;
+    let project_mismatch =
+        !volume.project_id.trim().is_empty() && volume.project_id != expected_project;
+    if zone_mismatch || project_mismatch {
+        return Err(ScalewayBackendError::Provider {
+            message: format!(
+                "block volume {} is in zone {zone} project {project}, but {expected_zone} \
+                 project {expected_project} was requested",
+                volume.id,
+                zone = volume.zone,
+                project = volume.project_id
+            ),
+        });
+    }
+    Ok(())
 }

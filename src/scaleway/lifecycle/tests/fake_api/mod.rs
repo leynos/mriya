@@ -218,10 +218,16 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<Request>> {
             return Ok(None);
         }
         buffer.extend(chunk.iter().take(count));
-        let text = std::str::from_utf8(&buffer)?;
-        let Some((headers, body)) = text.split_once("\r\n\r\n") else {
+        // Find the header boundary and the declared body length in bytes
+        // before decoding anything: a multibyte character can be split across
+        // reads, and decoding an incomplete buffer would fail a valid request.
+        let Some(boundary) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
             continue;
         };
+        let Some(header_bytes) = buffer.get(..boundary) else {
+            continue;
+        };
+        let headers = std::str::from_utf8(header_bytes)?;
         let length = headers
             .lines()
             .find_map(|line| {
@@ -232,9 +238,13 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<Request>> {
             .map(str::parse::<usize>)
             .transpose()?
             .unwrap_or_default();
-        if body.len() < length {
+        let Some(body_bytes) = buffer.get(boundary + 4..) else {
             continue;
-        }
+        };
+        let Some(body_region) = body_bytes.get(..length) else {
+            continue;
+        };
+        let body = std::str::from_utf8(body_region)?;
         let mut lines = headers.lines();
         let request_line = lines.next().context("request line missing")?;
         let mut parts = request_line.split_whitespace();

@@ -1881,6 +1881,7 @@ dependencies = [
  "cap-std 4.0.3",
  "clap",
  "clap_mangen",
+ "libc",
  "mockable",
  "mriya-test-macros",
  "ortho_config",

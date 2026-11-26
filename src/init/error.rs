@@ -60,6 +60,8 @@ pub enum InitErrorKind {
     Format,
     /// Ownership-aware cleanup failed.
     Cleanup,
+    /// The ownership ledger could not record a change.
+    Ledger,
     /// A signal interrupted the workflow.
     Cancelled,
 }
@@ -100,6 +102,9 @@ where
     /// Raised when ownership-aware cleanup cannot verify its postconditions.
     #[error("cleanup failed: {0}")]
     Cleanup(CleanupFailure),
+    /// Raised when the ownership ledger cannot record a change.
+    #[error("ownership ledger error: {0}")]
+    Ledger(String),
     /// Raised when initialization fails after the new volume was allocated.
     ///
     /// The primary error is preserved, and the note explains what happened to
@@ -158,6 +163,7 @@ where
             Self::Wait { .. } => InitErrorKind::Wait,
             Self::Format { .. } => InitErrorKind::Format,
             Self::Cleanup(_) => InitErrorKind::Cleanup,
+            Self::Ledger(_) => InitErrorKind::Ledger,
             Self::AfterVolume { kind, .. } => *kind,
             Self::Cancelled { .. } => InitErrorKind::Cancelled,
         }

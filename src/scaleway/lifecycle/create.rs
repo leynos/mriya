@@ -67,6 +67,20 @@ struct CreateServerRequest {
     organization: Option<String>,
 }
 
+/// A create-server response awaiting classification.
+struct CreateResponse<'a> {
+    /// The request that produced the response.
+    request: &'a InstanceRequest,
+    /// Allocation tag used to reconcile an ambiguous outcome.
+    tag: &'a AllocationTag,
+    /// Scope used to reconcile an ambiguous outcome.
+    scope: &'a AllocationScope,
+    /// HTTP status the provider returned.
+    status: reqwest::StatusCode,
+    /// Response body bytes.
+    body: &'a [u8],
+}
+
 impl ScalewayBackend {
     /// Creates a Scaleway instance in a stopped state.
     ///
@@ -126,6 +140,16 @@ impl ScalewayBackend {
         let status = response.status();
         let body = match response.bytes().await {
             Ok(body) => body,
+            // A definitive client rejection stays a rejection even when its
+            // body is unreadable: the provider decided, so the request was not
+            // applied and reconciliation would only waste the wait window.
+            Err(error) if status.is_client_error() => {
+                return Err(classify_error(
+                    "create server",
+                    status,
+                    &format!("response body could not be read: {error}"),
+                ));
+            }
             Err(error) => {
                 return self
                     .reconcile_or_unknown(&tag, &scope, &error.to_string())
@@ -133,19 +157,42 @@ impl ScalewayBackend {
             }
         };
 
+        self.classify_create_response(CreateResponse {
+            request,
+            tag: &tag,
+            scope: &scope,
+            status,
+            body: &body,
+        })
+        .await
+    }
+
+    /// Maps a create response body to a server, a rejection, or a
+    /// reconciliation attempt.
+    async fn classify_create_response(
+        &self,
+        response: CreateResponse<'_>,
+    ) -> Result<ServerModel, ScalewayBackendError> {
+        let CreateResponse {
+            request,
+            tag,
+            scope,
+            status,
+            body,
+        } = response;
         if status.is_success() {
-            return match serde_json::from_slice::<ServerResponse>(&body) {
+            return match serde_json::from_slice::<ServerResponse>(body) {
                 Ok(parsed) => Ok(parsed.server),
                 Err(error) => {
-                    self.reconcile_or_unknown(&tag, &scope, &error.to_string())
+                    self.reconcile_or_unknown(tag, scope, &error.to_string())
                         .await
                 }
             };
         }
 
-        let text = String::from_utf8_lossy(&body).into_owned();
+        let text = String::from_utf8_lossy(body).into_owned();
         if status.is_client_error() {
-            if let Ok(api_error) = serde_json::from_slice::<ScalewayApiError>(&body)
+            if let Ok(api_error) = serde_json::from_slice::<ScalewayApiError>(body)
                 && Self::is_instance_type_error(&api_error, request)
             {
                 return Err(ScalewayBackendError::InstanceTypeUnavailable {
@@ -157,8 +204,8 @@ impl ScalewayBackend {
         }
 
         self.reconcile_or_unknown(
-            &tag,
-            &scope,
+            tag,
+            scope,
             &format!("provider answered {}", status.as_u16()),
         )
         .await
@@ -171,16 +218,18 @@ impl ScalewayBackend {
         scope: &AllocationScope,
         detail: &str,
     ) -> Result<ServerModel, ScalewayBackendError> {
-        self.reconcile_server(tag, scope).await?.map_or_else(
-            || {
-                Err(ScalewayBackendError::AllocationOutcomeUnknown {
-                    kind: ResourceKind::Server,
-                    tag: tag.to_string(),
-                    zone: scope.zone.clone(),
-                    detail: detail.to_owned(),
-                })
-            },
-            Ok,
-        )
+        let unknown = |reason: String| ScalewayBackendError::AllocationOutcomeUnknown {
+            kind: ResourceKind::Server,
+            tag: tag.to_string(),
+            zone: scope.zone.clone(),
+            detail: reason,
+        };
+        // A failed lookup is exactly the unknown case: the create may have been
+        // applied, and the tag is the only way to find it later.
+        match self.reconcile_server(tag, scope).await {
+            Ok(Some(server)) => Ok(server),
+            Ok(None) => Err(unknown(detail.to_owned())),
+            Err(error) => Err(unknown(format!("{detail}; reconciliation failed: {error}"))),
+        }
     }
 }

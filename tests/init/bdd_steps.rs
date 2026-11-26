@@ -241,12 +241,45 @@ fn config_updated(init_context_result: &InitContextResult) -> Result<(), StepErr
 
 #[then("the instance is cleaned up")]
 fn instance_cleaned_up(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    assert_counter_condition(
-        init_context_result,
-        |ctx| ctx.backend.cleanup_calls(),
-        |count| count > 0,
-        "backend.cleanup should be invoked",
-    )
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    if init_context.backend.cleanup_calls() == 0 {
+        return Err(StepError::Assertion(String::from(
+            "backend.cleanup should be invoked",
+        )));
+    }
+    // The helper server and its root volume must be in the verified report,
+    // not merely attempted.
+    let removed = init_context.backend.removed_ids();
+    for expected in ["instance-123", "vol-root"] {
+        if !removed.iter().any(|id| id == expected) {
+            return Err(StepError::Assertion(format!(
+                "cleanup must report {expected} as removed, got {removed:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[then("the formatted volume is retained")]
+fn formatted_volume_retained(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let preserved = init_context.backend.preserved_ids();
+    let removed = init_context.backend.removed_ids();
+    if !preserved.iter().any(|id| id == "vol-123") {
+        return Err(StepError::Assertion(format!(
+            "cleanup must preserve vol-123, got preserved={preserved:?} removed={removed:?}"
+        )));
+    }
+    if removed.iter().any(|id| id == "vol-123") {
+        return Err(StepError::Assertion(String::from(
+            "cleanup must not delete the formatted volume",
+        )));
+    }
+    Ok(())
 }
 
 #[then("the retained volume is named with configuration instructions")]
@@ -294,7 +327,9 @@ fn map_failure_kind(
         InitErrorKind::Provision => InitFailureKind::Provision,
         InitErrorKind::Wait => InitFailureKind::Wait,
         InitErrorKind::Format => InitFailureKind::Format,
-        InitErrorKind::Cleanup | InitErrorKind::Cancelled => InitFailureKind::Cleanup,
+        InitErrorKind::Cleanup | InitErrorKind::Cancelled | InitErrorKind::Ledger => {
+            InitFailureKind::Cleanup
+        }
     }
 }
 

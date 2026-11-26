@@ -225,32 +225,36 @@ fn outcome(
     let ledger_for_run = ledger.clone();
     let recorder = backend.clone();
     let result = runtime.block_on(async move {
-        if cancel_after_allocation {
-            let interrupt_handle = cancel.clone();
-            let execute = orchestrator.execute(mriya::run::RunInputs {
-                request: &request_for_run,
-                ledger: &ledger_for_run,
-                source: &source_for_run,
-                remote_command: command.as_str(),
-                cancellation: &cancellation,
-            });
-            let interrupt = async move {
-                recorder.wait_until_recorded().await;
-                interrupt_handle.cancel(Signal::Interrupt);
-            };
-            let (result, ()) = tokio::join!(execute, interrupt);
-            result
-        } else {
-            orchestrator
-                .execute(mriya::run::RunInputs {
-                    request: &request_for_run,
-                    ledger: &ledger_for_run,
-                    source: &source_for_run,
-                    remote_command: command.as_str(),
-                    cancellation: &cancellation,
-                })
-                .await
+        let execute = orchestrator.execute(mriya::run::RunInputs {
+            request: &request_for_run,
+            ledger: &ledger_for_run,
+            source: &source_for_run,
+            remote_command: command.as_str(),
+            cancellation: &cancellation,
+        });
+        if !cancel_after_allocation {
+            return execute.await;
         }
+
+        // The backend records its allocation and then pends, so the observer
+        // resolves first. Bounding the whole interaction means a missed
+        // interrupt fails the scenario instead of hanging it.
+        let limit = Duration::from_secs(30);
+        let interrupt_handle = cancel.clone();
+        let interrupt = async move {
+            recorder.wait_until_recorded().await;
+            interrupt_handle.cancel(Signal::Interrupt);
+        };
+        tokio::pin!(execute);
+        tokio::pin!(interrupt);
+        tokio::time::timeout(limit, async {
+            tokio::select! {
+                result = &mut execute => result,
+                () = &mut interrupt => execute.await,
+            }
+        })
+        .await
+        .expect("the cancellation scenario must settle within its bound")
     });
 
     let result_enum = match result {
@@ -338,6 +342,9 @@ pub fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepE
                 .last()
                 .map(|arg| arg.to_string_lossy().into_owned())
         })
-        .find(|payload| !payload.contains("umount"))
+        .find(|payload| {
+            !(payload.starts_with("sync; if mountpoint -q ")
+                && payload.contains("; then sudo umount "))
+        })
         .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))
 }

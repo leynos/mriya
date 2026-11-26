@@ -46,6 +46,15 @@ fn rejected() -> Reply {
     }
 }
 
+/// A provider response rejecting the volume update for a reason other than
+/// absence; a 404 would mean the server is gone instead.
+fn rejected_update() -> Reply {
+    Reply {
+        status: 400,
+        body: String::from(r#"{"type":"denied","message":"volume is busy"}"#),
+    }
+}
+
 /// The single-server instance fixture whose `"0"` index is the root volume.
 fn attached_instance() -> Reply {
     Reply {
@@ -225,7 +234,7 @@ async fn detach_volumes_reports_the_operation_error(
 ) -> Result<()> {
     let (result, requests) = with_stub(
         backend_fixture,
-        vec![attached_instance(), rejected()],
+        vec![attached_instance(), rejected_update()],
         async |backend| {
             backend
                 .detach_volumes(&handle, &[String::from("vol-cache")])

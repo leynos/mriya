@@ -29,6 +29,10 @@ pub(in crate::scaleway) const MAX_LIST_PAGES: u32 = 100;
 
 /// Collects pages until the provider returns an empty page.
 ///
+/// The bound exists so a provider that ignores `page` cannot loop forever. One
+/// terminal probe follows the last permitted populated page, which lets a
+/// listing whose final content page is the bound itself still end normally.
+///
 /// # Errors
 ///
 /// Returns the first page failure, and a provider error when the listing does
@@ -50,7 +54,7 @@ where
         }
         items.extend(batch);
         page += 1;
-        if page > MAX_LIST_PAGES {
+        if page > MAX_LIST_PAGES + 1 {
             return Err(ScalewayBackendError::Provider {
                 message: format!("{operation} did not terminate after {MAX_LIST_PAGES} pages"),
             });
@@ -140,7 +144,12 @@ pub(in crate::scaleway) async fn checked_response(
         return Ok(response);
     }
 
-    let body = response.text().await.unwrap_or_default();
+    // Keep the status even when the body cannot be read; the read failure is
+    // added to the provider message instead of replacing the classification.
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|error| format!("response body could not be read: {error}"));
     Err(classify_error(operation, status, &body))
 }
 

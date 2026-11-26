@@ -146,6 +146,17 @@ pub enum JanitorError {
     Runner(#[from] SyncError),
 }
 
+/// Returns the zone to address a server's boot volume in.
+///
+/// An attached volume lives in the server's zone, so that zone is used when the
+/// volume object omits its own.
+fn boot_volume_zone(volume: &types::ScwServerVolume, server: &ScwServer) -> String {
+    if volume.zone.trim().is_empty() {
+        return server.zone.clone();
+    }
+    volume.zone.clone()
+}
+
 /// Deletes test-run-tagged Scaleway resources by shelling out to `scw`.
 #[derive(Clone, Debug)]
 pub struct Janitor<R: CommandRunner> {
@@ -181,13 +192,72 @@ impl<R: CommandRunner> Janitor<R> {
     pub fn sweep(&self) -> Result<SweepSummary, JanitorError> {
         let tag = self.config.test_run_tag();
 
-        let deleted_servers = self.delete_tagged_servers(&tag)?;
+        // The root volume of each tagged server carries no tag of its own, so
+        // its identifier is recorded before the server is deleted. If the
+        // server deletion removes the server but fails to remove the volume,
+        // the retry below is the only thing that can find it again.
+        let servers = self.list_tagged_servers(&tag)?;
+        let boot_volumes = Self::boot_volume_refs(&servers);
+        for server in &servers {
+            self.delete_server(server)?;
+        }
+        self.delete_boot_volumes(&boot_volumes)?;
+
         let deleted_volumes = self.delete_tagged_volumes(&tag)?;
-        self.ensure_no_remaining(&tag)?;
+        self.ensure_no_remaining(&tag, &boot_volumes)?;
 
         Ok(SweepSummary {
-            deleted_servers,
+            deleted_servers: servers.len(),
             deleted_volumes,
+        })
+    }
+
+    /// Returns the `(id, zone)` of each server's root volume.
+    ///
+    /// An attached volume lives in the server's zone, so that zone is used when
+    /// the volume object omits its own.
+    fn boot_volume_refs(servers: &[ScwServer]) -> Vec<(String, String)> {
+        servers
+            .iter()
+            .filter_map(|server| {
+                server
+                    .volumes
+                    .get("0")
+                    .map(|volume| (volume.id.clone(), boot_volume_zone(volume, server)))
+            })
+            .collect()
+    }
+
+    /// Deletes any recorded boot volume the provider still has.
+    ///
+    /// The root volume is often removed with its server, so each identifier is
+    /// checked against the project's Instance volumes first; only a volume that
+    /// still exists is deleted. A failure here is reported, because the
+    /// untagged volume has no other path back into a later sweep.
+    fn delete_boot_volumes(&self, boot_volumes: &[(String, String)]) -> Result<(), JanitorError> {
+        // The recorded zone is only used for the residual message; deletion
+        // sends the zone the provider reports for the volume.
+        if boot_volumes.is_empty() {
+            return Ok(());
+        }
+        let existing = self.list_instance_volumes()?;
+        for (id, _zone) in boot_volumes {
+            let Some(volume) = existing.iter().find(|volume| &volume.id == id) else {
+                continue;
+            };
+            self.delete_instance_volume(volume)?;
+        }
+        let remaining = self.list_instance_volumes()?;
+        let leftovers = boot_volumes
+            .iter()
+            .filter(|(id, _)| remaining.iter().any(|volume| &volume.id == id))
+            .map(|(id, zone)| format!("{id}@{zone}"))
+            .collect::<Vec<_>>();
+        if leftovers.is_empty() {
+            return Ok(());
+        }
+        Err(JanitorError::NotClean {
+            message: format!("boot volumes remaining: [{}]", leftovers.join(", ")),
         })
     }
 
@@ -208,11 +278,6 @@ impl<R: CommandRunner> Janitor<R> {
         Ok(items.len())
     }
 
-    /// Deletes every server carrying `tag`.
-    fn delete_tagged_servers(&self, tag: &str) -> Result<usize, JanitorError> {
-        self.delete_tagged(tag, Self::list_tagged_servers, Self::delete_server)
-    }
-
     /// Deletes every volume carrying `tag`.
     fn delete_tagged_volumes(&self, tag: &str) -> Result<usize, JanitorError> {
         self.delete_tagged(tag, Self::list_tagged_volumes, Self::delete_volume)
@@ -222,13 +287,25 @@ impl<R: CommandRunner> Janitor<R> {
     /// remain.
     ///
     /// The message names up to five of each as `id@zone`.
-    fn ensure_no_remaining(&self, tag: &str) -> Result<(), JanitorError> {
+    fn ensure_no_remaining(
+        &self,
+        tag: &str,
+        boot_volumes: &[(String, String)],
+    ) -> Result<(), JanitorError> {
         const MAX_ITEMS_TO_SHOW: usize = 5;
 
         let remaining_servers = self.list_tagged_servers(tag)?;
         let remaining_volumes = self.list_tagged_volumes(tag)?;
+        let instance_volumes = self.list_instance_volumes()?;
+        let remaining_boot = boot_volumes
+            .iter()
+            .filter(|(id, _)| instance_volumes.iter().any(|volume| &volume.id == id))
+            .map(|(id, zone)| format!("{id}@{zone}"))
+            .collect::<Vec<_>>();
 
-        if remaining_servers.is_empty() && remaining_volumes.is_empty() {
+        let no_tagged_resources = remaining_servers.is_empty() && remaining_volumes.is_empty();
+        let nothing_remains = no_tagged_resources && remaining_boot.is_empty();
+        if nothing_remains {
             return Ok(());
         }
 
@@ -246,11 +323,19 @@ impl<R: CommandRunner> Janitor<R> {
             .join(", ");
 
         let message = format!(
-            "servers remaining: {} [{}], volumes remaining: {} [{}] (showing up to {} of each)",
+            "servers remaining: {} [{}], volumes remaining: {} [{}], boot volumes remaining: \
+             {} [{}] (showing up to {} of each)",
             remaining_servers.len(),
             remaining_server_ids,
             remaining_volumes.len(),
             remaining_volume_ids,
+            remaining_boot.len(),
+            remaining_boot
+                .iter()
+                .take(MAX_ITEMS_TO_SHOW)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
             MAX_ITEMS_TO_SHOW
         );
         Err(JanitorError::NotClean { message })

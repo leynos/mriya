@@ -73,6 +73,17 @@ pub enum LedgerError {
         /// Identifier that was looked up.
         id: String,
     },
+    /// Raised when a promotion changes memory but cannot be persisted.
+    ///
+    /// The in-memory disposition is already updated, so cleanup in this
+    /// process still preserves the resource; the journal, however, still shows
+    /// the previous disposition. A caller for which that difference matters
+    /// must not report success.
+    #[error("the ledger change could not be persisted: {message}")]
+    Persist {
+        /// Human-readable persistence failure.
+        message: String,
+    },
 }
 
 /// Mutable ledger contents guarded by the ledger's mutex.
@@ -111,6 +122,7 @@ impl LedgerState {
             allocation: self.tag.clone(),
             scope: self.scope.clone(),
             entries: self.entries.clone(),
+            outcome_unknown: self.outcome_unknown,
         }
     }
 }
@@ -189,12 +201,14 @@ impl ResourceLedger {
     /// still act on it during this process, and the failure is kept in
     /// [`ResourceLedger::warnings`] so the eventual report can mention it.
     pub fn record(&self, resource: ResourceRef, disposition: Disposition) {
+        // The snapshot is taken and written while the lock is held, so two
+        // clones cannot publish an older snapshot after a newer one. The lock
+        // covers one small file write; correctness beats that contention.
         let mut state = self.lock();
         state.upsert(resource, disposition);
         let snapshot = state.snapshot();
-        drop(state);
         if let Err(err) = self.persist(&snapshot) {
-            self.lock().warnings.push(err.message);
+            state.warnings.push(err.message);
         }
     }
 
@@ -203,7 +217,9 @@ impl ResourceLedger {
     /// # Errors
     ///
     /// Returns [`LedgerError::NotRecorded`] when no entry names `kind` and
-    /// `id`.
+    /// `id`, and [`LedgerError::Persist`] when the change could not be written
+    /// to the journal. The in-memory disposition is updated even then, so this
+    /// process still honours it.
     pub fn promote(
         &self,
         kind: ResourceKind,
@@ -223,11 +239,9 @@ impl ResourceLedger {
         };
         entry.disposition = disposition;
         let snapshot = state.snapshot();
-        drop(state);
-        if let Err(err) = self.persist(&snapshot) {
-            self.lock().warnings.push(err.message);
-        }
-        Ok(())
+        self.persist(&snapshot).map_err(|err| LedgerError::Persist {
+            message: err.message,
+        })
     }
 
     /// Replaces the recorded entries with `entries`.
@@ -239,9 +253,8 @@ impl ResourceLedger {
         let mut state = self.lock();
         state.entries = entries;
         let snapshot = state.snapshot();
-        drop(state);
         if let Err(err) = self.persist(&snapshot) {
-            self.lock().warnings.push(err.message);
+            state.warnings.push(err.message);
         }
     }
 
@@ -287,6 +300,12 @@ impl ResourceLedger {
 
     /// Removes the durable journal after verified cleanup.
     ///
+    /// The removal is skipped while an allocation outcome is unknown, because
+    /// the tag is then the only durable correlation with the provider. A
+    /// successful return therefore does not prove the file is gone; use
+    /// [`ResourceLedger::has_unknown_outcome`] or
+    /// [`ResourceLedger::journal_path`] when that distinction matters.
+    ///
     /// # Errors
     ///
     /// Returns [`LedgerPersistError`] when the journal exists but cannot be
@@ -294,19 +313,38 @@ impl ResourceLedger {
     /// recover` can find it.
     pub fn clear_journal(&self) -> Result<(), LedgerPersistError> {
         if self.lock().outcome_unknown {
-            // The tag is the only durable correlation for an allocation whose
-            // outcome is unknown; dropping the journal now would lose it.
             return Ok(());
         }
         self.sink.as_ref().map_or(Ok(()), |sink| sink.clear())
     }
 
     /// Marks that a provider allocation may exist without a recorded
-    /// identifier.
+    /// identifier, and persists that fact.
     ///
-    /// This keeps the journal alive after cleanup, so `mriya recover` can
-    /// reconcile the tag later even when the process exits normally.
-    pub fn mark_outcome_unknown(&self) { self.lock().outcome_unknown = true; }
+    /// The flag survives a restart because it is part of the journal record:
+    /// `mriya recover` must know that the journal cannot be cleared until the
+    /// tag has been reconciled.
+    pub fn mark_outcome_unknown(&self) {
+        let mut state = self.lock();
+        state.outcome_unknown = true;
+        let snapshot = state.snapshot();
+        if let Err(err) = self.persist(&snapshot) {
+            state.warnings.push(err.message);
+        }
+    }
+
+    /// Clears the unknown-outcome flag after a verified reconciliation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerPersistError`] when the updated record cannot be
+    /// written; the journal must then be kept.
+    pub fn resolve_outcome(&self) -> Result<(), LedgerPersistError> {
+        let mut state = self.lock();
+        state.outcome_unknown = false;
+        let snapshot = state.snapshot();
+        self.persist(&snapshot)
+    }
 
     /// Reports whether an allocation outcome is unknown.
     #[must_use]

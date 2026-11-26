@@ -14,6 +14,17 @@ use crate::{
     },
 };
 
+/// How the detachment of preserved volumes ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DetachOutcome {
+    /// Every preserved volume was detached and verified.
+    Detached,
+    /// The server disappeared before the patch, so none remain attached.
+    ServerGone,
+    /// At least one preserved volume may still be attached.
+    Failed,
+}
+
 /// State of one recorded volume, reduced to what cleanup decides on.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum VolumeState {

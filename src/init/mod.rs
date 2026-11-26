@@ -2,9 +2,15 @@
 //!
 //! Initialization creates a volume, formats it from a helper instance, and
 //! records its identifier in configuration. The new volume is owned by the run
-//! until formatting succeeds, when it is promoted to retained. Every exit runs
-//! ownership-aware cleanup: a failure before formatting deletes the volume, and
-//! a failure after formatting leaves it detached and recoverable by identifier.
+//! until formatting succeeds, when it is promoted to retained, and every exit
+//! runs ownership-aware cleanup.
+//!
+//! What cleanup achieves is a verified outcome, not a guarantee: a failure
+//! before formatting normally deletes the volume, but a provider error, a
+//! permission denial, or a second signal can leave it attached or present. A
+//! failure after formatting detaches the volume and keeps it for the operator.
+//! Both cases report the volume's identifier and, when resources may remain,
+//! the journal that `mriya recover` replays.
 
 use std::ffi::OsString;
 
@@ -20,6 +26,7 @@ mod finish;
 mod format;
 mod helpers;
 mod orchestrator;
+mod outcome;
 
 pub use error::{InitConfigError, InitError, InitErrorKind, InitRequestError};
 pub use orchestrator::InitOrchestrator;
@@ -133,6 +140,9 @@ pub struct InitOutcome {
     pub volume_id: String,
     /// Configuration file path that was updated.
     pub config_path: Utf8PathBuf,
+    /// Non-fatal notes gathered during cleanup, such as a journal that could
+    /// not be rewritten.
+    pub warnings: Vec<String>,
 }
 
 #[cfg(test)]

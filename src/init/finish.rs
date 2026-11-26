@@ -15,13 +15,14 @@ use super::{
     InitOutcome,
     InitRequest,
     orchestrator::CleanupOutcome,
+    outcome::{after_volume, clear_journal, interrupted_note, journal_note, retained_note},
 };
 use crate::{
     backend::Backend,
     cancel::{Cancellation, Signal},
     cleanup::CleanupFailure,
     config_store::ConfigWriter,
-    ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef},
+    ownership::{Disposition, LedgerError, ResourceKind, ResourceLedger, ResourceRef},
     sync::CommandRunner,
     volume::{VolumeBackend, VolumeHandle},
 };
@@ -37,13 +38,6 @@ pub(super) struct InitContext<'a> {
     pub(super) cancellation: &'a Cancellation,
 }
 
-/// Configuration key that holds the cache volume identifier.
-const VOLUME_KEY: &str = "default_volume_id";
-/// Configuration section that holds the cache volume identifier.
-const SCALEWAY_SECTION: &str = "scaleway";
-/// Environment variable that overrides the cache volume identifier.
-const VOLUME_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
-
 impl<B, R, W> InitOrchestrator<B, R, W>
 where
     B: Backend + VolumeBackend,
@@ -57,28 +51,73 @@ where
         context: &InitContext<'_>,
         volume: &VolumeHandle,
     ) -> Result<InitOutcome, InitError<B::Error>> {
-        let InitContext {
-            request,
-            ledger,
-            cancellation,
-        } = *context;
+        let InitContext { ledger, .. } = *context;
+        Self::promote_retained(ledger, volume)?;
+        let warnings = self.cleanup_retained(context, volume).await?;
+        self.write_retained(context, volume, warnings)
+    }
+
+    /// Marks the created volume as retained, refusing to continue unless the
+    /// ledger and journal agree.
+    fn promote_retained(
+        ledger: &ResourceLedger,
+        volume: &VolumeHandle,
+    ) -> Result<(), InitError<B::Error>> {
         // From here the volume is the user's cache: it must survive cleanup.
-        if ledger
-            .promote(
-                ResourceKind::InstanceVolume,
-                &volume.id,
-                Disposition::Retained,
-            )
-            .is_err()
-        {
-            ledger.record(
+        // The promotion must reach the journal before cleanup can delete an
+        // `Owned` volume, so a persistence failure stops here rather than
+        // risking a later recovery deleting the formatted cache.
+        match ledger.promote(
+            ResourceKind::InstanceVolume,
+            &volume.id,
+            Disposition::Retained,
+        ) {
+            Ok(()) => {}
+            Err(error @ LedgerError::Persist { .. }) => {
+                return Err(after_volume(
+                    &InitError::Ledger(error.to_string()),
+                    volume,
+                    format!(
+                        "{retained}; the ledger could not record the retention ({error})",
+                        retained = retained_note(&volume.id)
+                    ),
+                    None,
+                ));
+            }
+            Err(LedgerError::NotRecorded { .. }) => ledger.record(
                 ResourceRef::instance_volume(&volume.id, &volume.zone),
                 Disposition::Retained,
-            );
+            ),
         }
+        if ledger
+            .find(ResourceKind::InstanceVolume, &volume.id)
+            .is_some_and(|entry| entry.disposition == Disposition::Owned)
+        {
+            // A failed record() leaves the previous `Owned` entry in place; the
+            // journal must not be trusted to preserve a volume it still marks
+            // for deletion.
+            return Err(after_volume(
+                &InitError::Cleanup(CleanupFailure::new()),
+                volume,
+                format!(
+                    "{retained}; the ledger still records the volume as owned",
+                    retained = retained_note(&volume.id)
+                ),
+                None,
+            ));
+        }
+        Ok(())
+    }
 
-        match self.cleanup(ledger, cancellation).await {
-            CleanupOutcome::Completed => {}
+    /// Runs the ownership-aware cleanup and keeps the warnings it reports.
+    async fn cleanup_retained(
+        &self,
+        context: &InitContext<'_>,
+        volume: &VolumeHandle,
+    ) -> Result<Vec<String>, InitError<B::Error>> {
+        let mut warnings = Vec::new();
+        match self.cleanup(context.ledger, context.cancellation).await {
+            CleanupOutcome::Completed(report) => warnings.extend(report.warnings),
             CleanupOutcome::Failed(failure) => {
                 let note = format!(
                     "{retained}; cleanup could not verify it: {failure}",
@@ -95,12 +134,70 @@ where
                 return Err(after_volume(
                     &InitError::Cleanup(CleanupFailure::new()),
                     volume,
-                    interrupted_note(ledger),
+                    interrupted_note(context.ledger),
                     None,
                 ));
             }
         }
+        Ok(warnings)
+    }
 
+    /// Reports a signal that arrived while cleanup ran; the volume is retained,
+    /// so its identifier is still written first.
+    fn cancelled_after_cleanup(
+        &self,
+        context: &InitContext<'_>,
+        volume: &VolumeHandle,
+        signal: Signal,
+    ) -> InitError<B::Error> {
+        let InitContext {
+            request, ledger, ..
+        } = *context;
+        let written = self
+            .config_writer
+            .write_volume_id(&volume.id, request.overwrite_existing_volume_id);
+        let journal = match &written {
+            Ok(_) => {
+                if ledger.clear_journal().is_ok() {
+                    None
+                } else {
+                    ledger.journal_path()
+                }
+            }
+            Err(_) => ledger.journal_path(),
+        };
+        InitError::Cancelled {
+            message: format!(
+                "{} received during cleanup; the volume {volume_id} is retained{written}",
+                signal.as_str(),
+                volume_id = volume.id,
+                written = match written {
+                    Ok(path) => format!(" and recorded in {path}"),
+                    Err(error) => format!(", but recording it failed: {error}"),
+                }
+            ),
+            signal,
+            cleanup: None,
+            journal,
+        }
+    }
+
+    /// Writes the retained volume identifier unless a signal interrupted the
+    /// initialization during cleanup.
+    fn write_retained(
+        &self,
+        context: &InitContext<'_>,
+        volume: &VolumeHandle,
+        warnings: Vec<String>,
+    ) -> Result<InitOutcome, InitError<B::Error>> {
+        let InitContext {
+            request,
+            ledger,
+            cancellation,
+        } = *context;
+        if let Some(signal) = cancellation.signal() {
+            return Err(self.cancelled_after_cleanup(context, volume, signal));
+        }
         match self
             .config_writer
             .write_volume_id(&volume.id, request.overwrite_existing_volume_id)
@@ -110,6 +207,7 @@ where
                 Ok(InitOutcome {
                     volume_id: volume.id.clone(),
                     config_path,
+                    warnings,
                 })
             }
             Err(error) => Err(after_volume(
@@ -134,7 +232,7 @@ where
             ..
         } = *context;
         match self.cleanup(ledger, cancellation).await {
-            CleanupOutcome::Completed => {
+            CleanupOutcome::Completed(_) => {
                 // The volume is gone and the formatter instance with it, so
                 // the journal has nothing left to replay.
                 ledger.clear_journal().ok();
@@ -176,7 +274,7 @@ where
             ..
         } = *context;
         match self.cleanup(ledger, cancellation).await {
-            CleanupOutcome::Completed => {
+            CleanupOutcome::Completed(_) => {
                 // Nothing was recorded as owned, so the journal is settled.
                 ledger.clear_journal().ok();
                 InitError::Volume(primary)
@@ -214,10 +312,17 @@ where
             ..
         } = *context;
         let signal = cancellation.signal().unwrap_or(Signal::Interrupt);
-        let journal = ledger.journal_path();
+        let mut journal = ledger.journal_path();
         let mut cleanup_failure = None;
+        let mut warnings = Vec::new();
         let state = match self.cleanup(ledger, cancellation).await {
-            CleanupOutcome::Completed => String::from("provisioned resources were cleaned up"),
+            CleanupOutcome::Completed(report) => {
+                warnings.extend(report.warnings);
+                // Owned resources are gone, so a journal with nothing left to
+                // recover must not keep warning the operator.
+                journal = clear_journal(ledger, &mut warnings);
+                String::from("provisioned resources were cleaned up")
+            }
             CleanupOutcome::Failed(failure) => {
                 let message = format!("ownership-aware cleanup did not complete: {failure}");
                 cleanup_failure = Some(Box::new(failure));
@@ -247,53 +352,10 @@ where
     ) -> CleanupOutcome {
         tokio::select! {
             result = self.backend.cleanup(ledger) => match result {
-                Ok(_) => CleanupOutcome::Completed,
+                Ok(report) => CleanupOutcome::Completed(report),
                 Err(error) => CleanupOutcome::Failed(error),
             },
             () = cancellation.repeated() => CleanupOutcome::Interrupted,
         }
     }
-}
-
-/// Wraps `primary` in the volume context `note`.
-fn after_volume<BackendError>(
-    primary: &InitError<BackendError>,
-    volume: &VolumeHandle,
-    note: String,
-    cleanup: Option<CleanupFailure>,
-) -> InitError<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    let kind = primary.kind();
-    InitError::AfterVolume {
-        primary: primary.to_string(),
-        kind,
-        volume_id: volume.id.clone(),
-        zone: volume.zone.clone(),
-        note,
-        cleanup: cleanup.map(Box::new),
-    }
-}
-
-/// Describes how to configure a retained volume, including the recovery step.
-pub(super) fn retained_note(volume_id: &str) -> String {
-    format!(
-        "the new volume {volume_id} is retained; configure it with \
-         [{SCALEWAY_SECTION}] {VOLUME_KEY} = \"{volume_id}\" or {VOLUME_ENV_VAR}={volume_id}, \
-         then run `mriya recover` to confirm it"
-    )
-}
-
-/// Describes a cleanup interrupted by a second signal.
-pub(super) fn interrupted_note(ledger: &ResourceLedger) -> String {
-    format!(
-        "cleanup was interrupted by a second signal; run `mriya recover`{note}",
-        note = journal_note(ledger.journal_path().as_deref())
-    )
-}
-
-/// Renders the journal path suffix for a message.
-fn journal_note(journal: Option<&camino::Utf8Path>) -> String {
-    journal.map_or_else(String::new, |path| format!(" (journal: {path})"))
 }

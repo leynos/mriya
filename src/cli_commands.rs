@@ -66,8 +66,11 @@ pub(crate) async fn run_command(
 
     let sync_config =
         SyncConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
-    let syncer = Syncer::new(sync_config, StreamingCommandRunner)
-        .map_err(|err| CliError::Sync(err.to_string()))?;
+    let syncer = Syncer::new(
+        sync_config,
+        StreamingCommandRunner::new(cancellation.scope()),
+    )
+    .map_err(|err| CliError::Sync(err.to_string()))?;
 
     let cwd = std::env::current_dir().map_err(|err| CliError::Config(err.to_string()))?;
     let source = Utf8PathBuf::from_path_buf(cwd)
@@ -126,8 +129,11 @@ pub(crate) async fn init_command(
 
     let backend = ScalewayBackend::new(scaleway_config.clone())
         .map_err(|err| CliError::Backend(err.to_string()))?;
-    let syncer = Syncer::new(sync_config, StreamingCommandRunner)
-        .map_err(|err| CliError::Sync(err.to_string()))?;
+    let syncer = Syncer::new(
+        sync_config,
+        StreamingCommandRunner::new(cancellation.scope()),
+    )
+    .map_err(|err| CliError::Sync(err.to_string()))?;
 
     let cwd = std::env::current_dir().map_err(|err| CliError::Config(err.to_string()))?;
     let cwd_path = Utf8PathBuf::from_path_buf(cwd)
@@ -149,6 +155,7 @@ pub(crate) async fn init_command(
         .execute(&request, &ledger, cancellation)
         .await?;
 
+    report_warnings(&outcome.warnings);
     writeln!(
         io::stdout(),
         "created cache volume {} and updated {}",

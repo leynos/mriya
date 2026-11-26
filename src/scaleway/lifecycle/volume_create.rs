@@ -103,6 +103,20 @@ struct ScalewayVolume {
     zone: String,
 }
 
+/// A create-volume response awaiting classification.
+struct VolumeCreateResponse<'a> {
+    /// The request that produced the response.
+    request: &'a VolumeRequest,
+    /// Allocation tag used to reconcile an ambiguous outcome.
+    tag: &'a AllocationTag,
+    /// Scope used to reconcile an ambiguous outcome.
+    scope: &'a AllocationScope,
+    /// HTTP status the provider returned.
+    status: reqwest::StatusCode,
+    /// Response body bytes.
+    body: &'a [u8],
+}
+
 impl ScalewayBackend {
     /// Creates a new Block Storage volume and records it as owned.
     ///
@@ -178,6 +192,21 @@ impl ScalewayBackend {
         let status = response.status();
         let body = match response.bytes().await {
             Ok(body) => body,
+            // The provider decided, so the create was not applied; keep the
+            // rejection rather than reconciling an allocation that cannot
+            // exist.
+            Err(error) if status.is_client_error() => {
+                return Err(ScalewayBackendError::VolumeCreateFailed {
+                    name: request.name.clone(),
+                    zone: request.zone.clone(),
+                    message: classify_error(
+                        "create volume",
+                        status,
+                        &format!("response body could not be read: {error}"),
+                    )
+                    .to_string(),
+                });
+            }
             Err(error) => {
                 return self
                     .reconcile_created_volume(&tag, &scope, &error.to_string())
@@ -185,8 +214,38 @@ impl ScalewayBackend {
             }
         };
 
+        self.classify_volume_response(VolumeCreateResponse {
+            request,
+            tag: &tag,
+            scope: &scope,
+            status,
+            body: &body,
+        })
+        .await
+    }
+
+    /// Maps a create response body to a handle, a rejection, or an attempt to
+    /// reconcile an allocation the provider may have made.
+    async fn classify_volume_response(
+        &self,
+        response: VolumeCreateResponse<'_>,
+    ) -> Result<VolumeHandle, ScalewayBackendError> {
+        let VolumeCreateResponse {
+            request,
+            tag,
+            scope,
+            status,
+            body,
+        } = response;
         if status.is_success() {
-            return match serde_json::from_slice::<CreateVolumeResponse>(&body) {
+            return match serde_json::from_slice::<CreateVolumeResponse>(body) {
+                Ok(parsed) if parsed.volume.id.trim().is_empty() => {
+                    // A handle without an identifier cannot be cleaned up by
+                    // ID, so treat it like an unreadable success and look the
+                    // volume up by its allocation tag instead.
+                    self.reconcile_created_volume(tag, scope, "create volume returned a blank id")
+                        .await
+                }
                 Ok(parsed) => Ok(VolumeHandle::new(
                     parsed.volume.id,
                     if parsed.volume.zone.trim().is_empty() {
@@ -196,13 +255,13 @@ impl ScalewayBackend {
                     },
                 )),
                 Err(error) => {
-                    self.reconcile_created_volume(&tag, &scope, &error.to_string())
+                    self.reconcile_created_volume(tag, scope, &error.to_string())
                         .await
                 }
             };
         }
 
-        let text = String::from_utf8_lossy(&body).into_owned();
+        let text = String::from_utf8_lossy(body).into_owned();
         if status.is_client_error() {
             return Err(ScalewayBackendError::VolumeCreateFailed {
                 name: request.name.clone(),
@@ -212,8 +271,8 @@ impl ScalewayBackend {
         }
 
         self.reconcile_created_volume(
-            &tag,
-            &scope,
+            tag,
+            scope,
             &format!("provider answered {}", status.as_u16()),
         )
         .await
@@ -226,25 +285,25 @@ impl ScalewayBackend {
         scope: &AllocationScope,
         detail: &str,
     ) -> Result<VolumeHandle, ScalewayBackendError> {
-        self.reconcile_volume(tag, scope).await?.map_or_else(
-            || {
-                Err(ScalewayBackendError::AllocationOutcomeUnknown {
-                    kind: ResourceKind::InstanceVolume,
-                    tag: tag.to_string(),
-                    zone: scope.zone.clone(),
-                    detail: detail.to_owned(),
-                })
-            },
-            |volume| {
-                Ok(VolumeHandle::new(
-                    volume.id,
-                    if volume.zone.trim().is_empty() {
-                        scope.zone.clone()
-                    } else {
-                        volume.zone
-                    },
-                ))
-            },
-        )
+        let unknown = |reason: String| ScalewayBackendError::AllocationOutcomeUnknown {
+            kind: ResourceKind::InstanceVolume,
+            tag: tag.to_string(),
+            zone: scope.zone.clone(),
+            detail: reason,
+        };
+        // A failed lookup is the unknown case: the POST may have created the
+        // volume, and the tag is the only durable way to find it later.
+        match self.reconcile_volume(tag, scope).await {
+            Ok(Some(volume)) => Ok(VolumeHandle::new(
+                volume.id,
+                if volume.zone.trim().is_empty() {
+                    scope.zone.clone()
+                } else {
+                    volume.zone
+                },
+            )),
+            Ok(None) => Err(unknown(detail.to_owned())),
+            Err(error) => Err(unknown(format!("{detail}; reconciliation failed: {error}"))),
+        }
     }
 }

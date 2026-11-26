@@ -121,12 +121,26 @@ pub(super) async fn patch_instance_volumes(
             message: err.to_string(),
         })?;
 
-    if response.status().is_success() {
+    let status = response.status();
+    if status.is_success() {
         return Ok(());
     }
 
-    let error_text = response.text().await.unwrap_or_default();
-    Err(context
-        .action
-        .into_error(context.volume_id.to_owned(), handle.id.clone(), error_text))
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|error| format!("response body could not be read: {error}"));
+    // A 404 while detaching means the server is already gone; that is absence,
+    // not a detached-failure, and the caller treats it as such.
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(ScalewayBackendError::NotFound {
+            operation: String::from("patch instance volumes"),
+            message: body,
+        });
+    }
+    Err(context.action.into_error(
+        context.volume_id.to_owned(),
+        handle.id.clone(),
+        format!("HTTP {}: {body}", status.as_u16()),
+    ))
 }

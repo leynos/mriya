@@ -129,7 +129,7 @@ async fn async_main() -> i32 {
     let result = match cli {
         Cli::Run(command) => exec_run(command, &cancellation).await,
         Cli::Init(command) => exec_init(command, &cancellation).await,
-        Cli::Recover(command) => exec_recover(command).await,
+        Cli::Recover(command) => exec_recover(command, &cancellation).await,
     };
     result.unwrap_or_else(|err| {
         report_error(&err);
@@ -143,8 +143,15 @@ async fn async_main() -> i32 {
 /// interrupted run from a failed one; every other failure exits 1.
 fn exit_code_for(err: &CliError) -> i32 {
     match err {
-        CliError::Run(RunError::Cancelled(cancelled)) => cancelled.signal.exit_code(),
-        CliError::Init(InitError::Cancelled { signal, .. }) => signal.exit_code(),
+        // A cancellation whose cleanup also failed is a failure: the signal
+        // status would tell a script the interruption was handled when
+        // resources may remain.
+        CliError::Run(RunError::Cancelled(cancelled)) if cancelled.cleanup.is_none() => {
+            cancelled.signal.exit_code()
+        }
+        CliError::Init(InitError::Cancelled {
+            signal, cleanup, ..
+        }) if cleanup.is_none() => signal.exit_code(),
         _ => 1,
     }
 }
@@ -177,8 +184,11 @@ async fn exec_init(command: InitCommand, cancellation: &Cancellation) -> Result<
 ///
 /// For example, a state directory holding one verified journal prints what was
 /// removed and exits 0, while residual resources exit non-zero.
-async fn exec_recover(_command: RecoverCommand) -> Result<i32, CliError> {
-    cli_state::recover_command().await
+async fn exec_recover(
+    _command: RecoverCommand,
+    cancellation: &Cancellation,
+) -> Result<i32, CliError> {
+    cli_state::recover_command(cancellation).await
 }
 
 /// Writes `err` to standard error.
