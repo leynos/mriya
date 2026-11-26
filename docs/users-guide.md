@@ -468,9 +468,11 @@ cloud-init deadlines are polling budgets, not durations to budget for.
 Scaleway's Billing FAQ[^1] states that each resource is billed separately for a
 minimum of 60 minutes, and that each uninterrupted period between a start and a
 stop billing event counts as a separate resource. Two distinct five-minute runs
-are therefore two separately metered resources, not ten minutes of one. The
-Instances FAQ[^2] describes CPU instances as billed per hour of uptime and GPU
-instances per minute, except RENDER-S, which is billed per hour.
+are therefore two separately metered resources, not ten minutes of one. That
+minimum applies to every resource class in the table, storage and IP addresses
+included, not only to compute. The Instances FAQ[^2] describes CPU instances as
+billed per hour of uptime and GPU instances per minute, except RENDER-S, which
+is billed per hour.
 
 The two pages disagree on when instance billing starts: the Billing FAQ says it
 starts at power-on, while the Instance pricing guide[^3] says it starts when
@@ -502,8 +504,11 @@ deletion is tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
 
 A cache volume is billed from creation until deletion, whether or not a run is
 active and whether or not it is attached. Its cost is the capacity times the
-storage rate times the hours it exists, so a cache retained for a week costs
-far more than the runs that used it.
+storage rate times the **billed** hours, and the billed hours are subject to
+the same per-resource minimum and granularity as compute: a volume kept for ten
+minutes is still billed as one period of at least `M`, so a freshly created
+cache costs the same as one retained for the full minimum. Beyond that, a cache
+retained for a week costs far more than the runs that used it.
 
 Two failure modes extend that lifetime unexpectedly:
 
@@ -549,8 +554,10 @@ divided by 60 before an hourly rate is applied. Per-run billed compute, in
 minutes, is `max(M, ceil((s + c + t) / g) * g)`; total compute cost is
 `N * (per-run billed compute) / 60 * R_vm`. Root storage, cache storage, and IP
 charges are separate terms: per-run root storage is billed for each run's own
-root volume; a cache volume is `capacity_GiB * retained_hours * R_storage`; and
-the `mriya init` formatter instance is a run of its own for compute purposes.
+root volume; a cache volume is `capacity_GiB * billed_hours * R_storage`, where
+`billed_hours` is `max(M, ceil(retained_minutes / g) * g) / 60`, so the same
+minimum applies as to compute; and the `mriya init` formatter instance is a run
+of its own for compute purposes.
 
 Take ten runs of a two-minute command with three minutes of setup and three
 minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
