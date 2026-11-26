@@ -27,6 +27,7 @@ mod format;
 mod helpers;
 mod orchestrator;
 mod outcome;
+mod retain;
 
 pub use error::{InitConfigError, InitError, InitErrorKind, InitRequestError};
 pub use orchestrator::InitOrchestrator;

@@ -185,8 +185,20 @@ fn test_invalid_request(
                     .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
                 skip!("permissions denied during instance creation: {err}")
             }
-            Err(err) if is_expected_error(&err) => Ok(()),
-            Err(err) => Err(err),
+            Err(err) if is_expected_error(&err) => {
+                // The create may have recorded a server before failing, so the
+                // ledger is cleaned before the error is accepted.
+                cleanup_recorded(scaleway_backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
+                Ok(())
+            }
+            Err(err) => {
+                cleanup_recorded(scaleway_backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
+                Err(err)
+            }
         }
     })
 }

@@ -6,7 +6,12 @@
 
 use tokio::time::{Instant, sleep};
 
-use super::{HTTP_CLIENT, InstanceSnapshot, http::checked_response};
+use super::{
+    HTTP_CLIENT,
+    InstanceSnapshot,
+    http::checked_response,
+    instances::{ExpectedServer, verify_server_identity},
+};
 use crate::scaleway::{ScalewayBackend, ScalewayBackendError, types::Zone};
 
 impl ScalewayBackend {
@@ -121,7 +126,20 @@ impl ScalewayBackend {
         let deadline = Instant::now() + self.wait_timeout;
         loop {
             let finished = match self.get_server(zone, server_id).await {
-                Ok(server) => server.state == "stopped",
+                Ok(server) => {
+                    // A zone- and project-scoped read that returns a different
+                    // server must not confirm that *this* server stopped.
+                    verify_server_identity(
+                        &server,
+                        "wait for the server to stop",
+                        ExpectedServer {
+                            id: server_id,
+                            zone,
+                            project: project_id,
+                        },
+                    )?;
+                    server.state == "stopped"
+                }
                 // A listing that still finds the server keeps the loop going;
                 // only confirmed absence ends it.
                 Err(ScalewayBackendError::NotFound { .. }) => {
@@ -133,13 +151,16 @@ impl ScalewayBackend {
                 return Ok(());
             }
 
-            if Instant::now() > deadline {
+            let now = Instant::now();
+            if now > deadline {
                 return Err(ScalewayBackendError::Timeout {
                     action: String::from("wait for the server to stop"),
                     instance_id: server_id.to_owned(),
                 });
             }
-            sleep(self.poll_interval).await;
+            // Cap the sleep at the remaining budget: the next iteration checks
+            // the deadline before issuing another probe.
+            sleep(self.poll_interval.min(deadline - now)).await;
         }
     }
 

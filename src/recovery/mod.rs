@@ -43,6 +43,12 @@ pub enum JournalError {
     /// Raised when neither the state override nor a home directory is set.
     #[error("cannot determine the state directory: set MRIYA_STATE_DIR, XDG_STATE_HOME, or HOME")]
     NoStateDir,
+    /// Raised when a state-directory setting cannot be decoded as UTF-8.
+    #[error("state directory setting {name} is not valid UTF-8")]
+    UndecodableStateDir {
+        /// Name of the offending environment variable.
+        name: &'static str,
+    },
     /// Raised when a journal path cannot be read or written.
     #[error("failed to access {path}: {message}")]
     Io {
@@ -124,12 +130,8 @@ impl JournalRecord {
     /// flag, so replaying cleanup acts on exactly what the journal recorded.
     #[must_use]
     pub fn into_ledger(self, journal: Arc<dyn LedgerSink>) -> ResourceLedger {
-        let unknown = self.outcome_unknown;
         let ledger = ResourceLedger::with_tag(self.scope, self.allocation, Some(journal));
-        ledger.replace_entries(self.entries);
-        if unknown {
-            ledger.mark_outcome_unknown();
-        }
+        ledger.restore(self.entries, self.outcome_unknown);
         ledger
     }
 }

@@ -23,7 +23,6 @@ use mriya::{
     ScalewayBackend,
     ScalewayConfig,
     Signal,
-    until_cancelled,
 };
 
 use crate::CliError;
@@ -220,9 +219,16 @@ impl Recovery<'_> {
         };
         let tag = record.allocation.clone();
         let ledger = record.into_ledger(sink);
-        let Some(cleanup) = until_cancelled(self.backend.cleanup(&ledger), cancellation).await
-        else {
-            return ReplayOutcome::Interrupted(cancellation.signal().unwrap_or(Signal::Interrupt));
+        // The first signal is handled between journals; only a second signal
+        // stops cleanup that has already started, so a replay is not abandoned
+        // half-way through.
+        let cleanup = tokio::select! {
+            result = self.backend.cleanup(&ledger) => result,
+            () = cancellation.repeated() => {
+                return ReplayOutcome::Interrupted(
+                    cancellation.signal().unwrap_or(Signal::Interrupt),
+                );
+            }
         };
         let report = match cleanup {
             Ok(report) => report,

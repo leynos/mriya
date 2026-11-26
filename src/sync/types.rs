@@ -5,16 +5,21 @@ use std::{
     io::{BufReader, Read, Write},
     process::{Command, Stdio},
     thread,
+    time::Duration,
 };
 
 use camino::Utf8PathBuf;
 
-use super::registry::{
-    Registration,
-    register_child,
-    should_isolate_group,
-    terminate_registered_child,
-    wait_for_registered_child,
+#[cfg(unix)]
+use super::registry::should_isolate_group;
+use super::{
+    registry::{
+        Registration,
+        register_child,
+        terminate_registered_child,
+        wait_for_registered_child,
+    },
+    runner::{join_forwarder_escalating, run_with_deadline, wait_for_registered_child_with_bound},
 };
 use crate::sync::SyncError;
 
@@ -76,6 +81,33 @@ pub trait CommandRunner {
     ///
     /// Returns [`SyncError::Spawn`] if the command cannot be started.
     fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError>;
+
+    /// Runs `program` with a wall-clock bound.
+    ///
+    /// # Parameters
+    ///
+    /// - `program`: executable to start.
+    /// - `args`: arguments passed verbatim.
+    /// - `bound`: maximum wall-clock time before the child is terminated.
+    ///
+    /// # Returns
+    ///
+    /// The captured output. A child terminated at the bound has no exit code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::Spawn`] if the command cannot be started. The
+    /// default implementation cannot enforce the bound and simply runs the
+    /// command, which is suitable only for test doubles.
+    fn run_bounded(
+        &self,
+        program: &str,
+        args: &[OsString],
+        bound: Duration,
+    ) -> Result<CommandOutput, SyncError> {
+        let _ = bound;
+        self.run(program, args)
+    }
 }
 
 /// Real command runner that shells out to the host operating system.
@@ -98,6 +130,17 @@ impl CommandRunner for ProcessCommandRunner {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
     }
+
+    fn run_bounded(
+        &self,
+        program: &str,
+        args: &[OsString],
+        bound: Duration,
+    ) -> Result<CommandOutput, SyncError> {
+        let mut command = Command::new(program);
+        command.args(args);
+        run_with_deadline(command, program, bound, None)
+    }
 }
 
 /// Spawns a thread that copies `reader` to this process's stderr (or stdout)
@@ -105,7 +148,7 @@ impl CommandRunner for ProcessCommandRunner {
 ///
 /// The thread returns the captured text, decoded lossily as UTF-8, or a
 /// `Spawn` error naming `program` when reading or writing fails.
-fn forward_stream(
+pub(super) fn forward_stream(
     reader: impl Read + Send + 'static,
     is_stderr: bool,
     program: &str,
@@ -154,7 +197,7 @@ fn forward_stream(
 /// [`SyncError::Spawn`].
 ///
 /// Returns an empty string when no forwarder was spawned for the stream.
-fn join_forwarder(
+pub(super) fn join_forwarder(
     handle: Option<thread::JoinHandle<Result<String, SyncError>>>,
     program: &str,
     stream_name: &str,
@@ -196,6 +239,27 @@ impl StreamingCommandRunner {
 
 impl CommandRunner for StreamingCommandRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
+        self.run_with_bound(program, args, None)
+    }
+
+    fn run_bounded(
+        &self,
+        program: &str,
+        args: &[OsString],
+        bound: Duration,
+    ) -> Result<CommandOutput, SyncError> {
+        self.run_with_bound(program, args, Some(bound))
+    }
+}
+
+impl StreamingCommandRunner {
+    /// Runs `program`, optionally terminating it once `bound` elapses.
+    fn run_with_bound(
+        &self,
+        program: &str,
+        args: &[OsString],
+        bound: Option<Duration>,
+    ) -> Result<CommandOutput, SyncError> {
         let mut command = Command::new(program);
         command
             .args(args)
@@ -236,16 +300,19 @@ impl CommandRunner for StreamingCommandRunner {
             // Cancellation won the race between spawn and registration.
             terminate_registered_child(id);
         }
-        let status = wait_for_registered_child(id).map_err(|err| SyncError::Spawn {
-            program: program.to_owned(),
-            message: err.to_string(),
-        })?;
+        let status = match bound {
+            Some(limit) => wait_for_registered_child_with_bound(id, limit, program)?,
+            None => wait_for_registered_child(id).map_err(|err| SyncError::Spawn {
+                program: program.to_owned(),
+                message: err.to_string(),
+            })?,
+        };
 
         // The forwarders finish only once every process holding the pipes has
         // gone, so the registration stays until here: a cancellation during the
         // drain can still reach a descendant left behind by the launcher.
-        let stdout = join_forwarder(stdout_handle, program, "stdout")?;
-        let stderr = join_forwarder(stderr_handle, program, "stderr")?;
+        let stdout = join_forwarder_escalating(stdout_handle, program, "stdout", id)?;
+        let stderr = join_forwarder_escalating(stderr_handle, program, "stderr", id)?;
 
         Ok(CommandOutput {
             code: status.code(),

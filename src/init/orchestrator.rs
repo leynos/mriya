@@ -60,6 +60,16 @@ where
     W: ConfigWriter,
 {
     /// Creates a new init orchestrator.
+    ///
+    /// # Parameters
+    ///
+    /// - `backend`: creates and cleans up the volume and helper instance.
+    /// - `syncer`: formats the volume through the configured command runner.
+    /// - `config_writer`: records the retained volume identifier.
+    ///
+    /// # Returns
+    ///
+    /// An orchestrator with no state beyond the injected collaborators.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>, config_writer: W) -> Self {
         Self {
@@ -152,7 +162,11 @@ where
             match until_cancelled(self.backend.create(&instance_request, ledger), cancellation)
                 .await
             {
-                None => return Err(StepFailure::Cancelled),
+                None => {
+                    // The helper-instance POST may have reached the provider.
+                    ledger.mark_outcome_unknown();
+                    return Err(StepFailure::Cancelled);
+                }
                 Some(Err(error)) => return Err(StepFailure::Error(InitError::Provision(error))),
                 Some(Ok(handle)) => handle,
             };

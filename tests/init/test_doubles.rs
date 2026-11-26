@@ -250,7 +250,7 @@ impl VolumeBackend for ScriptedVolumeBackend {
             );
             Ok(VolumeHandle {
                 id: String::from("vol-123"),
-                zone: String::from("test-zone"),
+                zone: request.zone.clone(),
             })
         })
     }

@@ -72,6 +72,8 @@ fn sweep_deletes_only_tagged_resources() {
     runner.push_output(Some(0), json_volumes(&[("vol-b", "fr-par-1", &[])]), "");
     // list instance volumes: no recorded boot volume remains
     runner.push_output(Some(0), json_volumes(&[]), "");
+    // list block volumes: no recorded SBS boot volume remains
+    runner.push_output(Some(0), json_volumes(&[]), "");
 
     let janitor = Janitor::new(cfg, runner.clone());
     let summary = janitor.sweep().expect("sweep should succeed");
@@ -131,6 +133,8 @@ fn sweep_errors_when_tagged_resources_remain() {
     // list volumes (post)
     runner.push_output(Some(0), json_volumes(&[]), "");
     // list instance volumes: the recorded boot volume is gone
+    runner.push_output(Some(0), json_volumes(&[]), "");
+    // list block volumes: no recorded SBS boot volume remains
     runner.push_output(Some(0), json_volumes(&[]), "");
 
     let janitor = Janitor::new(cfg, runner);

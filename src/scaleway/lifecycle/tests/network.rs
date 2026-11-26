@@ -136,7 +136,11 @@ async fn server_presence_confirms_absence_by_listing(
     let stub = StubApi::start(vec![not_found(), empty_list()]).await?;
     backend_fixture.instance_api_base.clone_from(&stub.base_url);
     let resource = ResourceRef::server("id", "zone");
-    let presence = backend_fixture.server_presence(&resource, "proj").await?;
+    // A project other than the fixture default proves the caller's project is
+    // the one the confirmation listing uses.
+    let presence = backend_fixture
+        .server_presence(&resource, "other-project")
+        .await?;
     assert!(
         matches!(presence, Presence::ConfirmedAbsent),
         "{presence:?}"
@@ -148,7 +152,10 @@ async fn server_presence_confirms_absence_by_listing(
     let url = request_url(list)?;
     assert_eq!(url.path(), "/instance/v1/zones/zone/servers");
     let query = url.query_pairs().collect::<BTreeMap<_, _>>();
-    assert_eq!(query.get("project").map(AsRef::as_ref), Some("proj"));
+    assert_eq!(
+        query.get("project").map(AsRef::as_ref),
+        Some("other-project")
+    );
     assert_eq!(query.get("page").map(AsRef::as_ref), Some("1"));
     Ok(())
 }

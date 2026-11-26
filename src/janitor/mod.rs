@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::sync::{CommandOutput, CommandRunner, ProcessCommandRunner, SyncError};
 
 mod scw;
+mod sweep;
 pub mod types;
 pub use types::{ScwServer, ScwVolume};
 
@@ -150,7 +151,10 @@ pub enum JanitorError {
 ///
 /// An attached volume lives in the server's zone, so that zone is used when the
 /// volume object omits its own.
-fn boot_volume_zone(volume: &types::ScwServerVolume, server: &ScwServer) -> String {
+pub(in crate::janitor) fn boot_volume_zone(
+    volume: &types::ScwServerVolume,
+    server: &ScwServer,
+) -> String {
     if volume.zone.trim().is_empty() {
         return server.zone.clone();
     }
@@ -225,63 +229,6 @@ impl<R: CommandRunner> Janitor<R> {
         })
     }
 
-    /// Returns the `(id, zone)` of each server's root volume.
-    ///
-    /// An attached volume lives in the server's zone, so that zone is used when
-    /// the volume object omits its own.
-    fn boot_volume_refs(servers: &[ScwServer]) -> Vec<(String, String)> {
-        servers
-            .iter()
-            .filter_map(|server| {
-                server
-                    .volumes
-                    .get("0")
-                    .map(|volume| (volume.id.clone(), boot_volume_zone(volume, server)))
-            })
-            .collect()
-    }
-
-    /// Deletes any recorded boot volume the provider still has.
-    ///
-    /// The root volume is often removed with its server, so each identifier is
-    /// checked against the project's Instance volumes first; only a volume that
-    /// still exists is deleted. A failure here is reported, because the
-    /// untagged volume has no other path back into a later sweep.
-    fn delete_boot_volumes(
-        &self,
-        boot_volumes: &[(String, String)],
-        first_error: &mut Option<JanitorError>,
-    ) -> Result<(), JanitorError> {
-        // The recorded zone is only used for the residual message; deletion
-        // sends the zone the provider reports for the volume.
-        if boot_volumes.is_empty() {
-            return Ok(());
-        }
-        let existing = self.list_instance_volumes()?;
-        for (id, _zone) in boot_volumes {
-            let Some(volume) = existing.iter().find(|volume| &volume.id == id) else {
-                continue;
-            };
-            // One failed root must not hide the others: the remaining roots are
-            // still attempted and their identifiers reported below.
-            if let Err(error) = self.delete_instance_volume(volume) {
-                first_error.get_or_insert(error);
-            }
-        }
-        let remaining = self.list_instance_volumes()?;
-        let leftovers = boot_volumes
-            .iter()
-            .filter(|(id, _)| remaining.iter().any(|volume| &volume.id == id))
-            .map(|(id, zone)| format!("{id}@{zone}"))
-            .collect::<Vec<_>>();
-        if leftovers.is_empty() {
-            return Ok(());
-        }
-        Err(JanitorError::NotClean {
-            message: format!("boot volumes remaining: [{}]", leftovers.join(", ")),
-        })
-    }
-
     /// Lists items with `list` and deletes each with `delete`, returning how many
     /// were found.
     ///
@@ -311,17 +258,25 @@ impl<R: CommandRunner> Janitor<R> {
     fn ensure_no_remaining(
         &self,
         tag: &str,
-        boot_volumes: &[(String, String)],
+        boot_volumes: &[(String, String, bool)],
     ) -> Result<(), JanitorError> {
         const MAX_ITEMS_TO_SHOW: usize = 5;
 
         let remaining_servers = self.list_tagged_servers(tag)?;
         let remaining_volumes = self.list_tagged_volumes(tag)?;
-        let instance_volumes = self.list_instance_volumes()?;
+        let remaining_instance = self.list_instance_volumes()?;
+        let remaining_block = self.list_block_volumes()?;
         let remaining_boot = boot_volumes
             .iter()
-            .filter(|(id, _)| instance_volumes.iter().any(|volume| &volume.id == id))
-            .map(|(id, zone)| format!("{id}@{zone}"))
+            .filter(|(id, _, is_block)| {
+                let inventory = if *is_block {
+                    &remaining_block
+                } else {
+                    &remaining_instance
+                };
+                inventory.iter().any(|volume| &volume.id == id)
+            })
+            .map(|(id, zone, _)| format!("{id}@{zone}"))
             .collect::<Vec<_>>();
 
         let no_tagged_resources = remaining_servers.is_empty() && remaining_volumes.is_empty();

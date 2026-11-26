@@ -4,7 +4,7 @@
 //! owner check and the replay is what stops two `mriya recover` processes from
 //! replaying the same journal at once.
 
-use std::io;
+use std::io::{self, Write};
 
 use camino::{Utf8Path, Utf8PathBuf};
 #[cfg(unix)]
@@ -13,10 +13,12 @@ use cap_std::{
     ambient_authority,
     fs_utf8::{Dir, OpenOptions},
 };
+use serde::{Deserialize, Serialize};
 
 use super::{
     JournalError,
     JournalStore,
+    ProcessIdentity,
     store::{file_name, open_parent_if_present},
 };
 
@@ -53,21 +55,74 @@ impl JournalStore {
             .map_err(|err| JournalError::io(parent, &err))?;
         let dir = Dir::open_ambient_dir(parent, ambient_authority())
             .map_err(|err| JournalError::io(parent, &err))?;
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        match dir.open_with(&lock_name, &options) {
-            Ok(file) => {
-                drop(file);
-                Ok(Some(JournalClaim {
-                    path: parent.join(&lock_name),
-                }))
+        let lock_path = parent.join(&lock_name);
+        match create_claim(&dir, &lock_name, &lock_path) {
+            Ok(()) => Ok(Some(JournalClaim { path: lock_path })),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Self::reclaim_abandoned(&dir, &lock_name, &lock_path)
             }
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-            Err(err) => Err(JournalError::io(&parent.join(&lock_name), &err)),
+            Err(error) => Err(JournalError::io(&lock_path, &error)),
         }
     }
+
+    /// Takes over a claim whose recorded owner has exited.
+    ///
+    /// Removing and recreating races safely with another reclaimer: only one
+    /// `create_new` succeeds, and the loser reports the journal as claimed.
+    fn reclaim_abandoned(
+        dir: &Dir,
+        lock_name: &str,
+        lock_path: &Utf8Path,
+    ) -> Result<Option<JournalClaim>, JournalError> {
+        if claim_owner(dir, lock_name).is_some_and(|owner| owner.is_alive()) {
+            return Ok(None);
+        }
+        match dir.remove_file(lock_name) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(JournalError::io(lock_path, &error)),
+        }
+        match create_claim(dir, lock_name, lock_path) {
+            Ok(()) => Ok(Some(JournalClaim {
+                path: lock_path.to_path_buf(),
+            })),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+            Err(error) => Err(JournalError::io(lock_path, &error)),
+        }
+    }
+}
+
+/// Creates the claim file and records this process as its owner.
+fn create_claim(dir: &Dir, name: &str, path: &Utf8Path) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = dir.open_with(name, &options)?;
+    let owner = ClaimOwner {
+        owner: ProcessIdentity::current(),
+    };
+    let rendered = serde_json::to_string(&owner)
+        .map_err(|error| io::Error::other(format!("the claim owner must serialize: {error}")))?;
+    file.write_all(rendered.as_bytes())?;
+    file.sync_all().map_err(|error| {
+        io::Error::other(format!(
+            "the claim owner could not be written to {path}: {error}"
+        ))
+    })
+}
+
+/// Reads the owner recorded in an existing claim file.
+fn claim_owner(dir: &Dir, name: &str) -> Option<ProcessIdentity> {
+    let contents = dir.read_to_string(name).ok()?;
+    serde_json::from_str::<ClaimOwner>(&contents).ok()?.owner
+}
+
+/// Serialized owner of a claim file.
+#[derive(Deserialize, Serialize)]
+struct ClaimOwner {
+    /// Process that created the claim, when it could be identified.
+    owner: Option<ProcessIdentity>,
 }
 
 /// An exclusive claim on one journal, released when dropped.

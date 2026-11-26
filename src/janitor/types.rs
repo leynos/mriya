@@ -25,6 +25,17 @@ pub(super) struct ScwServerVolume {
     /// Zone the volume lives in.
     #[serde(default)]
     pub(super) zone: String,
+    /// Provider volume type, such as `l_ssd`, `b_ssd`, or `sbs_volume`.
+    #[serde(default, rename = "volume_type")]
+    pub(super) volume_type: String,
+}
+
+impl ScwServerVolume {
+    /// Reports whether the Block Storage API owns this volume.
+    ///
+    /// SBS roots are not visible in the Instances API inventory, so they must
+    /// be found and deleted through the Block Storage CLI instead.
+    pub(super) fn is_block_storage(&self) -> bool { self.volume_type.starts_with("sbs") }
 }
 
 /// Scaleway Block Storage volume representation returned by `scw block volume list`.

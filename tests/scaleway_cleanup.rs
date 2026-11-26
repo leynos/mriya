@@ -58,6 +58,19 @@ macro_rules! require_live {
     };
 }
 
+/// Unwraps cache setup, enforcing a failure and skipping a permitted skip.
+macro_rules! require_cache_live {
+    ($expr:expr) => {
+        match $expr {
+            Ok(value) => value,
+            Err(outcome) => {
+                outcome.enforce("cache setup");
+                return;
+            }
+        }
+    };
+}
+
 /// Reports whether the live suite was opted into.
 fn enabled() -> bool {
     matches!(
@@ -235,7 +248,7 @@ fn create_cache(
     backend: &ScalewayBackend,
     name: &str,
     request: &InstanceRequest,
-) -> Result<(VolumeHandle, ResourceLedger), String> {
+) -> Result<(VolumeHandle, ResourceLedger), LiveOutcome> {
     let scope = AllocationScope::new(request.zone.clone(), request.project_id.clone());
     let ledger = ResourceLedger::in_memory(scope);
     match block_on(backend.create_volume(
@@ -254,10 +267,12 @@ fn create_cache(
             // left billable with no journal to recover it.
             let cleanup = block_on(backend.cleanup(&ledger));
             match cleanup {
-                Ok(_) => Err(format!("could not create the cache volume: {error}")),
-                Err(failure) => Err(format!(
+                Ok(_) => Err(permission_reason(&error).unwrap_or_else(|| {
+                    LiveOutcome::Failed(format!("could not create the cache volume: {error}"))
+                })),
+                Err(failure) => Err(LiveOutcome::Failed(format!(
                     "could not create the cache volume: {error}; cleanup also failed: {failure}"
-                )),
+                ))),
             }
         }
     }
@@ -299,8 +314,15 @@ fn a_nonexistent_cache_id_is_rejected_without_leaving_a_server() {
     let ledger = ResourceLedger::in_memory(scope.clone());
 
     let outcome = with_inventory(&backend, &scope, || {
-        let error = block_on(backend.create(&request, &ledger))
-            .expect_err("a nonexistent cache volume must be rejected");
+        let created = block_on(backend.create(&request, &ledger));
+        // Cleanup runs before any assertion: a create that unexpectedly
+        // succeeded must not leave its server allocated.
+        let cleanup = expect_cleanup(&backend, &ledger, "run");
+        let Err(error) = created else {
+            return Err(LiveOutcome::Failed(String::from(
+                "a nonexistent cache volume must be rejected",
+            )));
+        };
         if let Some(outcome) = permission_reason(&error) {
             return Err(outcome);
         }
@@ -309,7 +331,7 @@ fn a_nonexistent_cache_id_is_rejected_without_leaving_a_server() {
                 "expected VolumeNotFound, got {error:?}"
             )));
         }
-        expect_cleanup(&backend, &ledger, "run")
+        cleanup
     });
     outcome.enforce("nonexistent cache id");
 }
@@ -322,9 +344,16 @@ fn repeated_cleanup_treats_absence_as_success() {
     let ledger = ResourceLedger::in_memory(scope.clone());
 
     let outcome = with_inventory(&backend, &scope, || {
-        block_on(backend.create(&request, &ledger))
-            .map_err(|error| classify_backend_error(&error))?;
-        expect_cleanup(&backend, &ledger, "first")?;
+        let created = block_on(backend.create(&request, &ledger))
+            .map_err(|error| classify_backend_error(&error));
+        // A create that records a server and then fails must still be cleaned;
+        // propagating the error with `?` would leave the server allocated.
+        let first = expect_cleanup(&backend, &ledger, "first");
+        match created {
+            Ok(_handle) => {}
+            Err(outcome) => return Err(outcome),
+        }
+        first?;
         expect_cleanup(&backend, &ledger, "repeated")
     });
     outcome.enforce("repeated cleanup");
@@ -336,15 +365,22 @@ fn a_retained_cache_survives_cleanup() {
     let scope = require_live!(scope_of(&backend));
     let request = require_live!(default_request(&backend));
 
-    let (cache, cache_ledger) = require_live!(create_cache(&backend, "mriya-live-cache", &request));
+    let (cache, cache_ledger) =
+        require_cache_live!(create_cache(&backend, "mriya-live-cache", &request));
     let run_ledger = ResourceLedger::in_memory(scope.clone());
     let mut request_with_cache = request;
     request_with_cache.volume_id = Some(cache.id.clone());
 
     let outcome = with_inventory(&backend, &scope, || {
-        block_on(backend.create(&request_with_cache, &run_ledger))
-            .map_err(|error| classify_backend_error(&error))?;
-        expect_cleanup(&backend, &run_ledger, "run")?;
+        let created = block_on(backend.create(&request_with_cache, &run_ledger))
+            .map_err(|error| classify_backend_error(&error));
+        // Cleanup runs before the result is inspected, so a create failure
+        // cannot strand the server it may have recorded.
+        let cleanup = expect_cleanup(&backend, &run_ledger, "run");
+        let Ok(_handle) = created else {
+            return Err(created.err().unwrap_or(LiveOutcome::Passed));
+        };
+        cleanup?;
         let disposition = run_ledger
             .find(ResourceKind::InstanceVolume, &cache.id)
             .map(|entry| entry.disposition);
@@ -402,7 +438,7 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
     let request = require_live!(default_request(&backend));
 
     let (cache, cache_ledger) =
-        require_live!(create_cache(&backend, "mriya-live-marker-cache", &request));
+        require_cache_live!(create_cache(&backend, "mriya-live-marker-cache", &request));
 
     // `mriya init` formats the volume; this scenario does it inside the first
     // run so it can also write the marker.
@@ -421,7 +457,12 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
         run_with_cache(&backend, &syncer, &request_with_cache, &write_command);
     if let Some(outcome) = run_permission_reason(&first) {
         let removal = always_remove_cache(&backend, &cache, &cache_ledger);
-        outcome.enforce(&format!("marker write (cache removal: {removal:?})"));
+        // A cache this test created must be removed even when the scenario
+        // cannot run; a failed removal is a real residue, not a skip.
+        match removal {
+            Ok(()) => outcome.enforce("marker write"),
+            Err(reason) => LiveOutcome::Failed(reason).enforce("marker write"),
+        }
         return;
     }
 

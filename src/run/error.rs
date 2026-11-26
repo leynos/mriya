@@ -10,6 +10,7 @@ use std::fmt;
 use camino::Utf8PathBuf;
 use thiserror::Error;
 
+pub use super::cancel_error::RunCancellation;
 use crate::{
     cancel::Signal,
     cleanup::CleanupFailure,
@@ -82,7 +83,7 @@ where
     ///
     /// The variant is distinct so the CLI can exit 130 or 143 rather than 1.
     #[error("{0}")]
-    Cancelled(Box<RunCancellation<BackendError>>),
+    Cancelled(#[source] Box<RunCancellation<BackendError>>),
 }
 
 /// Everything known when cleanup could not verify its postconditions.
@@ -184,60 +185,6 @@ where
         self.cleanup
             .as_ref()
             .map(|error| error as &(dyn std::error::Error + 'static))
-    }
-}
-
-/// Result of a signal-driven cancellation.
-#[derive(Debug)]
-pub struct RunCancellation<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    /// Signal that requested cancellation.
-    pub signal: Signal,
-    /// Cleanup outcome, absent when cleanup completed.
-    pub cleanup: Option<Box<RunCleanupFailure<BackendError>>>,
-    /// Journal that `mriya recover` can replay, when one remains.
-    pub journal: Option<Utf8PathBuf>,
-    /// Non-fatal notes gathered before and during cleanup.
-    pub warnings: Vec<String>,
-}
-
-impl<BackendError> fmt::Display for RunCancellation<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = if self.cleanup.is_some() {
-            "ownership-aware cleanup did not complete"
-        } else {
-            "provisioned resources were cleaned up"
-        };
-        write!(formatter, "{} received; {state}", self.signal.as_str())?;
-        if let Some(cleanup) = self.cleanup.as_deref() {
-            write!(formatter, ": {cleanup}")?;
-        }
-        if let Some(journal) = self.journal.as_ref() {
-            write!(
-                formatter,
-                "; run `mriya recover` to finish cleanup recorded in {journal}"
-            )?;
-        }
-        for warning in &self.warnings {
-            write!(formatter, "; note: {warning}")?;
-        }
-        Ok(())
-    }
-}
-
-impl<BackendError> std::error::Error for RunCancellation<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cleanup
-            .as_deref()
-            .map(|cleanup| cleanup as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -348,6 +295,42 @@ mod tests {
         assert!(
             reached_cleanup,
             "the source chain must reach the typed CleanupFailure"
+        );
+    }
+
+    #[rstest]
+    fn a_cancellation_exposes_its_cleanup_failure_as_a_source() {
+        use std::error::Error as _;
+
+        let mut typed_cleanup = CleanupFailure::new();
+        typed_cleanup.add_cause("backend said no");
+        let error: RunError<Backend> = RunError::Cancelled(Box::new(RunCancellation {
+            signal: Signal::Interrupt,
+            cleanup: Some(Box::new(RunCleanupFailure {
+                primary: None,
+                output: None,
+                cleanup: Some(typed_cleanup),
+                cleanup_verified: false,
+                journal: None,
+                interrupted: false,
+                signal: Some(Signal::Interrupt),
+                warnings: Vec::new(),
+            })),
+            journal: None,
+            warnings: Vec::new(),
+        }));
+        let mut source = error.source();
+        let mut reached_cleanup = false;
+        while let Some(current) = source {
+            if current.downcast_ref::<CleanupFailure>().is_some() {
+                reached_cleanup = true;
+                break;
+            }
+            source = current.source();
+        }
+        assert!(
+            reached_cleanup,
+            "the cancellation source chain must reach the typed CleanupFailure"
         );
     }
 

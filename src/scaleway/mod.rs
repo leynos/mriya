@@ -255,6 +255,57 @@ impl ScalewayBackend {
             allocation,
         )
     }
+
+    /// Attaches the configured cache volume, recording it as retained.
+    ///
+    /// Nothing happens without a configured volume. A create response that
+    /// omitted the root volume has already caused a refresh, so the root's
+    /// identifier and family are always available here.
+    async fn attach_cache_if_configured(
+        &self,
+        request: &InstanceRequest,
+        created: CacheTarget<'_>,
+        ledger: &ResourceLedger,
+    ) -> Result<(), ScalewayBackendError> {
+        let CacheTarget { handle, server } = created;
+        let Some(volume_id) = request.volume_id.as_deref() else {
+            return Ok(());
+        };
+        let root = server
+            .root_volume()
+            .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
+                volume_id: String::from("0"),
+                zone: request.zone.clone(),
+            })?;
+        let root_volume_id = root.id.clone();
+        let root_family = root.storage_family();
+        record_server_creation(server, ledger);
+        Self::validate_cache_volume_id(volume_id, &root_volume_id, handle)?;
+        let family = self
+            .record_configured_cache(volume_id, &request.zone, ledger)
+            .await?;
+        self.attach_volume(
+            handle,
+            CacheAttachment {
+                volume_id,
+                root_volume_id: &root_volume_id,
+                family,
+                root_family,
+            },
+        )
+        .await
+    }
+}
+
+/// The created server and its handle.
+///
+/// Grouped because every attachment step needs both, and the server may be
+/// a refreshed response rather than the one the create returned.
+struct CacheTarget<'a> {
+    /// Handle naming the created server.
+    handle: &'a InstanceHandle,
+    /// Current server response, which knows the root volume.
+    server: &'a crate::scaleway::lifecycle::models::ServerModel,
 }
 
 impl Backend for ScalewayBackend {
@@ -297,30 +348,26 @@ impl Backend for ScalewayBackend {
                 zone: request.zone.clone(),
             };
 
-            if let Some(volume_id) = request.volume_id.as_deref() {
-                let root_volume_id = server
-                    .root_volume()
-                    .map(|volume| volume.id.clone())
-                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
-                        volume_id: String::from("0"),
-                        zone: request.zone.clone(),
-                    })?;
-                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
-                let family = self
-                    .record_configured_cache(volume_id, &request.zone, ledger)
-                    .await?;
-                self.attach_volume(
-                    &handle,
-                    CacheAttachment {
-                        volume_id,
-                        root_volume_id: &root_volume_id,
-                        family,
-                    },
-                )
-                .await?;
-            }
+            // A create response may omit the root volume. Refresh before the
+            // cache is attached so the root is recorded as owned, rather than
+            // being classified as borrowed at cleanup and preserved.
+            let root_refresh = if request.volume_id.is_some() && server.root_volume().is_none() {
+                Some(self.get_server(&request.zone, &handle.id).await?)
+            } else {
+                None
+            };
+            let current = root_refresh.as_ref().unwrap_or(&server);
+            self.attach_cache_if_configured(
+                request,
+                CacheTarget {
+                    handle: &handle,
+                    server: current,
+                },
+                ledger,
+            )
+            .await?;
 
-            let snapshot = server.snapshot();
+            let snapshot = current.snapshot();
             self.power_on_if_needed(&Zone::from(request.zone.as_str()), &snapshot)
                 .await?;
 
@@ -329,8 +376,8 @@ impl Backend for ScalewayBackend {
             // borrowed address it must preserve. A refresh failure is not
             // fatal: the server and root volume are already recorded, and the
             // run can continue.
-            if let Ok(refreshed) = self.get_server(&request.zone, &handle.id).await {
-                record_server_creation(&refreshed, ledger);
+            if let Ok(powered_on) = self.get_server(&request.zone, &handle.id).await {
+                record_server_creation(&powered_on, ledger);
             }
 
             Ok(handle)

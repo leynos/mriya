@@ -154,6 +154,14 @@ impl<R: CommandRunner> Janitor<R> {
         self.run_scw(&args, ResourceType::Volumes)
     }
 
+    /// Lists the Block Storage volumes in the project, across zones.
+    ///
+    /// SBS roots are not visible through the Instances API, so the recorded
+    /// identifier must be looked for here as well.
+    pub(super) fn list_block_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
+        self.list_scw_resources(&["block", "volume"], ResourceType::Volumes)
+    }
+
     /// Lists the Block Storage volumes the janitor may sweep in its zone.
     ///
     /// Volumes are listed separately from servers because a leaked volume can

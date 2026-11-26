@@ -145,10 +145,17 @@ impl ScalewayBackend {
             }
             Err(error) => return Err(error),
         };
-        ledger.record(
+        if let Err(error) = ledger.record_durable(
             ResourceRef::instance_volume(&handle.id, &handle.zone),
             Disposition::Owned,
-        );
+        ) {
+            // The volume exists but is not durably recorded. Keeping the
+            // unknown-outcome flag makes recovery look it up by tag.
+            ledger.mark_outcome_unknown();
+            return Err(ScalewayBackendError::Journal {
+                message: error.to_string(),
+            });
+        }
         Ok(handle)
     }
 
@@ -246,14 +253,10 @@ impl ScalewayBackend {
                     self.reconcile_created_volume(tag, scope, "create volume returned a blank id")
                         .await
                 }
-                Ok(parsed) => Ok(VolumeHandle::new(
-                    parsed.volume.id,
-                    if parsed.volume.zone.trim().is_empty() {
-                        request.zone.clone()
-                    } else {
-                        parsed.volume.zone
-                    },
-                )),
+                Ok(parsed) => {
+                    Self::ensure_created_zone(&parsed.volume, &request.zone)?;
+                    Ok(VolumeHandle::new(parsed.volume.id, request.zone.clone()))
+                }
                 Err(error) => {
                     self.reconcile_created_volume(tag, scope, &error.to_string())
                         .await
@@ -278,6 +281,26 @@ impl ScalewayBackend {
         .await
     }
 
+    /// Rejects a create response that names a zone other than the request's.
+    ///
+    /// Adopting the response zone would make cleanup act where the volume is not,
+    /// and a 404 there could be read as absence while the volume survives.
+    fn ensure_created_zone(
+        volume: &ScalewayVolume,
+        zone: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        if volume.zone.trim().is_empty() || volume.zone == zone {
+            return Ok(());
+        }
+        Err(ScalewayBackendError::Provider {
+            message: format!(
+                "create volume returned {id} in zone {actual}, but {zone} was requested",
+                id = volume.id,
+                actual = volume.zone
+            ),
+        })
+    }
+
     /// Reconciles an ambiguous volume create, or reports an unknown outcome.
     async fn reconcile_created_volume(
         &self,
@@ -294,6 +317,11 @@ impl ScalewayBackend {
         // A failed lookup is the unknown case: the POST may have created the
         // volume, and the tag is the only durable way to find it later.
         match self.reconcile_volume(tag, scope).await {
+            // A handle without an identifier cannot be addressed by later
+            // operations; the tag is the only durable way back to it.
+            Ok(Some(volume)) if volume.id.trim().is_empty() => Err(unknown(format!(
+                "{detail}; the reconciled volume has no id"
+            ))),
             Ok(Some(volume)) => Ok(VolumeHandle::new(
                 volume.id,
                 if volume.zone.trim().is_empty() {

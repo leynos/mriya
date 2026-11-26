@@ -50,11 +50,12 @@ impl JournalStore {
     /// Returns [`JournalError::NoStateDir`] when none of the three variables
     /// yields a non-blank directory.
     pub fn from_env(env: &impl mockable::Env) -> Result<Self, JournalError> {
-        let base = first_non_blank(env, &[STATE_DIR_ENV, XDG_STATE_HOME_ENV])
-            .or_else(|| {
-                first_non_blank(env, &[HOME_ENV]).map(|home| format!("{home}/.local/state"))
-            })
-            .ok_or(JournalError::NoStateDir)?;
+        let base = if let Some(base) = first_non_blank(env, &[STATE_DIR_ENV, XDG_STATE_HOME_ENV])? {
+            base
+        } else {
+            let home = first_non_blank(env, &[HOME_ENV])?.ok_or(JournalError::NoStateDir)?;
+            format!("{home}/.local/state")
+        };
         Ok(Self::at_root(
             Utf8PathBuf::from(base).join(APP_DIR).join(RUNS_DIR),
         ))
@@ -303,10 +304,23 @@ impl fmt::Display for RecoveryJournal {
 ///
 /// Only the blank check trims; the returned value keeps its original bytes, so
 /// a state directory whose name ends in a space still selects that directory.
-fn first_non_blank(env: &impl mockable::Env, names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| env.string(name).filter(|value| !value.trim().is_empty()))
+/// A value that is not valid UTF-8 is an error rather than a reason to search
+/// a different directory.
+fn first_non_blank(
+    env: &impl mockable::Env,
+    names: &[&'static str],
+) -> Result<Option<String>, JournalError> {
+    for name in names {
+        match env.raw(name) {
+            Ok(value) if value.trim().is_empty() => {}
+            Ok(value) => return Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(JournalError::UndecodableStateDir { name });
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Returns the file name of `path`.
@@ -353,5 +367,11 @@ fn write_atomic(path: &Utf8Path, contents: &str) -> Result<(), JournalError> {
     drop(file);
 
     dir.rename(&temporary, &dir, name)
-        .map_err(|err| JournalError::io(path, &err))
+        .map_err(|err| JournalError::io(path, &err))?;
+    // The rename is only durable once the directory entry is on disk; a
+    // crash could otherwise restore an older snapshot after the write was
+    // acknowledged.
+    dir.open(".")
+        .and_then(|handle| handle.sync_all())
+        .map_err(|err| JournalError::io(parent, &err))
 }

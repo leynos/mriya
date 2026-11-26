@@ -256,6 +256,18 @@ pub(super) fn register_child(scope: Option<u64>, child: Child, isolated: bool) -
     (id, cancelled)
 }
 
+/// Escalates a stalled termination while the output is being drained.
+///
+/// Once the launcher is reaped, only the pipes keep the runner waiting; a
+/// descendant that ignores `SIGTERM` would otherwise hold them forever because
+/// nothing calls [`escalate_if_needed`] again.
+pub(super) fn escalate_registered_child(id: u64) {
+    let mut registry = lock_registry();
+    if let Some(entry) = registry.children.iter_mut().find(|entry| entry.id == id) {
+        escalate_if_needed(entry);
+    }
+}
+
 /// Removes the registration `id`, if it is still present.
 fn deregister_child(id: u64) { lock_registry().children.retain(|entry| entry.id != id); }
 
@@ -276,7 +288,7 @@ pub(super) fn wait_for_registered_child(id: u64) -> io::Result<ExitStatus> {
 /// a descendant that holds the output pipes; [`deregister_child`] removes it
 /// once those pipes are drained. A wait failure removes the entry instead: the
 /// child's state is then unknown, and a later signal must not act on it.
-fn poll_registered_child(id: u64) -> io::Result<Option<ExitStatus>> {
+pub(super) fn poll_registered_child(id: u64) -> io::Result<Option<ExitStatus>> {
     let mut registry = lock_registry();
     let Some(registered) = registry.children.iter_mut().find(|entry| entry.id == id) else {
         return Err(io::Error::new(

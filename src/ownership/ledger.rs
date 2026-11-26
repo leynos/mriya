@@ -1,90 +1,21 @@
 //! The ownership ledger: a shared, persistable record of provider resources.
 
-use std::{
-    fmt,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use camino::Utf8PathBuf;
-use thiserror::Error;
 
-use super::types::{
-    AllocationScope,
-    AllocationTag,
-    Disposition,
-    LedgerEntry,
-    LedgerSnapshot,
-    ResourceKind,
-    ResourceRef,
+use super::{
+    sink::{LedgerError, LedgerPersistError, LedgerSink},
+    types::{
+        AllocationScope,
+        AllocationTag,
+        Disposition,
+        LedgerEntry,
+        LedgerSnapshot,
+        ResourceKind,
+        ResourceRef,
+    },
 };
-
-/// Failure returned by a [`LedgerSink`] when it cannot durably record a
-/// snapshot.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("{message}")]
-pub struct LedgerPersistError {
-    /// Human-readable description of the persistence failure.
-    pub message: String,
-}
-
-impl LedgerPersistError {
-    /// Wraps a message in a persistence failure.
-    #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-/// Durable destination for ledger snapshots.
-///
-/// The ownership module owns this port; the recovery journal is the adapter
-/// that writes it to disk. Keeping the interface here lets cleanup run with an
-/// in-memory ledger in tests and with a journal in production.
-pub trait LedgerSink: fmt::Debug + Send + Sync {
-    /// Writes `snapshot` durably, replacing any earlier snapshot.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LedgerPersistError`] when the snapshot cannot be written.
-    fn persist(&self, snapshot: &LedgerSnapshot) -> Result<(), LedgerPersistError>;
-
-    /// Returns the journal path backing this sink, when it has one.
-    fn location(&self) -> Option<Utf8PathBuf> { None }
-
-    /// Removes the durable record, called only after verified cleanup.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LedgerPersistError`] when the record exists but cannot be
-    /// removed.
-    fn clear(&self) -> Result<(), LedgerPersistError> { Ok(()) }
-}
-
-/// Errors raised by ledger queries and promotions.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum LedgerError {
-    /// Raised when a promotion names a resource that was never recorded.
-    #[error("{kind} {id} is not recorded in the ownership ledger")]
-    NotRecorded {
-        /// Kind that was looked up.
-        kind: ResourceKind,
-        /// Identifier that was looked up.
-        id: String,
-    },
-    /// Raised when a promotion changes memory but cannot be persisted.
-    ///
-    /// The in-memory disposition is already updated, so cleanup in this
-    /// process still preserves the resource; the journal, however, still shows
-    /// the previous disposition. A caller for which that difference matters
-    /// must not report success.
-    #[error("the ledger change could not be persisted: {message}")]
-    Persist {
-        /// Human-readable persistence failure.
-        message: String,
-    },
-}
 
 /// Mutable ledger contents guarded by the ledger's mutex.
 #[derive(Debug)]
@@ -225,6 +156,38 @@ impl ResourceLedger {
         }
     }
 
+    /// Records `resource` and reports whether the change reached the journal.
+    ///
+    /// Unlike [`ResourceLedger::record`], a persistence failure is returned
+    /// rather than collected, for a caller whose next step is unsafe unless
+    /// the allocation is durably recorded.
+    ///
+    /// # Parameters
+    ///
+    /// - `resource`: the allocation to record.
+    /// - `disposition`: what cleanup may do with it.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` once memory and the journal agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::Persist`] when the journal write fails; the
+    /// in-memory record is still updated so this process can clean it up.
+    pub fn record_durable(
+        &self,
+        resource: ResourceRef,
+        disposition: Disposition,
+    ) -> Result<(), LedgerError> {
+        let mut state = self.lock();
+        state.upsert(resource, disposition);
+        let snapshot = state.snapshot();
+        self.persist(&snapshot).map_err(|err| LedgerError::Persist {
+            message: err.message,
+        })
+    }
+
     /// Changes the disposition recorded for an already-recorded resource.
     ///
     /// # Errors
@@ -265,6 +228,30 @@ impl ResourceLedger {
     pub fn replace_entries(&self, entries: Vec<LedgerEntry>) {
         let mut state = self.lock();
         state.entries = entries;
+        let snapshot = state.snapshot();
+        if let Err(err) = self.persist(&snapshot) {
+            state.warnings.push(err.message);
+        }
+    }
+
+    /// Restores a recovered snapshot in one state update.
+    ///
+    /// Entries and the unknown-outcome flag are written together, so a journal
+    /// can never be left with the entries restored but the flag lost: that
+    /// combination would skip the reconciliation an unknown outcome needs.
+    ///
+    /// # Parameters
+    ///
+    /// - `entries`: resources recorded by the journal.
+    /// - `outcome_unknown`: whether the journal recorded an unresolved create.
+    ///
+    /// # Returns
+    ///
+    /// Nothing; a persistence failure is kept in [`ResourceLedger::warnings`].
+    pub fn restore(&self, entries: Vec<LedgerEntry>, outcome_unknown: bool) {
+        let mut state = self.lock();
+        state.entries = entries;
+        state.outcome_unknown = outcome_unknown;
         let snapshot = state.snapshot();
         if let Err(err) = self.persist(&snapshot) {
             state.warnings.push(err.message);

@@ -43,11 +43,12 @@ impl ScalewayBackend {
 
         match self.get_instance_volume(zone, volume_id).await {
             Ok(volume) => {
-                ledger.record(
-                    ResourceRef::instance_volume(volume_id, zone),
-                    Disposition::Retained,
-                );
-                Ok(volume.storage_family())
+                // Derive the reference and the returned family from the same
+                // value: an `sbs*` response must not be recorded as an
+                // instance volume while reporting the Block family.
+                let family = volume.storage_family();
+                ledger.record(volume_ref(&volume, zone), Disposition::Retained);
+                Ok(family)
             }
             Err(ScalewayBackendError::NotFound { .. }) => {
                 match self.get_block_volume(zone, volume_id).await {

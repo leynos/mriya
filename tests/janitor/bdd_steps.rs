@@ -121,7 +121,10 @@ fn scw_lists_tagged_resources(
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[("vol-b", "fr-par-1", &[])]), "");
-    // instance volume listing: no recorded boot volume remains
+    // instance and block volume listings: no recorded boot volume remains
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[]), "");
@@ -158,7 +161,10 @@ fn scw_lists_remaining_server(
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[]), "");
-    // instance volume listing: the recorded boot volume is gone
+    // instance and block volume listings: the recorded boot volume is gone
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[]), "");

@@ -109,6 +109,24 @@
         },
         "state": "attached",
         "zone": "zone"
+      },
+      "2": {
+        "id": "vol-extra",
+        "name": "extra",
+        "export_uri": null,
+        "size": 10000000000,
+        "volume_type": "sbs_volume",
+        "creation_date": "",
+        "modification_date": "",
+        "organization": "",
+        "project": "",
+        "tags": [],
+        "server": {
+          "id": "id",
+          "name": ""
+        },
+        "state": "attached",
+        "zone": "zone"
       }
     },
     "security_group": {

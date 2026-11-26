@@ -24,9 +24,18 @@ fn a_persisted_journal_records_its_owner(journal_dir: JournalDir, scope: Allocat
         .store
         .load(journal.path())
         .expect("the journal must load");
-    let owner = record.owner.expect("a live run must record its owner");
-    assert_eq!(owner.pid, std::process::id());
-    assert!(owner.is_alive(), "the current process is alive");
+    match (crate::recovery::ProcessIdentity::current(), record.owner) {
+        // Hosts without `/proc` cannot identify an owner; the journal is then
+        // ownerless, which recovery accepts.
+        (None, None) => {}
+        (Some(current), Some(owner)) => {
+            assert_eq!(owner, current);
+            assert!(owner.is_alive(), "the current process is alive");
+        }
+        (expected, actual) => {
+            panic!("owner availability must match: expected {expected:?}, got {actual:?}");
+        }
+    }
 }
 
 #[rstest]

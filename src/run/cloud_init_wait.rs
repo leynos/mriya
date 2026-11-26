@@ -74,18 +74,18 @@ where
     ///
     /// The probe is a blocking SSH call, so a bound on the following sleep
     /// alone would let a probe that started inside the window answer long after
-    /// it closed. Wrapping the remote command in `timeout` bounds the provider
-    /// round trip; a probe that is cut off did not observe the marker, so the
-    /// next pass of the wait sees the deadline and reports the timeout.
+    /// it closed. The call itself is bounded, and a probe cut off at the bound
+    /// has no exit code, which the wait treats as the window ending.
     fn probe_cloud_init(
         &self,
         networking: &InstanceNetworking,
         command: &str,
         remaining: Duration,
     ) -> Result<bool, StepFailure<B::Error>> {
-        let seconds = remaining.as_secs().max(1);
-        let bounded = format!("timeout {seconds} {command}");
-        match self.syncer.run_remote(networking, &bounded) {
+        match self
+            .syncer
+            .run_remote_raw_bounded(networking, command, remaining)
+        {
             Ok(output) => Ok(matches!(output.exit_code, Some(0))),
             Err(error) => Err(StepFailure::Error(RunError::Provisioning {
                 message: error.to_string(),

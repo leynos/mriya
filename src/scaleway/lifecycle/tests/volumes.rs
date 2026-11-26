@@ -104,6 +104,7 @@ async fn attach_volume_patches_root_and_cache_indices(
                     volume_id: "vol-cache",
                     root_volume_id: "vol-root",
                     family: StorageFamily::Instance,
+                    root_family: StorageFamily::Instance,
                 },
             )
             .await
@@ -146,6 +147,7 @@ async fn attach_volume_rejects_a_missing_root_volume(
                     volume_id: "vol-cache",
                     root_volume_id: "   ",
                     family: StorageFamily::Instance,
+                    root_family: StorageFamily::Instance,
                 },
             )
             .await
@@ -198,7 +200,12 @@ async fn detach_volumes_preserves_every_other_volume(
     assert_eq!(
         request_body(patch)?,
         serde_json::json!({
-            "volumes": { "0": {"id": "vol-root", "boot": true} }
+            "volumes": {
+                "0": {"id": "vol-root", "boot": true},
+                // A preserved SBS volume keeps its type, so the replacement
+                // map cannot change the family of a volume it does not remove.
+                "2": {"id": "vol-extra", "volume_type": "sbs_volume"}
+            }
         })
     );
     let verify = requests.get(2).context("verification read missing")?;

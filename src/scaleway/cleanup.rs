@@ -93,9 +93,10 @@ impl ScalewayBackend {
         ledger: &ResourceLedger,
         acc: &mut CleanupAccumulator,
     ) {
-        if !ledger.has_unknown_outcome()
-            || !ledger.entries_of(ResourceKind::InstanceVolume).is_empty()
-        {
+        // A create that succeeded can still have failed to write its volume
+        // to the journal; the tag is then the only durable way back to it, so
+        // the lookup runs whenever no volume was recorded.
+        if !ledger.entries_of(ResourceKind::InstanceVolume).is_empty() {
             return;
         }
         let scope = ledger.scope();

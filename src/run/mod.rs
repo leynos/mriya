@@ -12,12 +12,16 @@ use std::{fmt::Display, time::Duration};
 use camino::Utf8Path;
 use shell_escape::unix::escape;
 
+mod cancel_error;
 mod cloud_init_wait;
 mod error;
 mod finish;
+mod support;
 
-pub use error::{RunCancellation, RunCleanupFailure, RunError, RunOutcome};
+pub use cancel_error::RunCancellation;
+pub use error::{RunCleanupFailure, RunError, RunOutcome};
 use finish::{RunCompletion, RunFailureInputs};
+use support::{check_cancelled, remote_status_detail};
 
 use crate::{
     backend::{Backend, InstanceNetworking, InstanceRequest},
@@ -37,6 +41,8 @@ use crate::{
 const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Total time to wait for cloud-init to finish (ten minutes).
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
+/// Longest the cache release may take before its SSH child is terminated.
+const CACHE_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Why the step sequence stopped short of a completed remote command.
 enum StepFailure<BackendError>
@@ -293,7 +299,12 @@ where
         let mount_path = &self.syncer.config().volume_mount_path;
         let escaped = escape(mount_path.as_str().into());
         let command = format!("sync; if mountpoint -q {escaped}; then sudo umount {escaped}; fi");
-        match self.syncer.run_remote_raw(ready, &command) {
+        // A stalled unmount must not stop cleanup: the volume is detached
+        // next, and the warning already explains the failure.
+        match self
+            .syncer
+            .run_remote_raw_bounded(ready, &command, CACHE_RELEASE_TIMEOUT)
+        {
             Ok(output) if output.exit_code == Some(0) => Vec::new(),
             Ok(output) => vec![format!(
                 "could not release the cache volume at {mount_path}: {detail}",
@@ -361,32 +372,5 @@ where
                 stderr: output.stderr,
             },
         })
-    }
-}
-
-/// Returns `Cancelled` when a signal has already arrived.
-fn check_cancelled<BackendError>(
-    cancellation: &Cancellation,
-) -> Result<(), StepFailure<BackendError>>
-where
-    BackendError: std::error::Error + 'static,
-{
-    if cancellation.is_cancelled() {
-        return Err(StepFailure::Cancelled);
-    }
-    Ok(())
-}
-
-/// Describes a non-success remote status, including trimmed stderr when there
-/// is any.
-fn remote_status_detail(output: &RemoteCommandOutput) -> String {
-    let stderr = output.stderr.trim();
-    match (output.exit_code, stderr.is_empty()) {
-        (Some(code), true) => format!("remote command exited with status {code}"),
-        (Some(code), false) => format!("remote command exited with status {code}: {stderr}"),
-        (None, true) => String::from("remote command terminated without an exit status"),
-        (None, false) => {
-            format!("remote command terminated without an exit status: {stderr}")
-        }
     }
 }

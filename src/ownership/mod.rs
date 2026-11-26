@@ -16,8 +16,10 @@
 //! cannot be persisted.
 
 mod ledger;
+mod sink;
 
-pub use ledger::{LedgerError, LedgerPersistError, LedgerSink, ResourceLedger};
+pub use ledger::ResourceLedger;
+pub use sink::{LedgerError, LedgerPersistError, LedgerSink};
 pub use types::{
     ALLOCATION_TAG_PREFIX,
     AllocationScope,

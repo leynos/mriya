@@ -39,6 +39,8 @@ struct OpenExample {
     identifier: String,
     /// Delimiter that opened the block.
     fence: String,
+    /// Full run of the opening delimiter.
+    run: String,
     /// Fence language, such as `bash`.
     language: String,
     /// Lines read so far.
@@ -77,7 +79,14 @@ impl ExampleParser {
             return self.open_marker(line, trimmed);
         }
         if let Some((fence, rest)) = split_fence(trimmed) {
-            return self.toggle_fence(line, fence, rest.trim());
+            return self.toggle_fence(
+                line,
+                &Fence {
+                    delimiter: fence,
+                    run: &fence_run(trimmed, fence),
+                    info: rest.trim(),
+                },
+            );
         }
         if let Some(current) = self.current.as_mut() {
             current.lines.push(line.to_owned());
@@ -106,7 +115,12 @@ impl ExampleParser {
     }
 
     /// Opens an example or completes the one currently open.
-    fn toggle_fence(&mut self, line: &str, fence: &str, language: &str) -> Result<(), String> {
+    fn toggle_fence(&mut self, line: &str, opener: &Fence<'_>) -> Result<(), String> {
+        let Fence {
+            delimiter: fence,
+            run,
+            info: language,
+        } = *opener;
         // A fence ends its example; a marker belongs to exactly one fence, so
         // an unmarked fence is a contract gap, not prose.
         match self.current.take() {
@@ -118,18 +132,22 @@ impl ExampleParser {
                 self.current = Some(OpenExample {
                     identifier,
                     fence: fence.to_owned(),
+                    run: run.to_owned(),
                     language: language.to_owned(),
                     lines: Vec::new(),
                 });
             }
             Some(open) => {
-                // A closing fence must use the delimiter that opened it; the
-                // other form is ordinary content inside the block.
-                if open.fence != fence {
+                // A closing fence must use the opening delimiter, be at least
+                // as long, and carry no info string.
+                if open.fence != fence || run.len() < open.run.len() {
                     return Err(format!(
-                        "closing fence {fence} does not match opening fence {}: {line}",
-                        open.fence
+                        "closing fence {run} does not match opening fence {}: {line}",
+                        open.run
                     ));
+                }
+                if !language.is_empty() {
+                    return Err(format!("closing fence carries an info string: {line}"));
                 }
                 self.examples.push(open.finish());
             }
@@ -152,11 +170,33 @@ impl ExampleParser {
     }
 }
 
+/// One fence line's delimiter, full run, and info string.
+struct Fence<'a> {
+    /// The fence character's three-character prefix.
+    delimiter: &'static str,
+    /// The full run of the fence character.
+    run: &'a str,
+    /// Text after the run, which must be empty on a closing fence.
+    info: &'a str,
+}
+
 /// Splits a fence line into its delimiter and remainder.
+///
+/// Only the first three characters identify the fence character; the full run
+/// is kept so a closing fence can be required to be at least as long as the
+/// opening one.
 fn split_fence(line: &str) -> Option<(&'static str, &str)> {
     FENCE_PREFIXES
         .iter()
         .find_map(|prefix| line.strip_prefix(prefix).map(|rest| (*prefix, rest)))
+}
+
+/// Returns the full run of the fence character at the start of `line`.
+fn fence_run(line: &str, delimiter: &str) -> String {
+    let character = delimiter.chars().next().unwrap_or('`');
+    line.chars()
+        .take_while(|candidate| *candidate == character)
+        .collect()
 }
 
 /// Extracts every marked example from `document`, rejecting a bad structure.

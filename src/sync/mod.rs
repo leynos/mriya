@@ -2,7 +2,7 @@
 //! `.gitignore` filters and wrapping SSH commands while preserving remote
 //! exit codes.
 
-use std::ffi::OsString;
+use std::{ffi::OsString, time::Duration};
 
 use camino::Utf8Path;
 use mockable::{DefaultEnv, Env};
@@ -12,6 +12,7 @@ use crate::backend::InstanceNetworking;
 mod config;
 mod registry;
 mod remote_command;
+mod runner;
 mod types;
 mod util;
 
@@ -167,6 +168,32 @@ impl<R: CommandRunner> Syncer<R> {
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
         self.execute_ssh(networking, remote_command)
+    }
+
+    /// Executes `remote_command` over SSH with a wall-clock bound.
+    ///
+    /// A command that outlives `bound` is terminated, and its exit code is then
+    /// absent. This bounds a blocking SSH call that a deadline cannot
+    /// otherwise stop, such as a readiness probe or a cache release.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure to spawn or execute the SSH command.
+    pub fn run_remote_raw_bounded(
+        &self,
+        networking: &InstanceNetworking,
+        remote_command: &str,
+        bound: Duration,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        let args = self.build_ssh_args(networking, remote_command, &DefaultEnv)?;
+        let output = self
+            .runner
+            .run_bounded(&self.config.ssh_bin, &args, bound)?;
+        Ok(RemoteCommandOutput {
+            exit_code: output.code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
     }
 
     fn execute_ssh(

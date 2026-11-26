@@ -27,6 +27,8 @@ pub(in crate::scaleway) struct CacheAttachment<'a> {
     pub(in crate::scaleway) root_volume_id: &'a str,
     /// API family that owns the cache volume.
     pub(in crate::scaleway) family: StorageFamily,
+    /// API family that owns the root volume, which must be re-sent.
+    pub(in crate::scaleway) root_family: StorageFamily,
 }
 
 /// Volume types the Instances API can record for this backend.
@@ -110,9 +112,10 @@ impl ScalewayBackend {
     /// Each provider volume type is listed separately; a volume the provider
     /// reports under more than one type must not be recorded twice.
     fn merge_volumes(volumes: &mut Vec<VolumeModel>, page_items: Vec<VolumeModel>) {
+        let mut seen: std::collections::HashSet<String> =
+            volumes.iter().map(|volume| volume.id.clone()).collect();
         for volume in page_items {
-            let known = volumes.iter().any(|existing| existing.id == volume.id);
-            if !known {
+            if seen.insert(volume.id.clone()) {
                 volumes.push(volume);
             }
         }
@@ -233,6 +236,7 @@ impl ScalewayBackend {
             volume_id,
             root_volume_id,
             family,
+            root_family,
         } = volume;
         if root_volume_id.trim().is_empty() {
             return Err(ScalewayBackendError::VolumeNotFound {
@@ -244,7 +248,7 @@ impl ScalewayBackend {
         let mut volumes = HashMap::new();
         volumes.insert(
             String::from("0"),
-            VolumeAttachment::new(root_volume_id.to_owned(), true, StorageFamily::Instance),
+            VolumeAttachment::new(root_volume_id.to_owned(), true, root_family),
         );
         volumes.insert(
             String::from("1"),
@@ -303,7 +307,15 @@ impl ScalewayBackend {
             );
         }
 
-        let first = volume_ids.first().map_or("", String::as_str);
+        // Name a volume this PATCH actually removes: an earlier request may
+        // already have detached the first identifier, leaving a later one to
+        // fail.
+        let removed = server
+            .volumes
+            .values()
+            .find(|volume| volume_ids.iter().any(|id| id == &volume.id))
+            .map_or("", |volume| volume.id.as_str());
+        let first = removed;
         let request = UpdateInstanceVolumesRequest { volumes };
         patch_instance_volumes(self, handle, &request, VolumePatchContext::detach(first)).await?;
 
