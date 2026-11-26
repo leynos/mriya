@@ -188,7 +188,7 @@ provisioning) that will guide subsequent optimizations.
 
 ### Boot volume decision (26 November 2026)
 
-- Model boot storage in a provider-neutral `src/boot_volume.rs`: the storage
+- Model boot storage in a provider-neutral `src/boot_volume/`: the storage
   type (`l_ssd` or `sbs_volume`), the profile's request, the resolved plan with
   its compatibility-default provenance, the reported root volume, and the
   allocation pairing the plan with what was bought. The `Backend` port names
@@ -239,8 +239,8 @@ provisioning) that will guide subsequent optimizations.
   field that identifies the root volume, so it cannot answer the question
   capture asks.
 - On any post-POST failure, destroy the server best-effort and return the
-  original error, appending the teardown outcome as `src/run.rs` does. Do not
-  delete volumes explicitly: ownership-aware boot-volume cleanup is issue
+  original error, appending the teardown outcome as `src/run/mod.rs` does. Do
+  not delete volumes explicitly: ownership-aware boot-volume cleanup is issue
   #154's scope.
 - Include `volume_type: "sbs_volume"` on the root entry of attach and detach
   PATCH bodies, and only there. The provider requires it for Block Storage and

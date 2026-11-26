@@ -2,139 +2,33 @@
 //!
 //! The loopback suites prove what Mriya sends; only a live account can prove
 //! what Scaleway actually creates. This suite therefore creates real servers,
-//! so it runs only when `MRIYA_RUN_SCALEWAY_BOOT_TESTS` is truthy.
-//!
-//! When enabled it never skips silently. A missing credential, an unreadable
-//! configuration, a provider permission error, or an empty case list is a
-//! failure: an operator who asked for the check must not be told it passed
-//! when it never ran.
-//!
-//! `MRIYA_TEST_BOOT_CASES` lists the cases to execute as
-//! `instance_type:volume_type:size_gb` triples separated by semicolons, for
-//! example `DEV1-S:l_ssd:20;DEV1-S:sbs_volume:20`. Sizes are decimal
-//! gigabytes (10^9 bytes), matching the configuration surface.
+//! so it runs only when `MRIYA_RUN_SCALEWAY_BOOT_TESTS` is truthy. Case parsing
+//! lives in [`cases`] and the independent provider reads in [`api`].
 //!
 //! Every created server is destroyed even when an assertion fails. The
 //! captured root volume is then checked for survival, because deleting a
 //! server through the API may or may not remove its Block Storage volumes;
 //! ownership-aware cleanup is tracked in issue #154.
 
-use std::{io::Write, time::Duration};
+use std::io::Write;
 
-use mockable::{DefaultEnv, Env};
-use mriya::{
-    Backend,
-    BootVolumeRequest,
-    BootVolumeType,
-    InstanceHandle,
-    InstanceRequest,
-    RootVolume,
-    ScalewayBackend,
-    ScalewayConfig,
+use mriya::{Backend, BootVolumeType, InstanceHandle, RootVolume, ScalewayBackend, ScalewayConfig};
+
+#[path = "scaleway_boot_volume/api.rs"]
+mod api;
+#[path = "scaleway_boot_volume/cases.rs"]
+mod cases;
+
+use api::{
+    BLOCK_API,
+    HTTP_TIMEOUT,
+    INSTANCE_API,
+    build_request,
+    get_json,
+    read_block_volume,
+    read_server_root,
 };
-
-/// Variable that opts the live suite in.
-const ENABLE_VARIABLE: &str = "MRIYA_RUN_SCALEWAY_BOOT_TESTS";
-
-/// Variable listing the cases to execute.
-const CASES_VARIABLE: &str = "MRIYA_TEST_BOOT_CASES";
-
-/// Production Instances API base.
-const INSTANCE_API: &str = "https://api.scaleway.com/instance/v1";
-
-/// Production Block Storage API base.
-const BLOCK_API: &str = "https://api.scaleway.com/block/v1";
-
-/// Per-request budget for the independent reads this suite makes.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// One live case to execute.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Case {
-    /// Commercial type to provision.
-    instance_type: String,
-    /// Boot storage type to request.
-    volume_type: BootVolumeType,
-    /// Capacity to request, in decimal gigabytes.
-    size_gb: u32,
-}
-
-/// Reports whether the suite was opted into.
-fn enabled() -> bool {
-    DefaultEnv.raw(ENABLE_VARIABLE).is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes"
-        )
-    })
-}
-
-/// Reads the configured cases, refusing an empty list.
-///
-/// # Errors
-///
-/// Returns a description naming the variable when the list is absent, empty,
-/// or contains an unparsable case.
-fn cases_from_env() -> Result<Vec<Case>, String> {
-    let raw = DefaultEnv
-        .raw(CASES_VARIABLE)
-        .map_err(|_| missing_cases())?;
-    let cases = parse_cases(&raw)?;
-    if cases.is_empty() {
-        return Err(missing_cases());
-    }
-    Ok(cases)
-}
-
-/// The failure reported when no case was listed.
-fn missing_cases() -> String {
-    format!("{CASES_VARIABLE} must list at least one instance_type:volume_type:size_gb case")
-}
-
-/// Parses the semicolon-separated case list.
-///
-/// For example, `DEV1-S:l_ssd:20;DEV1-S:sbs_volume:20` yields two cases.
-///
-/// # Errors
-///
-/// Returns the offending entry when a field is missing or unparsable.
-fn parse_cases(raw: &str) -> Result<Vec<Case>, String> {
-    raw.split(';')
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .map(parse_case)
-        .collect()
-}
-
-/// Parses one `instance_type:volume_type:size_gb` triple.
-fn parse_case(entry: &str) -> Result<Case, String> {
-    let mut fields = entry.split(':');
-    let instance_type = fields
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("case '{entry}' is missing its instance type"))?;
-    let volume_type = fields
-        .next()
-        .ok_or_else(|| format!("case '{entry}' is missing its volume type"))?
-        .trim()
-        .parse::<BootVolumeType>()
-        .map_err(|error| format!("case '{entry}': {error}"))?;
-    let size_gb = fields
-        .next()
-        .ok_or_else(|| format!("case '{entry}' is missing its size in GB"))?
-        .trim()
-        .parse::<u32>()
-        .map_err(|error| format!("case '{entry}': invalid size: {error}"))?;
-    if fields.next().is_some() {
-        return Err(format!("case '{entry}' has more than three fields"));
-    }
-    Ok(Case {
-        instance_type: instance_type.to_owned(),
-        volume_type,
-        size_gb,
-    })
-}
+use cases::{Case, cases_from_env, enabled};
 
 /// Everything one live run needs, plus what it has learned.
 struct LiveRun<'a> {
@@ -405,105 +299,4 @@ impl LiveRun<'_> {
             self.cleanup_errors.len()
         );
     }
-}
-
-/// Builds the request for one case, clearing the cache volume explicitly.
-///
-/// Clearing `volume_id` is deliberate: this check is about the boot disk, and
-/// a configured cache volume would add an attachment this suite does not need
-/// and would then have to clean up.
-fn build_request(config: &ScalewayConfig, case: &Case) -> Result<InstanceRequest, String> {
-    let mut request = config
-        .as_request()
-        .map_err(|error| format!("cannot build a request: {error}"))?;
-    request.instance_type.clone_from(&case.instance_type);
-    request.volume_id = None;
-    request.boot_volume = BootVolumeRequest::new(case.volume_type, case.size_gb);
-    Ok(request)
-}
-
-/// Reads the server's boot entry straight from the Instances API.
-async fn read_server_root(
-    client: &reqwest::Client,
-    config: &ScalewayConfig,
-    handle: &InstanceHandle,
-) -> Result<(String, String, Option<u64>), String> {
-    let url = format!(
-        "{}/zones/{}/servers/{}",
-        INSTANCE_API, handle.zone, handle.id
-    );
-    let body = get_json(client, &url, &config.secret_key)
-        .await?
-        .ok_or_else(|| format!("instance {} disappeared before it could be read", handle.id))?;
-    let volumes = body
-        .pointer("/server/volumes")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| format!("instance {} reports no volumes object", handle.id))?;
-
-    let entry = volumes
-        .iter()
-        .find(|(_, volume)| volume.get("boot") == Some(&serde_json::Value::Bool(true)))
-        .or_else(|| volumes.get_key_value("0"))
-        .map(|(_, volume)| volume)
-        .ok_or_else(|| format!("instance {} reports no boot volume", handle.id))?;
-
-    let id = entry
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("instance {} root volume has no id", handle.id))?;
-    let volume_type = entry
-        .get("volume_type")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("instance {} root volume has no type", handle.id))?;
-    let size = entry.get("size").and_then(serde_json::Value::as_u64);
-    Ok((id.to_owned(), volume_type.to_owned(), size))
-}
-
-/// Reads an SBS volume from the Block Storage API.
-async fn read_block_volume(
-    client: &reqwest::Client,
-    config: &ScalewayConfig,
-    zone: &str,
-    volume_id: &str,
-) -> Result<(u64, String), String> {
-    let url = format!("{BLOCK_API}/zones/{zone}/volumes/{volume_id}");
-    let body = get_json(client, &url, &config.secret_key)
-        .await?
-        .ok_or_else(|| format!("Block Storage has no volume {volume_id}"))?;
-    let size = body
-        .get("size")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| format!("Block Storage volume {volume_id} reports no size"))?;
-    let id = body
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("Block Storage volume {volume_id} reports no id"))?;
-    Ok((size, id.to_owned()))
-}
-
-/// Fetches `url`, returning `None` for a 404 and an error otherwise.
-async fn get_json(
-    client: &reqwest::Client,
-    url: &str,
-    token: &str,
-) -> Result<Option<serde_json::Value>, String> {
-    let response = client
-        .get(url)
-        .header("X-Auth-Token", token)
-        .send()
-        .await
-        .map_err(|error| format!("request to {url} failed: {error}"))?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("request to {url} returned {status}: {body}"));
-    }
-    response
-        .json::<serde_json::Value>()
-        .await
-        .map(Some)
-        .map_err(|error| format!("response from {url} was not JSON: {error}"))
 }

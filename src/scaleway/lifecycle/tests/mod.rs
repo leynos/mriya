@@ -7,6 +7,7 @@ use scaleway_rs::{ScalewayApi, ScalewayImage};
 
 use super::InstanceSnapshot;
 use crate::{
+    BootVolumeMismatch,
     ScalewayConfig,
     backend::{InstanceHandle, InstanceRequest},
     scaleway::{
@@ -161,7 +162,19 @@ fn handle() -> InstanceHandle {
     }
 }
 
+/// Reports whether `error` is a root-volume mismatch of the `Differs` kind.
+fn is_differing_mismatch(error: &ScalewayBackendError) -> bool {
+    match error {
+        ScalewayBackendError::BootVolumeMismatch(mismatch) => {
+            matches!(**mismatch, BootVolumeMismatch::Differs { .. })
+        }
+        _ => false,
+    }
+}
+
 mod boot_plan;
+mod boot_plan_defaults;
+mod create_cleanup;
 mod image;
 mod wait;
 
@@ -170,4 +183,5 @@ mod instances;
 mod network;
 mod properties;
 mod root_volume;
+mod volume_sbs;
 mod volumes;

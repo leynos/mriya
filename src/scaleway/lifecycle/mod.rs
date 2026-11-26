@@ -8,6 +8,7 @@ mod create;
 mod http;
 mod image;
 mod products;
+mod root_capture;
 mod volume_attach;
 mod volume_create;
 mod volume_detach;

@@ -5,7 +5,7 @@ use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
 use super::{
-    test_doubles::MemoryConfigStore,
+    memory_config_store::MemoryConfigStore,
     test_helpers::{
         InitContext,
         InitContextResult,

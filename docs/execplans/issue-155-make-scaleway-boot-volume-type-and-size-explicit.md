@@ -44,7 +44,7 @@ Observable success:
   provider path. The cache volume's existing binary GiB conversion stays as it
   is. Provider payloads and reports state their units.
 - Provider HTTP contracts live in `src/scaleway/`; orchestrators depend on the
-  `Backend` port. `src/boot_volume.rs` holds the provider-neutral domain model
+  `Backend` port. `src/boot_volume/` holds the provider-neutral domain model
   and must not import Scaleway types.
 - No single code file may exceed 400 lines.
 - All comments and documentation use en-GB-oxendict spelling.
@@ -159,14 +159,14 @@ neutral request and result types. `src/config.rs` maps `ScalewayConfig` to an
 `Backend`; its `create` resolves an image (`lifecycle/image.rs`), posts a server
 (`lifecycle/create.rs`), attaches a cache volume
 (`lifecycle/volume_attach.rs`), and powers the server on. `src/init/mod.rs`
-orchestrates cache-volume creation. `src/run.rs` orchestrates a remote run.
+orchestrates cache-volume creation. `src/run/mod.rs` orchestrates a remote run.
 `src/test_backdoors.rs` (test-only) renders `dump-request` output.
 
 ## Milestones
 
 ### EP-M1: boot-storage domain model and configuration
 
-Create `src/boot_volume.rs` with `BootVolumeType`, `BootVolumeRequest`,
+Create `src/boot_volume/` with `BootVolumeType`, `BootVolumeRequest`,
 `BootVolumePlan` and `BootVolumeSource`, `RootVolume`, and
 `BootVolumeAllocation`. Carry optional profile settings through
 `ScalewayConfig` into `InstanceRequest`, and record the allocation on
@@ -198,7 +198,7 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 ## Progress
 
 - [x] Read the repository, the Scaleway OpenAPI schemas, and the issue.
-- [x] EP-M1: domain model and configuration. `src/boot_volume.rs` holds
+- [x] EP-M1: domain model and configuration. `src/boot_volume/` holds
   `BootVolumeType`, `BootVolumeRequest`, `BootVolumePlan`,
   `CompatibilityDefault`, `ImageStorage`, `RootVolume`, and
   `BootVolumeAllocation`. `ScalewayConfig` carries `boot_volume_type` and
@@ -226,25 +226,22 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 
 - Observation: `clippy::result_large_err` is denied, and the new error variants
   pushed `ScalewayBackendError` past the 128-byte threshold, which then made
-  `CliError` too large through `RunError`/`InitError`.
-  Evidence: the first full lint run reported "the `Err`-variant returned from
-  this function is very large" at `src/cli_args.rs` and `src/test_backdoors.rs`.
-  Consequence: `ImageStorageIncompatible` and `BootVolumeMismatch` carry boxed
-  payloads, and `ScalewayBackendError` is back to 80 bytes.
+  `CliError` too large through `RunError`/`InitError`. Evidence: the first full
+  lint run reported "the `Err`-variant returned from this function is very
+  large" at `src/cli_args.rs` and `src/test_backdoors.rs`. Consequence:
+  `ImageStorageIncompatible` and `BootVolumeMismatch` carry boxed payloads, and
+  `ScalewayBackendError` is back to 80 bytes.
 - Observation: the SDK's `ScalewayInstance` requires a non-optional `size` on
   every volume entry, but the provider reports `"size": null` for an attached
-  Block Storage volume.
-  Evidence: `scaleway-rs-0.1.9/src/data/image.rs` declares `size: u64` on
-  `ScalewayImageExtraVolume`, while the Instances API schema types the same
-  field as nullable.
-  Consequence: creation, the single-instance read, and the readiness list all
-  decode through the local minimal model. The SBS fixture keeps `size: null` so
-  the regression is caught locally.
+  Block Storage volume. Evidence: `scaleway-rs-0.1.9/src/data/image.rs` declares
+  `size: u64` on `ScalewayImageExtraVolume`, while the Instances API schema
+  types the same field as nullable. Consequence: creation, the single-instance
+  read, and the readiness list all decode through the local minimal model. The
+  SBS fixture keeps `size: null` so the regression is caught locally.
 - Observation: the repository's pinned en-GB-oxendict dictionary uses Oxford
   `-ize`/`-able` forms, so `unrecognised` and `unparseable` are rejected in
-  favour of `unrecognized` and `unparsable`.
-  Evidence: `make spelling` reported both as corrections.
-  Consequence: prose uses the Oxford forms throughout.
+  favour of `unrecognized` and `unparsable`. Evidence: `make spelling` reported
+  both as corrections. Consequence: prose uses the Oxford forms throughout.
 
 - Observation: this branch is based on `200563a`, which predates the `#153`
   Block Storage migration. The cache volume here is still created through the
@@ -258,7 +255,7 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 
 ## Decision Log
 
-- Decision: hold the provider-neutral domain model in `src/boot_volume.rs`
+- Decision: hold the provider-neutral domain model in `src/boot_volume/`
   rather than in `src/scaleway/`. Rationale: the `Backend` port must be able to
   name a boot plan without importing Scaleway types, and a future backend
   should reuse it.
@@ -279,8 +276,8 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 - Decision: `clean_up_after_failed_create` returns the original error unchanged
   when the delete succeeds, and wraps it in `CreateCleanupFailed` only when the
   delete also failed, preserving the original as the source. Rationale: matches
-  `src/run.rs`'s `destroy_with_note`, so callers can still classify the failure
-  in the common case.
+  `src/run/mod.rs`'s `destroy_with_note`, so callers can still classify the
+  failure in the common case.
 - Decision: stop catalogue pagination when a page adds no key an earlier page
   had not already shown. Rationale: the catalogue is a map rather than a list,
   so counting pages alone cannot detect the end; an endpoint that ignored the

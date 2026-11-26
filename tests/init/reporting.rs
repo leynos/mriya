@@ -15,7 +15,8 @@ use mriya::{
 };
 
 use super::{
-    test_doubles::{MemoryConfigStore, ScriptedVolumeBackend},
+    memory_config_store::MemoryConfigStore,
+    test_doubles::ScriptedVolumeBackend,
     test_helpers::{build_init_context, init_context_result},
 };
 
