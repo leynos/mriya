@@ -111,7 +111,12 @@ impl ProductServerType {
     }
 }
 
-/// The `products/servers` page: commercial type name to catalogue entry.
+/// The `products/servers` page: commercial type name to raw catalogue entry.
+///
+/// Entries stay undecoded until one is actually needed. The page describes
+/// every type in the zone, including shapes this backend does not model, and
+/// deserialising all of them would let one unfamiliar entry fail a lookup for
+/// a perfectly ordinary type.
 ///
 /// # Examples
 ///
@@ -123,14 +128,14 @@ impl ProductServerType {
 /// ```
 #[derive(Debug, Deserialize)]
 pub(in crate::scaleway) struct ProductServersResponse {
-    /// Catalogue entries keyed by commercial type.
-    pub(crate) servers: HashMap<String, ProductServerType>,
+    /// Catalogue entries keyed by commercial type, still undecoded.
+    pub(crate) servers: HashMap<String, serde_json::Value>,
 }
 
 /// What one catalogue page contributed.
 enum PageOutcome {
-    /// The requested type was on this page.
-    Found(ProductServerType),
+    /// The requested type was on this page, still undecoded.
+    Found(serde_json::Value),
     /// The page added nothing new, so pagination is finished.
     Exhausted,
     /// The page added types; another page may hold more.
@@ -142,7 +147,7 @@ enum PageOutcome {
 /// `seen` accumulates every key returned so far, which is how a map-shaped
 /// response detects the end of pagination.
 fn take_page(
-    servers: HashMap<String, ProductServerType>,
+    servers: HashMap<String, serde_json::Value>,
     instance_type: &str,
     seen: &mut HashSet<String>,
 ) -> PageOutcome {
@@ -158,6 +163,26 @@ fn take_page(
     } else {
         PageOutcome::Exhausted
     }
+}
+
+/// Decodes one catalogue entry, naming the type when the shape is unfamiliar.
+///
+/// # Errors
+///
+/// Returns [`ScalewayBackendError::ProductCatalogueUnavailable`] with the
+/// decoding failure attached, so an operator can tell "the provider does not
+/// list this type" from "the entry changed shape".
+fn decode_server_type(
+    raw: &serde_json::Value,
+    zone: &str,
+    instance_type: &str,
+) -> Result<ProductServerType, ScalewayBackendError> {
+    serde_json::from_value(raw.clone()).map_err(|error| {
+        ScalewayBackendError::ProductCatalogueUnavailable {
+            instance_type: format!("{instance_type} (unreadable catalogue entry: {error})"),
+            zone: zone.to_owned(),
+        }
+    })
 }
 
 impl ScalewayBackend {
@@ -201,7 +226,7 @@ impl ScalewayBackend {
             // adds nothing means the endpoint either finished or ignored the
             // page parameter; either way, continuing would loop forever.
             match take_page(decoded.servers, instance_type, &mut seen) {
-                PageOutcome::Found(product) => return Ok(product),
+                PageOutcome::Found(raw) => return decode_server_type(&raw, zone, instance_type),
                 PageOutcome::Exhausted => break,
                 PageOutcome::More => page += 1,
             }

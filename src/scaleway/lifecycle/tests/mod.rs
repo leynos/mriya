@@ -181,6 +181,7 @@ mod wait;
 mod http_stub;
 mod instances;
 mod network;
+mod products;
 mod properties;
 mod root_volume;
 mod volume_sbs;
