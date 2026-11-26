@@ -28,3 +28,17 @@ fn a_plan_with_a_repetition_of_zero_is_refused() {
     let error = CampaignPlan::from_toml(&text).expect_err("repetitions start at one");
     assert!(error.contains("repetition zero"), "{error}");
 }
+
+#[test]
+fn an_attempt_on_an_undeclared_provider_is_refused() {
+    let text = example_campaign().replace("provider = \"scaleway\"", "provider = \"hetzner\"");
+    let error = CampaignPlan::from_toml(&text).expect_err("the provider must be declared");
+    assert!(error.contains("does not declare"), "{error}");
+}
+
+#[test]
+fn a_plan_with_no_providers_is_refused() {
+    let text = example_campaign().replace("providers = [\"scaleway\"]", "providers = []");
+    let error = CampaignPlan::from_toml(&text).expect_err("a comparison needs providers");
+    assert!(error.contains("must declare the providers"), "{error}");
+}

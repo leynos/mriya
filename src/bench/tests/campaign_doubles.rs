@@ -6,6 +6,7 @@ use std::{collections::VecDeque, sync::Mutex};
 use super::{
     super::{
         campaign::{
+            AttemptFailure,
             AttemptRecords,
             CampaignDriver,
             CampaignPlan,
@@ -27,7 +28,7 @@ pub struct ScriptedDriver {
     /// What the pre-sweep returns.
     pub sweep: Result<SweepReport, String>,
     /// What each attempt returns.
-    pub runs: Mutex<VecDeque<Result<RunRecord, String>>>,
+    pub runs: Mutex<VecDeque<Result<RunRecord, AttemptFailure>>>,
     /// What each teardown check returns.
     pub teardowns: Mutex<VecDeque<Result<TeardownReport, String>>>,
 }
@@ -76,14 +77,14 @@ impl CampaignDriver for ScriptedDriver {
         &self,
         _campaign_id: &str,
         attempt: &PlannedAttempt,
-    ) -> Result<AttemptRecords, String> {
+    ) -> Result<AttemptRecords, AttemptFailure> {
         self.note(format!("run:{}", attempt.workload_id));
         let run = self
             .runs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pop_front()
-            .unwrap_or_else(|| Err(String::from("no scripted run left")))?;
+            .unwrap_or_else(|| Err(AttemptFailure::without_resources("no scripted run left")))?;
         Ok(AttemptRecords {
             run,
             phases: Vec::new(),

@@ -314,22 +314,29 @@ impl ScalewayDriver {
         campaign_id: &str,
         attempt: &PlannedAttempt,
         request: &InstanceRequest,
-    ) -> DriverResult<Measurement> {
+    ) -> Result<Measurement, super::ports::AttemptFailure> {
         let lifecycle = Arc::new(RecordingSink::default());
-        let backend = self.backend(campaign_id, Some(lifecycle.clone()))?;
-        let syncer = Syncer::new(self.sync_config.clone(), StreamingCommandRunner)
-            .map_err(|err| format!("syncer: {err}"))?;
+        let backend = self
+            .backend(campaign_id, Some(lifecycle.clone()))
+            .map_err(super::ports::AttemptFailure::without_resources)?;
+        let syncer =
+            Syncer::new(self.sync_config.clone(), StreamingCommandRunner).map_err(|err| {
+                super::ports::AttemptFailure::without_resources(format!("syncer: {err}"))
+            })?;
         let observer = Arc::new(RecordingObserver::default());
         let orchestrator = RunOrchestrator::new(backend, syncer)
             .with_observer(Box::new(SharedObserver(observer.clone())))
             .with_pre_workload_command(PROBE_COMMAND)
             .with_post_workload_command(PROBE_COMMAND);
 
-        let source = current_directory()?;
-        let command = workload_command(&attempt.workload_id)?;
+        let source =
+            current_directory().map_err(super::ports::AttemptFailure::without_resources)?;
+        let command = workload_command(&attempt.workload_id)
+            .map_err(super::ports::AttemptFailure::without_resources)?;
         let rendered = shell_escape(&command);
-        let runtime =
-            tokio::runtime::Runtime::new().map_err(|err| format!("async runtime: {err}"))?;
+        let runtime = tokio::runtime::Runtime::new().map_err(|err| {
+            super::ports::AttemptFailure::without_resources(format!("async runtime: {err}"))
+        })?;
         let started = std::time::Instant::now();
         let attempt_output = runtime
             .block_on(async {
@@ -337,11 +344,18 @@ impl ScalewayDriver {
                     .execute_observed(request, &source, &rendered)
                     .await
             })
-            .map_err(|err| format!("run failed: {err}"))?;
+            .map_err(|err| super::ports::AttemptFailure {
+                reason: format!("run failed: {err}"),
+                resource_ids: lifecycle.created_ids(),
+            })?;
         let total_nanos = elapsed_nanos(started.elapsed());
-        let probe_stdout = attempt_output
-            .pre_stdout
-            .ok_or_else(|| String::from("the pre-workload probe produced no output"))?;
+        // The run completed and its teardown was verified, so a later failure
+        // leaves nothing behind and is reported without resource identifiers.
+        let probe_stdout = attempt_output.pre_stdout.ok_or_else(|| {
+            super::ports::AttemptFailure::without_resources(
+                "the pre-workload probe produced no output",
+            )
+        })?;
         Ok(Measurement {
             source,
             command,

@@ -23,6 +23,7 @@ mod scaleway_measure;
 
 pub use plan::{CampaignPlan, PlannedAttempt};
 pub use ports::{
+    AttemptFailure,
     AttemptRecords,
     CampaignDriver,
     CampaignError,

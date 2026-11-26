@@ -302,6 +302,7 @@ pub fn build_report(
             comparability: &mut comparability_problems,
         };
         super::rules::note_differences(&workload_id, &attributed, campaign, &mut notes);
+        super::rules::note_repetition_shortfall(&attributed, &mut capability_notes);
         workloads.insert(workload_id, attributed);
     }
 

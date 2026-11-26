@@ -105,6 +105,19 @@ impl CampaignPlan {
                 "the campaign needs at least one attempt",
             )));
         }
+        if self.providers.is_empty() {
+            return Err(CampaignError::InvalidPlan(String::from(
+                "the campaign must declare the providers it compares",
+            )));
+        }
+        for attempt in &self.attempts {
+            if !self.providers.iter().any(|name| name == &attempt.provider) {
+                return Err(CampaignError::InvalidPlan(format!(
+                    "attempt for {} targets provider {:?}, which the campaign does not declare",
+                    attempt.workload_id, attempt.provider
+                )));
+            }
+        }
         if self.limits.declares_a_zero() {
             return Err(CampaignError::InvalidPlan(String::from(
                 "every limit must be greater than zero",

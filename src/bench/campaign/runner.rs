@@ -127,25 +127,24 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
 ) -> Result<(), CampaignError> {
     let records = match driver.run_attempt(&plan.campaign_id, attempt) {
         Ok(records) => records,
-        Err(reason) => {
+        Err(failure) => {
             // An attempt that failed may have allocated before it failed. The
             // identifiers it reported are recorded, and the campaign stops:
             // continuing would allocate on top of an unknown residue.
-            let resource_ids = Vec::new();
             record_residual(
                 sink,
                 plan,
                 ResidualDetail {
                     provider: attempt.provider.clone(),
-                    resource_ids: resource_ids.clone(),
+                    resource_ids: failure.resource_ids.clone(),
                     reason: format!(
                         "the attempt for {} did not complete, so its resources could not be \
-                         verified gone: {reason}",
-                        attempt.workload_id
+                         verified gone: {}",
+                        attempt.workload_id, failure.reason
                     ),
                 },
             )?;
-            return Err(CampaignError::AttemptFailed(reason));
+            return Err(CampaignError::AttemptFailed(failure.reason));
         }
     };
     sink.append(&Record::Run(Box::new(records.run.clone())))

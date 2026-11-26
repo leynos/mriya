@@ -23,9 +23,12 @@ max_attempts = 40
 # One hour, which matches Scaleway's 60-minute minimum billing period.
 max_attempt_nanos = 3600000000000
 
-# The four workloads the protocol defines. Each is repeated so the report can
-# show a spread rather than a single sample; the `cold-build` repetition is the
-# one that establishes the cache the warm workloads reuse.
+# The four workloads the protocol defines, one attempt each. That is a dry run:
+# the protocol requires five completed repetitions per workload before a
+# per-gate figure is evidence, and the report says when a campaign falls short.
+# Repeat each `[[attempts]]` block five times, with `repetition` counting from
+# one, before claiming a measured advantage. The `cold-build` attempt is the one
+# that establishes the cache the warm workloads reuse.
 # Workloads are listed in dependency order: `cold-build` establishes the cache
 # the other three reuse. Each attempt declares its repetition so a resumed
 # campaign cannot number two attempts the same.

@@ -50,6 +50,7 @@ Each attempt declares the cache state it started from:
 - `empty` — the cache location held nothing.
 - `warm` — the cache location held a previous attempt's artefacts.
 - `seed` — the cache location was populated from a declared seed artefact.
+- `absent` — the backend cannot persist a cache at all.
 
 The record carries the cache class, the measured cache size in bytes, and the
 cache mount status. A comparison between two backends must state their cache
@@ -98,6 +99,10 @@ the phase that caused the wait.
 resource. A delete call that returns without a confirmation produces an
 `unverified` teardown, which section 10 treats as a cleanup doubt.
 
+A backend that persists its cache by leaving a volume attached needs no save
+step. Such a backend records no `cache-save` phase, and the report says the
+phase was not observed rather than inventing a zero-length one.
+
 ## 5. Repetition
 
 Each workload repeats at least five times on each backend. The record set for
@@ -106,7 +111,12 @@ report prints the minimum, median, and maximum, and refuses to rank on a single
 repetition.
 
 Warm-up runs that exist only to populate a cache are recorded, because they
-cost money, and are excluded from the timing summary by their declared role.
+cost money, and are excluded from the timing summary by their declared role. A
+warm-up is declared as such in the campaign plan; the driver does not guess it.
+
+A campaign with fewer than five completed repetitions per workload and backend
+is a dry run. Its costs are real and are reported, but no per-gate figure from
+it may be published as evidence, and the report says so.
 
 ## 6. Billing rules
 

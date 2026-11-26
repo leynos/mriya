@@ -33,6 +33,27 @@ pub(super) fn note_differences(
     note_comparability(campaign, workload_id, notes.comparability);
 }
 
+/// The completed repetitions the protocol requires before a claim is made.
+pub const MIN_COMPLETED_REPETITIONS: u32 = 5;
+
+/// States how far short of the required repetition count a group fell.
+///
+/// The protocol requires at least five completed attempts before a per-gate
+/// figure may be published. A report can still show a smaller campaign — it is
+/// how an operator checks a protocol before spending on a full one — but it
+/// says so, rather than letting a single sample read as evidence.
+pub(super) fn note_repetition_shortfall(results: &[WorkloadResult], notes: &mut Vec<String>) {
+    for result in results {
+        if result.completed < MIN_COMPLETED_REPETITIONS {
+            notes.push(format!(
+                "{}: {} completed repetitions, fewer than the {} the protocol requires before a \
+                 claim; this is a dry run, not evidence",
+                result.workload_id, result.completed, MIN_COMPLETED_REPETITIONS
+            ));
+        }
+    }
+}
+
 /// States every cache class the group's attempts used, when they differ.
 fn note_cache_differences(
     workload_id: &str,

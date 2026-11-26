@@ -63,6 +63,30 @@ pub struct AttemptRecords {
     pub resource_ids: Vec<String>,
 }
 
+/// Why an attempt could not produce a record, and what it may have left behind.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttemptFailure {
+    /// What went wrong, in one sentence.
+    pub reason: String,
+    /// Provider identifiers the attempt created before it failed.
+    ///
+    /// Empty when the attempt is known to have created nothing, or when its
+    /// teardown was verified before the failure. Non-empty identifiers are
+    /// written into a residual record so an operator can act on them.
+    pub resource_ids: Vec<String>,
+}
+
+impl AttemptFailure {
+    /// Returns a failure that certainly left nothing behind.
+    #[must_use]
+    pub fn without_resources(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            resource_ids: Vec::new(),
+        }
+    }
+}
+
 /// Runs one attempt and reports the resources it used.
 pub trait CampaignDriver {
     /// Lists and deletes anything an earlier run of this campaign left behind.
@@ -82,7 +106,7 @@ pub trait CampaignDriver {
         &self,
         campaign_id: &str,
         attempt: &PlannedAttempt,
-    ) -> Result<AttemptRecords, String>;
+    ) -> Result<AttemptRecords, AttemptFailure>;
 
     /// Verifies that the attempt's resources are gone.
     ///

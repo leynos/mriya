@@ -142,11 +142,18 @@ impl CampaignDriver for ScalewayDriver {
         &self,
         campaign_id: &str,
         attempt: &PlannedAttempt,
-    ) -> DriverResult<AttemptRecords> {
-        let request = self.request(campaign_id, attempt)?;
+    ) -> Result<AttemptRecords, super::ports::AttemptFailure> {
+        let request = self
+            .request(campaign_id, attempt)
+            .map_err(super::ports::AttemptFailure::without_resources)?;
         let measured = self.measure(campaign_id, attempt, &request)?;
-        let probe = parse_probe_report(&measured.probe_stdout)
-            .map_err(|err| format!("the pre-workload probe could not be read: {err}"))?;
+        // The run completed and its teardown was verified, so a probe that
+        // cannot be read leaves nothing behind.
+        let probe = parse_probe_report(&measured.probe_stdout).map_err(|err| {
+            super::ports::AttemptFailure::without_resources(format!(
+                "the pre-workload probe could not be read: {err}"
+            ))
+        })?;
         Ok(AttemptRecords {
             run: RunRecord {
                 schema: SCHEMA_VERSION,
@@ -156,7 +163,8 @@ impl CampaignDriver for ScalewayDriver {
                 command: measured.command.clone(),
                 role: attempt.role,
                 class: WorkloadClass::Cpu,
-                tree: tree_pin(&measured.source)?,
+                tree: tree_pin(&measured.source)
+                    .map_err(super::ports::AttemptFailure::without_resources)?,
                 toolchain: toolchain_pin(&probe),
                 provider: ProviderProduct {
                     provider: String::from("scaleway"),

@@ -10,6 +10,7 @@ use std::{collections::VecDeque, sync::Mutex};
 use super::{
     super::{
         campaign::{
+            AttemptFailure,
             CampaignError,
             JsonLinesSink,
             RecordSink,
@@ -246,9 +247,10 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
 #[test]
 fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
     let mut driver = ScriptedDriver::healthy(1);
-    driver.runs = Mutex::new(VecDeque::from(vec![Err(String::from(
-        "the teardown did not confirm the instance is gone",
-    ))]));
+    driver.runs = Mutex::new(VecDeque::from(vec![Err(AttemptFailure {
+        reason: String::from("the teardown did not confirm the instance is gone"),
+        resource_ids: vec![String::from("srv-1")],
+    })]));
     let mut sink = MemorySink::default();
     let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
         .expect_err("a failed attempt stops the campaign");
@@ -262,6 +264,7 @@ fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
         })
         .expect("a residual record must name the doubt");
     assert_eq!(residual.provider, "scaleway");
+    assert_eq!(residual.resource_ids, vec![String::from("srv-1")]);
     assert!(residual.reason.contains("could not be verified gone"));
     assert_eq!(
         driver
