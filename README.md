@@ -23,8 +23,10 @@ mriya run -- cargo test --workspace --all-features
 
 That's it. Mriya provisions a VM, syncs your project (respecting `.gitignore`),
 runs the command over SSH, and then attempts to tear the VM down and report any
-failure to do so. The exit code from your remote command is preserved, so CI
-integration works out of the box.
+failure to do so. When teardown succeeds, the exit code from your remote
+command is preserved, so CI integration works out of the box. A teardown
+failure makes the run fail and reports the teardown error instead of that exit
+code.
 
 ## What it does
 
@@ -32,7 +34,9 @@ integration works out of the box.
   are excluded from the transfer and are not deleted on the remote. The filter
   reads `.gitignore` patterns rather than Git's index, so an untracked but
   unignored file still travels. Persistence *across* runs needs a cache volume:
-  each VM is ephemeral, so anything left on its own disk goes with it.
+  a later run never reuses the previous VM's own disk. The root volume itself
+  can outlive the server and stay billable; see the
+  [cleanup notes](docs/users-guide.md#cleanup-what-is-and-is-not-verified).
 - **Live output streaming** – stdout and stderr stream back to your terminal in
   real time.
 - **Exit code preservation** – If `cargo test` fails remotely with status 101,

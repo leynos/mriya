@@ -290,8 +290,10 @@ they are part of the configuration surface users already have on disk.
 ## What the Scaleway backend does now
 
 - Resolves an image by label, architecture, and zone using the order described
-  under [Run a command remotely](#run-a-command-remotely): project images
-  first, then public images, newest available match wins.
+  under [Run a command remotely](#run-a-command-remotely): public images are
+  consulted only when the project has no images at all, not when its images
+  fail to match the requested label; among the candidates, the newest available
+  match wins.
 - Creates an instance with a routed public IPv4 address and tags `mriya` and
   `ephemeral`. The instance type is validated from the provider's create-server
   response rather than by a preflight check.
@@ -463,7 +465,9 @@ The symbols below let a reader substitute a provider's published rates without
 this guide hard-coding a price:
 
 - `N` — number of runs.
-- `s` — setup time per run: create, attach, power on, and reach SSH.
+- `s` — setup time per run, covering every stage between the create request and
+  the command: create, attach, power on, reach SSH, mount, sync, and wait for
+  cloud-init. A run without cloud-init contributes nothing for that stage.
 - `c` — remote command duration.
 - `t` — teardown time per run: delete request plus polling.
 - `M` — the provider's minimum billing period per resource, in minutes.
@@ -529,8 +533,10 @@ listing it. That is the extent of the guarantee:
 - The janitor used by the live test suite is tag-scoped to a single test run
   and does not cover resources created outside it.
 
-Do not rely on Mriya as a cost control. Check the provider console after
-unusual failures, and delete cache volumes that are no longer needed.
+Do not rely on Mriya as a cost control. Check the provider console for retained
+resources periodically, including after runs that reported success, because a
+root volume can outlive its server silently. Delete cache volumes that are no
+longer needed.
 
 ### Concurrency
 
@@ -543,8 +549,9 @@ Mriya enforces nothing on top of it. There is no lock, queue, or retry around
 the attachment. Two runs sharing a cache volume contend, and the losing run's
 attachment is rejected after its server already exists, leaving a stopped
 server that Mriya cannot destroy because it never received a handle. Serialize
-runs that share a volume; use separate volumes or separate zones when runs must
-overlap.
+runs that share a volume. When runs must overlap, give each its own volume: the
+volume has to be in the instance's zone, so moving one run to another zone
+requires a separate volume there rather than making the shared one attachable.
 
 ## Building from source
 
