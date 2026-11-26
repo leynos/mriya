@@ -117,12 +117,7 @@ where
             .create(request)
             .await
             .map_err(RunError::Provision)?;
-        // Report before readiness checks: the instance is billing from this
-        // point, and the cache setting is the request's, never the boot
-        // record's.
-        if let Some(reporter) = self.reporter.as_deref() {
-            reporter.instance_created(&handle, request.volume_id.as_deref());
-        }
+        self.report_created(&handle, request);
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
 
         self.mount_volume_if_needed(&handle, &networking, request)
@@ -145,6 +140,21 @@ where
             .map_err(RunError::Teardown)?;
 
         Ok(output)
+    }
+
+    /// Reports the created instance and the request's cache setting, when a
+    /// reporter is installed.
+    ///
+    /// Reporting happens before readiness checks because the instance is
+    /// billing from this point. The cache value is the request's own, never
+    /// the boot record's, so the two lines cannot be confused.
+    ///
+    /// For example, a request naming `vol-cache` reports that identifier while
+    /// a request naming none reports nothing.
+    fn report_created(&self, handle: &InstanceHandle, request: &InstanceRequest) {
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.instance_created(handle, request.volume_id.as_deref());
+        }
     }
 
     /// Waits for the backend to report SSH readiness, destroying the instance

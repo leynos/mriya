@@ -11,6 +11,17 @@
 use serde::Deserialize;
 
 use super::super::{ScalewayBackend, ScalewayBackendError};
+use crate::{
+    boot_volume::{
+        BootVolumeAllocation,
+        BootVolumeMismatch,
+        BootVolumePlan,
+        BootVolumeType,
+        RootVolume,
+    },
+    scaleway::lifecycle::create::CreatedServer,
+};
+
 /// The subset of a Block Storage volume that root capture reads.
 ///
 /// # Examples
@@ -28,17 +39,6 @@ pub(in crate::scaleway) struct BlockVolume {
     /// Capacity in bytes.
     size: u64,
 }
-
-use crate::{
-    boot_volume::{
-        BootVolumeAllocation,
-        BootVolumeMismatch,
-        BootVolumePlan,
-        BootVolumeType,
-        RootVolume,
-    },
-    scaleway::lifecycle::create::CreatedServer,
-};
 
 impl ScalewayBackend {
     /// Reads the volume the created instance boots from.

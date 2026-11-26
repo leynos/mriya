@@ -12,7 +12,16 @@
 
 use std::io::Write;
 
-use mriya::{Backend, BootVolumeType, InstanceHandle, RootVolume, ScalewayBackend, ScalewayConfig};
+use mriya::{
+    Backend,
+    BootVolumePlan,
+    BootVolumeType,
+    InstanceHandle,
+    InstanceRequest,
+    RootVolume,
+    ScalewayBackend,
+    ScalewayConfig,
+};
 
 #[path = "scaleway_boot_volume/api.rs"]
 mod api;
@@ -85,25 +94,9 @@ impl LiveRun<'_> {
     /// still run and, more importantly, that a failing assertion cannot skip
     /// the destroy step for its own server.
     async fn execute_case(&mut self, case: &Case) {
-        let request = match build_request(self.config, case) {
-            Ok(request) => request,
-            Err(error) => {
-                self.assertion_failures.push(error);
-                return;
-            }
+        let Some((request, plan)) = self.resolve_case(case).await else {
+            return;
         };
-
-        let plan = match self.backend.preflight(&request).await {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.assertion_failures.push(format!(
-                    "preflight for {} failed: {error}",
-                    case.instance_type
-                ));
-                return;
-            }
-        };
-
         let handle = match self.backend.create(&request).await {
             Ok(handle) => handle,
             Err(error) => {
@@ -112,7 +105,43 @@ impl LiveRun<'_> {
                 return;
             }
         };
+        self.verify_and_finish(case, handle, &plan).await;
+    }
 
+    /// Builds and preflights the request for one case.
+    ///
+    /// Returns `None` after recording the reason, so the caller simply moves
+    /// on to the next case.
+    async fn resolve_case(&mut self, case: &Case) -> Option<(InstanceRequest, BootVolumePlan)> {
+        let request = match build_request(self.config, case) {
+            Ok(request) => request,
+            Err(error) => {
+                self.assertion_failures.push(error);
+                return None;
+            }
+        };
+        match self.backend.preflight(&request).await {
+            Ok(plan) => Some((request, plan)),
+            Err(error) => {
+                self.assertion_failures.push(format!(
+                    "preflight for {} failed: {error}",
+                    case.instance_type
+                ));
+                None
+            }
+        }
+    }
+
+    /// Verifies the live root, destroys the server, and reaps anything left.
+    ///
+    /// The destroy runs whatever the verification found, so one failing
+    /// assertion cannot leave a billing server behind.
+    async fn verify_and_finish(
+        &mut self,
+        case: &Case,
+        handle: InstanceHandle,
+        plan: &BootVolumePlan,
+    ) {
         let zone = handle.zone.clone();
         let captured = handle
             .boot_volume
