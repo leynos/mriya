@@ -67,6 +67,8 @@ pub enum BootVolumeMismatch {
         instance_id: String,
     },
     /// Raised when the reported type or size differs from the plan.
+    // thiserror 1.x accepts only a literal here, so the line is joined with a
+    // continuation escape; `concat!` is rejected outright.
     #[error(
         "instance {instance_id} root volume {volume_id} is {actual}, but the plan \
          requested {expected}"

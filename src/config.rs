@@ -213,8 +213,11 @@ impl ScalewayConfig {
             .map(|value| {
                 value.parse::<BootVolumeType>().map_err(|err| {
                     ConfigError::Parse(format!(
-                        "{err}; set SCW_BOOT_VOLUME_TYPE or add boot_volume_type \
-                         to [scaleway] in mriya.toml"
+                        concat!(
+                            "{err}; set SCW_BOOT_VOLUME_TYPE or add boot_volume_type ",
+                            "to [scaleway] in mriya.toml"
+                        ),
+                        err = err
                     ))
                 })
             })

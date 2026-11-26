@@ -71,6 +71,8 @@ pub enum BootVolumeError {
     #[error("unknown boot volume type '{0}': supported types are l_ssd and sbs_volume")]
     UnknownType(String),
     /// Raised when a configured size is zero.
+    // thiserror 1.x accepts only a literal here, so the line is joined with a
+    // continuation escape; `concat!` is rejected outright.
     #[error(
         "boot volume size must be greater than zero: set SCW_BOOT_VOLUME_SIZE_GB \
          or add boot_volume_size_gb to [scaleway] in mriya.toml"
@@ -102,8 +104,12 @@ impl BootVolumeError {
     #[must_use]
     pub fn describe_zero_size(env_var: &str, toml_key: &str) -> String {
         format!(
-            "boot volume size must be greater than zero: set {env_var} or add \
-             {toml_key} to [scaleway] in mriya.toml"
+            concat!(
+                "boot volume size must be greater than zero: set {env_var} or add ",
+                "{toml_key} to [scaleway] in mriya.toml"
+            ),
+            env_var = env_var,
+            toml_key = toml_key
         )
     }
 }
