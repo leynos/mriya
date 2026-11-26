@@ -10,11 +10,17 @@ use camino::Utf8Path;
 use shell_escape::unix::escape;
 use tokio::time::sleep;
 
-use super::{ProvisionedInstance, RunError, RunOrchestrator, StepContext};
+use super::{ProvisionedInstance, RunError, RunOrchestrator, StepContext, VerifiedCache};
 use crate::{
     backend::{InstanceNetworking, InstanceRequest},
     cache_device::{self, CacheDeviceStatus},
-    sync::{CommandRunner, RemoteCommandOutput, SyncDestination, create_cache_directories_command},
+    sync::{
+        CacheRouting,
+        CommandRunner,
+        RemoteCommandOutput,
+        SyncDestination,
+        create_cache_directories_command,
+    },
     teardown::append_teardown_note,
     volume::VolumeBackend,
 };
@@ -35,9 +41,9 @@ where
         &self,
         context: StepContext<'_>,
         request: &InstanceRequest,
-    ) -> Result<(), RunError<B::Error>> {
+    ) -> Result<Option<VerifiedCache>, RunError<B::Error>> {
         let Some(volume_id) = context.instance.volume_id else {
-            return Ok(());
+            return Ok(None);
         };
         if request.volume_id.as_deref() != Some(volume_id) {
             return Err(RunError::CacheMount {
@@ -49,6 +55,7 @@ where
         }
         self.mount_cache_volume(context.instance, context.networking, volume_id)
             .await
+            .map(|device| Some(VerifiedCache { device }))
     }
 
     /// Syncs the workspace to `dest`, tearing the instance down if that fails.
@@ -90,10 +97,11 @@ where
         &self,
         context: StepContext<'_>,
         remote_command: &str,
+        routing: &CacheRouting,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
         match self
             .syncer
-            .run_remote_with_cache(context.networking, remote_command, true)
+            .run_remote_with_cache(context.networking, remote_command, routing)
         {
             Ok(result) => Ok(result),
             Err(err) => {
@@ -118,13 +126,17 @@ where
     ///
     /// When `create_cache_directories` is enabled, the cache subdirectories are
     /// created after verification so language toolchains can write
-    /// immediately. The `mountpoint -q` guard remains as a second check.
+    /// immediately, and their exit status is checked: a missing cache
+    /// directory would otherwise surface as a confusing toolchain failure.
+    ///
+    /// Returns the guest device path reported by the verified mount, which the
+    /// remote-command preamble re-checks immediately before the user command.
     pub(super) async fn mount_cache_volume(
         &self,
         instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
         volume_id: &str,
-    ) -> Result<(), RunError<B::Error>> {
+    ) -> Result<String, RunError<B::Error>> {
         let config = self.syncer.config();
         let mount_path = config.volume_mount_path.clone();
         let script = cache_device::mount_script(volume_id, &mount_path, &config.ssh_user);
@@ -169,14 +181,46 @@ where
                 source: None,
             });
         }
+        let Some(device) = report.device() else {
+            let failure =
+                format!("cache volume {volume_id} was verified without reporting a device");
+            let message = self
+                .teardown_with_note(instance, Some(networking), &failure)
+                .await;
+            return Err(RunError::CacheMount {
+                message,
+                source: None,
+            });
+        };
+        let verified_device = device.to_owned();
 
-        if config.create_cache_directories {
-            let command = format!(
-                "if mountpoint -q {path} 2>/dev/null; then {create}; fi",
-                path = escape(mount_path.as_str().into()),
-                create = create_cache_directories_command(&mount_path)
-            );
-            if let Err(err) = self.syncer.run_remote_raw(networking, &command) {
+        if config.create_cache_directories
+            && let Err(failure) = self
+                .create_cache_directories(instance, networking, &mount_path)
+                .await
+        {
+            return Err(failure);
+        }
+
+        Ok(verified_device)
+    }
+
+    /// Creates the cache subdirectories and requires the remote command to
+    /// succeed.
+    async fn create_cache_directories(
+        &self,
+        instance: ProvisionedInstance<'_>,
+        networking: &InstanceNetworking,
+        mount_path: &str,
+    ) -> Result<(), RunError<B::Error>> {
+        let command = format!(
+            "if mountpoint -q {path} 2>/dev/null; then {create}; fi",
+            path = escape(mount_path.into()),
+            create = create_cache_directories_command(mount_path)
+        );
+        let output = match self.syncer.run_remote_raw(networking, &command) {
+            Ok(output) => output,
+            Err(err) => {
                 let message = self
                     .teardown_with_note(instance, Some(networking), &err)
                     .await;
@@ -185,9 +229,22 @@ where
                     source: Some(err),
                 });
             }
+        };
+        if output.exit_code == Some(0) {
+            return Ok(());
         }
-
-        Ok(())
+        let failure = format!(
+            "creating cache directories under {mount_path} exited with {:?}: {}",
+            output.exit_code,
+            output.stderr.trim()
+        );
+        let message = self
+            .teardown_with_note(instance, Some(networking), &failure)
+            .await;
+        Err(RunError::CacheMount {
+            message,
+            source: None,
+        })
     }
 
     /// Polls for cloud-init's `boot-finished` marker until it appears or the

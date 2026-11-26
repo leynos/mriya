@@ -30,6 +30,19 @@ struct OperationSpec {
     error: ScriptedVolumeBackendError,
 }
 
+/// Callbacks that record one scripted operation.
+///
+/// `on_attempt` runs before the scripted failure check, so counters observe a
+/// failed call; `on_success` runs only after the check, so a completed-event
+/// log never records a failure as a success.
+struct OperationHooks<A, S> {
+    on_attempt: A,
+    on_success: S,
+}
+
+/// Hooks for the volume double, whose callbacks capture nothing.
+type VolumeHooks = OperationHooks<fn(&mut State), fn(&mut State)>;
+
 impl ScriptedVolumeBackend {
     pub fn new() -> Self {
         Self {
@@ -104,15 +117,17 @@ impl ScriptedVolumeBackend {
             source: ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}")),
         })?;
         state.teardown_calls += 1;
-        state.destroy_calls += 1;
         state.events.push(LifecycleEvent::Teardown);
 
+        // A detach failure means the destroy is never attempted, so the
+        // counter must stay put; a failed destroy attempt still counts.
         if state.failures.contains(FailureMode::Detach) {
             return Err(TeardownFailure {
                 stage: TeardownStage::Detaching,
                 source: ScriptedVolumeBackendError::Detach,
             });
         }
+        state.destroy_calls += 1;
         if state.failures.contains(FailureMode::Destroy) {
             return Err(TeardownFailure {
                 stage: TeardownStage::Destroying,
@@ -122,11 +137,16 @@ impl ScriptedVolumeBackend {
         Ok(())
     }
 
-    /// Execute an operation with scripted failure checking.
+    /// Execute an operation, recording the attempt and the completed event
+    /// separately.
+    ///
+    /// The attempt counter runs before the scripted failure check so a failed
+    /// call is still observed; the completed event runs only after the check
+    /// passes, so a failure never records a success transition.
     fn execute_with_failure_check<T>(
         &self,
         operation: OperationSpec,
-        increment: impl FnOnce(&mut State),
+        hooks: OperationHooks<impl FnOnce(&mut State), impl FnOnce(&mut State)>,
         success: impl FnOnce() -> T,
     ) -> Result<T, ScriptedVolumeBackendError> {
         let mut state = self.state.lock().map_err(|err| {
@@ -136,25 +156,29 @@ impl ScriptedVolumeBackend {
             ))
         })?;
 
-        increment(&mut state);
+        (hooks.on_attempt)(&mut state);
 
         if state.failures.contains(operation.failure_mode) {
             return Err(operation.error);
         }
 
+        (hooks.on_success)(&mut state);
         Ok(success())
     }
 
     fn run_operation<'a, T>(
         &'a self,
         operation: OperationSpec,
-        increment: impl FnOnce(&mut State) + Send + 'a,
+        hooks: OperationHooks<
+            impl FnOnce(&mut State) + Send + 'a,
+            impl FnOnce(&mut State) + Send + 'a,
+        >,
         success: impl FnOnce() -> T + Send + 'a,
     ) -> BackendFuture<'a, T, ScriptedVolumeBackendError>
     where
         T: Send + 'a,
     {
-        Box::pin(async move { self.execute_with_failure_check(operation, increment, success) })
+        Box::pin(async move { self.execute_with_failure_check(operation, hooks, success) })
     }
 }
 

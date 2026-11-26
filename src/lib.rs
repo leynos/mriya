@@ -29,7 +29,7 @@ pub use backend::{
 };
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};
-pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest};
+pub use init::{InitConfig, InitError, InitOptions, InitOrchestrator, InitOutcome, InitRequest};
 pub use janitor::{
     Janitor,
     JanitorConfig,

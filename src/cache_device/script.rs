@@ -132,35 +132,60 @@ fn shared_prelude(volume_id: &str) -> String {
     format!("{}{}", resolver_prelude(volume_id), root_guard())
 }
 
-/// Builds the `blkid` probe function used by the format and mount scripts.
+/// Builds the `blkid` and readability probes used by format and mount.
 ///
 /// `mriya_probe <tag>` leaves the value in `mriya_probe_value` and the exit
-/// status in `mriya_probe_code`. Callers distinguish "nothing found" (2) from
-/// operational failures and ambiguity (4 and 8), which must never be read as
-/// an empty disk.
-fn probe_function() -> String {
-    format!(
-        concat!(
-            "mriya_probe() {{\n",
-            "  mriya_probe_value=$(sudo blkid -p -o value -s \"$1\" \"$mriya_device\" 2>/dev/null)\n",
-            "  mriya_probe_code=$?\n",
-            "}}\n",
-            "mriya_probe_refused() {{\n",
-            "  case \"$1\" in\n",
-            "    0|2) return 1 ;;\n",
-            "  esac\n",
-            "  return 0\n",
-            "}}\n",
-            "mriya_probe_failure() {{\n",
-            "  if mriya_probe_refused \"$mriya_type_code\" || mriya_probe_refused \"$mriya_pttype_code\"; then\n",
-            "    echo \"{prefix}probe-failed DEVICE=$mriya_device TYPE_CODE=$mriya_type_code PTTYPE_CODE=$mriya_pttype_code\"\n",
-            "    return 0\n",
-            "  fi\n",
-            "  return 1\n",
-            "}}\n",
-        ),
-        prefix = STATUS_PREFIX
+/// status in `mriya_probe_code`. `blkid -p` returns 2 both when a signature is
+/// absent and when it cannot open or read the device, so a 2 alone proves
+/// nothing: `mriya_readable` must also succeed before the device may be
+/// treated as an empty disk.
+fn probe_helpers() -> String {
+    concat!(
+        "mriya_probe() {\n",
+        "  mriya_probe_value=$(sudo blkid -p -o value -s \"$1\" \"$mriya_device\" 2>/dev/null)\n",
+        "  mriya_probe_code=$?\n",
+        "}\n",
+        "mriya_probe_failed() {\n",
+        "  case \"$1\" in\n",
+        "    4|8) return 0 ;;\n",
+        "  esac\n",
+        "  return 1\n",
+        "}\n",
+        "mriya_readable() {\n",
+        "  sudo dd if=\"$mriya_device\" of=/dev/null bs=512 count=1 >/dev/null 2>&1\n",
+        "}\n",
     )
+    .to_owned()
+}
+
+/// Builds the mount-source query helpers shared by the mount and unmount
+/// scripts.
+///
+/// `findmnt --mountpoint` returns 1 when the path is not a mount point but
+/// also when the query itself fails, so `mountpoint -q` is consulted before a
+/// failed query is read as "nothing mounted".
+fn mount_source_helpers() -> String {
+    concat!(
+        "mriya_mount_source() {\n",
+        "  mriya_source=$(findmnt -no SOURCE --mountpoint \"$1\" 2>/dev/null)\n",
+        "  mriya_source_code=$?\n",
+        "}\n",
+        "mriya_source_failed() {\n",
+        "  if [ \"$mriya_source_code\" -gt 1 ]; then return 0; fi\n",
+        "  if [ \"$mriya_source_code\" -eq 0 ] && [ -z \"$mriya_source\" ]; then return 0; fi\n",
+        "  return 1\n",
+        "}\n",
+        // `mountpoint -q` reports 1 for a path that does not exist and 32 for
+        // an existing path that is not a mount point; both mean "not mounted".
+        "mriya_not_mounted() {\n",
+        "  mountpoint -q \"$1\" 2>/dev/null\n",
+        "  case \"$?\" in\n",
+        "    1|32) return 0 ;;\n",
+        "  esac\n",
+        "  return 1\n",
+        "}\n",
+    )
+    .to_owned()
 }
 
 /// Builds the script that formats the new cache volume.
@@ -181,20 +206,30 @@ fn probe_function() -> String {
 /// ```
 #[must_use]
 pub fn format_script(volume_id: &str) -> String {
+    let prelude = format!("{}{}", shared_prelude(volume_id), probe_helpers());
     format!(
         concat!(
             "{prelude}",
-            "{probe}",
             "mriya_probe TYPE\n",
             "mriya_type=$mriya_probe_value\n",
             "mriya_type_code=$mriya_probe_code\n",
+            "mriya_probe UUID\n",
+            "mriya_uuid=$mriya_probe_value\n",
+            "mriya_uuid_code=$mriya_probe_code\n",
             "mriya_probe PTTYPE\n",
             "mriya_pttype=$mriya_probe_value\n",
             "mriya_pttype_code=$mriya_probe_code\n",
-            "if mriya_probe_failure; then\n",
+            "if mriya_probe_failed \"$mriya_type_code\" || mriya_probe_failed \"$mriya_uuid_code\" || mriya_probe_failed \"$mriya_pttype_code\"; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device TYPE_CODE=$mriya_type_code UUID_CODE=$mriya_uuid_code PTTYPE_CODE=$mriya_pttype_code\"\n",
             "  exit 0\n",
             "fi\n",
-            "if [ \"$mriya_type_code\" -ne 2 ] || [ \"$mriya_pttype_code\" -ne 2 ]; then\n",
+            // An empty probe only proves the disk is empty when the disk can
+            // be read at all; `blkid` also returns 2 for an unreadable device.
+            "if ! mriya_readable; then\n",
+            "  echo \"{prefix}device-unreadable DEVICE=$mriya_device\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "if [ \"$mriya_type_code\" -ne 2 ] || [ \"$mriya_uuid_code\" -ne 2 ] || [ \"$mriya_pttype_code\" -ne 2 ]; then\n",
             "  echo \"{prefix}signature-present DEVICE=$mriya_device FSTYPE=$mriya_type PTTYPE=$mriya_pttype\"\n",
             "  exit 0\n",
             "fi\n",
@@ -205,8 +240,7 @@ pub fn format_script(volume_id: &str) -> String {
             "sync\n",
             "echo \"{prefix}formatted DEVICE=$mriya_device\"\n",
         ),
-        prelude = shared_prelude(volume_id),
-        probe = probe_function(),
+        prelude = prelude,
         prefix = STATUS_PREFIX,
         label = CACHE_LABEL,
     )
@@ -230,10 +264,15 @@ pub fn format_script(volume_id: &str) -> String {
 /// ```
 #[must_use]
 pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
+    let prelude = format!(
+        "{}{}{}",
+        shared_prelude(volume_id),
+        probe_helpers(),
+        mount_source_helpers()
+    );
     format!(
         concat!(
             "{prelude}",
-            "{probe}",
             "mriya_path={path}\n",
             "mriya_owner={owner}\n",
             "mriya_probe TYPE\n",
@@ -242,14 +281,22 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
             "mriya_probe PTTYPE\n",
             "mriya_pttype=$mriya_probe_value\n",
             "mriya_pttype_code=$mriya_probe_code\n",
-            "if mriya_probe_failure; then\n",
+            "if mriya_probe_failed \"$mriya_type_code\" || mriya_probe_failed \"$mriya_pttype_code\"; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device TYPE_CODE=$mriya_type_code PTTYPE_CODE=$mriya_pttype_code\"\n",
             "  exit 0\n",
             "fi\n",
-            "if [ \"$mriya_type_code\" -ne 0 ] || [ \"$mriya_type\" != \"ext4\" ] || [ \"$mriya_pttype_code\" -eq 0 ]; then\n",
+            // `-s PTTYPE` filters the printed tags; it does not change the exit
+            // status, so an ext4 disk without a partition table still exits 0
+            // with an empty value. Only a non-empty value is a partition table.
+            "if [ \"$mriya_type_code\" -ne 0 ] || [ \"$mriya_type\" != \"ext4\" ] || [ -n \"$mriya_pttype\" ]; then\n",
             "  echo \"{prefix}not-ext4 DEVICE=$mriya_device FSTYPE=$mriya_type PTTYPE=$mriya_pttype\"\n",
             "  exit 0\n",
             "fi\n",
-            "mriya_source=$(findmnt -no SOURCE --mountpoint \"$mriya_path\" 2>/dev/null || true)\n",
+            "mriya_mount_source \"$mriya_path\"\n",
+            "if mriya_source_failed; then\n",
+            "  echo \"{prefix}query-failed PATH=$mriya_path CODE=$mriya_source_code\"\n",
+            "  exit 0\n",
+            "fi\n",
             "if [ -n \"$mriya_source\" ] && [ \"$mriya_source\" != \"$mriya_device\" ]; then\n",
             "  echo \"{prefix}mount-occupied PATH=$mriya_path SOURCE=$mriya_source\"\n",
             "  exit 0\n",
@@ -264,7 +311,7 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
             "    exit 0\n",
             "  fi\n",
             "fi\n",
-            "mriya_source=$(findmnt -no SOURCE --mountpoint \"$mriya_path\" 2>/dev/null || true)\n",
+            "mriya_mount_source \"$mriya_path\"\n",
             "if [ \"$mriya_source\" != \"$mriya_device\" ]; then\n",
             "  echo \"{prefix}wrong-source PATH=$mriya_path EXPECTED=$mriya_device ACTUAL=$mriya_source\"\n",
             "  exit 0\n",
@@ -275,8 +322,7 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
             "fi\n",
             "echo \"{prefix}verified DEVICE=$mriya_device PATH=$mriya_path\"\n",
         ),
-        prelude = shared_prelude(volume_id),
-        probe = probe_function(),
+        prelude = prelude,
         path = quoted(mount_path),
         owner = quoted(owner),
         prefix = STATUS_PREFIX,
@@ -303,9 +349,21 @@ pub fn unmount_script(volume_id: &str, mount_path: &str) -> String {
     format!(
         concat!(
             "mriya_path={path}\n",
-            "mriya_source=$(findmnt -no SOURCE --mountpoint \"$mriya_path\" 2>/dev/null || true)\n",
+            "{source}",
+            "mriya_mount_source \"$mriya_path\"\n",
+            "if mriya_source_failed; then\n",
+            "  echo \"{prefix}query-failed PATH=$mriya_path CODE=$mriya_source_code\"\n",
+            "  exit 0\n",
+            "fi\n",
             "if [ -z \"$mriya_source\" ]; then\n",
-            "  echo \"{prefix}unmounted PATH=$mriya_path\"\n",
+            // A path that is still a mount point but whose source could not be
+            // resolved must not be reported as unmounted: detaching the volume
+            // under a live filesystem loses unflushed cache writes.
+            "  if mriya_not_mounted \"$mriya_path\"; then\n",
+            "    echo \"{prefix}unmounted PATH=$mriya_path\"\n",
+            "    exit 0\n",
+            "  fi\n",
+            "  echo \"{prefix}query-failed PATH=$mriya_path CODE=unknown\"\n",
             "  exit 0\n",
             "fi\n",
             "{resolver}",
@@ -321,6 +379,7 @@ pub fn unmount_script(volume_id: &str, mount_path: &str) -> String {
             "fi\n",
         ),
         path = quoted(mount_path),
+        source = mount_source_helpers(),
         resolver = resolver_prelude(volume_id),
         prefix = STATUS_PREFIX,
     )

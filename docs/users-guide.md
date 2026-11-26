@@ -31,6 +31,7 @@ to override discovery.
 
 Example `mriya.toml`:
 
+<!-- tested-example: users-guide-config-file -->
 ```toml
 [scaleway]
 secret_key = "scw-secret-key-here"
@@ -46,6 +47,7 @@ ssh_user = "ubuntu"
 Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
+<!-- tested-example: users-guide-validation-error -->
 ```text
 missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
 ```
@@ -82,6 +84,7 @@ missing status.
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
 
+<!-- tested-example: users-guide-instance-override -->
 ```bash
 mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo test
 ```
@@ -99,12 +102,14 @@ first-boot provisioning before the remote command starts.
 
 Provide user-data either inline or via a local file:
 
+<!-- tested-example: users-guide-cloud-init-file -->
 ```bash
 mriya run --cloud-init-file ./cloud-init.yml -- jq --version
 ```
 
 Or inline (handy for short scripts):
 
+<!-- tested-example: users-guide-cloud-init-inline -->
 ```bash
 mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 ```
@@ -112,6 +117,7 @@ mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 A file path starting with `~/` is expanded through `HOME` before the file is
 read:
 
+<!-- tested-example: users-guide-cloud-init-tilde -->
 ```bash
 mriya run --cloud-init-file '~/cloud-init.yml' -- jq --version
 ```
@@ -201,12 +207,14 @@ To enable the cache volume:
    volume ID.
 2. (Optional) override the volume ID explicitly via configuration:
 
+   <!-- tested-example: users-guide-explicit-volume-env -->
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
    ```
 
    Or in `mriya.toml`:
 
+   <!-- tested-example: users-guide-explicit-volume-file -->
    ```toml
    [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
@@ -214,6 +222,7 @@ To enable the cache volume:
 
 3. Configure the build tool to use the mounted volume. For Cargo:
 
+   <!-- tested-example: users-guide-cargo-build -->
    ```bash
    mriya run -- cargo build
    ```
@@ -228,6 +237,7 @@ To enable the cache volume:
 Select the tier with `MRIYA_INIT_VOLUME_TIER` or `[init].volume_tier` in
 `mriya.toml`:
 
+<!-- tested-example: users-guide-init-tier -->
 ```toml
 [init]
 volume_size_gb = 20
@@ -282,6 +292,7 @@ server. Scaleway deletes every volume still attached when a server is deleted,
 so the detach is what preserves the cache. If the detach fails, Mriya keeps the
 server and reports both IDs with a recovery command:
 
+<!-- tested-example: users-guide-detach-recovery -->
 ```text
 scw instance server detach-volume server-id=<instance> \
   volume-id=<volume> zone=<zone>
@@ -289,6 +300,7 @@ scw instance server detach-volume server-id=<instance> \
 
 Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in `mriya.toml`:
 
+<!-- tested-example: users-guide-init-size -->
 ```toml
 [init]
 volume_size_gb = 50
@@ -338,6 +350,7 @@ The behavioural suite provisions a real DEV1-S instance to prove create → wait
 → destroy works end to end and that teardown leaves no residue. Ensure the
 `SCW_*` variables are set, then run:
 
+<!-- tested-example: users-guide-scaleway-test -->
 ```bash
 make scaleway-test
 ```
@@ -376,6 +389,7 @@ prefix's `bin` first on `PATH`, so every Make target uses the pinned release; a
 bare `cargo build` outside Make needs the same directory on `PATH`. The example
 reads the variable the Makefile reads, so it follows an override:
 
+<!-- tested-example: users-guide-build-tools-path -->
 ```bash
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
@@ -385,6 +399,7 @@ assigns its own `RUSTFLAGS`, which displaces the configuration's flags, so a
 shipped artefact keeps the platform linker. To build with the platform linker
 directly, assign an empty `RUSTFLAGS`:
 
+<!-- tested-example: users-guide-release-linker -->
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
@@ -397,6 +412,7 @@ entry point that reads the environment has two forms: the default one reads the
 real process environment, and a `_with_env` counterpart takes any
 `mockable::Env` so your own tests can inject a value.
 
+<!-- tested-example: users-guide-library-usage -->
 ```rust
 use mriya::sync::{expand_tilde, expand_tilde_with_home, home_from_env};
 use mockable::{DefaultEnv, Env};

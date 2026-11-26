@@ -90,6 +90,14 @@ fn scenario_create_cache_subdirectories(run_context_result: RunContextResult) {
 
 #[scenario(
     path = "tests/features/run.feature",
+    name = "Fail and tear down when cache directories cannot be created"
+)]
+fn scenario_cache_directory_failure_tears_down(run_context_result: RunContextResult) {
+    drop(run_context_result);
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
     name = "Allow disabling cache directory creation"
 )]
 fn scenario_disable_cache_directory_creation(run_context_result: RunContextResult) {

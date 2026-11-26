@@ -81,8 +81,9 @@ pub(crate) type ExpectedVolumeMap = BTreeMap<String, ServerVolumeEntry>;
 /// Builds the expected map from the server returned by the create call.
 ///
 /// The SDK does not model the per-volume `boot` flag, so the comparison covers
-/// the keys, identifiers and volume types; that is enough to prove the
-/// attachment did not replace or drop an unrelated volume.
+/// the keys, identifiers and, whenever the response reports one, the volume
+/// type; that is enough to prove the attachment did not replace or drop an
+/// unrelated volume.
 pub(crate) fn expected_map(
     volumes: &HashMap<String, scaleway_rs::ScalewayImageExtraVolume>,
 ) -> ExpectedVolumeMap {
@@ -142,8 +143,24 @@ fn verify_expected_entries(
                 before.id, after.id
             ));
         }
+        verify_entry_type(index, before, after)?;
     }
     Ok(())
+}
+
+/// Rejects a preserved entry whose reported type differs from the recorded one.
+fn verify_entry_type(
+    index: &str,
+    before: &ServerVolumeEntry,
+    after: &ServerVolumeEntry,
+) -> Result<(), String> {
+    match (&before.volume_type, &after.volume_type) {
+        (Some(expected), Some(actual)) if expected != actual => Err(format!(
+            "volume index {index} ({}) changed type from {expected} to {actual}",
+            before.id
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Verifies that the cache is present once, off the root index, and typed SBS.
@@ -234,6 +251,7 @@ fn verify_surviving_entries(
                 before.id, after.id
             ));
         }
+        verify_entry_type(index, before, after)?;
     }
     Ok(())
 }

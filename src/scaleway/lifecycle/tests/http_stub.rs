@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::oneshot,
     task::JoinHandle,
 };
 
@@ -19,6 +20,7 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 pub(super) struct StubApi {
     pub(super) base_url: String,
     pub(super) block_base_url: String,
+    stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<Result<Vec<String>>>,
 }
 
@@ -31,43 +33,97 @@ impl StubApi {
     /// Starts a loopback API returning each scripted response in order.
     ///
     /// For example, two empty-list replies serve exactly two requests, whose
-    /// complete request text is returned by `finish` for assertions.
+    /// complete request text is returned by `finish` for assertions. The
+    /// listener keeps accepting after the script is exhausted so a request
+    /// sent by a buggy cleanup path is recorded and fails the test instead of
+    /// being silently refused.
     pub(super) async fn start(replies: Vec<Reply>) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
-        let task = tokio::spawn(async move {
-            let mut requests = Vec::new();
-            for reply in replies {
-                let (mut stream, _) = listener.accept().await?;
-                requests.push(read_request(&mut stream).await?);
-                let response = format!(
-                    "HTTP/1.1 {} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    reply.status,
-                    reply.body.len(),
-                    reply.body,
-                );
-                stream.write_all(response.as_bytes()).await?;
-                stream.shutdown().await?;
-            }
-            Ok(requests)
-        });
+        let (stop, stop_rx) = oneshot::channel();
+        let task = tokio::spawn(serve(listener, replies, stop_rx));
         Ok(Self {
             base_url: format!("http://{address}/instance/v1"),
             block_base_url: format!("http://{address}/block/v1"),
+            stop: Some(stop),
             task,
         })
     }
 
-    /// Waits for all exchanges, failing if a production call was skipped.
+    /// Stops the stub and returns the captured requests.
     ///
-    /// For example, a script expecting DELETE followed by GET fails after two
-    /// seconds if teardown incorrectly returns before its GET request.
-    pub(super) async fn finish(self) -> Result<Vec<String>> {
+    /// # Errors
+    ///
+    /// Fails when a scripted reply was not consumed, or when the lifecycle sent
+    /// a request after the script ended. Both mean the production path differs
+    /// from the script the test wrote.
+    pub(super) async fn finish(mut self) -> Result<Vec<String>> {
+        if let Some(stop) = self.stop.take() {
+            // The receiver is gone only when the stub task already finished.
+            let _sent = stop.send(());
+        }
         tokio::time::timeout(Duration::from_secs(2), self.task)
             .await
             .context("lifecycle did not consume the HTTP script")?
             .context("HTTP script task failed")?
     }
+}
+
+/// Serves the script, then records any further request until stopped.
+async fn serve(
+    listener: TcpListener,
+    replies: Vec<Reply>,
+    stop: oneshot::Receiver<()>,
+) -> Result<Vec<String>> {
+    tokio::pin!(stop);
+    let mut requests = Vec::new();
+    for reply in replies {
+        let Some(mut stream) = next_stream(&listener, &mut stop).await? else {
+            bail!("lifecycle did not consume the HTTP script");
+        };
+        requests.push(read_request(&mut stream).await?);
+        write_reply(&mut stream, &reply).await?;
+    }
+    if let Some(mut stream) = next_stream(&listener, &mut stop).await? {
+        let request = read_request(&mut stream).await?;
+        write_reply(
+            &mut stream,
+            &Reply {
+                status: 500,
+                body: String::from("{}"),
+            },
+        )
+        .await?;
+        bail!("lifecycle sent a request after the script ended: {request}");
+    }
+    Ok(requests)
+}
+
+/// Waits for the next connection, or for the caller to stop the stub.
+async fn next_stream(
+    listener: &TcpListener,
+    stop: &mut std::pin::Pin<&mut oneshot::Receiver<()>>,
+) -> Result<Option<TcpStream>> {
+    tokio::select! {
+        accepted = listener.accept() => {
+            let (stream, _) = accepted?;
+            Ok(Some(stream))
+        }
+        _ = &mut **stop => Ok(None),
+    }
+}
+
+/// Writes one scripted response and closes the connection.
+async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<()> {
+    let response = format!(
+        "HTTP/1.1 {} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        reply.status,
+        reply.body.len(),
+        reply.body,
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await?;
+    Ok(())
 }
 
 /// Runs `call` against a loopback API scripting `replies` in order.

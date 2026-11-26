@@ -108,6 +108,16 @@ Feature: Remote execution via mriya run
     Then the mount command creates cache subdirectories
     And the instance is destroyed
 
+  Scenario: Fail and tear down when cache directories cannot be created
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the mount command succeeds
+    And cache directory creation fails
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the run error kind is "cache-mount"
+    And the instance is destroyed
+
   Scenario: Allow disabling cache directory creation
     Given a ready backend and sync pipeline
     And cache directory creation is disabled

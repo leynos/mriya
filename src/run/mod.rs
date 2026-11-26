@@ -11,7 +11,7 @@ use camino::Utf8Path;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
-    sync::{CommandRunner, RemoteCommandOutput, Syncer},
+    sync::{CacheRouting, CommandRunner, RemoteCommandOutput, Syncer},
     volume::VolumeBackend,
 };
 
@@ -140,7 +140,7 @@ where
             instance,
             networking: &networking,
         };
-        self.mount_volume_if_needed(context, request).await?;
+        let cache = self.mount_volume_if_needed(context, request).await?;
 
         let dest = self.syncer.destination_for(&networking);
         self.sync_or_destroy(context, source, &dest).await?;
@@ -149,7 +149,16 @@ where
             self.wait_for_cloud_init(context).await?;
         }
 
-        let output = self.run_remote_or_destroy(context, remote_command).await?;
+        let routing = cache
+            .as_ref()
+            .map_or(CacheRouting::Unconfigured, |verified| {
+                CacheRouting::Required {
+                    device: verified.device.clone(),
+                }
+            });
+        let output = self
+            .run_remote_or_destroy(context, remote_command, &routing)
+            .await?;
 
         let unmount_note = self.unmount_cache(&networking, instance.volume_id);
         if let Err(failure) = self
@@ -204,6 +213,13 @@ struct ProvisionedInstance<'a> {
     handle: &'a InstanceHandle,
     /// Configured cache volume, when one was attached.
     volume_id: Option<&'a str>,
+}
+
+/// Cache mount verified before the user command runs.
+#[derive(Clone, Debug)]
+pub(super) struct VerifiedCache {
+    /// Guest device path the mount script resolved and verified.
+    pub(super) device: String,
 }
 
 /// A provisioned instance plus its reachable networking details.

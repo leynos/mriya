@@ -43,6 +43,16 @@ Feature: mriya init prepares a cache volume
     Then the init result is successful
     And the init warning names the environment override
 
+  Scenario: Warn when the environment repeats the file volume ID
+    Given a ready init workflow
+    And configuration already contains a volume id
+    And an environment volume ID "vol-existing" is effective
+    And force overwrite is enabled
+    And the formatter succeeds
+    When I prepare the cache volume
+    Then the init result is successful
+    And the init warning names the environment override
+
   Scenario: Allow overwriting an existing volume ID with force
     Given a ready init workflow
     And configuration already contains a volume id
@@ -91,6 +101,23 @@ Feature: mriya init prepares a cache volume
     And volume deletion fails
     When I prepare the cache volume
     Then the init error kind is "format"
+    And the init error names the retained volume
+
+  Scenario: Delete the detached volume when the formatter destroy fails
+    Given a ready init workflow
+    And the formatter succeeds
+    And teardown fails
+    When I prepare the cache volume
+    Then the init error kind is "teardown"
+    And the owned volume is deleted
+
+  Scenario: Report the retained volume when destroy and deletion both fail
+    Given a ready init workflow
+    And the formatter succeeds
+    And teardown fails
+    And volume deletion fails
+    When I prepare the cache volume
+    Then the init error kind is "teardown"
     And the init error names the retained volume
 
   Scenario: Surface teardown failures after success

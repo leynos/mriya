@@ -104,6 +104,19 @@ const FORMAT_CASES: &[FormatCase] = &[
         status: "format-failed",
         formats: true,
     },
+    // `blkid` returns 2 for an unreadable device as well as for an empty one,
+    // so a failed read must stop the format before `mkfs.ext4` runs.
+    FormatCase {
+        state: &[("dd-exit", "1\n")],
+        status: "device-unreadable",
+        formats: false,
+    },
+    // A UUID surviving from a partially wiped filesystem is still a signature.
+    FormatCase {
+        state: &[("signature-UUID", "a23cd711-3a36-4fca-bfa9-fab507e19e6f\n")],
+        status: "signature-present",
+        formats: false,
+    },
 ];
 
 /// Applies one format case's state to a fresh guest.
@@ -131,6 +144,10 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
             "pkname-dm-0" => guest.set(StateFile::PknameDm0(value))?,
             "signature-TYPE" => guest.set(StateFile::SignatureType(value))?,
             "signature-PTTYPE" => guest.set(StateFile::SignaturePartitionTable(value))?,
+            "signature-UUID" => guest.set(StateFile::SignatureUuid(value))?,
+            "findmnt-exit" => guest.set(StateFile::FindmntExit(value))?,
+            "mountpoint-exit" => guest.set(StateFile::MountpointExit(value))?,
+            "dd-exit" => guest.set(StateFile::DdExit(value))?,
             "mkfs-exit" => guest.set(StateFile::MkfsExit(value))?,
             "umount-exit" => guest.set(StateFile::UmountExit(value))?,
             "chown-exit" => guest.set(StateFile::ChownExit(value))?,
@@ -146,7 +163,7 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
 
 #[rstest]
 fn format_refuses_unsafe_devices(
-    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)] index: usize,
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)] index: usize,
 ) -> Result<()> {
     let case = FORMAT_CASES
         .get(index)
@@ -227,10 +244,15 @@ const MOUNT_CASES: &[MountCase] = &[
         status: "root-disk",
         mounts: false,
     },
+    MountCase {
+        state: &[("signature-TYPE", "ext4\n"), ("findmnt-exit", "3\n")],
+        status: "query-failed",
+        mounts: false,
+    },
 ];
 
 #[rstest]
-fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6)] index: usize) -> Result<()> {
+fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6, 7)] index: usize) -> Result<()> {
     let case = MOUNT_CASES
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("mount case {index} is out of range"))?;
@@ -311,6 +333,26 @@ fn unmount_refuses_a_missing_serial() -> Result<()> {
     guest.set(StateFile::Scsi(""))?;
     guest.set(StateFile::MountSource("/dev/sdb"))?;
     ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "not-found");
+    ensure!(!guest.log()?.contains("umount"), "{}", guest.log()?);
+    Ok(())
+}
+
+#[test]
+fn unmount_reports_an_unresolvable_mount_as_a_failed_query() -> Result<()> {
+    let guest = Guest::new()?;
+    guest.set(StateFile::FindmntExit("4"))?;
+    // A failing query must not be read as "nothing mounted": teardown would
+    // then detach the volume under a live filesystem.
+    ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "query-failed");
+    ensure!(!guest.log()?.contains("umount"), "{}", guest.log()?);
+    Ok(())
+}
+
+#[test]
+fn unmount_reports_a_path_that_stays_mounted_without_a_source() -> Result<()> {
+    let guest = Guest::new()?;
+    guest.set(StateFile::MountpointExit("0"))?;
+    ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "query-failed");
     ensure!(!guest.log()?.contains("umount"), "{}", guest.log()?);
     Ok(())
 }

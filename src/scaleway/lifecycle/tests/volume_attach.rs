@@ -180,6 +180,10 @@ struct UnverifiedCase {
     volumes: r#"{"0": {"id": "root-id", "volume_type": "sbs_volume"}}"#,
     marker: "absent",
 })]
+#[case::changed_root_type(UnverifiedCase {
+    volumes: r#"{"0": {"id": "root-id", "volume_type": "l_ssd"}}"#,
+    marker: "changed type",
+})]
 #[case::wrong_type(UnverifiedCase {
     volumes: r#"{
         "0": {"id": "root-id", "volume_type": "sbs_volume"},
@@ -224,6 +228,9 @@ async fn attach_volume_rejects_an_unverifiable_map(
 /// Scenario: the cache was attached at the root index.
 ///
 /// Invariant: index "0" is refused even when the identifier and type match.
+///
+/// The expected map is empty so no earlier check can reject the response: the
+/// only possible refusal is the root-index guard itself.
 #[rstest]
 #[tokio::test]
 async fn attach_volume_rejects_the_root_index(backend_fixture: ScalewayBackend) -> Result<()> {
@@ -231,24 +238,59 @@ async fn attach_volume_rejects_the_root_index(backend_fixture: ScalewayBackend) 
         id: String::from("id"),
         zone: String::from("zone"),
     };
-    let expected = BTreeMap::from([(
-        String::from("0"),
-        ServerVolumeEntry {
-            id: String::from("root-id"),
-            volume_type: Some(String::from("sbs_volume")),
-        },
-    )]);
     let reply = server_with(&serde_json::json!({
         "0": {"id": CACHE_ID, "volume_type": "sbs_volume"},
     }));
     let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend.attach_volume(&handle, CACHE_ID, &expected).await
+        backend
+            .attach_volume(&handle, CACHE_ID, &ExpectedVolumeMap::new())
+            .await
     })
     .await?;
 
-    assert!(matches!(
-        result.expect_err("the root index must be refused"),
-        ScalewayBackendError::VolumeAttachmentUnverified { .. }
-    ));
+    let error = result.expect_err("the root index must be refused");
+    assert!(
+        matches!(
+            error,
+            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
+                if message.contains("root index")
+        ),
+        "{error:?}"
+    );
+    Ok(())
+}
+
+/// Scenario: the provider returns an ambiguous server error for the attach.
+///
+/// Invariant: a 5xx does not prove a rejection, so the error is
+/// `VolumeAttachmentUnverified` and the caller must still treat the cache as
+/// possibly attached.
+#[rstest]
+#[tokio::test]
+async fn attach_volume_treats_a_server_error_as_unverified(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+) -> Result<()> {
+    let reply = Reply {
+        status: 503,
+        body: String::from(r#"{"message":"gateway unavailable"}"#),
+    };
+    let (result, requests) = with_stub(backend_fixture, vec![reply], async |backend| {
+        backend
+            .attach_volume(&handle, CACHE_ID, &expected_map())
+            .await
+    })
+    .await?;
+
+    let error = result.expect_err("an ambiguous attach must fail");
+    assert!(
+        matches!(
+            error,
+            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
+                if message.contains("503")
+        ),
+        "{error:?}"
+    );
+    assert_eq!(requests.len(), 1, "no status read may follow a failure");
     Ok(())
 }

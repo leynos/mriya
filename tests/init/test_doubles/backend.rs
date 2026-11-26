@@ -7,9 +7,11 @@ use mriya::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest, backen
 use super::{
     FailureMode,
     LifecycleEvent,
+    OperationHooks,
     OperationSpec,
     ScriptedVolumeBackend,
     ScriptedVolumeBackendError,
+    State,
 };
 
 impl Backend for ScriptedVolumeBackend {
@@ -25,8 +27,11 @@ impl Backend for ScriptedVolumeBackend {
                 failure_mode: FailureMode::Provision,
                 error: ScriptedVolumeBackendError::Provision,
             },
-            |state| {
-                state.events.push(LifecycleEvent::InstanceCreated);
+            OperationHooks {
+                on_attempt: |_: &mut State| {},
+                on_success: |state: &mut State| {
+                    state.events.push(LifecycleEvent::InstanceCreated);
+                },
             },
             || InstanceHandle {
                 id: String::from("instance-123"),
@@ -45,7 +50,10 @@ impl Backend for ScriptedVolumeBackend {
                 failure_mode: FailureMode::Wait,
                 error: ScriptedVolumeBackendError::Wait,
             },
-            |_| {},
+            OperationHooks {
+                on_attempt: |_: &mut State| {},
+                on_success: |_: &mut State| {},
+            },
             || InstanceNetworking {
                 public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 ssh_port: 22,
@@ -60,8 +68,11 @@ impl Backend for ScriptedVolumeBackend {
                 failure_mode: FailureMode::Destroy,
                 error: ScriptedVolumeBackendError::Destroy,
             },
-            |state| {
-                state.destroy_calls += 1;
+            OperationHooks {
+                on_attempt: |state: &mut State| {
+                    state.destroy_calls += 1;
+                },
+                on_success: |_: &mut State| {},
             },
             || (),
         )

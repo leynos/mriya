@@ -15,9 +15,19 @@
 mod flow;
 #[path = "scaleway_cache_volume_support/harness.rs"]
 mod harness;
+#[path = "scaleway_cache_volume_support/scripts.rs"]
+mod scripts;
 
 use flow::run_flow;
-use harness::{CacheEvidence, CacheHarness, StepError, block_on, cache_harness};
+use harness::{
+    CacheEvidence,
+    CacheEvidenceSlot,
+    CacheHarness,
+    StepError,
+    block_on,
+    cache_evidence_slot,
+    cache_harness,
+};
 use rstest_bdd::skip;
 use rstest_bdd_macros::{given, scenario, then, when};
 
@@ -33,7 +43,8 @@ fn live_credentials(cache_harness: Result<Option<CacheHarness>, String>) -> Resu
 #[when("I run the three-VM cache persistence check")]
 fn run_persistence(
     cache_harness: Result<Option<CacheHarness>, String>,
-) -> Result<CacheEvidence, StepError> {
+    cache_evidence_slot: CacheEvidenceSlot,
+) -> Result<(), StepError> {
     let harness = match cache_harness {
         Ok(Some(harness)) => harness,
         Ok(None) => {
@@ -43,29 +54,46 @@ fn run_persistence(
         }
         Err(error) => return Err(StepError::Message(error)),
     };
-    block_on(run_flow(&harness)).map_err(|error| StepError::Message(format!("{error:#}")))
+    let evidence =
+        block_on(run_flow(&harness)).map_err(|error| StepError::Message(format!("{error:#}")))?;
+    cache_evidence_slot.set(evidence);
+    Ok(())
+}
+
+/// Returns the recorded evidence, failing the step when the flow did not run.
+fn evidence(slot: &CacheEvidenceSlot) -> Result<CacheEvidence, StepError> {
+    slot.get().ok_or_else(|| {
+        StepError::Message(String::from(
+            "the cache persistence check produced no evidence",
+        ))
+    })
 }
 
 #[then("sentinel A is readable on the second VM")]
-fn sentinel_a_read(evidence: &CacheEvidence) {
+fn sentinel_a_read(cache_evidence_slot: CacheEvidenceSlot) -> Result<(), StepError> {
+    let evidence = evidence(&cache_evidence_slot)?;
     assert!(
         evidence.read_a_on_second,
         "VM 2 should read {}",
         evidence.sentinel_a
     );
+    Ok(())
 }
 
 #[then("sentinel B is readable on the third VM")]
-fn sentinel_b_read(evidence: &CacheEvidence) {
+fn sentinel_b_read(cache_evidence_slot: CacheEvidenceSlot) -> Result<(), StepError> {
+    let evidence = evidence(&cache_evidence_slot)?;
     assert!(
         evidence.read_b_on_third,
         "VM 3 should read {}",
         evidence.sentinel_b
     );
+    Ok(())
 }
 
 #[then("the volume was available after every VM")]
-fn volume_available(evidence: &CacheEvidence) {
+fn volume_available(cache_evidence_slot: CacheEvidenceSlot) -> Result<(), StepError> {
+    let evidence = evidence(&cache_evidence_slot)?;
     assert_eq!(
         evidence.volume_statuses,
         vec![
@@ -75,17 +103,23 @@ fn volume_available(evidence: &CacheEvidence) {
         ],
         "the volume should be available after each teardown"
     );
+    Ok(())
 }
 
 #[then("the volume is gone after deletion")]
-fn volume_gone(evidence: &CacheEvidence) {
+fn volume_gone(cache_evidence_slot: CacheEvidenceSlot) -> Result<(), StepError> {
+    let evidence = evidence(&cache_evidence_slot)?;
     assert!(evidence.volume_gone, "the deleted volume should be gone");
+    Ok(())
 }
 
 #[scenario(
     path = "tests/features/scaleway_cache_volume.feature",
     name = "A cache volume survives three successive VMs"
 )]
-fn scenario_cache_persistence(cache_harness: Result<Option<CacheHarness>, String>) {
-    drop(cache_harness);
+fn scenario_cache_persistence(
+    cache_harness: Result<Option<CacheHarness>, String>,
+    cache_evidence_slot: CacheEvidenceSlot,
+) {
+    drop((cache_harness, cache_evidence_slot));
 }

@@ -1,9 +1,11 @@
 //! Fake guest utilities for the cache-device shell tests.
 //!
 //! Each fake logs its arguments to a shared file and reads its state from small
-//! files under the sandbox root, so a case can model a filesystem, a partition
-//! table, an ambiguous probe, a device-mapper root, a duplicate serial or a
-//! failing command without touching the host.
+//! files under the sandbox root, so a case can model a filesystem, a
+//! partition table, an ambiguous probe, a device-mapper root, a duplicate
+//! serial or a failing command without touching the host. The fakes share one
+//! sandbox root, so they are methods on [`Fakes`] rather than free functions
+//! that repeat the root argument.
 
 /// Reads a state file, printing nothing when it is absent.
 fn read_state(root: &str, name: &str) -> String {
@@ -17,164 +19,210 @@ fn read_state(root: &str, name: &str) -> String {
     )
 }
 
-/// Builds the resolver and root-guard `lsblk` fake.
-fn fake_lsblk(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'lsblk %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "case \"$*\" in\n",
-            "  *PKNAME*)\n",
-            "    for arg in \"$@\"; do target=\"$arg\"; done\n",
-            "    name=\"${{target##*/}}\"\n",
-            "    file=\"{root}/pkname-$name\"\n",
-            "    if [ -f \"$file\" ]; then while IFS= read -r line; do ",
-            "printf '%s\\n' \"$line\"; done < \"$file\"; fi\n",
-            "    ;;\n",
-            "  *)\n",
-            "    {scsi}\n",
-            "    ;;\n",
-            "esac"
-        ),
-        root = root,
-        scsi = read_state(root, "scsi"),
-    )
+/// Fake guest utilities rooted at one sandbox directory.
+struct Fakes<'a> {
+    /// Sandbox root holding the state files and the call log.
+    root: &'a str,
 }
 
-/// Builds the `findmnt` fake for the root source and mount-point queries.
-fn fake_findmnt(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'findmnt %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "case \"$*\" in\n",
-            "  *--mountpoint*)\n",
-            "    {mount}\n",
-            "    ;;\n",
-            "  *)\n",
-            "    {root_source}\n",
-            "    ;;\n",
-            "esac"
-        ),
-        root = root,
-        mount = read_state(root, "mount-source"),
-        root_source = read_state(root, "root-source"),
-    )
-}
+/// Builds the full set of fake tools for `root`.
+pub(super) fn fakes(root: &str) -> Vec<(&'static str, String)> { Fakes { root }.all() }
 
-/// Builds the `blkid` fake, which reports the configured signature.
-///
-/// The fake distinguishes the `TYPE` and `PTTYPE` probes so a case can model a
-/// filesystem, a partition table, an ambiguous low-level result or an
-/// operational failure independently.
-fn fake_blkid(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'blkid %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "tag='TYPE'\n",
-            "prev=''\n",
-            "for arg in \"$@\"; do\n",
-            "  if [ \"$prev\" = '-s' ]; then tag=\"$arg\"; fi\n",
-            "  prev=\"$arg\"\n",
-            "done\n",
-            "file=\"{root}/signature-$tag\"\n",
-            "if [ -f \"$file\" ]; then\n",
-            "  value=''; code=0\n",
-            "  while IFS= read -r line; do\n",
-            "    case \"$line\" in\n",
-            "      code=*) code=\"${{line#code=}}\" ;;\n",
-            "      *) value=\"$line\" ;;\n",
-            "    esac\n",
-            "  done < \"$file\"\n",
-            "  if [ -n \"$value\" ]; then printf '%s\\n' \"$value\"; fi\n",
-            "  exit \"$code\"\n",
-            "fi\n",
-            "exit 2"
-        ),
-        root = root
-    )
-}
+impl Fakes<'_> {
+    /// Returns every fake in the order they are written.
+    fn all(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("lsblk", self.lsblk()),
+            ("findmnt", self.findmnt()),
+            ("blkid", self.blkid()),
+            ("mountpoint", self.mountpoint()),
+            ("dd", self.dd()),
+            ("udevadm", self.logger("udevadm")),
+            ("sleep", self.logger("sleep")),
+            ("sync", self.logger("sync")),
+            ("mkdir", self.logger("mkdir")),
+            ("chown", self.exit_status("chown", "chown-exit")),
+            ("sudo", self.sudo()),
+            ("mkfs.ext4", self.exit_status("mkfs.ext4", "mkfs-exit")),
+            ("mount", self.mount()),
+            ("umount", self.umount()),
+        ]
+    }
 
-/// Builds a fake that logs its arguments and exits successfully.
-fn fake_logger(root: &str, name: &str) -> String {
-    format!("printf '{name} %s\\n' \"$*\" >> '{root}/tools.log'\nexit 0")
-}
+    /// Builds the resolver and root-guard `lsblk` fake.
+    fn lsblk(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'lsblk %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "case \"$*\" in\n",
+                "  *PKNAME*)\n",
+                "    for arg in \"$@\"; do target=\"$arg\"; done\n",
+                "    name=\"${{target##*/}}\"\n",
+                "    file=\"{root}/pkname-$name\"\n",
+                "    if [ -f \"$file\" ]; then while IFS= read -r line; do ",
+                "printf '%s\\n' \"$line\"; done < \"$file\"; fi\n",
+                "    ;;\n",
+                "  *)\n",
+                "    {scsi}\n",
+                "    ;;\n",
+                "esac"
+            ),
+            root = root,
+            scsi = read_state(root, "scsi"),
+        )
+    }
 
-/// Builds the `sudo` fake, which logs and runs the wrapped command.
-fn fake_sudo(root: &str) -> String {
-    format!("printf 'sudo %s\\n' \"$*\" >> '{root}/tools.log'\nexec \"$@\"")
-}
+    /// Builds the `findmnt` fake for root-source and mount-point queries.
+    ///
+    /// A mount-point query with no source exits 1, as the real `findmnt` does
+    /// when the lookup finds nothing, so the script's "not mounted" branch is
+    /// exercised rather than masked by a successful empty result. A
+    /// `findmnt-exit` state models a failing query.
+    fn findmnt(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'findmnt %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "case \"$*\" in\n",
+                "  *--mountpoint*)\n",
+                "    {mount}\n",
+                "    if [ -s '{root}/mount-source' ]; then exit 0; fi\n",
+                "    if [ -f '{root}/findmnt-exit' ]; then ",
+                "read -r findmnt_code < '{root}/findmnt-exit'; exit \"$findmnt_code\"; fi\n",
+                "    exit 1\n",
+                "    ;;\n",
+                "  *)\n",
+                "    {root_source}\n",
+                "    ;;\n",
+                "esac"
+            ),
+            root = root,
+            mount = read_state(root, "mount-source"),
+            root_source = read_state(root, "root-source"),
+        )
+    }
 
-/// Builds the `chown` fake, whose exit status comes from a state file.
-fn fake_chown(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'chown %s\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/chown-exit' ]; then read -r code < '{root}/chown-exit'; fi\n",
-            "exit \"${{code:-0}}\""
-        ),
-        root = root
-    )
-}
+    /// Builds the `blkid` fake, which reports the configured signature.
+    ///
+    /// The fake distinguishes the `TYPE`, `UUID` and `PTTYPE` probes so a case
+    /// can model a filesystem, a partition table, an ambiguous low-level result
+    /// or an operational failure independently.
+    fn blkid(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'blkid %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "tag='TYPE'\n",
+                "prev=''\n",
+                "for arg in \"$@\"; do\n",
+                "  if [ \"$prev\" = '-s' ]; then tag=\"$arg\"; fi\n",
+                "  prev=\"$arg\"\n",
+                "done\n",
+                "file=\"{root}/signature-$tag\"\n",
+                "if [ -f \"$file\" ]; then\n",
+                "  value=''; code=0\n",
+                "  while IFS= read -r line; do\n",
+                "    case \"$line\" in\n",
+                "      code=*) code=\"${{line#code=}}\" ;;\n",
+                "      *) value=\"$line\" ;;\n",
+                "    esac\n",
+                "  done < \"$file\"\n",
+                "  if [ -n \"$value\" ]; then printf '%s\\n' \"$value\"; fi\n",
+                "  exit \"$code\"\n",
+                "fi\n",
+                "exit 2"
+            ),
+            root = root
+        )
+    }
 
-/// Builds the `mkfs.ext4` fake, whose exit status comes from a state file.
-fn fake_mkfs(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'mkfs.ext4 %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/mkfs-exit' ]; then read -r code < '{root}/mkfs-exit'; fi\n",
-            "exit \"${{code:-0}}\""
-        ),
-        root = root
-    )
-}
+    /// Builds the `mountpoint` fake, whose status comes from a state file.
+    ///
+    /// A fresh guest has no mount-point state, so the fake reports 32 ("not a
+    /// mount point") rather than success, matching the real tool for a path
+    /// that exists but is not mounted.
+    fn mountpoint(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'mountpoint %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "if [ -f '{root}/mountpoint-exit' ]; then ",
+                "read -r code < '{root}/mountpoint-exit'; exit \"$code\"; fi\n",
+                "if [ -f '{root}/mount-source' ] && [ -s '{root}/mount-source' ]; ",
+                "then exit 0; fi\n",
+                "exit 32"
+            ),
+            root = root
+        )
+    }
 
-/// Builds the `mount` fake, which records the source it was given.
-fn fake_mount(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'mount %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "if [ -f '{root}/mount-source-override' ]; then\n",
-            "  while IFS= read -r line; do printf '%s\\n' \"$line\"; done ",
-            "< '{root}/mount-source-override' > '{root}/mount-source'\n",
-            "else\n",
-            "  printf '%s\\n' \"$3\" > '{root}/mount-source'\n",
-            "fi\n",
-            "exit 0"
-        ),
-        root = root
-    )
-}
+    /// Builds the `dd` fake used by the readability probe.
+    fn dd(&self) -> String { self.exit_status("dd", "dd-exit") }
 
-/// Builds the `umount` fake, whose exit status comes from a state file.
-fn fake_umount(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'umount %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/umount-exit' ]; then read -r code < '{root}/umount-exit'; fi\n",
-            "if [ \"${{code:-0}}\" -ne 0 ]; then exit \"$code\"; fi\n",
-            ": > '{root}/mount-source'\n",
-            "exit 0"
-        ),
-        root = root
-    )
-}
+    /// Builds a fake that logs its arguments and exits successfully.
+    fn logger(&self, name: &str) -> String {
+        format!(
+            "printf '{name} %s\\n' \"$*\" >> '{root}/tools.log'\nexit 0",
+            root = self.root
+        )
+    }
 
-/// Builds the full set of fake tools.
-pub(super) fn fakes(root: &str) -> Vec<(&'static str, String)> {
-    vec![
-        ("lsblk", fake_lsblk(root)),
-        ("findmnt", fake_findmnt(root)),
-        ("blkid", fake_blkid(root)),
-        ("udevadm", fake_logger(root, "udevadm")),
-        ("sleep", fake_logger(root, "sleep")),
-        ("sync", fake_logger(root, "sync")),
-        ("mkdir", fake_logger(root, "mkdir")),
-        ("chown", fake_chown(root)),
-        ("sudo", fake_sudo(root)),
-        ("mkfs.ext4", fake_mkfs(root)),
-        ("mount", fake_mount(root)),
-        ("umount", fake_umount(root)),
-    ]
+    /// Builds a fake whose exit status comes from `state`.
+    fn exit_status(&self, name: &str, state: &str) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf '{name} %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "code=0\n",
+                "if [ -f '{root}/{state}' ]; then read -r code < '{root}/{state}'; fi\n",
+                "exit \"${{code:-0}}\""
+            ),
+            root = root,
+            name = name,
+            state = state,
+        )
+    }
+
+    /// Builds the `sudo` fake, which logs and runs the wrapped command.
+    fn sudo(&self) -> String {
+        format!(
+            "printf 'sudo %s\\n' \"$*\" >> '{root}/tools.log'\nexec \"$@\"",
+            root = self.root
+        )
+    }
+
+    /// Builds the `mount` fake, which records the source it was given.
+    fn mount(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'mount %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "if [ -f '{root}/mount-source-override' ]; then\n",
+                "  while IFS= read -r line; do printf '%s\\n' \"$line\"; done ",
+                "< '{root}/mount-source-override' > '{root}/mount-source'\n",
+                "else\n",
+                "  printf '%s\\n' \"$3\" > '{root}/mount-source'\n",
+                "fi\n",
+                "exit 0"
+            ),
+            root = root
+        )
+    }
+
+    /// Builds the `umount` fake, whose exit status comes from a state file.
+    fn umount(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'umount %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "code=0\n",
+                "if [ -f '{root}/umount-exit' ]; then read -r code < '{root}/umount-exit'; fi\n",
+                "if [ \"${{code:-0}}\" -ne 0 ]; then exit \"$code\"; fi\n",
+                ": > '{root}/mount-source'\n",
+                "exit 0"
+            ),
+            root = root
+        )
+    }
 }

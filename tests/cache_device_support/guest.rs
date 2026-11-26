@@ -106,12 +106,20 @@ pub(super) enum StateFile<'a> {
     UmountExit(&'a str),
     /// The mount source `findmnt --mountpoint` reports.
     MountSource(&'a str),
+    /// The exit status the `findmnt --mountpoint` fake returns.
+    FindmntExit(&'a str),
+    /// The exit status the `mountpoint` fake returns.
+    MountpointExit(&'a str),
+    /// The exit status the `dd` fake returns.
+    DdExit(&'a str),
     /// The source the `mount` fake substitutes after mounting.
     MountSourceOverride(&'a str),
     /// The `blkid -s TYPE` result, with an optional `code=` line.
     SignatureType(&'a str),
     /// The `blkid -s PTTYPE` result, with an optional `code=` line.
     SignaturePartitionTable(&'a str),
+    /// The `blkid -s UUID` result, with an optional `code=` line.
+    SignatureUuid(&'a str),
     /// The exit status the `chown` fake returns.
     ChownExit(&'a str),
 }
@@ -128,9 +136,13 @@ impl StateFile<'_> {
             Self::MkfsExit(_) => "mkfs-exit",
             Self::UmountExit(_) => "umount-exit",
             Self::MountSource(_) => "mount-source",
+            Self::FindmntExit(_) => "findmnt-exit",
+            Self::MountpointExit(_) => "mountpoint-exit",
+            Self::DdExit(_) => "dd-exit",
             Self::MountSourceOverride(_) => "mount-source-override",
             Self::SignatureType(_) => "signature-TYPE",
             Self::SignaturePartitionTable(_) => "signature-PTTYPE",
+            Self::SignatureUuid(_) => "signature-UUID",
             Self::ChownExit(_) => "chown-exit",
         }
     }
@@ -146,9 +158,13 @@ impl StateFile<'_> {
             | Self::MkfsExit(value)
             | Self::UmountExit(value)
             | Self::MountSource(value)
+            | Self::FindmntExit(value)
+            | Self::MountpointExit(value)
+            | Self::DdExit(value)
             | Self::MountSourceOverride(value)
             | Self::SignatureType(value)
             | Self::SignaturePartitionTable(value)
+            | Self::SignatureUuid(value)
             | Self::ChownExit(value) => format!("{value}\n"),
         }
     }

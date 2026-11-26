@@ -124,7 +124,9 @@ fn environment_volume_id(
     volume_id: String,
 ) -> Result<InitContextResult, StepError> {
     let mut init_context = init_context_result?;
-    init_context.request.effective_volume_id = Some(volume_id.trim().to_owned());
+    let override_id = volume_id.trim().to_owned();
+    init_context.request.effective_volume_id = Some(override_id.clone());
+    init_context.request.environment_volume_id = Some(override_id);
     Ok(Ok(init_context))
 }
 
@@ -288,12 +290,17 @@ fn init_warning_names_environment(
     let init_context = init_context_result
         .as_ref()
         .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let expected = init_context
+        .request
+        .environment_volume_id
+        .as_deref()
+        .map_or_else(String::new, |id| format!("SCW_DEFAULT_VOLUME_ID={id}"));
     match &init_context.outcome {
         Some(InitResult::Success {
             warning: Some(warning),
-        }) if warning.contains("SCW_DEFAULT_VOLUME_ID=vol-env") => Ok(()),
+        }) if !expected.is_empty() && warning.contains(&expected) => Ok(()),
         other => Err(StepError::Assertion(format!(
-            "expected a warning naming SCW_DEFAULT_VOLUME_ID=vol-env, got {other:?}"
+            "expected a warning naming {expected}, got {other:?}"
         ))),
     }
 }

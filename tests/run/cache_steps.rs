@@ -17,6 +17,19 @@ fn cache_routing_disabled(
     Ok(Ok(run_context))
 }
 
+#[given("cache directory creation fails")]
+fn cache_directory_creation_fails(
+    run_context_result: RunContextResult,
+) -> Result<RunContextResult, StepError> {
+    let run_context = run_context_result?;
+    // The mount response is queued first; this failure is consumed by the
+    // cache-directory command that follows it.
+    run_context
+        .runner
+        .push_output(Some(1), "", "mkdir: permission denied");
+    Ok(Ok(run_context))
+}
+
 #[given("cache directory creation is disabled")]
 fn cache_directory_creation_disabled(
     run_context_result: RunContextResult,
@@ -33,7 +46,10 @@ fn remote_command_routes_cargo_caches(
     let run_context = context(run_context_result)?;
     let remote_command = last_ssh_remote_command(run_context)?;
     for required in [
-        "if mountpoint -q /mriya 2>/dev/null; then",
+        // A verified cache fails closed: the command only runs when the mount
+        // path's source is still the device the mount step verified.
+        "if [ \"$(findmnt -no SOURCE --mountpoint /mriya 2>/dev/null)\" != /dev/sdb ]; then",
+        "refusing to run",
         "export CARGO_HOME=/mriya/cargo",
         "export RUSTUP_HOME=/mriya/rustup",
         "export CARGO_TARGET_DIR=/mriya/target",
@@ -43,7 +59,7 @@ fn remote_command_routes_cargo_caches(
         "export npm_config_cache=/mriya/npm/cache",
         "export YARN_CACHE_FOLDER=/mriya/yarn/cache",
         "export PNPM_STORE_PATH=/mriya/pnpm/store",
-        "fi; cd",
+        "cd /remote",
     ] {
         if !remote_command.contains(required) {
             return Err(StepError::Assertion(format!(

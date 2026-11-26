@@ -27,6 +27,7 @@ use mriya::{
     ConfigStore,
     InitConfig,
     InitError,
+    InitOptions,
     InitOrchestrator,
     InitRequest,
     InstanceRequest,
@@ -226,9 +227,15 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
         .map_err(|path| CliError::Config(path.display().to_string()))?;
     let project_name = cwd_path.file_name().unwrap_or("mriya");
 
-    let request =
-        InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
-            .map_err(|err| CliError::Config(err.to_string()))?;
+    let request = InitRequest::from_config(
+        &scaleway_config,
+        &init_config,
+        InitOptions {
+            project_name,
+            overwrite_existing_volume_id: args.force,
+        },
+    )
+    .map_err(|err| CliError::Config(err.to_string()))?;
 
     let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
     let outcome = orchestrator.execute(&request).await?;

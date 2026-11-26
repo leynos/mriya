@@ -22,7 +22,7 @@ pub use config::{
     SyncConfigLoadError,
     SyncError,
 };
-pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command};
+pub use remote_command::{CACHE_SUBDIRECTORIES, CacheRouting, create_cache_directories_command};
 pub use types::{
     CommandOutput,
     CommandRunner,
@@ -143,22 +143,22 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        self.run_remote_with_cache(networking, remote_command, true)
+        self.run_remote_with_cache(networking, remote_command, &CacheRouting::Unconfigured)
     }
 
-    /// Executes `remote_command` over SSH, routing caches only when verified.
+    /// Executes `remote_command` over SSH with the requested cache routing.
     ///
-    /// A caller that attached a configured cache passes the result of its
-    /// mount verification here. When the mount was not verified, the cache
-    /// exports and the `mountpoint -q` guard are omitted, so build output
-    /// cannot be silently redirected onto the root filesystem.
+    /// A caller that attached a configured cache passes
+    /// [`CacheRouting::Required`] with the device it verified. The preamble
+    /// then fails closed when the path's source is no longer that device, so
+    /// build output cannot be silently redirected onto the root filesystem. A
+    /// run without a configured cache keeps the guarded historical preamble.
     ///
     /// # Parameters
     ///
     /// - `networking`: public address and SSH port of the instance.
     /// - `remote_command`: command to execute after the optional cache prefix.
-    /// - `cache_verified`: whether the configured cache mount was verified; `true` for a run
-    ///   without a configured cache, which keeps the guarded historical preamble.
+    /// - `routing`: whether the command requires a verified cache mount.
     ///
     /// # Returns
     ///
@@ -177,9 +177,9 @@ impl<R: CommandRunner> Syncer<R> {
         &self,
         networking: &InstanceNetworking,
         remote_command: &str,
-        cache_verified: bool,
+        routing: &CacheRouting,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let remote_cmd_wrapped = self.build_remote_command(remote_command, cache_verified);
+        let remote_cmd_wrapped = self.build_remote_command(remote_command, routing);
         self.execute_ssh(networking, &remote_cmd_wrapped)
     }
 
@@ -361,8 +361,8 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(format!("{} {}", self.config.ssh_bin, opts))
     }
 
-    fn build_remote_command(&self, remote_command: &str, cache_verified: bool) -> String {
-        remote_command::build_remote_command(&self.config, remote_command, cache_verified)
+    fn build_remote_command(&self, remote_command: &str, routing: &CacheRouting) -> String {
+        remote_command::build_remote_command(&self.config, remote_command, routing)
     }
 }
 

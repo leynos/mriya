@@ -2,9 +2,10 @@
 //!
 //! These are the real backend, SSH and cache-device calls the suite drives;
 //! they live here so the test module keeps the fixture, BDD steps and evidence
-//! assertions readable.
+//! assertions readable. The guest-side script and sentinel helpers are in the
+//! `scripts` submodule.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use mriya::{
     Backend,
     InstanceHandle,
@@ -15,49 +16,41 @@ use mriya::{
     VolumeHandle,
     VolumeRequest,
     VolumeStatus,
-    cache_device::{self, CacheDeviceStatus},
     sync::ProcessCommandRunner,
 };
-use shell_escape::unix::escape;
 
-use super::harness::{CacheEvidence, CacheHarness, DELETE_POLL, DELETE_WAIT, VOLUME_SIZE_BYTES};
+use super::{
+    harness::{CacheEvidence, CacheHarness, DELETE_POLL, DELETE_WAIT, VOLUME_SIZE_BYTES},
+    scripts::{Sentinel, format_volume, mount, read_file, unmount, write_file},
+};
 
-/// Formats the new volume through the guarded cache-device script.
-fn format_volume(
+/// What one VM does while it holds the cache.
+struct Lifetime<F>
+where
+    F: FnOnce(&InstanceNetworking) -> Result<()>,
+{
+    /// Whether the new volume must be formatted before it is mounted.
+    format: bool,
+    /// Action to run while the verified cache is mounted.
+    mounted: F,
+}
+
+/// Creates, mounts, exercises and tears down one VM, returning its status.
+async fn one_lifetime<F>(
+    harness: &CacheHarness,
     syncer: &Syncer<ProcessCommandRunner>,
-    networking: &InstanceNetworking,
     volume: &VolumeHandle,
-) -> Result<()> {
-    let script = cache_device::format_script(&volume.id);
-    let output = syncer
-        .run_remote_raw(networking, &script)
-        .context("run format script")?;
-    let report = cache_device::parse_report(&output.stdout).context("parse format status")?;
-    if report.status() != &CacheDeviceStatus::Formatted {
-        bail!("cache format failed: {}", report.describe());
+    lifetime: Lifetime<F>,
+) -> Result<String>
+where
+    F: FnOnce(&InstanceNetworking) -> Result<()>,
+{
+    let (handle, networking) = provision(harness, volume).await?;
+    if lifetime.format {
+        format_volume(syncer, &networking, volume)?;
     }
-    Ok(())
-}
-
-/// A sentinel file to write and the value it should contain.
-struct Sentinel<'a> {
-    /// Guest path of the sentinel file.
-    path: &'a str,
-    /// Value written to and read from the file.
-    value: &'a str,
-}
-
-/// Initializes the volume on the first VM, writes sentinel A and tears down.
-async fn first_lifetime(
-    harness: &CacheHarness,
-    syncer: &Syncer<ProcessCommandRunner>,
-    volume: &VolumeHandle,
-    sentinel: &Sentinel<'_>,
-) -> Result<String> {
-    let (handle, networking) = provision(harness, volume).await?;
-    format_volume(syncer, &networking, volume)?;
     mount(harness, syncer, &networking, volume)?;
-    write_file(syncer, &networking, sentinel.path, sentinel.value)?;
+    (lifetime.mounted)(&networking)?;
     unmount(
         syncer,
         &networking,
@@ -67,23 +60,107 @@ async fn first_lifetime(
     teardown_and_check(harness, handle, volume).await
 }
 
-/// Creates, mounts and tears down one VM, returning its volume status.
-async fn one_lifetime(
+/// Sentinel paths and values used across the three lifetimes.
+struct Sentinels {
+    /// Guest path of sentinel A.
+    path_a: String,
+    /// Guest path of sentinel B.
+    path_b: String,
+    /// Value written to sentinel A on the first VM.
+    value_a: String,
+    /// Value written to sentinel B on the second VM.
+    value_b: String,
+}
+
+/// Evidence collected while the three VMs run.
+struct LifetimeEvidence {
+    /// Volume status after each teardown, in order.
+    statuses: Vec<String>,
+    /// Whether the second VM read sentinel A.
+    read_a_on_second: bool,
+    /// Whether the third VM read sentinel B.
+    read_b_on_third: bool,
+}
+
+/// Runs the first VM and writes sentinel A.
+async fn run_first(
     harness: &CacheHarness,
     syncer: &Syncer<ProcessCommandRunner>,
     volume: &VolumeHandle,
-    action: impl FnOnce(&InstanceNetworking) -> Result<()>,
+    sentinels: &Sentinels,
 ) -> Result<String> {
-    let (handle, networking) = provision(harness, volume).await?;
-    mount(harness, syncer, &networking, volume)?;
-    action(&networking)?;
-    unmount(
+    let first_sentinel = Sentinel {
+        path: &sentinels.path_a,
+        value: &sentinels.value_a,
+    };
+    one_lifetime(
+        harness,
         syncer,
-        &networking,
         volume,
-        &harness.sync_config.volume_mount_path,
-    )?;
-    teardown_and_check(harness, handle, volume).await
+        Lifetime {
+            format: true,
+            mounted: |networking: &InstanceNetworking| {
+                write_file(
+                    syncer,
+                    networking,
+                    first_sentinel.path,
+                    first_sentinel.value,
+                )
+            },
+        },
+    )
+    .await
+}
+
+/// Runs the three VM lifetimes and returns the collected evidence.
+async fn run_lifetimes(
+    harness: &CacheHarness,
+    syncer: &Syncer<ProcessCommandRunner>,
+    volume: &VolumeHandle,
+    sentinels: &Sentinels,
+) -> Result<LifetimeEvidence> {
+    let mut statuses = Vec::with_capacity(3);
+    statuses.push(run_first(harness, syncer, volume, sentinels).await?);
+
+    let mut read_a_on_second = false;
+    let second = one_lifetime(
+        harness,
+        syncer,
+        volume,
+        Lifetime {
+            format: false,
+            mounted: |networking: &InstanceNetworking| {
+                read_a_on_second =
+                    read_file(syncer, networking, &sentinels.path_a)?.trim() == sentinels.value_a;
+                write_file(syncer, networking, &sentinels.path_b, &sentinels.value_b)
+            },
+        },
+    )
+    .await?;
+    statuses.push(second);
+
+    let mut read_b_on_third = false;
+    let third = one_lifetime(
+        harness,
+        syncer,
+        volume,
+        Lifetime {
+            format: false,
+            mounted: |networking: &InstanceNetworking| {
+                read_b_on_third =
+                    read_file(syncer, networking, &sentinels.path_b)?.trim() == sentinels.value_b;
+                Ok(())
+            },
+        },
+    )
+    .await?;
+    statuses.push(third);
+
+    Ok(LifetimeEvidence {
+        statuses,
+        read_a_on_second,
+        read_b_on_third,
+    })
 }
 
 /// Runs the full three-VM flow and returns the collected evidence.
@@ -91,35 +168,15 @@ pub(super) async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
     let volume = create_volume(harness).await?;
     let syncer =
         Syncer::with_process_runner(harness.sync_config.clone()).context("build syncer")?;
-    let mount_path = harness.sync_config.volume_mount_path.clone();
-    let sentinel_a = format!("sentinel-a-{}", uuid::Uuid::new_v4().simple());
-    let sentinel_b = format!("sentinel-b-{}", uuid::Uuid::new_v4().simple());
-    let path_a = format!("{mount_path}/sentinel-a");
-    let path_b = format!("{mount_path}/sentinel-b");
-    let mut volume_statuses = Vec::with_capacity(3);
-
-    let first_sentinel = Sentinel {
-        path: &path_a,
-        value: &sentinel_a,
+    let mount_path = &harness.sync_config.volume_mount_path;
+    let sentinels = Sentinels {
+        path_a: format!("{mount_path}/sentinel-a"),
+        path_b: format!("{mount_path}/sentinel-b"),
+        value_a: format!("sentinel-a-{}", uuid::Uuid::new_v4().simple()),
+        value_b: format!("sentinel-b-{}", uuid::Uuid::new_v4().simple()),
     };
-    let first = first_lifetime(harness, &syncer, &volume, &first_sentinel).await?;
-    volume_statuses.push(first);
 
-    let mut read_a_on_second = false;
-    let second = one_lifetime(harness, &syncer, &volume, |networking| {
-        read_a_on_second = read_file(&syncer, networking, &path_a)?.trim() == sentinel_a;
-        write_file(&syncer, networking, &path_b, &sentinel_b)
-    })
-    .await?;
-    volume_statuses.push(second);
-
-    let mut read_b_on_third = false;
-    let third = one_lifetime(harness, &syncer, &volume, |networking| {
-        read_b_on_third = read_file(&syncer, networking, &path_b)?.trim() == sentinel_b;
-        Ok(())
-    })
-    .await?;
-    volume_statuses.push(third);
+    let evidence = run_lifetimes(harness, &syncer, &volume, &sentinels).await?;
 
     harness
         .backend
@@ -129,11 +186,11 @@ pub(super) async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
     let volume_gone = wait_until_gone(harness, &volume).await?;
 
     Ok(CacheEvidence {
-        sentinel_a,
-        sentinel_b,
-        read_a_on_second,
-        read_b_on_third,
-        volume_statuses,
+        sentinel_a: sentinels.value_a,
+        sentinel_b: sentinels.value_b,
+        read_a_on_second: evidence.read_a_on_second,
+        read_b_on_third: evidence.read_b_on_third,
+        volume_statuses: evidence.statuses,
         volume_gone,
     })
 }
@@ -188,83 +245,6 @@ async fn provision(
     }
 }
 
-/// Mounts and verifies the cache on `networking`.
-fn mount(
-    harness: &CacheHarness,
-    syncer: &Syncer<ProcessCommandRunner>,
-    networking: &InstanceNetworking,
-    volume: &VolumeHandle,
-) -> Result<()> {
-    let script = cache_device::mount_script(
-        &volume.id,
-        &harness.sync_config.volume_mount_path,
-        &harness.sync_config.ssh_user,
-    );
-    let output = syncer
-        .run_remote_raw(networking, &script)
-        .context("run mount script")?;
-    let report = cache_device::parse_report(&output.stdout).context("parse mount status")?;
-    if report.status() != &CacheDeviceStatus::Verified {
-        bail!("cache mount was not verified: {}", report.describe());
-    }
-    Ok(())
-}
-
-/// Flushes and unmounts the cache path.
-fn unmount(
-    syncer: &Syncer<ProcessCommandRunner>,
-    networking: &InstanceNetworking,
-    volume: &VolumeHandle,
-    mount_path: &str,
-) -> Result<()> {
-    let script = cache_device::unmount_script(&volume.id, mount_path);
-    let output = syncer
-        .run_remote_raw(networking, &script)
-        .context("run unmount script")?;
-    let report = cache_device::parse_report(&output.stdout).context("parse unmount status")?;
-    if report.status() != &CacheDeviceStatus::Unmounted {
-        bail!("cache unmount failed: {}", report.describe());
-    }
-    Ok(())
-}
-
-/// Writes `contents` to `path` on the guest and flushes it.
-fn write_file(
-    syncer: &Syncer<ProcessCommandRunner>,
-    networking: &InstanceNetworking,
-    path: &str,
-    contents: &str,
-) -> Result<()> {
-    let command = format!(
-        "printf '%s' {value} | sudo tee {path} >/dev/null && sync",
-        value = escape(contents.into()),
-        path = escape(path.into()),
-    );
-    let output = syncer
-        .run_remote_raw(networking, &command)
-        .context("write sentinel")?;
-    if output.exit_code != Some(0) {
-        bail!("writing {path} failed with status {:?}", output.exit_code);
-    }
-    Ok(())
-}
-
-/// Reads `path` from the guest and returns its contents.
-fn read_file(
-    syncer: &Syncer<ProcessCommandRunner>,
-    networking: &InstanceNetworking,
-    path: &str,
-) -> Result<String> {
-    let command = format!("sudo cat {path}", path = escape(path.into()));
-    let output = syncer
-        .run_remote_raw(networking, &command)
-        .context("read sentinel")?;
-    if output.exit_code != Some(0) {
-        bail!("reading {path} failed with status {:?}", output.exit_code);
-    }
-    Ok(output.stdout)
-}
-
 /// Tears the VM down, then confirms the volume is available.
 async fn teardown_and_check(
     harness: &CacheHarness,
@@ -282,7 +262,7 @@ async fn teardown_and_check(
         .await
         .context("read volume after teardown")?;
     if state.status != VolumeStatus::Available {
-        bail!(
+        anyhow::bail!(
             "volume {} should be available after teardown, got {}",
             volume.id,
             state.status

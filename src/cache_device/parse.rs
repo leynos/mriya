@@ -29,6 +29,10 @@ pub enum CacheDeviceStatus {
     SignaturePresent,
     /// A signature probe failed or returned an ambiguous result.
     ProbeFailed,
+    /// The device could not be read, so an empty probe proves nothing.
+    DeviceUnreadable,
+    /// The mount-source query failed, so the mount state is unknown.
+    QueryFailed,
     /// The device does not carry an ext4 signature.
     NotExt4,
     /// A different source already occupies the mount path.
@@ -72,6 +76,8 @@ impl CacheDeviceStatus {
             "root-unknown" => Self::RootUnknown,
             "signature-present" => Self::SignaturePresent,
             "probe-failed" => Self::ProbeFailed,
+            "device-unreadable" => Self::DeviceUnreadable,
+            "query-failed" => Self::QueryFailed,
             "not-ext4" => Self::NotExt4,
             "mount-occupied" => Self::MountOccupied,
             "mount-failed" => Self::MountFailed,
@@ -96,6 +102,8 @@ impl CacheDeviceStatus {
             Self::RootUnknown => "root-unknown",
             Self::SignaturePresent => "signature-present",
             Self::ProbeFailed => "probe-failed",
+            Self::DeviceUnreadable => "device-unreadable",
+            Self::QueryFailed => "query-failed",
             Self::NotExt4 => "not-ext4",
             Self::MountOccupied => "mount-occupied",
             Self::MountFailed => "mount-failed",

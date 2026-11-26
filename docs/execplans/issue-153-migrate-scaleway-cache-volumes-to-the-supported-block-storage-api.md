@@ -213,7 +213,16 @@ updates.
   provider-safety, documentation and test-harness findings.
 - [x] 2026-11-26: Draft pull request #275 opened, linked to Lody session
   `2a050576-8c80-47cd-9e03-8a32fdfc268b`.
-- [ ] Second CodeRabbit review pass after the remediation push.
+- [x] 2026-11-26: Second CodeRabbit review pass raised 21 findings; all were
+  remediated: `blkid` and partition-table probe semantics, device readability,
+  mount-source query failures, a fail-closed cache preamble carrying the
+  verified device, atomic configuration writes, environment-override tracking,
+  ambiguous attach status mapping, preserved volume-type comparison, the live
+  suite's evidence fixture, the message-freezing test doubles, and a shared
+  loader for the marked user-guide examples.
+- [x] 2026-11-26: All deterministic gates pass again after the second
+  remediation, and CodeScene's local delta reports `no-issues-found` over 95
+  eligible files.
 
 ## Surprises & discoveries
 
@@ -252,6 +261,20 @@ updates.
   the init and run doubles and the cache-device state fixtures into directory
   modules is part of keeping the suite inside 400 lines per file rather than a
   stylistic preference.
+- `blkid -p -s PTTYPE` exits 0 with empty output on an ext4 filesystem that has
+  no partition table: `-s` filters printed tags but does not change the exit
+  status. A code-based test therefore rejected every disk the formatter had
+  just produced; only a non-empty value proves a partition table exists.
+- `blkid -p` also exits 2 when it cannot open or read the device, so an empty
+  result authorizes `mkfs.ext4` only after a separate read of the first sector
+  succeeds.
+- `findmnt --mountpoint` returns 1 both for "not a mount point" and for a
+  failed query, so `mountpoint -q` is needed before treating the path as
+  unmounted. Detaching a volume under a live filesystem would lose unflushed
+  writes.
+- rstest's fixture macro re-emits a single-expression body inside braces, which
+  trips `unused_braces`; the repository already provides
+  `#[mriya_test_macros::allow_fixture_expansion_lints]` for that expansion.
 
 ## Decision log
 
@@ -299,6 +322,21 @@ updates.
 - Bound every SSH call with `ConnectTimeout` and keepalives, so a dead peer is
   noticed within three keepalive intervals instead of hanging a readiness probe
   past its deadline.
+- Carry the verified device in the remote-command preamble and fail closed when
+  the mount path's source is not that device, instead of re-running a
+  verification step and leaving a window before the user command.
+- Track `SCW_DEFAULT_VOLUME_ID` separately from the merged effective ID: the
+  merged value cannot say which source supplied it, and an environment override
+  keeps winning after the file is rewritten even when the file held the same
+  old ID.
+- Write the configuration document to a temporary file in the same directory
+  and rename it over the target, preserving the existing mode so a file that
+  holds a secret key does not become world-readable.
+- Attempt to delete the owned volume when the formatter destroy fails after
+  detachment, and report the manual command only when that deletion also fails.
+- Load the marked user-guide examples from the published document, checking
+  TOML against the real config types and shell examples with `bash -n`; the
+  recovery template is tied to the error message the implementation prints.
 
 ## Outcomes & Retrospective
 

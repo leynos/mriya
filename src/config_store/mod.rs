@@ -7,6 +7,10 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 use ortho_config::{ConfigDiscovery, toml};
 use thiserror::Error;
 
+mod write;
+
+use write::write_config;
+
 /// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
 /// Environment variable that overrides the configuration file location.
@@ -207,7 +211,7 @@ struct ConfigTarget {
 /// # Errors
 ///
 /// Returns `InvalidStructure` when `path` has no file name.
-fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreError> {
+pub(super) fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreError> {
     let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
     let file_name = path
         .file_name()
@@ -343,36 +347,6 @@ fn write_volume_id_value(
         toml::Value::String(volume_id.trim().to_owned()),
     );
     Ok(())
-}
-
-/// Renders `value` and writes it over the file, creating parent directories.
-///
-/// The whole document is re-rendered, so comments and formatting in an
-/// existing file are not preserved. The write is not atomic.
-fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreError> {
-    let (parent, file_name) = split_config_path(path)?;
-    Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
-        ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        }
-    })?;
-    let dir =
-        Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        })?;
-
-    let rendered = toml::to_string_pretty(value).map_err(|err| ConfigStoreError::Parse {
-        path: path.to_path_buf(),
-        message: err.to_string(),
-    })?;
-
-    dir.write(file_name, rendered)
-        .map_err(|err| ConfigStoreError::Io {
-            path: path.to_path_buf(),
-            message: err.to_string(),
-        })
 }
 
 #[cfg(test)]

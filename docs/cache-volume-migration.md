@@ -12,9 +12,11 @@ old volume is left untouched, and Mriya never reformats it.
 
 ## Before you start
 
-- The legacy volume must not be attached to any instance. Stop the instance
-  that uses it, unmount the filesystem, and detach the volume. Do not delete
-  the instance while the volume is still attached: a default
+- The legacy volume must not be attached to any instance. Unmount the
+  filesystem from inside the guest over SSH and verify that the mount point is
+  gone before stopping the instance, then detach the volume. Waiting for the
+  guest-side unmount avoids snapshotting a filesystem with unflushed writes. Do
+  not delete the instance while the volume is still attached: a default
   `scw instance server delete` deletes attached volumes too, which would
   destroy the source before it is snapshotted.
 - You need an Object Storage bucket in the same region as the volume. The
@@ -61,7 +63,10 @@ scw block snapshot import-from-object-storage \
 ```
 
 The import produces a Block Storage snapshot in the same region. Record its
-snapshot ID.
+snapshot ID, then wait until
+`scw block snapshot get <snapshot-id> zone=fr-par-1` reports
+`status: available`. An imported snapshot stays in `creating` while the image
+is being ingested, and creating a volume from it too early fails.
 
 ## 4. Create the replacement Block Storage volume
 

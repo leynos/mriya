@@ -5,7 +5,7 @@
 //! setup failure so an invalid live configuration cannot silently skip the
 //! persistence check.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::Result;
 use mockable::{DefaultEnv, Env};
@@ -105,6 +105,43 @@ pub(super) struct CacheEvidence {
     pub(super) volume_statuses: Vec<String>,
     pub(super) volume_gone: bool,
 }
+
+/// Evidence slot written by the `when` step and read by the `then` steps.
+///
+/// `rstest-bdd` stores a step's return value only when exactly one scenario
+/// fixture has the same type, so the flow records its evidence in this
+/// explicitly typed slot instead of relying on an implicit type match.
+#[derive(Clone)]
+pub(super) struct CacheEvidenceSlot {
+    /// Evidence captured by the persistence flow, once it has run.
+    evidence: Arc<Mutex<Option<CacheEvidence>>>,
+}
+
+impl CacheEvidenceSlot {
+    /// Builds an empty slot.
+    pub(super) fn new() -> Self {
+        Self {
+            evidence: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Stores the evidence produced by the flow.
+    pub(super) fn set(&self, evidence: CacheEvidence) {
+        if let Ok(mut slot) = self.evidence.lock() {
+            *slot = Some(evidence);
+        }
+    }
+
+    /// Returns a copy of the recorded evidence, if the flow has run.
+    pub(super) fn get(&self) -> Option<CacheEvidence> {
+        self.evidence.lock().ok().and_then(|slot| slot.clone())
+    }
+}
+
+/// Scenario fixture holding the live flow's evidence.
+#[mriya_test_macros::allow_fixture_expansion_lints]
+#[fixture]
+pub fn cache_evidence_slot() -> CacheEvidenceSlot { CacheEvidenceSlot::new() }
 
 /// Failure surfaced by a live step.
 #[derive(Debug, thiserror::Error)]

@@ -24,9 +24,13 @@ impl ScalewayBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] when the API
-    /// rejects the request or the returned map violates the contract, and any
-    /// lookup or timeout error from the status wait.
+    /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] only for a 4xx
+    /// rejection, which proves nothing was attached. Any other non-success
+    /// status, an unparsable body or a map that violates the contract means the
+    /// volume may be attached, so those return
+    /// [`ScalewayBackendError::VolumeAttachmentUnverified`] and the caller must
+    /// detach before destroying the server. Lookup and timeout errors from the
+    /// status wait propagate unchanged.
     ///
     /// # Examples
     ///
@@ -63,10 +67,22 @@ impl ScalewayBackend {
             })?;
 
         if !status.is_success() {
-            return Err(ScalewayBackendError::VolumeAttachmentFailed {
-                volume_id: volume_id.to_owned(),
-                instance_id: handle.id.clone(),
-                message: body,
+            // A 4xx rejection proves the request was refused before it took
+            // effect. A 5xx or gateway status does not: the provider may have
+            // attached the volume before the failure, so that case must stay
+            // detachable.
+            return Err(if status.is_client_error() {
+                ScalewayBackendError::VolumeAttachmentFailed {
+                    volume_id: volume_id.to_owned(),
+                    instance_id: handle.id.clone(),
+                    message: body,
+                }
+            } else {
+                ScalewayBackendError::VolumeAttachmentUnverified {
+                    volume_id: volume_id.to_owned(),
+                    instance_id: handle.id.clone(),
+                    message: format!("attach-volume returned {status}: {body}"),
+                }
             });
         }
 

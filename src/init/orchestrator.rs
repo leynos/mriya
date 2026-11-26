@@ -4,13 +4,14 @@ use std::fmt::Display;
 
 use super::{
     error::InitError,
+    format::{FormatFailure, format_error, format_spawn_failure},
     request::{InitOutcome, InitRequest},
 };
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking},
-    cache_device::{self, CacheDeviceReport, CacheDeviceStatus},
+    cache_device,
     config_store::{ConfigStoreError, ConfigWriter},
-    sync::{CommandRunner, SyncError, Syncer},
+    sync::{CommandRunner, Syncer},
     volume::{VolumeBackend, VolumeHandle, VolumeStatus},
 };
 
@@ -38,6 +39,16 @@ where
     W: ConfigWriter,
 {
     /// Creates a new init orchestrator.
+    ///
+    /// # Parameters
+    ///
+    /// - `backend`: creates, attaches and tears down the volume and formatter.
+    /// - `syncer`: runs the format command on the formatter over SSH.
+    /// - `config_writer`: reads and records the configured volume ID.
+    ///
+    /// # Returns
+    ///
+    /// An orchestrator that owns exactly the volume it creates.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>, config_writer: W) -> Self {
         Self {
@@ -48,6 +59,16 @@ where
     }
 
     /// Executes the cache volume preparation workflow.
+    ///
+    /// # Parameters
+    ///
+    /// - `request`: volume, instance and overwrite settings.
+    ///
+    /// # Returns
+    ///
+    /// The new volume ID, the configuration path and an optional warning when
+    /// the environment still overrides the recorded value. Success means the
+    /// formatter is gone and the new ID is written.
     ///
     /// # Errors
     ///
@@ -101,9 +122,9 @@ where
         };
 
         let warning = request
-            .effective_volume_id
+            .environment_volume_id
             .as_deref()
-            .filter(|effective| Some(*effective) != file_volume_id.as_deref())
+            .filter(|effective| *effective != volume.id)
             .map(|effective| {
                 format!(
                     "SCW_DEFAULT_VOLUME_ID={effective} still overrides the new default_volume_id={}; unset it to use the new cache volume",
@@ -118,11 +139,12 @@ where
         })
     }
 
-    /// Tears the formatter down, naming the detached volume if destruction fails.
+    /// Tears the formatter down and deletes the detached volume if needed.
     ///
-    /// Only a destroy failure proves the cache was detached; a stop or detach
-    /// failure leaves the server and volume in an unknown state, so the error
-    /// is reported without a delete instruction.
+    /// Only a destroy failure proves the cache was detached, so only that
+    /// stage deletes the volume this run created. A stop or detach failure
+    /// leaves the server and volume in an unknown state, so the error is
+    /// reported without touching the volume.
     async fn teardown_formatter(
         &self,
         handle: &InstanceHandle,
@@ -131,18 +153,44 @@ where
         match self.backend.teardown(handle, Some(&volume.id)).await {
             Ok(()) => Ok(()),
             Err(failure) if failure.stage == crate::volume::TeardownStage::Destroying => {
-                Err(InitError::TeardownAfterDetach {
-                    volume_id: volume.id.clone(),
-                    zone: volume.zone.clone(),
-                    message: failure.source.to_string(),
-                    source: Box::new(failure.source),
-                })
+                self.delete_detached_volume(volume, failure).await
             }
             Err(failure) => Err(InitError::FormatterTeardown {
                 message: failure.to_string(),
                 source: Box::new(failure.source),
             }),
         }
+    }
+
+    /// Deletes the owned volume after the formatter's destroy failed.
+    ///
+    /// The formatter is detached at this stage, so the volume can be removed.
+    /// The destroy failure is reported either way; the manual recovery command
+    /// appears only when this deletion also fails.
+    async fn delete_detached_volume(
+        &self,
+        volume: &VolumeHandle,
+        failure: crate::volume::TeardownFailure<B::Error>,
+    ) -> Result<(), InitError<B::Error>> {
+        let destroy_message = failure.source.to_string();
+        Err(match self.backend.delete_volume(volume).await {
+            Ok(()) => InitError::FormatterTeardown {
+                message: format!(
+                    "{destroy_message}; the detached cache volume {} was deleted",
+                    volume.id
+                ),
+                source: Box::new(failure.source),
+            },
+            Err(error) => InitError::TeardownAfterDetach {
+                volume_id: volume.id.clone(),
+                zone: volume.zone.clone(),
+                message: format!(
+                    "{destroy_message}; deleting the detached volume {} in zone {} failed: {error}",
+                    volume.id, volume.zone
+                ),
+                source: Box::new(failure.source),
+            },
+        })
     }
 
     /// Creates the cache volume and waits for its documented ready state.
@@ -277,86 +325,5 @@ where
             return Ok(());
         }
         Err(FormatFailure::Report(report))
-    }
-}
-
-/// Builds the failure for a format command that could not be started.
-///
-/// `write_error` prints only the outermost `Display` and no cause chain, so the
-/// cause and its remedy have to be in the message itself. A stored source
-/// alone would report "failed to execute format command", and a user whose
-/// `HOME` cannot be decoded would look for a broken volume instead.
-pub(crate) fn format_spawn_failure(err: SyncError) -> FormatFailure {
-    FormatFailure::Spawn {
-        message: format!("failed to execute format command: {err}"),
-        source: err,
-    }
-}
-
-/// Why formatting failed, kept so the error can carry its cause.
-#[derive(Debug)]
-pub(crate) enum FormatFailure {
-    /// The SSH command could not be started.
-    Spawn {
-        /// Description that names the underlying cause and remedy.
-        message: String,
-        /// Underlying SSH error.
-        source: SyncError,
-    },
-    /// The script ran but printed no usable status line.
-    Protocol {
-        /// Description of the missing status.
-        message: String,
-    },
-    /// The script reported a refusal.
-    Report(CacheDeviceReport),
-}
-
-/// Maps a formatting failure to the matching typed init error.
-pub(crate) fn format_error<BackendError: std::error::Error + 'static>(
-    volume_id: &str,
-    failure: FormatFailure,
-) -> InitError<BackendError> {
-    match failure {
-        FormatFailure::Spawn { message, source } => InitError::FormatFailed {
-            volume_id: volume_id.to_owned(),
-            message,
-            source: Some(Box::new(source)),
-        },
-        FormatFailure::Protocol { message } => InitError::FormatFailed {
-            volume_id: volume_id.to_owned(),
-            message,
-            source: None,
-        },
-        FormatFailure::Report(report) => {
-            let message = report.describe();
-            match report.status() {
-                CacheDeviceStatus::NotFound => InitError::FormatDeviceNotFound {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                },
-                CacheDeviceStatus::Ambiguous => InitError::FormatDeviceAmbiguous {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                },
-                CacheDeviceStatus::RootDisk => InitError::FormatRootDisk {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                },
-                CacheDeviceStatus::RootUnknown => InitError::FormatRootUnknown {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                },
-                CacheDeviceStatus::SignaturePresent => InitError::FormatSignaturePresent {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                },
-                _ => InitError::FormatFailed {
-                    volume_id: volume_id.to_owned(),
-                    message,
-                    source: None,
-                },
-            }
-        }
     }
 }
