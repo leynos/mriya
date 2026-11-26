@@ -327,8 +327,11 @@ billed.
 ## Running the integration check
 
 `make scaleway-test` is opt-in and creates real, billable resources. Without it
-the live scenarios skip themselves and the rest of the suite never touches the
-network.
+the live scenarios skip themselves, so an unconfigured run provisions nothing.
+Other tests in the suite do use the network stack, but only against loopback
+servers and local files: the Scaleway request tests point the backend at a stub
+HTTP server on the loopback interface, and the sync tests copy files locally.
+No test contacts a cloud provider unless the live suite is enabled.
 
 ```bash
 make scaleway-test
@@ -367,10 +370,10 @@ listed or checked.
 ## Cost and resource lifetime
 
 A Mriya run bills for the lifetime of the resources it creates, not for the
-duration of your command. A two-minute test still pays for provisioning, boot,
-sync, and teardown, and providers meter each resource class separately with
-their own minimum billing period. Treat any estimate built by summing command
-runtimes as a lower bound that is usually far too low.
+duration of the remote command. A two-minute test still pays for provisioning,
+boot, sync, and teardown, and providers meter each resource class separately
+with their own minimum billing period. Treat any estimate built by summing
+command runtimes as a lower bound that is usually far too low.
 
 ### What a run creates
 
@@ -395,29 +398,26 @@ cloud-init deadlines are polling budgets, not durations to budget for.
 
 ### Billing minima and granularity
 
-Scaleway's [Billing FAQ](https://www.scaleway.com/en/docs/billing/faq/),
-reviewed 9 September 2025, states that each resource is billed separately for a
+Scaleway's Billing FAQ[^1] states that each resource is billed separately for a
 minimum of 60 minutes, and that each uninterrupted period between a start and a
 stop billing event counts as a separate resource. Two distinct five-minute runs
 are therefore two separately metered resources, not ten minutes of one. The
-[Instances FAQ](https://www.scaleway.com/en/docs/instances/faq/), reviewed
-19 December 2025, describes CPU instances as billed per hour of uptime and GPU
+Instances FAQ[^2] describes CPU instances as billed per hour of uptime and GPU
 instances per minute, except RENDER-S, which is billed per hour.
 
 The two pages disagree on when instance billing starts: the Billing FAQ says it
-starts at power-on, while the
-[Instance pricing guide](https://www.scaleway.com/en/docs/instances/reference-content/understanding-instance-pricing/)
-says it starts when the instance is created. Confirm current terms before
-relying on either for a specific product, and do not assume another provider
-uses the same minimum, the same granularity, or the same start event.
+starts at power-on, while the Instance pricing guide[^3] says it starts when
+the instance is created. Confirm current terms before relying on either for a
+specific product, and do not assume another provider uses the same minimum, the
+same granularity, or the same start event.
 
 ### Root storage is implicit
 
 The create-server request carries no boot-volume type or size, so the provider
 decides both. This has two cost consequences:
 
-- The capacity you pay for is not the capacity you selected, because you did not
-  select it.
+- The billed capacity is not a capacity the operator selected, because neither
+  setting is expressed in configuration.
 - The storage tier is not necessarily the one the instance type suggests. A live
   inspection recorded in
   [issue #155](https://github.com/leynos/mriya/issues/155) found a 10 GB SBS
@@ -435,7 +435,7 @@ deletion is tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
 
 A cache volume is billed from creation until deletion, whether or not a run is
 active and whether or not it is attached. Its cost is the capacity times the
-storage rate times the hours it exists, so a cache you keep for a week costs
+storage rate times the hours it exists, so a cache retained for a week costs
 far more than the runs that used it.
 
 Two failure modes extend that lifetime unexpectedly:
@@ -444,16 +444,14 @@ Two failure modes extend that lifetime unexpectedly:
   volume exists with no configuration entry pointing at it, and nothing sweeps
   it unless it carries a test-run tag.
 - `mriya init --force` replaces the configured ID with a new volume. The
-  previously configured volume is not deleted, so both are billed until you
-  remove the old one yourself.
+  previously configured volume is not deleted, so both are billed until the old
+  one is removed by hand.
 
 ### IP addresses
 
 Mriya requests a dynamic, routed public IPv4 address and does not specify an IP
-type. The
-[IP billing page](https://www.scaleway.com/en/docs/ipam/reference-content/understanding-ip-billing/),
-reviewed 4 November 2025, bills flexible IPs separately from the resource they
-are attached to, from reservation until deletion, whether or not they are
+type. The IP billing page[^4] bills flexible IPs separately from the resource
+they are attached to, from reservation until deletion, whether or not they are
 attached. The Billing FAQ instead ties dynamic-IP billing to association with a
 running instance. Because Mriya does not assert which type it receives, treat
 the address as potentially billable beyond the server's own lifetime and check
@@ -461,42 +459,43 @@ the allocation after a run. Do not assume the assigned type from the request.
 
 ### Worked example: ten short jobs at the per-run minimum
 
-The symbols below let you substitute a provider's published rates without this
-guide hard-coding a price:
+The symbols below let a reader substitute a provider's published rates without
+this guide hard-coding a price:
 
 - `N` — number of runs.
 - `s` — setup time per run: create, attach, power on, and reach SSH.
 - `c` — remote command duration.
 - `t` — teardown time per run: delete request plus polling.
-- `M` — the provider's minimum billing period per resource.
-- `g` — the provider's billing granularity.
+- `M` — the provider's minimum billing period per resource, in minutes.
+- `g` — the provider's billing granularity, in minutes.
 - `R_vm` — the instance-type rate per billed hour.
 
-Per-run billed compute is `max(M, ceil((s + c + t) / g) * g)`, and total
-compute cost is `N * (per-run billed compute) * R_vm`. Root storage, cache
-storage, and IP charges are separate terms: per-run root storage is billed for
-each run's own root volume; a cache volume is
-`capacity_GiB * retained_hours * R_storage`; and the `mriya init` formatter
-instance is a run of its own for compute purposes.
+`M`, `g`, `s`, `c`, and `t` are all in minutes, so the billed duration must be
+divided by 60 before an hourly rate is applied. Per-run billed compute, in
+minutes, is `max(M, ceil((s + c + t) / g) * g)`; total compute cost is
+`N * (per-run billed compute) / 60 * R_vm`. Root storage, cache storage, and IP
+charges are separate terms: per-run root storage is billed for each run's own
+root volume; a cache volume is `capacity_GiB * retained_hours * R_storage`; and
+the `mriya init` formatter instance is a run of its own for compute purposes.
 
-Take ten runs of a two-minute command with three minutes of setup and teardown,
-16 minutes of measured lifetime per run — 20 minutes of command time and 160
-minutes of billable lifetime in total. With `M = 60` minutes and `g = 60`
+Take ten runs of a two-minute command with three minutes of setup and three
+minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
+lifetime cover 20 minutes of command time. With `M = 60` minutes and `g = 60`
 minutes, each run is billed as one hour:
 
 ```text
 per-run billed compute = max(60, ceil((3 + 2 + 3) / 60) * 60) = 60 minutes
-total compute          = 10 * 60 minutes = 600 minutes = 10 instance-hours
+total compute cost     = 10 * 60 / 60 * R_vm = 10 * R_vm
 ```
 
-So 20 minutes of command time is billed as 10 instance-hours of compute before
-storage or IP charges are added. Halving the command time barely changes the
-total, because the minimum dominates; halving the number of runs halves it.
-This example uses the Scaleway CPU-instance terms described above, as of the
-cited review dates. It does not apply to every provider or product, and it
-quotes no price.
+So 20 minutes of command time costs 10 instance-hours of compute — ten times
+`R_vm` — before storage or IP charges are added. Halving the command time
+barely changes the total, because the minimum dominates; halving the number of
+runs halves it. This example uses the Scaleway CPU-instance terms described
+above, as of the cited review dates. It does not apply to every provider or
+product, and it quotes no price.
 
-### If you quote a price
+### Quoting a price
 
 Any price stated in a Mriya discussion, issue, or document must name:
 
@@ -530,14 +529,13 @@ provider stops listing it. That is the extent of the guarantee:
   and does not cover resources created outside it.
 
 Do not rely on Mriya as a cost control. Check the provider console after
-unusual failures, and delete cache volumes you no longer need.
+unusual failures, and delete cache volumes that are no longer needed.
 
 ### Concurrency
 
 Only one instance can attach a given Block Storage volume at a time, and the
-volume must be in the same availability zone as the instance; Scaleway's
-[Block Storage attach guide](https://www.scaleway.com/en/docs/block-storage/how-to/attach-a-volume/),
-reviewed 21 October 2025, states both constraints. This is a provider rule, so
+volume must be in the same availability zone as the instance; Scaleway's Block
+Storage attach guide[^5] states both constraints. This is a provider rule, so
 it applies to every client, not just Mriya.
 
 Mriya enforces nothing on top of it. There is no lock, queue, or retry around
@@ -613,3 +611,22 @@ you need to tell those two cases apart or report the cause; the error type
 implements `std::error::Error`, so `?` propagates it in a program whose error
 type accepts it. Everything to change when upgrading a dependent is listed in
 [Migrating to 0.2.0](migration-0.2.0.md).
+
+[^1]: Scaleway, "Billing FAQ",
+    <https://www.scaleway.com/en/docs/billing/faq/>, reviewed 9 September 2025.
+
+[^2]: Scaleway, "Instances FAQ",
+    <https://www.scaleway.com/en/docs/instances/faq/>, reviewed 19 December
+    2025.
+
+[^3]: Scaleway, "Understanding Scaleway Instance pricing",
+    <https://www.scaleway.com/en/docs/instances/reference-content/understanding-instance-pricing/>,
+    reviewed 19 August 2025.
+
+[^4]: Scaleway, "Understanding billing for Scaleway IP addresses",
+    <https://www.scaleway.com/en/docs/ipam/reference-content/understanding-ip-billing/>,
+    reviewed 4 November 2025.
+
+[^5]: Scaleway, "How to attach a Block Storage volume to an Instance",
+    <https://www.scaleway.com/en/docs/block-storage/how-to/attach-a-volume/>,
+    reviewed 21 October 2025.

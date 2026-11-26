@@ -1530,10 +1530,13 @@ pair. We give flexibility:
 **Cloud Resource Cleanup on Failure:** Failures can happen at any step – we
 ensure that we don’t leak resources:
 
-- If VM creation fails (API error or no quota), we propagate that error and
-  nothing needs cleanup (no VM was created). This holds only when the create
-  request itself fails: a request that succeeds and is then followed by a
-  volume or power-on failure is outside it. See the status notes under
+- If VM creation is **known** not to have happened (an API error that names the
+  cause, or no quota before the request was accepted), we propagate that error
+  and nothing needs cleanup. Two cases fall outside that: a request whose
+  response timed out, where the client saw a failure but the provider may
+  already have created the server, and a request that succeeded but was
+  followed by a volume or power-on failure. Both can leave a stopped server.
+  See the status notes under
   [Implementation status (October 2026)](#implementation-status-october-2026)
   and [issue #154](https://github.com/leynos/mriya/issues/154).
 
