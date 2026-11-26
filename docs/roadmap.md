@@ -33,6 +33,11 @@ for concrete, testable deliverables.
 - [x] Allow an optional volume ID in config and attach it at VM creation,
   mounting to a stable path; acceptance: two consecutive runs reuse the same
   volume and retain files created in the first run.
+- [x] Create, look up, wait for, and delete cache volumes through the Block
+  Storage API, attach and detach with `volume_type: sbs_volume`, identify the
+  guest device by its `volume-<uuid>` serial, and require a verified mount;
+  acceptance: the opt-in three-VM suite reads sentinel files across successive
+  servers and the volume is `available` after every teardown.
 
 ### 2.2. Cache routing
 

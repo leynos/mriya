@@ -4,14 +4,20 @@
 //! The creation request sets `stopped: true` so the payload is available when
 //! the instance is powered on.
 
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use super::{
     super::{ScalewayBackend, ScalewayBackendError},
     InstanceSnapshot,
 };
-use crate::{backend::InstanceRequest, scaleway::types::Zone};
+use crate::{
+    backend::{InstanceHandle, InstanceRequest},
+    scaleway::types::Zone,
+};
 
 /// JSON body for the create-server call.
 ///
@@ -121,6 +127,75 @@ impl ScalewayBackend {
         Err(ScalewayBackendError::PowerOnNotAllowed {
             instance_id: snapshot.id.as_str().to_owned(),
             state: snapshot.state.as_str().to_owned(),
+        })
+    }
+
+    /// Powers the instance off unless it is already stopped, then waits for
+    /// the `stopped` state.
+    ///
+    /// Scaleway only permits volume detachment while the server is stopped, so
+    /// teardown calls this before detaching the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider error when the power-off action is rejected, and
+    /// [`ScalewayBackendError::Timeout`] when the server never reports
+    /// `stopped`. A server that has already disappeared counts as stopped.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // The companion instance is running after formatting; this stops it
+    /// // before the cache is detached.
+    /// backend.power_off_if_needed(&handle).await?;
+    /// ```
+    pub(in crate::scaleway) async fn power_off_if_needed(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        let Some(snapshot) = self.fetch_instance(handle).await? else {
+            return Ok(());
+        };
+
+        match snapshot.state.as_str() {
+            "stopped" => return Ok(()),
+            "stopping" => return self.wait_for_stopped(handle).await,
+            _ => {
+                let zone = Zone::from(handle.zone.as_str());
+                self.power_off_instance(&zone, &handle.id).await?;
+            }
+        }
+
+        self.wait_for_stopped(handle).await
+    }
+
+    /// Polls until the instance reports `stopped` or disappears.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::Timeout`] when the deadline elapses
+    /// before the server reports `stopped`.
+    pub(in crate::scaleway) async fn wait_for_stopped(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        let deadline = Instant::now() + self.wait_timeout;
+        loop {
+            match self.fetch_instance(handle).await? {
+                None => return Ok(()),
+                Some(snapshot) if snapshot.state.as_str() == "stopped" => return Ok(()),
+                Some(_) => {}
+            }
+
+            if Instant::now() >= deadline {
+                break;
+            }
+            sleep(self.poll_interval).await;
+        }
+
+        Err(ScalewayBackendError::Timeout {
+            action: String::from("wait_for_stopped"),
+            instance_id: handle.id.clone(),
         })
     }
 

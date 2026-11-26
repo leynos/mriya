@@ -233,6 +233,10 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
     let outcome = orchestrator.execute(&request).await?;
 
+    if let Some(warning) = outcome.warning.as_deref() {
+        writeln!(io::stderr(), "warning: {warning}").ok();
+    }
+
     writeln!(
         io::stdout(),
         "created cache volume {} and updated {}",

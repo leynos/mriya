@@ -60,6 +60,14 @@ pub enum ConfigStoreError {
         /// Volume identifier already present in configuration.
         volume_id: String,
     },
+    /// Raised when the environment supplies an effective volume ID.
+    #[error(
+        "SCW_DEFAULT_VOLUME_ID={volume_id} is already in effect and overrides mriya.toml; unset it or rerun with --force to create and record a new volume"
+    )]
+    EffectiveVolumeConfigured {
+        /// Volume identifier supplied by the environment.
+        volume_id: String,
+    },
 }
 
 /// Abstraction over configuration writers for dependency injection.

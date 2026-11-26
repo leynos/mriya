@@ -16,6 +16,8 @@ use mriya::{
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,
+    VolumeState,
+    VolumeStatus,
     backend::BackendFuture,
 };
 use thiserror::Error;
@@ -29,20 +31,24 @@ pub struct ScriptedVolumeBackend {
 #[derive(Clone, Copy, Debug)]
 enum FailureMode {
     CreateVolume,
+    VolumeReady,
     Provision,
     Wait,
     Detach,
     Destroy,
+    DeleteVolume,
 }
 
 impl FailureMode {
     const fn flag(self) -> u8 {
         match self {
-            Self::CreateVolume => 0b00001,
-            Self::Provision => 0b00010,
-            Self::Wait => 0b00100,
-            Self::Detach => 0b01000,
-            Self::Destroy => 0b10000,
+            Self::CreateVolume => 0b0000_0001,
+            Self::VolumeReady => 0b0000_0010,
+            Self::Provision => 0b0000_0100,
+            Self::Wait => 0b0000_1000,
+            Self::Detach => 0b0001_0000,
+            Self::Destroy => 0b0010_0000,
+            Self::DeleteVolume => 0b0100_0000,
         }
     }
 }
@@ -60,7 +66,24 @@ impl Failures {
 struct State {
     failures: Failures,
     create_volume_calls: u32,
+    volume_ready_calls: u32,
+    delete_volume_calls: u32,
+    teardown_calls: u32,
     destroy_calls: u32,
+}
+
+/// Builds the available volume state the doubles report.
+fn volume_state() -> VolumeState {
+    VolumeState {
+        id: String::from("vol-123"),
+        zone: String::from("test-zone"),
+        project_id: String::from("project"),
+        status: VolumeStatus::Available,
+        volume_type: String::from("sbs_5k"),
+        storage_class: Some(String::from("sbs")),
+        size_bytes: 10_000_000_000,
+        references: Vec::new(),
+    }
 }
 
 #[derive(Clone)]
@@ -83,6 +106,22 @@ impl ScriptedVolumeBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::CreateVolume);
+    }
+
+    pub fn fail_volume_ready(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .failures
+            .set(FailureMode::VolumeReady);
+    }
+
+    pub fn fail_delete_volume(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .failures
+            .set(FailureMode::DeleteVolume);
     }
 
     pub fn fail_provision(&self) {
@@ -131,6 +170,27 @@ impl ScriptedVolumeBackend {
             .destroy_calls
     }
 
+    pub fn delete_volume_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .delete_volume_calls
+    }
+
+    pub fn volume_ready_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .volume_ready_calls
+    }
+
+    pub fn teardown_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .teardown_calls
+    }
+
     /// Execute an operation with scripted failure checking.
     fn execute_with_failure_check<T>(
         &self,
@@ -172,6 +232,10 @@ impl ScriptedVolumeBackend {
 pub enum ScriptedVolumeBackendError {
     #[error("volume create failure")]
     VolumeCreate,
+    #[error("volume readiness failure")]
+    VolumeReady,
+    #[error("volume delete failure")]
+    DeleteVolume,
     #[error("provision failure")]
     Provision,
     #[error("wait failure")]
@@ -259,6 +323,74 @@ impl VolumeBackend for ScriptedVolumeBackend {
         )
     }
 
+    fn get_volume<'a>(
+        &'a self,
+        _zone: &'a str,
+        _volume_id: &'a str,
+    ) -> BackendFuture<'a, VolumeState, Self::Error> {
+        self.run_operation(
+            OperationSpec {
+                context: "get_volume",
+                failure_mode: FailureMode::VolumeReady,
+                error: ScriptedVolumeBackendError::VolumeReady,
+            },
+            |_| {},
+            volume_state,
+        )
+    }
+
+    fn wait_for_volume_status<'a>(
+        &'a self,
+        _zone: &'a str,
+        _volume_id: &'a str,
+        _status: VolumeStatus,
+    ) -> BackendFuture<'a, VolumeState, Self::Error> {
+        self.run_operation(
+            OperationSpec {
+                context: "wait_for_volume_status",
+                failure_mode: FailureMode::VolumeReady,
+                error: ScriptedVolumeBackendError::VolumeReady,
+            },
+            |state| {
+                state.volume_ready_calls += 1;
+            },
+            volume_state,
+        )
+    }
+
+    fn delete_volume<'a>(
+        &'a self,
+        _handle: &'a VolumeHandle,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        self.run_operation(
+            OperationSpec {
+                context: "delete_volume",
+                failure_mode: FailureMode::DeleteVolume,
+                error: ScriptedVolumeBackendError::DeleteVolume,
+            },
+            |state| {
+                state.delete_volume_calls += 1;
+            },
+            || (),
+        )
+    }
+
+    fn attach_volume<'a>(
+        &'a self,
+        _handle: &'a InstanceHandle,
+        _volume_id: &'a str,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        self.run_operation(
+            OperationSpec {
+                context: "attach_volume",
+                failure_mode: FailureMode::Provision,
+                error: ScriptedVolumeBackendError::Provision,
+            },
+            |_| {},
+            || (),
+        )
+    }
+
     fn detach_volume<'a>(
         &'a self,
         _handle: &'a InstanceHandle,
@@ -273,6 +405,31 @@ impl VolumeBackend for ScriptedVolumeBackend {
             |_| {},
             || (),
         )
+    }
+
+    fn teardown<'a>(
+        &'a self,
+        _handle: &'a InstanceHandle,
+        _volume_id: Option<&'a str>,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        Box::pin(async move {
+            let outcome = {
+                let mut state = self.state.lock().map_err(|err| {
+                    ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}"))
+                })?;
+                state.teardown_calls += 1;
+                state.destroy_calls += 1;
+
+                if state.failures.contains(FailureMode::Detach) {
+                    Err(ScriptedVolumeBackendError::Detach)
+                } else if state.failures.contains(FailureMode::Destroy) {
+                    Err(ScriptedVolumeBackendError::Destroy)
+                } else {
+                    Ok(())
+                }
+            };
+            outcome
+        })
     }
 }
 

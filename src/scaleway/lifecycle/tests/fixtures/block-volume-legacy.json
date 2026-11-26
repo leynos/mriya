@@ -1,0 +1,15 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "name": "legacy-cache",
+  "type": "b_ssd",
+  "size": 20000000000,
+  "project_id": "proj",
+  "created_at": "2024-01-01T10:00:00.000000Z",
+  "updated_at": "2024-01-01T10:00:00.000000Z",
+  "references": [],
+  "parent_snapshot_id": null,
+  "status": "available",
+  "tags": ["mriya", "cache"],
+  "specs": {"perf_iops": 5000, "class": "bssd"},
+  "zone": "zone"
+}

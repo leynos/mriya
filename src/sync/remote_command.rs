@@ -29,11 +29,17 @@ pub const CACHE_SUBDIRECTORIES: &[&str] = &[
 
 /// Builds a remote command string with an optional cache routing preamble.
 ///
-/// The remote path is shell-escaped, cache exports are prepended when enabled,
-/// and the user command is wrapped with a directory change.
-pub(crate) fn build_remote_command(config: &SyncConfig, remote_command: &str) -> String {
+/// The remote path is shell-escaped, cache exports are prepended when routing
+/// is enabled *and* the caller verified the cache mount, and the user command
+/// is wrapped with a directory change. The `mountpoint -q` guard remains as a
+/// second check even after verification.
+pub(crate) fn build_remote_command(
+    config: &SyncConfig,
+    remote_command: &str,
+    cache_verified: bool,
+) -> String {
     let escaped_path = escape(config.remote_path.as_str().into());
-    let cache_preamble = cache_routing_preamble(config);
+    let cache_preamble = cache_routing_preamble(config, cache_verified);
     if cache_preamble.is_empty() {
         format!("cd {escaped_path} && {remote_command}")
     } else {
@@ -42,11 +48,13 @@ pub(crate) fn build_remote_command(config: &SyncConfig, remote_command: &str) ->
 }
 
 /// Builds a shell prefix that exports build cache locations under the
-/// volume mount path, but only when the path is a mount point at run time.
+/// volume mount path, but only when the cache was verified at run time.
 ///
-/// Returns an empty string when cache routing is disabled.
-fn cache_routing_preamble(config: &SyncConfig) -> String {
-    if !config.route_build_caches {
+/// Returns an empty string when cache routing is disabled or unverified, so a
+/// configured cache can never silently route build output onto the root
+/// filesystem.
+fn cache_routing_preamble(config: &SyncConfig, cache_verified: bool) -> String {
+    if !config.route_build_caches || !cache_verified {
         return String::new();
     }
 

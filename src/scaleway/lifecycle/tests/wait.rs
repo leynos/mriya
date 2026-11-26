@@ -162,6 +162,7 @@ async fn wait_for_ssh_ready_matches_listener_state(
     let backend = ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
+        block_api_base: String::from("http://127.0.0.1:9/block/v1"),
         config: super::dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,

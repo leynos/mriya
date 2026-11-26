@@ -1,0 +1,7 @@
+{
+  "volume_types": [
+    {"type": "sbs_15k", "specs": {"perf_iops": 15000, "class": "sbs"}, "zone": "zone"},
+    {"type": "sbs_5k", "specs": {"perf_iops": 5000, "class": "sbs"}, "zone": "zone"}
+  ],
+  "total_count": 2
+}

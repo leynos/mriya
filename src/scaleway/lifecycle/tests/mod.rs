@@ -104,6 +104,7 @@ fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
+        block_api_base: String::from("http://127.0.0.1:9/block/v1"),
         config: dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
@@ -160,4 +161,6 @@ mod http_stub;
 mod instances;
 mod network;
 mod properties;
+mod provision;
+mod volume_attach;
 mod volumes;

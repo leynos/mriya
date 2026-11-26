@@ -3,17 +3,24 @@
 use std::{ffi::OsString, fmt::Display};
 
 use camino::Utf8PathBuf;
-use helpers::{format_command, volume_name_for_project, volume_size_bytes};
+use helpers::{volume_name_for_project, volume_size_bytes};
 use ortho_config::OrthoConfig;
 use serde::Deserialize;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    cache_device::{self, CacheDeviceReport, CacheDeviceStatus},
     config::ScalewayConfig,
     config_store::{ConfigStoreError, ConfigWriter},
-    sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
-    teardown::append_teardown_note,
-    volume::{VolumeBackend, VolumeHandle, VolumeRequest},
+    sync::{CommandRunner, SyncError, Syncer},
+    volume::{
+        MIN_VOLUME_SIZE_GB,
+        VolumeBackend,
+        VolumeHandle,
+        VolumeRequest,
+        VolumeStatus,
+        VolumeTier,
+    },
 };
 
 mod error;
@@ -35,9 +42,12 @@ pub use error::{InitConfigError, InitError, InitRequestError};
     )
 )]
 pub struct InitConfig {
-    /// Size of the cache volume in gigabytes.
+    /// Size of the cache volume in decimal gigabytes (10^9 bytes).
     #[ortho_config(default = 20)]
     pub volume_size_gb: u32,
+    /// Block Storage performance tier: `sbs_5k` (default) or `sbs_15k`.
+    #[ortho_config(default = "sbs_5k".to_owned())]
+    pub volume_tier: String,
 }
 
 impl InitConfig {
@@ -56,12 +66,42 @@ impl InitConfig {
     /// # Errors
     ///
     /// Returns [`InitConfigError::InvalidVolumeSize`] when the configured
-    /// volume size is zero.
-    pub const fn validate(&self) -> Result<(), InitConfigError> {
-        if self.volume_size_gb == 0 {
+    /// volume size is below the provider's 5 GB minimum, and
+    /// [`InitConfigError::InvalidVolumeTier`] when the tier is not `sbs_5k` or
+    /// `sbs_15k`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mriya::InitConfig;
+    ///
+    /// let config = InitConfig {
+    ///     volume_size_gb: 4,
+    ///     volume_tier: String::from("sbs_5k"),
+    /// };
+    /// assert!(config.validate().is_err());
+    ///
+    /// let config = InitConfig {
+    ///     volume_size_gb: 5,
+    ///     volume_tier: String::from("sbs_15k"),
+    /// };
+    /// assert!(config.validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), InitConfigError> {
+        if u64::from(self.volume_size_gb) < MIN_VOLUME_SIZE_GB {
             return Err(InitConfigError::InvalidVolumeSize);
         }
+        VolumeTier::parse(&self.volume_tier)?;
         Ok(())
+    }
+
+    /// Returns the parsed performance tier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InitConfigError::InvalidVolumeTier`] for an unsupported value.
+    pub fn tier(&self) -> Result<VolumeTier, InitConfigError> {
+        Ok(VolumeTier::parse(&self.volume_tier)?)
     }
 }
 
@@ -74,6 +114,12 @@ pub struct InitRequest {
     pub instance_request: InstanceRequest,
     /// Whether to overwrite any existing configured volume ID.
     pub overwrite_existing_volume_id: bool,
+    /// Effective merged volume ID at request time, including the environment.
+    ///
+    /// The file may hold a different value; this is what `mriya run` will
+    /// actually use, so init must refuse to create a cache that would be
+    /// ignored.
+    pub effective_volume_id: Option<String>,
 }
 
 impl InitRequest {
@@ -89,6 +135,7 @@ impl InitRequest {
         overwrite_existing_volume_id: bool,
     ) -> Result<Self, InitRequestError> {
         init_config.validate()?;
+        let tier = init_config.tier()?;
         let volume_name = volume_name_for_project(project_name);
         if volume_name.trim().is_empty() {
             return Err(InitRequestError::InvalidVolumeName);
@@ -108,18 +155,27 @@ impl InitRequest {
             .build()
             .map_err(|err| InitRequestError::RequestBuild(err.to_string()))?;
 
+        let effective_volume_id = scaleway
+            .default_volume_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+
         let volume = VolumeRequest::new(
             volume_name,
             size_bytes,
             scaleway.default_zone.clone(),
             scaleway.default_project_id.clone(),
         )
-        .organisation_id(scaleway.default_organization_id.clone());
+        .organisation_id(scaleway.default_organization_id.clone())
+        .with_tier(tier);
 
         Ok(Self {
             volume,
             instance_request,
             overwrite_existing_volume_id,
+            effective_volume_id,
         })
     }
 }
@@ -131,20 +187,20 @@ pub struct InitOutcome {
     pub volume_id: String,
     /// Configuration file path that was updated.
     pub config_path: Utf8PathBuf,
+    /// Warning to show the user, such as an environment ID that will override
+    /// the newly written file value.
+    pub warning: Option<String>,
 }
 
 /// Coordinates volume creation, formatting, and configuration updates.
 #[derive(Debug)]
 pub struct InitOrchestrator<B, R: CommandRunner, W> {
-    /// Backend that creates the volume and destroys the helper instance.
+    /// Backend that creates the volume and manages the helper instance.
     ///
-    /// The volume is deliberately not destroyed on failure: no method bound
-    /// here can delete one, so a failed run leaves it in place (issue #154).
-    /// Janitor cleanup is not a safety net for it in general: the janitor
-    /// sweeps only volumes carrying an `mriya-test-run-<id>` tag, and this
-    /// volume carries one only when `MRIYA_TEST_RUN_ID` holds a non-blank
-    /// value. Without that variable the janitor will not remove a leaked
-    /// volume, and it remains until an operator deletes it manually.
+    /// The orchestrator owns exactly the volume it created. A later failure
+    /// tears the formatter down and deletes that volume, never a previously
+    /// configured ID. If deletion fails, the error names the volume and the
+    /// `scw block volume delete` command for manual recovery.
     backend: B,
     /// Runs the format command on the helper instance over SSH.
     syncer: Syncer<R>,
@@ -176,7 +232,8 @@ where
     /// Returns [`InitError`] when volume creation, formatting, teardown, or
     /// configuration updates fail.
     pub async fn execute(&self, request: &InitRequest) -> Result<InitOutcome, InitError<B::Error>> {
-        self.ensure_configurable(request)?;
+        let file_volume_id = self.config_writer.current_volume_id()?;
+        self.ensure_configurable(request, file_volume_id.as_deref())?;
 
         let volume = self
             .backend
@@ -184,140 +241,178 @@ where
             .await
             .map_err(InitError::Volume)?;
 
-        let (handle, networking) = self.prepare_instance(request, &volume).await?;
-        let format_result = self.format_volume(&networking, &volume.id);
-        self.handle_failure_or_destroy(&handle, format_result, |message, failure| {
-            InitError::Format {
-                message,
-                source: failure.source,
-            }
-        })
-        .await?;
-
-        let detach_result = self.backend.detach_volume(&handle, &volume.id).await;
-        self.handle_failure_or_destroy(&handle, detach_result, |message, err| InitError::Detach {
-            message,
-            source: err,
-        })
-        .await?;
-
-        self.backend
-            .destroy(handle)
+        if let Err(source) = self
+            .backend
+            .wait_for_volume_status(&volume.zone, &volume.id, VolumeStatus::Available)
             .await
-            .map_err(InitError::Teardown)?;
-
-        let config_path = self
-            .config_writer
-            .write_volume_id(&volume.id, request.overwrite_existing_volume_id)?;
-
-        Ok(InitOutcome {
-            volume_id: volume.id,
-            config_path,
-        })
-    }
-
-    /// Fails before creating anything when a volume ID is already configured
-    /// and overwriting was not requested.
-    fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
-        if let Some(existing) = self.config_writer.current_volume_id()?
-            && !request.overwrite_existing_volume_id
         {
-            return Err(InitError::Config(
-                ConfigStoreError::VolumeAlreadyConfigured {
-                    volume_id: existing,
-                },
-            ));
+            let message = source.to_string();
+            let error = InitError::VolumeReady { message, source };
+            return Err(self.rollback(&volume, None, error).await);
         }
-        Ok(())
-    }
 
-    /// Creates a helper instance with the new volume attached and waits for it
-    /// to be reachable.
-    ///
-    /// Cloud-init user-data is cleared so the helper boots with defaults.
-    async fn prepare_instance(
-        &self,
-        request: &InitRequest,
-        volume: &VolumeHandle,
-    ) -> Result<(InstanceHandle, InstanceNetworking), InitError<B::Error>> {
         let mut instance_request = request.instance_request.clone();
         instance_request.volume_id = Some(volume.id.clone());
         instance_request.cloud_init_user_data = None;
 
-        let handle = self
-            .backend
-            .create(&instance_request)
-            .await
-            .map_err(InitError::Provision)?;
+        let handle = match self.backend.create(&instance_request).await {
+            Ok(handle) => handle,
+            Err(source) => {
+                let error = InitError::Provision(source);
+                return Err(self.rollback(&volume, None, error).await);
+            }
+        };
 
-        let networking = self.wait_for_ready_or_destroy(&handle).await?;
-        Ok((handle, networking))
+        let networking = match self.backend.wait_for_ready(&handle).await {
+            Ok(networking) => networking,
+            Err(source) => {
+                let message = source.to_string();
+                let error = InitError::Wait { message, source };
+                return Err(self.rollback(&volume, Some(&handle), error).await);
+            }
+        };
+
+        if let Err(failure) = self.format_volume(&networking, &volume.id) {
+            let error = format_error(&volume.id, failure);
+            return Err(self.rollback(&volume, Some(&handle), error).await);
+        }
+
+        if let Err(source) = self.backend.teardown(&handle, Some(&volume.id)).await {
+            return Err(InitError::Teardown(source));
+        }
+
+        let config_path = match self
+            .config_writer
+            .write_volume_id(&volume.id, request.overwrite_existing_volume_id)
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(self.rollback(&volume, None, InitError::Config(error)).await);
+            }
+        };
+
+        let warning = request
+            .effective_volume_id
+            .as_deref()
+            .filter(|effective| Some(*effective) != file_volume_id.as_deref())
+            .map(|effective| {
+                format!(
+                    "SCW_DEFAULT_VOLUME_ID={effective} still overrides the new default_volume_id={}; unset it to use the new cache volume",
+                    volume.id
+                )
+            });
+
+        Ok(InitOutcome {
+            volume_id: volume.id,
+            config_path,
+            warning,
+        })
     }
 
-    /// Waits for SSH readiness, destroying the instance if that fails.
-    async fn wait_for_ready_or_destroy(
+    /// Fails before creating anything when an effective volume ID is already
+    /// configured and overwriting was not requested.
+    ///
+    /// The effective value includes `SCW_DEFAULT_VOLUME_ID`, which `mriya run`
+    /// prefers over the file, so creating a new volume while it is set would
+    /// silently leave the new cache unused.
+    fn ensure_configurable(
         &self,
-        handle: &InstanceHandle,
-    ) -> Result<InstanceNetworking, InitError<B::Error>> {
-        match self.backend.wait_for_ready(handle).await {
-            Ok(net) => Ok(net),
-            Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
-                Err(InitError::Wait {
-                    message,
-                    source: err,
-                })
+        request: &InitRequest,
+        file_volume_id: Option<&str>,
+    ) -> Result<(), InitError<B::Error>> {
+        if request.overwrite_existing_volume_id {
+            return Ok(());
+        }
+
+        if let Some(existing) = file_volume_id {
+            return Err(InitError::Config(
+                ConfigStoreError::VolumeAlreadyConfigured {
+                    volume_id: existing.to_owned(),
+                },
+            ));
+        }
+
+        if let Some(effective) = request
+            .effective_volume_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            return Err(InitError::Config(
+                ConfigStoreError::EffectiveVolumeConfigured {
+                    volume_id: effective.to_owned(),
+                },
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Removes the owned volume and any formatter server after a failure.
+    ///
+    /// Only the handle created by this call is touched. A cleanup failure
+    /// wraps the original error and names the volume for manual recovery.
+    async fn rollback(
+        &self,
+        volume: &VolumeHandle,
+        handle: Option<&InstanceHandle>,
+        original: InitError<B::Error>,
+    ) -> InitError<B::Error> {
+        let mut cleanup = Vec::new();
+
+        if let Some(handle) = handle
+            && let Err(error) = self.backend.teardown(handle, Some(&volume.id)).await
+        {
+            cleanup.push(format!(
+                "tearing down formatter {} failed: {error}",
+                handle.id
+            ));
+        }
+
+        if let Err(error) = self.backend.delete_volume(volume).await {
+            cleanup.push(format!(
+                "deleting volume {} in zone {} failed: {error}; delete it with `scw block volume delete {} zone={}`",
+                volume.id, volume.zone, volume.id, volume.zone
+            ));
+        }
+
+        if cleanup.is_empty() {
+            original
+        } else {
+            let original: Box<dyn std::error::Error + Send + Sync + 'static> = Box::new(original);
+            InitError::Rollback {
+                original,
+                cleanup: cleanup.join("; "),
             }
         }
     }
 
-    /// Passes `Ok` through. On failure, destroys the instance and builds the
-    /// error with `make_error` from the message and original error.
-    async fn handle_failure_or_destroy<E>(
-        &self,
-        handle: &InstanceHandle,
-        result: Result<(), E>,
-        make_error: impl FnOnce(String, E) -> InitError<B::Error>,
-    ) -> Result<(), InitError<B::Error>>
-    where
-        E: Display,
-    {
-        match result {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
-                Err(make_error(message, err))
-            }
-        }
-    }
-
-    /// Formats the volume on the helper instance, failing when the command
-    /// cannot be run or exits with anything other than 0.
+    /// Formats the new volume through the guarded cache-device script.
+    ///
+    /// The script identifies the device by its `volume-<uuid>` serial, refuses
+    /// the root disk and any ancestor, refuses a device that already carries a
+    /// filesystem signature, labels the new ext4 filesystem and flushes it.
+    /// The single status line is parsed rather than trusting the exit code.
     fn format_volume(
         &self,
         networking: &InstanceNetworking,
         volume_id: &str,
     ) -> Result<(), FormatFailure> {
+        let script = cache_device::format_script(volume_id);
         let output = self
             .syncer
-            .run_remote_raw(networking, &format_command(volume_id))
+            .run_remote_raw(networking, &script)
             .map_err(format_spawn_failure)?;
 
-        if output.exit_code == Some(0) {
+        let report = cache_device::parse_report(&output.stdout).map_err(|error| {
+            FormatFailure::Protocol {
+                message: format!("format script produced no usable status: {error}"),
+            }
+        })?;
+
+        if report.status().is_success() {
             return Ok(());
         }
-
-        Err(FormatFailure {
-            message: format_failure_message(&output),
-            source: None,
-        })
-    }
-
-    /// Destroys the instance and returns `err` as text, with a note appended
-    /// when the teardown also fails.
-    async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
-        let teardown_error = self.backend.destroy(handle.clone()).await.err();
-        append_teardown_note(err.to_string(), teardown_error.as_ref())
+        Err(FormatFailure::Report(report))
     }
 }
 
@@ -328,36 +423,77 @@ where
 /// alone would report "failed to execute format command", and a user whose
 /// `HOME` cannot be decoded would look for a broken volume instead.
 fn format_spawn_failure(err: SyncError) -> FormatFailure {
-    FormatFailure {
+    FormatFailure::Spawn {
         message: format!("failed to execute format command: {err}"),
-        source: Some(err),
+        source: err,
     }
 }
 
 /// Why formatting failed, kept so the error can carry its cause.
 #[derive(Debug)]
-struct FormatFailure {
-    /// Description of the failure, shown to the user.
-    message: String,
-    /// Underlying SSH error, absent when the command ran but exited non-zero.
-    source: Option<SyncError>,
+enum FormatFailure {
+    /// The SSH command could not be started.
+    Spawn {
+        /// Description that names the underlying cause and remedy.
+        message: String,
+        /// Underlying SSH error.
+        source: SyncError,
+    },
+    /// The script ran but printed no usable status line.
+    Protocol {
+        /// Description of the missing status.
+        message: String,
+    },
+    /// The script reported a refusal.
+    Report(CacheDeviceReport),
 }
 
-impl Display for FormatFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-/// Describes a non-zero or missing exit status from `mkfs.ext4`, including
-/// trimmed stderr when there is any.
-fn format_failure_message(output: &RemoteCommandOutput) -> String {
-    let stderr = output.stderr.trim();
-    match output.exit_code {
-        Some(code) if stderr.is_empty() => format!("mkfs.ext4 exited with status {code}"),
-        Some(code) => format!("mkfs.ext4 exited with status {code}: {stderr}"),
-        None if stderr.is_empty() => String::from("mkfs.ext4 terminated without an exit status"),
-        None => format!("mkfs.ext4 terminated without an exit status: {stderr}"),
+/// Maps a formatting failure to the matching typed init error.
+fn format_error<BackendError: std::error::Error + 'static>(
+    volume_id: &str,
+    failure: FormatFailure,
+) -> InitError<BackendError> {
+    match failure {
+        FormatFailure::Spawn { message, source } => InitError::FormatFailed {
+            volume_id: volume_id.to_owned(),
+            message,
+            source: Some(source),
+        },
+        FormatFailure::Protocol { message } => InitError::FormatFailed {
+            volume_id: volume_id.to_owned(),
+            message,
+            source: None,
+        },
+        FormatFailure::Report(report) => {
+            let message = report.describe();
+            match report.status() {
+                CacheDeviceStatus::NotFound => InitError::FormatDeviceNotFound {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                },
+                CacheDeviceStatus::Ambiguous => InitError::FormatDeviceAmbiguous {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                },
+                CacheDeviceStatus::RootDisk => InitError::FormatRootDisk {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                },
+                CacheDeviceStatus::RootUnknown => InitError::FormatRootUnknown {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                },
+                CacheDeviceStatus::SignaturePresent => InitError::FormatSignaturePresent {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                },
+                _ => InitError::FormatFailed {
+                    volume_id: volume_id.to_owned(),
+                    message,
+                    source: None,
+                },
+            }
+        }
     }
 }
 

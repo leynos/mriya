@@ -35,7 +35,9 @@ remote command is preserved, so CI integration works out of the box.
 - **Exit code preservation** – If `cargo test` fails remotely with status 101,
   you get 101 locally.
 - **Guaranteed cleanup** – The VM is destroyed after every run, successful or
-  not.
+  not. A configured cache volume is unmounted and detached first, because
+  Scaleway deletes attached volumes with the server; if detachment fails, the
+  VM is retained and both IDs are reported.
 
 ## Current status
 

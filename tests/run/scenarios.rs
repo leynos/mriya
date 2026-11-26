@@ -34,9 +34,17 @@ fn scenario_mount_cache_volume(run_context_result: RunContextResult) { drop(run_
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Continue execution when volume mount fails"
+    name = "Fail and tear down when the configured cache cannot be verified"
 )]
-fn scenario_volume_mount_failure_continues(run_context_result: RunContextResult) {
+fn scenario_volume_mount_failure_tears_down(run_context_result: RunContextResult) {
+    drop(run_context_result);
+}
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Unmount and detach the cache before destroying the VM"
+)]
+fn scenario_unmount_before_teardown(run_context_result: RunContextResult) {
     drop(run_context_result);
 }
 

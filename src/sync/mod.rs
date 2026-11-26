@@ -143,7 +143,32 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let remote_cmd_wrapped = self.build_remote_command(remote_command);
+        self.run_remote_with_cache(networking, remote_command, true)
+    }
+
+    /// Executes `remote_command` over SSH, routing caches only when verified.
+    ///
+    /// A caller that attached a configured cache passes the result of its
+    /// mount verification here. When the mount was not verified, the cache
+    /// exports and the `mountpoint -q` guard are omitted, so build output
+    /// cannot be silently redirected onto the root filesystem.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure to spawn or execute the SSH command.
+    ///
+    /// # Security
+    ///
+    /// `remote_command` is not escaped; only the working directory component is
+    /// shell-escaped. Ensure any caller-provided arguments are validated or
+    /// quoted upstream.
+    pub fn run_remote_with_cache(
+        &self,
+        networking: &InstanceNetworking,
+        remote_command: &str,
+        cache_verified: bool,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        let remote_cmd_wrapped = self.build_remote_command(remote_command, cache_verified);
         self.execute_ssh(networking, &remote_cmd_wrapped)
     }
 
@@ -313,8 +338,8 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(format!("{} {}", self.config.ssh_bin, opts))
     }
 
-    fn build_remote_command(&self, remote_command: &str) -> String {
-        remote_command::build_remote_command(&self.config, remote_command)
+    fn build_remote_command(&self, remote_command: &str, cache_verified: bool) -> String {
+        remote_command::build_remote_command(&self.config, remote_command, cache_verified)
     }
 }
 

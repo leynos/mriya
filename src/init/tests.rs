@@ -5,58 +5,84 @@
 
 use rstest::rstest;
 
-use super::{InitConfig, InitConfigError, format_failure_message};
-use crate::{
-    sync::{RemoteCommandOutput, SyncError},
-    teardown::append_teardown_note,
-};
+use super::{FormatFailure, InitConfig, InitConfigError, InitError, format_error};
+use crate::{cache_device::parse_report, sync::SyncError, teardown::append_teardown_note};
 
-/// Checks that zero-sized volumes return `InvalidVolumeSize`.
+/// Builds an init configuration with the default tier.
+fn config(volume_size_gb: u32) -> InitConfig {
+    InitConfig {
+        volume_size_gb,
+        volume_tier: String::from("sbs_5k"),
+    }
+}
+
+/// Checks that a volume below the provider minimum returns
+/// `InvalidVolumeSize`.
 #[test]
-fn validate_rejects_zero_volume_size() {
-    let config = InitConfig { volume_size_gb: 0 };
-    let result = config.validate();
+fn validate_rejects_a_size_below_the_minimum() {
+    let result = config(4).validate();
     assert!(
         matches!(result, Err(InitConfigError::InvalidVolumeSize)),
-        "expected InvalidVolumeSize for zero size, got {result:?}"
+        "expected InvalidVolumeSize for 4 GB, got {result:?}"
     );
 }
 
-/// Checks that a non-zero volume size passes configuration validation.
+/// Checks that the minimum accepted size passes configuration validation.
 #[test]
-fn validate_accepts_non_zero_volume_size() {
-    let config = InitConfig { volume_size_gb: 20 };
-    let result = config.validate();
-    assert!(result.is_ok(), "expected Ok for non-zero size: {result:?}");
+fn validate_accepts_the_minimum_volume_size() {
+    let result = config(5).validate();
+    assert!(result.is_ok(), "expected Ok for 5 GB size: {result:?}");
 }
 
-/// Covers present and missing `mkfs` exit statuses, with and without stderr.
+/// Checks that an unsupported tier is rejected with an actionable error.
+#[test]
+fn validate_rejects_an_unknown_volume_tier() {
+    let mut init = config(20);
+    init.volume_tier = String::from("b_ssd");
+    let result = init.validate();
+    assert!(
+        matches!(result, Err(InitConfigError::InvalidVolumeTier { ref value }) if value == "b_ssd"),
+        "expected InvalidVolumeTier, got {result:?}"
+    );
+}
+
+/// Checks that both supported tiers parse.
+#[test]
+fn validate_accepts_both_supported_tiers() {
+    for tier in ["sbs_5k", "sbs_15k"] {
+        let mut init = config(20);
+        init.volume_tier = String::from(tier);
+        assert!(init.validate().is_ok(), "expected {tier} to pass");
+        assert_eq!(init.tier().expect("tier parses").as_str(), tier);
+    }
+}
+
+/// Covers each cache-device refusal and the typed error it produces.
 #[rstest]
-#[case(Some(1), "", "mkfs.ext4 exited with status 1")]
-#[case(Some(1), "boom\n", "mkfs.ext4 exited with status 1: boom")]
-#[case(None, "", "mkfs.ext4 terminated without an exit status")]
-#[case(None, "boom\n", "mkfs.ext4 terminated without an exit status: boom")]
-fn format_failure_message_covers_every_arm(
-    #[case] exit_code: Option<i32>,
-    #[case] stderr: &str,
-    #[case] expected: &str,
-) {
-    let output = RemoteCommandOutput {
-        exit_code,
-        stdout: String::new(),
-        stderr: stderr.to_owned(),
-    };
-    assert_eq!(format_failure_message(&output), expected);
-}
-
-/// Verifies the public display text for a formatting failure.
-#[test]
-fn format_failure_display_writes_the_message() {
-    let failure = super::FormatFailure {
-        message: String::from("mkfs.ext4 exited with status 1"),
-        source: None,
-    };
-    assert_eq!(failure.to_string(), "mkfs.ext4 exited with status 1");
+#[case("signature-present DEVICE=/dev/sdb FSTYPE=ext4", "signature")]
+#[case("root-disk DEVICE=/dev/sda", "root")]
+#[case("not-found DEVICE=serial:volume-1", "not-found")]
+#[case("ambiguous DEVICE=serial:volume-1", "ambiguous")]
+#[case("root-unknown DEVICE=/dev/sdb", "root")]
+#[case("format-failed DEVICE=/dev/sdb", "format")]
+fn format_refusals_map_to_typed_errors(#[case] line: &str, #[case] marker: &str) {
+    let report = parse_report(&format!("MRIYA_CACHE_STATUS={line}\n")).expect("status parses");
+    let error = format_error::<std::io::Error>("volume-1", FormatFailure::Report(report));
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains(marker),
+        "expected `{marker}` in {rendered}"
+    );
+    assert!(rendered.contains("volume-1"), "{rendered}");
+    assert!(matches!(
+        error,
+        InitError::FormatSignaturePresent { .. }
+            | InitError::FormatRootDisk { .. }
+            | InitError::FormatDeviceNotFound { .. }
+            | InitError::FormatDeviceAmbiguous { .. }
+            | InitError::FormatRootUnknown { .. }
+            | InitError::FormatFailed { .. }
+    ));
 }
 
 /// Proves the `init` diagnostic keeps the cause and the remedy.
@@ -72,15 +98,17 @@ fn format_failure_names_the_unusable_home() {
         source: crate::sync::HomeUnavailable,
     });
 
-    let rendered = failure.to_string();
+    let FormatFailure::Spawn { message, .. } = failure else {
+        panic!("expected a spawn failure");
+    };
     for expected in [
         "~/keys/id",
         "HOME is set to a value that is not valid UTF-8",
         "configure an absolute ssh_identity_file",
     ] {
         assert!(
-            rendered.contains(expected),
-            "`{expected}` should appear in the diagnostic: {rendered}"
+            message.contains(expected),
+            "`{expected}` should appear in the diagnostic: {message}"
         );
     }
 }
@@ -99,7 +127,7 @@ fn append_teardown_note_appends_teardown_failure() {
     let teardown = SyncError::InvalidConfig {
         field: String::from("ssh_user"),
     };
-    let note = super::append_teardown_note(String::from("provision failed"), Some(&teardown));
+    let note = append_teardown_note(String::from("provision failed"), Some(&teardown));
     assert_eq!(
         note,
         format!("provision failed (teardown also failed: {teardown})")

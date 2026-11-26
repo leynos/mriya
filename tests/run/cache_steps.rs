@@ -4,13 +4,7 @@ use mriya::sync::CACHE_SUBDIRECTORIES;
 use rstest_bdd_macros::{given, then};
 
 use super::{
-    bdd_steps::{
-        SshLookupDirection,
-        StepError,
-        context,
-        find_ssh_command,
-        last_ssh_remote_command,
-    },
+    bdd_steps::{StepError, context, last_ssh_remote_command},
     test_helpers::{RunContext, RunContextResult},
 };
 
@@ -80,8 +74,39 @@ fn remote_command_does_not_route_cargo_caches(
     Ok(())
 }
 
-fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> {
-    find_ssh_command(run_context, SshLookupDirection::First)
+/// Returns the SSH payload that creates cache subdirectories.
+///
+/// The mount script and the directory creation are separate SSH calls now, so
+/// the step cannot assume the first SSH invocation is the one it inspects.
+fn cache_directories_command(run_context: &RunContext) -> Result<String, StepError> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let subdir = CACHE_SUBDIRECTORIES
+        .first()
+        .ok_or_else(|| StepError::Assertion(String::from("no cache subdirectories")))?;
+    let expected = format!("/mriya/{subdir}");
+    run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .rev()
+        .find(|invocation| {
+            invocation.program == ssh_bin
+                && invocation
+                    .args
+                    .last()
+                    .is_some_and(|arg| arg.to_string_lossy().contains(&expected))
+        })
+        .and_then(|invocation| {
+            invocation
+                .args
+                .last()
+                .map(|arg| arg.to_string_lossy().into_owned())
+        })
+        .ok_or_else(|| {
+            StepError::Assertion(format!(
+                "missing cache-directory invocation containing {expected}"
+            ))
+        })
 }
 
 #[then("the mount command creates cache subdirectories")]
@@ -89,8 +114,7 @@ fn mount_command_creates_cache_subdirectories(
     run_context_result: &RunContextResult,
 ) -> Result<(), StepError> {
     let run_context = context(run_context_result)?;
-    // The first SSH command is the mount + mkdir cache dirs command
-    let mount_command = first_ssh_raw_command(run_context)?;
+    let mount_command = cache_directories_command(run_context)?;
 
     // Verify the mkdir -p command is present
     if !mount_command.contains("mkdir -p") {
@@ -124,16 +148,32 @@ fn mount_command_does_not_create_cache_subdirectories(
     run_context_result: &RunContextResult,
 ) -> Result<(), StepError> {
     let run_context = context(run_context_result)?;
-    // The first SSH command is the mount command
-    let mount_command = first_ssh_raw_command(run_context)?;
-
-    // Verify none of the cache subdirectories are present using the production constant
-    for subdir in CACHE_SUBDIRECTORIES {
-        let path = format!("/mriya/{subdir}");
-        if mount_command.contains(&path) {
-            return Err(StepError::Assertion(format!(
-                "expected mount command to NOT create cache directory '{path}', got: {mount_command}"
-            )));
+    // Verify no SSH invocation creates a cache subdirectory, using the
+    // production constant.
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    for invocation in run_context.runner.invocations() {
+        if invocation.program != ssh_bin {
+            continue;
+        }
+        let Some(payload) = invocation
+            .args
+            .last()
+            .map(|arg| arg.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        // The routing preamble exports these paths without creating them; only
+        // a command that also creates directories is a violation.
+        if !payload.contains("mkdir -p") {
+            continue;
+        }
+        for subdir in CACHE_SUBDIRECTORIES {
+            let path = format!("/mriya/{subdir}");
+            if payload.contains(&path) {
+                return Err(StepError::Assertion(format!(
+                    "expected no invocation to create cache directory '{path}', got: {payload}"
+                )));
+            }
         }
     }
 

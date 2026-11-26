@@ -75,6 +75,49 @@ fn new_trims_whitespace() {
     assert_eq!(error, BackendError::Validation(String::from("image_label")));
 }
 
+/// Rejects blank and non-UUID cache volume identifiers.
+#[test]
+fn validate_rejects_a_volume_id_that_is_not_a_canonical_uuid() {
+    let base = InstanceRequest::builder()
+        .image_label("ubuntu-22-04")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
+        .zone("fr-par-1")
+        .project_id("project-id")
+        .architecture("x86_64")
+        .build()
+        .expect("baseline request should be valid");
+
+    for value in ["", "   ", "vol-123", "11111111222233334444555555555555"] {
+        let request = InstanceRequest {
+            volume_id: Some(String::from(value)),
+            ..base.clone()
+        };
+        let error = request.validate().expect_err("invalid volume_id must fail");
+        assert!(
+            matches!(error, BackendError::VolumeIdNotUuid { .. }),
+            "{value:?}: {error:?}"
+        );
+    }
+}
+
+/// Accepts a canonical hyphenated UUID.
+#[test]
+fn validate_accepts_a_canonical_volume_id() {
+    let request = InstanceRequest::builder()
+        .image_label("ubuntu-22-04")
+        .instance_type(DEFAULT_INSTANCE_TYPE)
+        .zone("fr-par-1")
+        .project_id("project-id")
+        .architecture("x86_64")
+        .volume_id(Some(String::from("11111111-2222-3333-4444-555555555555")))
+        .build()
+        .expect("a canonical UUID should pass");
+    assert_eq!(
+        request.volume_id.as_deref(),
+        Some("11111111-2222-3333-4444-555555555555")
+    );
+}
+
 #[test]
 fn validate_rejects_empty_cloud_init_user_data() {
     let error = InstanceRequest::builder()

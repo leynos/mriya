@@ -5,6 +5,7 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod cache_device;
 pub mod cloud_init;
 pub mod config;
 pub mod config_store;
@@ -51,4 +52,11 @@ pub use sync::{
     SyncError,
     Syncer,
 };
-pub use volume::{VolumeBackend, VolumeHandle, VolumeRequest};
+pub use volume::{
+    VolumeBackend,
+    VolumeHandle,
+    VolumeRequest,
+    VolumeState,
+    VolumeStatus,
+    VolumeTier,
+};

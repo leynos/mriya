@@ -18,6 +18,7 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
 pub(super) struct StubApi {
     pub(super) base_url: String,
+    pub(super) block_base_url: String,
     task: JoinHandle<Result<Vec<String>>>,
 }
 
@@ -52,6 +53,7 @@ impl StubApi {
         });
         Ok(Self {
             base_url: format!("http://{address}/instance/v1"),
+            block_base_url: format!("http://{address}/block/v1"),
             task,
         })
     }
@@ -70,12 +72,13 @@ impl StubApi {
 
 /// Runs `call` against a loopback API scripting `replies` in order.
 ///
-/// The backend is pointed at the stub before `call` runs, so a wrapper that
-/// formats its URL from `instance_api_base` reaches the stub while one that
-/// hard-codes the production host fails to connect. Both the call's result and
-/// the captured requests are returned, letting each suite assert on what the
-/// provider would have received. For example, a single 200 reply around an
-/// attachment yields one captured PATCH request and `Ok(())`.
+/// The backend is pointed at the stub's Instances and Block Storage bases
+/// before `call` runs, so a wrapper that formats its URL from either field
+/// reaches the stub while one that hard-codes the production host fails to
+/// connect. Both the call's result and the captured requests are returned,
+/// letting each suite assert on what the provider would have received. For
+/// example, a tier listing followed by a 200 create yields two captured
+/// requests and `Ok(handle)`.
 pub(super) async fn with_stub<T, F>(
     mut backend: ScalewayBackend,
     replies: Vec<Reply>,
@@ -86,6 +89,7 @@ where
 {
     let stub = StubApi::start(replies).await?;
     backend.instance_api_base.clone_from(&stub.base_url);
+    backend.block_api_base.clone_from(&stub.block_base_url);
     let result = call(&backend).await;
     Ok((result, stub.finish().await?))
 }

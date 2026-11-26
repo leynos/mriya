@@ -1,0 +1,9 @@
+{
+  "server": {
+    "id": "id",
+    "volumes": {
+      "0": {"id": "root-id", "volume_type": "sbs_volume"},
+      "1": {"id": "11111111-1111-1111-1111-111111111111", "volume_type": "sbs_volume"}
+    }
+  }
+}

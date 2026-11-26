@@ -17,6 +17,7 @@ use tokio::time::sleep;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    cache_device::{self, CacheDeviceStatus},
     sync::{
         CommandRunner,
         RemoteCommandOutput,
@@ -25,6 +26,7 @@ use crate::{
         create_cache_directories_command,
     },
     teardown::append_teardown_note,
+    volume::VolumeBackend,
 };
 
 /// Delay between checks for the cloud-init completion marker.
@@ -83,9 +85,24 @@ where
         #[source]
         source: SyncError,
     },
+    /// Raised when a configured cache cannot be mounted or verified.
+    #[error("failed to mount the configured cache volume: {message}")]
+    CacheMount {
+        /// Human-readable description of the refusal.
+        message: String,
+        /// Underlying synchronization error, when the SSH call itself failed.
+        #[source]
+        source: Option<SyncError>,
+    },
     /// Raised when teardown fails after the primary operation succeeded.
-    #[error("failed to destroy instance: {0}")]
-    Teardown(#[source] BackendError),
+    #[error("failed to destroy instance: {message}")]
+    Teardown {
+        /// Human-readable description, including any unmount failure.
+        message: String,
+        /// Provider-specific error.
+        #[source]
+        source: BackendError,
+    },
 }
 
 /// Executes the remote run flow using the provided backend and syncer.
@@ -103,7 +120,7 @@ pub struct RunOrchestrator<B, R: CommandRunner> {
 
 impl<B, R> RunOrchestrator<B, R>
 where
-    B: Backend,
+    B: Backend + VolumeBackend,
     B::Error: Display + Send + Sync + std::error::Error + 'static,
     R: CommandRunner,
 {
@@ -157,26 +174,53 @@ where
             .create(request)
             .await
             .map_err(RunError::Provision)?;
-        let networking = self.wait_for_ready_or_destroy(&handle).await?;
+        let networking = self
+            .wait_for_ready_or_destroy(&handle, request.volume_id.as_deref())
+            .await?;
 
-        self.mount_volume_if_needed(&handle, &networking, request)
+        let cache_verified = self
+            .mount_volume_if_needed(&handle, &networking, request)
             .await?;
 
         let dest = self.syncer.destination_for(&networking);
-        self.sync_or_destroy(&handle, source, &dest).await?;
+        self.sync_or_destroy(
+            &handle,
+            &networking,
+            source,
+            &dest,
+            request.volume_id.as_deref(),
+        )
+        .await?;
 
         if request.cloud_init_user_data.is_some() {
-            self.wait_for_cloud_init(&handle, &networking).await?;
+            self.wait_for_cloud_init(&handle, &networking, request.volume_id.as_deref())
+                .await?;
         }
 
         let output = self
-            .run_remote_or_destroy(&handle, &networking, remote_command)
+            .run_remote_or_destroy(
+                &handle,
+                &networking,
+                remote_command,
+                request.volume_id.as_deref(),
+                cache_verified,
+            )
             .await?;
 
-        self.backend
-            .destroy(handle)
+        let unmount_note = self
+            .unmount_cache(&networking, request.volume_id.as_deref())
+            .await;
+        if let Err(source) = self
+            .backend
+            .teardown(&handle, request.volume_id.as_deref())
             .await
-            .map_err(RunError::Teardown)?;
+        {
+            let message = match unmount_note {
+                Some(note) => format!("{source} ({note})"),
+                None => source.to_string(),
+            };
+            return Err(RunError::Teardown { message, source });
+        }
 
         Ok(output)
     }
@@ -192,11 +236,12 @@ where
     async fn wait_for_ready_or_destroy(
         &self,
         handle: &InstanceHandle,
+        volume_id: Option<&str>,
     ) -> Result<InstanceNetworking, RunError<B::Error>> {
         match self.backend.wait_for_ready(handle).await {
             Ok(net) => Ok(net),
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self.teardown_with_note(handle, volume_id, None, &err).await;
                 Err(RunError::Wait {
                     message,
                     source: err,
@@ -207,19 +252,22 @@ where
 
     /// Mounts the cache volume only when the request attached one.
     ///
-    /// For example, a request carrying a `volume_id` mounts it, while one
-    /// without an attached volume returns `Ok(())` without contacting the
-    /// instance at all.
+    /// Returns whether cache routing is allowed. A request without an attached
+    /// volume keeps the historical behaviour: the preamble is emitted with its
+    /// `mountpoint -q` guard. A request with a volume is allowed to route only
+    /// after the mount is verified.
     async fn mount_volume_if_needed(
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
         request: &InstanceRequest,
-    ) -> Result<(), RunError<B::Error>> {
-        if request.volume_id.is_some() {
-            self.mount_cache_volume(handle, networking).await?;
-        }
-        Ok(())
+    ) -> Result<bool, RunError<B::Error>> {
+        let Some(volume_id) = request.volume_id.as_deref() else {
+            return Ok(true);
+        };
+        self.mount_cache_volume(handle, networking, volume_id)
+            .await?;
+        Ok(true)
     }
 
     /// Syncs the workspace to `dest`, destroying the instance if that fails.
@@ -230,11 +278,15 @@ where
     async fn sync_or_destroy(
         &self,
         handle: &InstanceHandle,
+        networking: &InstanceNetworking,
         source: &Utf8Path,
         dest: &crate::sync::SyncDestination,
+        volume_id: Option<&str>,
     ) -> Result<(), RunError<B::Error>> {
         if let Err(err) = self.syncer.sync(source, dest) {
-            let message = self.destroy_with_note(handle, &err).await;
+            let message = self
+                .teardown_with_note(handle, volume_id, Some(networking), &err)
+                .await;
             return Err(RunError::Sync {
                 message,
                 source: err,
@@ -256,11 +308,18 @@ where
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
         remote_command: &str,
+        volume_id: Option<&str>,
+        cache_verified: bool,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
-        match self.syncer.run_remote(networking, remote_command) {
+        match self
+            .syncer
+            .run_remote_with_cache(networking, remote_command, cache_verified)
+        {
             Ok(result) => Ok(result),
             Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
+                let message = self
+                    .teardown_with_note(handle, volume_id, Some(networking), &err)
+                    .await;
                 Err(RunError::Remote {
                     message,
                     source: err,
@@ -269,68 +328,86 @@ where
         }
     }
 
-    /// Mounts the cache volume via SSH and creates cache subdirectories.
+    /// Mounts the configured cache volume and verifies the mount source.
     ///
-    /// The mount command is idempotent: it creates the mount point directory
-    /// and attempts to mount `/dev/vdb`. The mount itself is best-effort
-    /// because the command uses `|| true` for graceful degradation. Only SSH
-    /// execution failures are surfaced as errors.
+    /// The script resolves the disk by its `volume-<uuid>` serial, refuses the
+    /// root disk, requires an ext4 signature, refuses a different source at the
+    /// path, mounts the device and confirms with `findmnt` that the path's
+    /// source is that device. Any other outcome fails the run and tears the
+    /// instance down: a configured cache is required, not best-effort.
     ///
-    /// When `create_cache_directories` is enabled in the sync configuration,
-    /// the cache subdirectories are created after mounting so that language
-    /// toolchains can write immediately.
-    ///
-    /// For example, with cache directories enabled and the path already a
-    /// mount point, `/mnt/mriya-cache/npm` and its siblings are created before
-    /// the remote command runs, so a toolchain usually does not have to create
-    /// them itself.
-    ///
-    /// Creation is only *attempted*, never guaranteed. The guard
-    /// `mountpoint -q` tests whether the path *is* a mount point rather than
-    /// whether this mount attempt succeeded, so an earlier mount can satisfy
-    /// it; when the path is not a mount point at all, nothing is attempted.
-    /// The creation command itself ends in `2>/dev/null || true`, so a
-    /// read-only or full filesystem also leaves no directories without failing
-    /// the run. A toolchain must therefore cope with their absence.
+    /// When `create_cache_directories` is enabled, the cache subdirectories are
+    /// created after verification so language toolchains can write
+    /// immediately. The `mountpoint -q` guard remains as a second check.
     async fn mount_cache_volume(
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
+        volume_id: &str,
     ) -> Result<(), RunError<B::Error>> {
         let config = self.syncer.config();
-        let mount_path = &config.volume_mount_path;
-        let escaped_mount_path = escape(mount_path.as_str().into());
+        let mount_path = config.volume_mount_path.clone();
+        let script = cache_device::mount_script(volume_id, &mount_path, &config.ssh_user);
 
-        let mkdir_cache_dirs = if config.create_cache_directories {
-            format!(
-                " && if mountpoint -q {path} 2>/dev/null; then {create_dirs}; fi",
-                path = escaped_mount_path,
-                create_dirs = create_cache_directories_command(mount_path)
-            )
-        } else {
-            String::new()
+        let output = match self.syncer.run_remote_raw(networking, &script) {
+            Ok(output) => output,
+            Err(err) => {
+                let message = self
+                    .teardown_with_note(handle, Some(volume_id), Some(networking), &err)
+                    .await;
+                return Err(RunError::CacheMount {
+                    message,
+                    source: Some(err),
+                });
+            }
         };
 
-        let mount_command = format!(
-            concat!(
-                "sudo mkdir -p {path} && ",
-                "sudo mount /dev/vdb {path} 2>/dev/null || true"
-            ),
-            path = escaped_mount_path
-        );
-
-        let full_command = format!("{mount_command}{mkdir_cache_dirs}");
-
-        match self.syncer.run_remote_raw(networking, &full_command) {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
-                Err(RunError::Sync {
+        let report = match cache_device::parse_report(&output.stdout) {
+            Ok(report) => report,
+            Err(error) => {
+                let failure = format!("cache mount script produced no usable status: {error}");
+                let message = self
+                    .teardown_with_note(handle, Some(volume_id), Some(networking), &failure)
+                    .await;
+                return Err(RunError::CacheMount {
                     message,
-                    source: err,
-                })
+                    source: None,
+                });
+            }
+        };
+
+        if report.status() != &CacheDeviceStatus::Verified {
+            let failure = format!(
+                "cache volume {volume_id} was not verified: {}",
+                report.describe()
+            );
+            let message = self
+                .teardown_with_note(handle, Some(volume_id), Some(networking), &failure)
+                .await;
+            return Err(RunError::CacheMount {
+                message,
+                source: None,
+            });
+        }
+
+        if config.create_cache_directories {
+            let command = format!(
+                "if mountpoint -q {path} 2>/dev/null; then {create}; fi",
+                path = escape(mount_path.as_str().into()),
+                create = create_cache_directories_command(&mount_path)
+            );
+            if let Err(err) = self.syncer.run_remote_raw(networking, &command) {
+                let message = self
+                    .teardown_with_note(handle, Some(volume_id), Some(networking), &err)
+                    .await;
+                return Err(RunError::CacheMount {
+                    message,
+                    source: Some(err),
+                });
             }
         }
+
+        Ok(())
     }
 
     /// Polls for cloud-init's `boot-finished` marker until it appears or the
@@ -345,6 +422,7 @@ where
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,
+        volume_id: Option<&str>,
     ) -> Result<(), RunError<B::Error>> {
         let deadline = Instant::now() + self.cloud_init_wait_timeout;
         let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
@@ -354,7 +432,9 @@ where
             let finished = match self.syncer.run_remote(networking, &command) {
                 Ok(output) => matches!(output.exit_code, Some(0)),
                 Err(err) => {
-                    let message = self.destroy_with_note(handle, &err).await;
+                    let message = self
+                        .teardown_with_note(handle, volume_id, Some(networking), &err)
+                        .await;
                     return Err(RunError::Provisioning {
                         message,
                         source: err,
@@ -373,19 +453,69 @@ where
             "cloud-init did not finish within {} seconds",
             self.cloud_init_wait_timeout.as_secs()
         );
-        let message_with_teardown = self.destroy_with_note(handle, &timeout_message).await;
+        let message_with_teardown = self
+            .teardown_with_note(handle, volume_id, Some(networking), &timeout_message)
+            .await;
         Err(RunError::ProvisioningTimeout {
             message: message_with_teardown,
         })
     }
 
-    /// Destroys the instance and returns `err` as text, with a note appended
+    /// Unmounts the cache path when a volume was configured.
+    ///
+    /// Returns a description of the failure, if any. The caller still requests
+    /// the power-off fallback, which teardown performs; this note keeps the
+    /// unmount outcome visible when teardown also fails.
+    async fn unmount_cache(
+        &self,
+        networking: &InstanceNetworking,
+        volume_id: Option<&str>,
+    ) -> Option<String> {
+        let volume_id = volume_id?;
+        let mount_path = &self.syncer.config().volume_mount_path;
+        let script = cache_device::unmount_script(mount_path);
+
+        match self.syncer.run_remote_raw(networking, &script) {
+            Ok(output) => match cache_device::parse_report(&output.stdout) {
+                Ok(report) if report.status() == &CacheDeviceStatus::Unmounted => None,
+                Ok(report) => Some(format!(
+                    "unmount of {mount_path} for volume {volume_id} reported {}",
+                    report.describe()
+                )),
+                Err(error) => Some(format!(
+                    "unmount of {mount_path} for volume {volume_id} produced no usable status: {error}"
+                )),
+            },
+            Err(error) => Some(format!(
+                "unmount request for {mount_path} (volume {volume_id}) failed: {error}"
+            )),
+        }
+    }
+
+    /// Tears the instance down and returns `err` as text, with a note appended
     /// when the teardown also fails.
     ///
-    /// For example, `destroy` failing yields `"<err> (teardown also failed:
+    /// A configured cache is flushed and unmounted first; teardown then stops
+    /// the server, detaches the volume, waits for it to become `available`, and
+    /// only then deletes the server.
+    ///
+    /// For example, `teardown` failing yields `"<err> (teardown also failed:
     /// ...)"` rather than discarding the original error.
-    async fn destroy_with_note<E: Display>(&self, handle: &InstanceHandle, err: &E) -> String {
-        let teardown_error = self.backend.destroy(handle.clone()).await.err();
-        append_teardown_note(err.to_string(), teardown_error.as_ref())
+    async fn teardown_with_note<E: Display>(
+        &self,
+        handle: &InstanceHandle,
+        volume_id: Option<&str>,
+        networking: Option<&InstanceNetworking>,
+        err: &E,
+    ) -> String {
+        let mut message = err.to_string();
+        if let Some(networking) = networking
+            && let Some(note) = self.unmount_cache(networking, volume_id).await
+        {
+            message = format!("{message} ({note})");
+        }
+
+        let teardown_error = self.backend.teardown(handle, volume_id).await.err();
+        append_teardown_note(message, teardown_error.as_ref())
     }
 }

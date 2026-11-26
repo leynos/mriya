@@ -1,8 +1,8 @@
 # Migrate Scaleway cache volumes to the Block Storage API
 
-This ExecPlan is a living document. The sections `Progress`, `Surprises &
-Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to
-date as work proceeds.
+This ExecPlan is a living document. The sections `Progress`,
+`Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must
+be kept up to date as work proceeds.
 
 This document must be maintained in accordance with `AGENTS.md` and the
 ExecPlan rules in the `execplans` skill.
@@ -11,11 +11,12 @@ ExecPlan rules in the `execplans` skill.
 
 Scaleway removed new Block Storage volume creation from the Instances API on
 30 April 2025. `mriya init` still posts `volume_type = "b_ssd"` to
-`/instance/v1/zones/{zone}/volumes`, so the advertised cache-initialization path
-fails against the live provider with
+`/instance/v1/zones/{zone}/volumes`, so the advertised cache-initialization
+path fails against the live provider with
 `b_ssd volumes are no longer supported. Use Scaleway Block Storage (SBS)
-volumes instead.` The attachment payload also omits `volume_type =
-"sbs_volume"`, so even an externally created SBS volume cannot be attached.
+volumes instead.`
+The attachment payload also omits `volume_type = "sbs_volume"`, so even an
+externally created SBS volume cannot be attached.
 
 After this change a user can run `mriya init` against a current Scaleway
 account, receive an SBS volume in the configured zone, and then run
@@ -154,14 +155,14 @@ against the real provider.
 SDK only for image lookup. `src/scaleway/lifecycle/` holds the HTTP helpers and
 their loopback tests. `src/volume.rs` defines the volume port. `src/init/`
 orchestrates cache preparation, and `src/run.rs` mounts the cache before
-running a remote command. `src/sync/remote_command.rs` builds the cache
-routing preamble.
+running a remote command. `src/sync/remote_command.rs` builds the cache routing
+preamble.
 
 Current behaviour to replace: `volume_create.rs` posts `b_ssd` to the Instances
-API; `volume_attach.rs` PATCHes a partial volume map; `volume_detach.rs`
-GETs then PATCHes; `init/helpers.rs` formats
-`/dev/disk/by-id/scsi-0SCW_BSSD_<id>`; `run.rs` mounts `/dev/vdb` best-effort
-and destroys the server without detaching.
+API; `volume_attach.rs` PATCHes a partial volume map; `volume_detach.rs` GETs
+then PATCHes; `init/helpers.rs` formats `/dev/disk/by-id/scsi-0SCW_BSSD_<id>`;
+`run.rs` mounts `/dev/vdb` best-effort and destroys the server without
+detaching.
 
 ## Plan of work
 
@@ -193,13 +194,19 @@ updates.
 
 ## Progress
 
-- [ ] 2026-11-26: Reconnaissance and provider contract research complete.
-- [ ] EP-M1 implemented and gated.
-- [ ] EP-M2 implemented and gated.
-- [ ] EP-M3 implemented and gated.
-- [ ] EP-M4 implemented and gated.
-- [ ] EP-M5 implemented and gated.
-- [ ] Draft pull request opened and CodeRabbit concerns cleared.
+- [x] 2026-11-26: Reconnaissance and provider contract research complete.
+- [x] EP-M1 and EP-M2 implemented: the Block Storage lifecycle, dedicated
+  attach and detach endpoints, preflight validation, rollback, power-off and
+  ordered teardown are in place with loopback tests.
+- [x] EP-M3 implemented: `src/cache_device/` builds guarded scripts and the
+  fake-tool suite exercises them.
+- [x] EP-M4 implemented: init owns and rolls back its volume, the effective-ID
+  guard is in place, and run uses the ordered teardown on every path.
+- [x] EP-M5 implemented: the live three-VM suite, migration guide and price
+  notes are written.
+- [ ] Deterministic gates pass (`make check-fmt`, `make lint`, `make test`).
+- [ ] CodeRabbit review concerns cleared.
+- [ ] Draft pull request opened.
 
 ## Surprises & discoveries
 
@@ -209,6 +216,13 @@ updates.
   existing run path silently destroys the cache volume it just used.
 - The Block Storage create response is the unwrapped `Volume`, unlike the
   Instances API's `{"volume": ...}` wrapper.
+- `list_instance` paginates until an empty page, so every instance fetch in a
+  loopback test consumes two responses: the page carrying the server and the
+  empty page that ends pagination. Tests that power off an already-stopped
+  server must script both.
+- `power_off_if_needed` returns immediately for an already-stopped server
+  rather than entering the separate stopped-state wait, which keeps teardown to
+  one fetch in the common case.
 
 ## Decision log
 
@@ -225,6 +239,14 @@ updates.
   and the API uses 10^9-byte granularity.
 - Retain the server when detach fails: a visible paid server is safer than
   deleting the cache volume with the server.
+- Keep the status-polling loop separate from the HTTP call
+  (`poll_for_volume_status`) so the timeout and terminal-error paths are
+  unit-testable without scripting an unbounded number of loopback responses.
+- Validate the volume use in `Backend::create` rather than only in `mriya run`,
+  so `mriya init` gets the same preflight for free.
+- Map every init formatting refusal to its own `InitError` variant while
+  keeping the BDD failure kind `format`, so operators get a precise message
+  without changing the scenario vocabulary.
 
 ## Outcomes & Retrospective
 
@@ -236,3 +258,9 @@ and which assumptions survived contact with the implementation.
 Initial draft created 26 November 2026 from issue #153 and its Coding Plan,
 after verifying the Block Storage and Instances v1 schemas, the device
 identification guide, the changelog, and the FAQ.
+
+Revision 2 (26 November 2026) records the implemented milestones, the
+pagination discovery that affects loopback scripts, the power-off fast path,
+and the decision to expose the polling loop and the preflight at the backend
+boundary. Remaining work is gate evidence, review remediation and the pull
+request.

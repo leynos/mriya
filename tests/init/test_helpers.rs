@@ -46,7 +46,10 @@ pub struct InitFailure {
 
 #[derive(Clone, Debug)]
 pub enum InitResult {
-    Success,
+    Success {
+        /// Warning the orchestrator asked the caller to show.
+        warning: Option<String>,
+    },
     Failure(InitFailure),
 }
 
@@ -86,6 +89,7 @@ fn build_init_context() -> Result<InitContext, InitTestError> {
             volume,
             instance_request,
             overwrite_existing_volume_id: false,
+            effective_volume_id: None,
         },
         config_store: MemoryConfigStore::new(),
         outcome: None,

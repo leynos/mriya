@@ -41,6 +41,7 @@ pub enum RunFailureKind {
     Provisioning,
     ProvisioningTimeout,
     Sync,
+    CacheMount,
     Remote,
     Teardown,
 }
