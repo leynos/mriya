@@ -71,7 +71,8 @@ impl CompatibilityDefault {
 pub struct BootVolumePlan {
     /// Storage type the create request will ask for.
     pub volume_type: BootVolumeType,
-    /// Capacity in bytes, aligned to [`SIZE_ALIGNMENT_BYTES`].
+    /// Capacity in bytes, aligned to
+    /// [`SIZE_ALIGNMENT_BYTES`](crate::boot_volume::SIZE_ALIGNMENT_BYTES).
     pub size_bytes: u64,
     /// Which settings came from the compatibility default.
     pub compatibility_default: CompatibilityDefault,

@@ -112,7 +112,7 @@ impl BootVolumeError {
 ///
 /// Either setting may be absent, in which case the backend chooses a
 /// documented default and records that it did so on the resulting
-/// [`BootVolumePlan`].
+/// [`BootVolumePlan`](super::BootVolumePlan).
 ///
 /// # Examples
 ///
