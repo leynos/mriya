@@ -383,6 +383,53 @@ without changing behaviour, and each publishes only what its parent needs:
   these functions therefore means editing that list too, or its mutants start
   surviving as unrecorded gaps rather than recorded exceptions.
 
+## Lint baseline
+
+The authoritative lint configuration lives in two files; this section does not
+copy their inventory.
+
+- `Cargo.toml` holds the `[workspace.lints.clippy]`, `[workspace.lints.rust]`
+  and `[workspace.lints.rustdoc]` tables. Every member opts in with
+  `[lints] workspace = true`, and a new crate must do the same; do not add a
+  local `[lints]` table, which Cargo rejects alongside `workspace = true`.
+- `clippy.toml` holds the thresholds (at most 4 arguments, 70 lines per
+  function, nesting depth 4), `allow-expect-in-tests` and the
+  `disallowed-methods` list.
+
+The rust table denies `unknown_lints`, `renamed_and_removed_lints` and
+`missing_docs`, and forbids `unsafe_code`, so no member may contain `unsafe`
+and it cannot be re-allowed. The rustdoc table denies `broken_intra_doc_links`,
+`private_intra_doc_links`, `bare_urls`, `invalid_html_tags`,
+`invalid_codeblock_attributes` and `unescaped_backticks`; `make lint` builds
+the documentation under `RUSTDOC_FLAGS = --cfg docsrs -D warnings`, while the
+`doc` and `doctest` recipes keep the standard rustflags.
+
+The Clippy table denies `missing_assert_message`,
+`missing_docs_in_private_items` and `disallowed_methods`, among others. The
+last is fed by the `disallowed-methods` list in `clippy.toml`, which has a
+reason per entry: tests must not mutate the process environment or working
+directory, because that forces the runner to serialize them. Sites that cannot
+yet migrate carry `#[expect(clippy::disallowed_methods, reason = "...")]`,
+which reports itself once the site is gone.
+
+`make lint` runs, in order: the docstring gate,
+`cargo doc --workspace --no-deps`, Clippy over every target, and then the
+Whitaker suite. Cognitive complexity is not gated by Clippy, which would score
+code after macro expansion; Whitaker's `macro_aware_cognitive_complexity` gates
+it at 9 instead. `make test` selects `--workspace`, so the members under
+`crates/` are covered.
+
+Two of the denials are written for production code and do not apply to test
+code: `missing_assert_message` and `missing_docs_in_private_items` are not
+reported inside `#[cfg(test)]` modules or `tests/*.rs`. That is a blind spot
+worth knowing: an assertion without a message in a test passes `make lint`.
+Write the message anyway.
+
+Fix findings at the source. The only sanctioned suppressions are
+`#[mriya_test_macros::allow_fixture_expansion_lints]` on fixtures and
+`#[expect(..., reason = "...")]` for a macro-expansion artefact or a documented
+reasoned exception. Never add a bare `#[allow]`.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend
