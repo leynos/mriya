@@ -1,0 +1,55 @@
+# Example campaign plan for `mriya-bench run`.
+#
+# This file is a plan, not a result. Running it spends money, so the harness
+# refuses unless MRIYA_BENCH_ENABLE_PAID_RUNS=1 is set in the environment and
+# every limit below is present and positive.
+#
+# `estimated_micros` is the operator's estimate of one attempt, in micro-units
+# of the price sheet's currency. The harness enforces the budget against those
+# declared figures before each allocation, because the actual figure does not
+# exist until after the money is spent. Set them from the price sheet, not from
+# optimism.
+
+[campaign]
+id = "example-2026-11-26"
+price_sheet = "benchmarks/price-sheet.example.toml"
+providers = ["scaleway"]
+
+[campaign.limits]
+# EUR 5.00.
+max_spend_micros = 5000000
+# Attempts across every workload and provider.
+max_attempts = 40
+# One hour, which matches Scaleway's 60-minute minimum billing period.
+max_attempt_nanos = 3600000000000
+
+# The four workloads the protocol defines. Each is repeated so the report can
+# show a spread rather than a single sample; the `cold-build` repetition is the
+# one that establishes the cache the warm workloads reuse.
+[[attempts]]
+workload_id = "cold-build"
+provider = "scaleway"
+product = "DEV1-S"
+planned_lifetime_nanos = 1800000000000
+estimated_micros = 8980
+
+[[attempts]]
+workload_id = "warm-incremental"
+provider = "scaleway"
+product = "DEV1-S"
+planned_lifetime_nanos = 900000000000
+estimated_micros = 8980
+
+[[attempts]]
+workload_id = "link-heavy"
+provider = "scaleway"
+product = "DEV1-S"
+planned_lifetime_nanos = 1200000000000
+estimated_micros = 8980
+
+[[attempts]]
+workload_id = "test-execution"
+provider = "scaleway"
+product = "DEV1-S"
+planned_lifetime_nanos = 1800000000000
+estimated_micros = 8980

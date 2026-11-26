@@ -97,7 +97,7 @@ pub struct Concurrency {
 }
 
 /// The cache state an attempt started from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CacheState {
     /// The cache location held nothing.

@@ -37,6 +37,18 @@ const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Total time to wait for cloud-init to finish (ten minutes).
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// The result of a run that also ran the optional benchmark probes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedRun {
+    /// The workload's own output, exactly as [`RunOrchestrator::execute`]
+    /// returns it.
+    pub output: RemoteCommandOutput,
+    /// Standard output of the pre-workload hook, when one was configured.
+    pub pre_stdout: Option<String>,
+    /// Standard output of the post-workload hook, when one was configured.
+    pub post_stdout: Option<String>,
+}
+
 /// Errors surfaced while performing a remote run.
 #[derive(Debug, Error)]
 pub enum RunError<BackendError>
@@ -109,6 +121,14 @@ pub struct RunOrchestrator<B, R: CommandRunner> {
     /// observation gets the same behaviour, the same return values, and the
     /// same phase order as before this field existed.
     observer: Box<dyn RunObserver>,
+    /// Optional remote command run immediately before the workload.
+    ///
+    /// `None` on every ordinary run, which is why `mriya run` makes exactly the
+    /// same remote calls it always did. A benchmark sets it to a probe command
+    /// so the record can state what the guest actually provided.
+    pre_workload_command: Option<String>,
+    /// Optional remote command run immediately after the workload.
+    post_workload_command: Option<String>,
 }
 
 impl<B, R> std::fmt::Debug for RunOrchestrator<B, R>
@@ -142,7 +162,28 @@ where
             cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
             cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
             observer: Box::new(NoopObserver),
+            pre_workload_command: None,
+            post_workload_command: None,
         }
+    }
+
+    /// Sets a remote command to run immediately before the workload.
+    ///
+    /// The command's standard output is returned by
+    /// [`RunOrchestrator::execute_observed`]. It is not part of the workload's
+    /// own command, so a benchmark can probe the guest without changing the
+    /// command it pins in the record.
+    #[must_use]
+    pub fn with_pre_workload_command(mut self, command: impl Into<String>) -> Self {
+        self.pre_workload_command = Some(command.into());
+        self
+    }
+
+    /// Sets a remote command to run immediately after the workload.
+    #[must_use]
+    pub fn with_post_workload_command(mut self, command: impl Into<String>) -> Self {
+        self.post_workload_command = Some(command.into());
+        self
     }
 
     /// Replaces the observer that receives this orchestrator's phase timings.
@@ -202,6 +243,30 @@ where
         source: &Utf8Path,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
+        self.execute_observed(request, source, remote_command)
+            .await
+            .map(|observed| observed.output)
+    }
+
+    /// Runs the workflow and returns the workload output with the two optional
+    /// probe outputs.
+    ///
+    /// With neither hook configured this performs exactly the calls
+    /// [`RunOrchestrator::execute`] performs and makes no extra remote calls,
+    /// so an ordinary run is unchanged. A benchmark sets both hooks and reads
+    /// the guest facts they report.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError`] for the same reasons [`RunOrchestrator::execute`]
+    /// does. A hook that fails is reported as a remote failure, because a
+    /// benchmark that could not measure the guest has not measured the run.
+    pub async fn execute_observed(
+        &self,
+        request: &InstanceRequest,
+        source: &Utf8Path,
+        remote_command: &str,
+    ) -> Result<ObservedRun, RunError<B::Error>> {
         let handle = self
             .observe_async(PhaseKind::Allocate, self.backend.create(request))
             .await
@@ -218,13 +283,50 @@ where
             self.wait_for_cloud_init(&handle, &networking).await?;
         }
 
+        let pre_stdout = self
+            .run_hook_or_destroy(&handle, &networking, self.pre_workload_command.as_deref())
+            .await?;
+
         let output = self
             .run_remote_or_destroy(&handle, &networking, remote_command)
             .await?;
 
+        let post_stdout = self
+            .run_hook_or_destroy(&handle, &networking, self.post_workload_command.as_deref())
+            .await?;
+
         self.destroy_observed(handle).await?;
 
-        Ok(output)
+        Ok(ObservedRun {
+            output,
+            pre_stdout,
+            post_stdout,
+        })
+    }
+
+    /// Runs an optional hook command, destroying the instance if it cannot run.
+    ///
+    /// A hook that is not configured is not run at all: there is no empty
+    /// command and no extra round trip.
+    async fn run_hook_or_destroy(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+        hook: Option<&str>,
+    ) -> Result<Option<String>, RunError<B::Error>> {
+        let Some(command) = hook else {
+            return Ok(None);
+        };
+        match self.syncer.run_remote_raw(networking, command) {
+            Ok(output) => Ok(Some(output.stdout)),
+            Err(err) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Remote {
+                    message,
+                    source: err,
+                })
+            }
+        }
     }
 
     /// Awaits `work` and reports it to the observer as one phase.

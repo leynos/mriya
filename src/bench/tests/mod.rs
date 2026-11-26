@@ -7,8 +7,10 @@
 //! agreeing with itself.
 
 mod billing;
+mod campaign;
 mod probe;
 mod record;
+mod report;
 mod validate;
 
 /// Reads a fixture from the benchmark fixtures directory.

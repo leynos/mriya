@@ -1,6 +1,6 @@
 .PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie \
 	typecheck scaleway-test scaleway-janitor test-workflow-contracts spelling \
-	install-build-tools check-build-tools
+	install-build-tools check-build-tools bench-validate bench-report bench-campaign
 
 
 TARGET ?= mriya
@@ -124,6 +124,28 @@ test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutat
 	$(CV005_CONTRACTS) check --repository .
 	$(UV_GATE) tool --python 3.13 --from 'pytest==$(PYTEST_VERSION)' --with 'pyyaml==$(PYYAML_VERSION)' \
 		--with 'hypothesis==$(HYPOTHESIS_VERSION)' -- pytest $(WORKFLOW_CONTRACT_TESTS) -q
+
+# The benchmark's paid route is deliberately absent from `all`, `test`, and
+# every CI job: a default goal that can spend money is a hazard regardless of
+# how it is guarded. Only `bench-campaign` allocates, and it refuses unless the
+# operator has set MRIYA_BENCH_ENABLE_PAID_RUNS=1 and declared the limits in
+# the campaign file.
+BENCH_RECORDS ?= src/bench/fixtures/valid-campaign.jsonl
+BENCH_PRICE_SHEET ?= benchmarks/price-sheet.example.toml
+BENCH_CAMPAIGN ?=
+
+bench-validate: ## Check a benchmark campaign file without spending
+	$(CARGO) run --quiet --bin mriya-bench -- validate $(BENCH_RECORDS)
+
+bench-report: ## Price a benchmark campaign against a dated price sheet
+	$(CARGO) run --quiet --bin mriya-bench -- report $(BENCH_RECORDS) \
+		--price-sheet $(BENCH_PRICE_SHEET)
+
+bench-campaign: ## Run a PAID benchmark campaign (requires explicit opt-in and limits)
+	@test -n "$(BENCH_CAMPAIGN)" || \
+		(echo "set BENCH_CAMPAIGN to a campaign file; see benchmarks/campaign.example.toml" && exit 1)
+	$(CARGO) run --quiet --bin mriya-bench -- run \
+		--campaign $(BENCH_CAMPAIGN) --out $(BENCH_RESULTS)
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor

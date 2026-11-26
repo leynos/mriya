@@ -21,10 +21,12 @@
 //! ```
 
 pub mod billing;
+pub mod campaign;
 pub mod lifecycle;
 pub mod observe;
 pub mod probe;
 pub mod record;
+pub mod report;
 pub mod validate;
 
 #[cfg(test)]
