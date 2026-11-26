@@ -80,9 +80,11 @@ Use `mriya run -- <command>` to provision a VM, sync the working tree, and run
 the provided command over SSH. Output streams live to the local terminal using
 the system `ssh` client and the configured `rsync` binary. When teardown
 succeeds, the CLI exits with the remote command's status code; a teardown
-failure exits with the teardown error instead. When the remote process
-terminates without a status (for example, due to a signal), Mriya exits with
-code 1 and reports the missing status.
+failure exits with the teardown error instead. Two less common cases are
+different. A remote command killed by a signal is reported by OpenSSH as exit
+status 255, and Mriya returns 255 unchanged. If the local `ssh` process itself
+ends without an exit status — for example, because a signal terminates it —
+Mriya exits with code 1 and reports the missing status.
 
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
