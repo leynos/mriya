@@ -133,7 +133,7 @@ async fn wait_until_gone_times_out_on_residual(handle: InstanceHandle) {
     let result = poll_until_gone(&handle, POLL_INTERVAL, Duration::from_millis(2), fetch).await;
     assert!(matches!(
         result,
-        Err(ScalewayBackendError::ResidualResource { .. })
+        Err(ScalewayBackendError::Timeout { ref action, .. }) if action == "wait_until_gone"
     ));
 }
 
@@ -162,11 +162,13 @@ async fn wait_for_ssh_ready_matches_listener_state(
     let backend = ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
+        block_api_base: String::from("http://127.0.0.1:9/block/v1"),
         config: super::dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
         poll_interval: Duration::from_millis(1),
         wait_timeout: Duration::from_millis(50),
+        image_id_override: None,
     };
 
     let networking = InstanceNetworking {

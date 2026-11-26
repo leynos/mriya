@@ -5,15 +5,18 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod cancel;
+pub mod cleanup;
 pub mod cloud_init;
 pub mod config;
 pub mod config_store;
 pub mod init;
 pub mod janitor;
+pub mod ownership;
+pub mod recovery;
 pub mod run;
 pub mod scaleway;
 pub mod sync;
-mod teardown;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod test_support;
@@ -26,9 +29,11 @@ pub use backend::{
     InstanceRequest,
     InstanceRequestBuilder,
 };
+pub use cancel::{CancelHandle, Cancellation, Signal};
+pub use cleanup::{CleanupFailure, CleanupReport, ResidualResource};
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};
-pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest};
+pub use init::{InitConfig, InitError, InitErrorKind, InitOrchestrator, InitOutcome, InitRequest};
 pub use janitor::{
     Janitor,
     JanitorConfig,
@@ -37,8 +42,20 @@ pub use janitor::{
     TEST_RUN_ID_ENV,
     TEST_RUN_TAG_PREFIX,
 };
-pub use run::{RunError, RunOrchestrator};
-pub use scaleway::{ScalewayBackend, ScalewayBackendError};
+pub use ownership::{
+    AllocationScope,
+    AllocationTag,
+    Disposition,
+    LedgerEntry,
+    LedgerSink,
+    ResourceKind,
+    ResourceLedger,
+    ResourceRef,
+    StorageFamily,
+};
+pub use recovery::{JournalError, JournalRecord, JournalStore, RecoveryJournal};
+pub use run::{RunCancellation, RunCleanupFailure, RunError, RunOrchestrator, RunOutcome};
+pub use scaleway::{ResourceInventory, ScalewayBackend, ScalewayBackendError};
 pub use sync::{
     CommandOutput,
     DEFAULT_REMOTE_PATH,

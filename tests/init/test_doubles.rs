@@ -1,18 +1,28 @@
 //! Test doubles for init workflow scenarios.
+//!
+//! The scripted backend records allocations in the init ledger exactly as the
+//! production backend does, and cleanup reports what it removed and preserved.
+//! The in-memory configuration store can fail a write, which models the case
+//! where the new volume must survive for recovery.
 
 use std::{
     net::{IpAddr, Ipv4Addr},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use camino::Utf8PathBuf;
 use mriya::{
     Backend,
+    CleanupFailure,
+    CleanupReport,
     ConfigStoreError,
     ConfigWriter,
+    Disposition,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    ResourceLedger,
+    ResourceRef,
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,
@@ -23,30 +33,31 @@ use thiserror::Error;
 /// Scripted backend that simulates volume and instance lifecycle operations.
 #[derive(Clone, Debug)]
 pub struct ScriptedVolumeBackend {
+    /// Shared scripted state.
     state: Arc<Mutex<State>>,
 }
 
+/// Failure points scripted by a scenario.
 #[derive(Clone, Copy, Debug)]
 enum FailureMode {
     CreateVolume,
     Provision,
     Wait,
-    Detach,
-    Destroy,
+    Cleanup,
 }
 
 impl FailureMode {
     const fn flag(self) -> u8 {
         match self {
-            Self::CreateVolume => 0b00001,
-            Self::Provision => 0b00010,
-            Self::Wait => 0b00100,
-            Self::Detach => 0b01000,
-            Self::Destroy => 0b10000,
+            Self::CreateVolume => 0b0001,
+            Self::Provision => 0b0010,
+            Self::Wait => 0b0100,
+            Self::Cleanup => 0b1000,
         }
     }
 }
 
+/// Bit set of scripted failures.
 #[derive(Clone, Copy, Debug, Default)]
 struct Failures(u8);
 
@@ -56,132 +67,86 @@ impl Failures {
     const fn contains(self, mode: FailureMode) -> bool { self.0 & mode.flag() != 0 }
 }
 
+/// Mutable state tracked by the scripted backend.
 #[derive(Debug, Default)]
 struct State {
+    /// Armed failure points.
     failures: Failures,
+    /// Number of volume-creation attempts.
     create_volume_calls: u32,
-    destroy_calls: u32,
-}
-
-#[derive(Clone)]
-struct OperationSpec {
-    context: &'static str,
-    failure_mode: FailureMode,
-    error: ScriptedVolumeBackendError,
+    /// Number of cleanup attempts.
+    cleanup_calls: u32,
+    /// Resources cleanup reports as residual when it fails.
+    residue: Vec<ResourceRef>,
 }
 
 impl ScriptedVolumeBackend {
+    /// Creates a backend with no failures armed.
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(State::default())),
         }
     }
 
-    pub fn fail_create_volume(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failures
-            .set(FailureMode::CreateVolume);
+    /// Makes volume creation fail before any allocation.
+    pub fn fail_create_volume(&self) { self.fail(FailureMode::CreateVolume); }
+
+    /// Makes helper-instance creation fail.
+    pub fn fail_provision(&self) { self.fail(FailureMode::Provision); }
+
+    /// Makes readiness polling fail.
+    pub fn fail_wait(&self) { self.fail(FailureMode::Wait); }
+
+    /// Makes cleanup fail, reporting the helper server as residual.
+    pub fn fail_cleanup(&self) {
+        let mut state = self.lock();
+        state.failures.set(FailureMode::Cleanup);
+        state
+            .residue
+            .push(ResourceRef::server("instance-123", "test-zone"));
     }
 
-    pub fn fail_provision(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failures
-            .set(FailureMode::Provision);
+    /// Returns how many volume-creation attempts were made.
+    pub fn create_volume_calls(&self) -> u32 { self.lock().create_volume_calls }
+
+    /// Returns how many cleanup attempts were made.
+    pub fn cleanup_calls(&self) -> u32 { self.lock().cleanup_calls }
+
+    /// Locks the state, recovering a poisoned lock.
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn fail_wait(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failures
-            .set(FailureMode::Wait);
-    }
-
-    pub fn fail_detach(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failures
-            .set(FailureMode::Detach);
-    }
-
-    pub fn fail_destroy(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .failures
-            .set(FailureMode::Destroy);
-    }
-
-    pub fn create_volume_calls(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .create_volume_calls
-    }
-
-    pub fn destroy_calls(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .destroy_calls
-    }
-
-    /// Execute an operation with scripted failure checking.
-    fn execute_with_failure_check<T>(
-        &self,
-        operation: OperationSpec,
-        increment: impl FnOnce(&mut State),
-        success: impl FnOnce() -> T,
-    ) -> Result<T, ScriptedVolumeBackendError> {
-        let mut state = self.state.lock().map_err(|err| {
-            ScriptedVolumeBackendError::Lock(format!(
-                "lock poisoned in {}: {err}",
-                operation.context
-            ))
-        })?;
-
-        increment(&mut state);
-
-        if state.failures.contains(operation.failure_mode) {
-            return Err(operation.error);
+    /// Builds the failure cleanup reports when it is scripted to fail.
+    fn cleanup_failure(&self) -> CleanupFailure {
+        let mut state = self.lock();
+        state.cleanup_calls += 1;
+        let mut failure = CleanupFailure::new();
+        for resource in state.residue.clone() {
+            failure.add(resource, "403 denied");
         }
-
-        Ok(success())
+        failure
     }
 
-    fn run_operation<'a, T>(
-        &'a self,
-        operation: OperationSpec,
-        increment: impl FnOnce(&mut State) + Send + 'a,
-        success: impl FnOnce() -> T + Send + 'a,
-    ) -> BackendFuture<'a, T, ScriptedVolumeBackendError>
-    where
-        T: Send + 'a,
-    {
-        Box::pin(async move { self.execute_with_failure_check(operation, increment, success) })
-    }
+    /// Arms `mode`.
+    fn fail(&self, mode: FailureMode) { self.lock().failures.set(mode); }
+
+    /// Reports whether `mode` is armed.
+    fn has(&self, mode: FailureMode) -> bool { self.lock().failures.contains(mode) }
 }
 
 /// Errors raised by the scripted backend to model failure points.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ScriptedVolumeBackendError {
+    /// Volume creation failed.
     #[error("volume create failure")]
     VolumeCreate,
+    /// Instance provisioning failed.
     #[error("provision failure")]
     Provision,
+    /// Readiness polling failed.
     #[error("wait failure")]
     Wait,
-    #[error("detach failure")]
-    Detach,
-    #[error("destroy failure")]
-    Destroy,
-    #[error("{0}")]
-    Lock(String),
 }
 
 impl Backend for ScriptedVolumeBackend {
@@ -189,146 +154,150 @@ impl Backend for ScriptedVolumeBackend {
 
     fn create<'a>(
         &'a self,
-        _request: &'a InstanceRequest,
+        request: &'a InstanceRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
-        self.run_operation(
-            OperationSpec {
-                context: "create",
-                failure_mode: FailureMode::Provision,
-                error: ScriptedVolumeBackendError::Provision,
-            },
-            |_| {},
-            || InstanceHandle {
+        Box::pin(async move {
+            if self.has(FailureMode::Provision) {
+                return Err(ScriptedVolumeBackendError::Provision);
+            }
+            let zone = request.zone.clone();
+            ledger.record(
+                ResourceRef::server("instance-123", &zone),
+                Disposition::Owned,
+            );
+            ledger.record(
+                ResourceRef::instance_volume("vol-root", &zone),
+                Disposition::Owned,
+            );
+            Ok(InstanceHandle {
                 id: String::from("instance-123"),
-                zone: String::from("test-zone"),
-            },
-        )
+                zone,
+            })
+        })
     }
 
     fn wait_for_ready<'a>(
         &'a self,
         _handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
-        self.run_operation(
-            OperationSpec {
-                context: "wait_for_ready",
-                failure_mode: FailureMode::Wait,
-                error: ScriptedVolumeBackendError::Wait,
-            },
-            |_| {},
-            || InstanceNetworking {
+        Box::pin(async move {
+            if self.has(FailureMode::Wait) {
+                return Err(ScriptedVolumeBackendError::Wait);
+            }
+            Ok(InstanceNetworking {
                 public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 ssh_port: 22,
-            },
-        )
+            })
+        })
     }
 
-    fn destroy(&self, _handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
-        self.run_operation(
-            OperationSpec {
-                context: "destroy",
-                failure_mode: FailureMode::Destroy,
-                error: ScriptedVolumeBackendError::Destroy,
-            },
-            |state| {
-                state.destroy_calls += 1;
-            },
-            || (),
-        )
+    fn cleanup<'a>(
+        &'a self,
+        ledger: &'a ResourceLedger,
+    ) -> BackendFuture<'a, CleanupReport, CleanupFailure> {
+        Box::pin(async move {
+            if self.has(FailureMode::Cleanup) {
+                return Err(self.cleanup_failure());
+            }
+            self.lock().cleanup_calls += 1;
+            Ok(cleanup_report(ledger))
+        })
     }
 }
 
 impl VolumeBackend for ScriptedVolumeBackend {
     fn create_volume<'a>(
         &'a self,
-        _request: &'a VolumeRequest,
+        request: &'a VolumeRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
-        self.run_operation(
-            OperationSpec {
-                context: "create_volume",
-                failure_mode: FailureMode::CreateVolume,
-                error: ScriptedVolumeBackendError::VolumeCreate,
-            },
-            |state| {
-                state.create_volume_calls += 1;
-            },
-            || VolumeHandle {
+        Box::pin(async move {
+            self.lock().create_volume_calls += 1;
+            if self.has(FailureMode::CreateVolume) {
+                return Err(ScriptedVolumeBackendError::VolumeCreate);
+            }
+            ledger.record(
+                ResourceRef::instance_volume("vol-123", &request.zone),
+                Disposition::Owned,
+            );
+            Ok(VolumeHandle {
                 id: String::from("vol-123"),
                 zone: String::from("test-zone"),
-            },
-        )
+            })
+        })
     }
+}
 
-    fn detach_volume<'a>(
-        &'a self,
-        _handle: &'a InstanceHandle,
-        _volume_id: &'a str,
-    ) -> BackendFuture<'a, (), Self::Error> {
-        self.run_operation(
-            OperationSpec {
-                context: "detach_volume",
-                failure_mode: FailureMode::Detach,
-                error: ScriptedVolumeBackendError::Detach,
-            },
-            |_| {},
-            || (),
-        )
+/// Builds the report a successful cleanup returns from `ledger`.
+fn cleanup_report(ledger: &ResourceLedger) -> CleanupReport {
+    let mut report = CleanupReport::default();
+    for entry in ledger.entries() {
+        if entry.disposition.is_deletable() {
+            report.removed.push(entry.resource);
+        } else {
+            report.preserved.push(entry.resource);
+        }
     }
+    report
 }
 
 /// In-memory config store for behavioural tests.
 #[derive(Clone, Debug)]
 pub struct MemoryConfigStore {
+    /// Shared configuration state.
     state: Arc<Mutex<ConfigState>>,
 }
 
+/// Mutable configuration state.
 #[derive(Debug, Default)]
 struct ConfigState {
+    /// Identifier already present in configuration.
     existing_volume_id: Option<String>,
+    /// Number of successful writes.
     write_calls: u32,
+    /// Whether the next write fails.
+    fail_write: bool,
 }
 
 impl MemoryConfigStore {
+    /// Creates an empty store.
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(ConfigState::default())),
         }
     }
 
+    /// Creates a store that already holds `volume_id`.
     pub fn with_existing(volume_id: &str) -> Self {
         let store = Self::new();
-        store
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .existing_volume_id = Some(volume_id.to_owned());
+        store.lock().existing_volume_id = Some(volume_id.to_owned());
         store
     }
 
-    pub fn write_calls(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .write_calls
+    /// Makes the next configuration write fail.
+    pub fn fail_write(&self) { self.lock().fail_write = true; }
+
+    /// Returns how many successful writes were made.
+    pub fn write_calls(&self) -> u32 { self.lock().write_calls }
+
+    /// Locks the state, recovering a poisoned lock.
+    fn lock(&self) -> std::sync::MutexGuard<'_, ConfigState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_state(
-        &self,
-        context: &str,
-    ) -> Result<std::sync::MutexGuard<'_, ConfigState>, ConfigStoreError> {
+    /// Returns the state or an I/O error when the lock is poisoned.
+    fn try_lock(&self) -> Result<std::sync::MutexGuard<'_, ConfigState>, ConfigStoreError> {
         self.state.lock().map_err(|err| ConfigStoreError::Io {
             path: Utf8PathBuf::from("in-memory"),
-            message: format!("lock poisoned in {context}: {err}"),
+            message: format!("lock poisoned: {err}"),
         })
     }
 }
 
 impl ConfigWriter for MemoryConfigStore {
     fn current_volume_id(&self) -> Result<Option<String>, ConfigStoreError> {
-        Ok(self
-            .lock_state("current_volume_id")?
-            .existing_volume_id
-            .clone())
+        Ok(self.try_lock()?.existing_volume_id.clone())
     }
 
     fn write_volume_id(
@@ -336,12 +305,18 @@ impl ConfigWriter for MemoryConfigStore {
         volume_id: &str,
         force: bool,
     ) -> Result<Utf8PathBuf, ConfigStoreError> {
-        let mut state = self.lock_state("write_volume_id")?;
+        let mut state = self.try_lock()?;
         if let Some(existing) = state.existing_volume_id.as_ref()
             && !force
         {
             return Err(ConfigStoreError::VolumeAlreadyConfigured {
                 volume_id: existing.clone(),
+            });
+        }
+        if state.fail_write {
+            return Err(ConfigStoreError::Io {
+                path: Utf8PathBuf::from("mriya.toml"),
+                message: String::from("simulated write failure"),
             });
         }
         state.existing_volume_id = Some(volume_id.to_owned());

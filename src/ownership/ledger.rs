@@ -1,0 +1,330 @@
+//! The ownership ledger: a shared, persistable record of provider resources.
+
+use std::{
+    fmt,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
+
+use camino::Utf8PathBuf;
+use thiserror::Error;
+
+use super::types::{
+    AllocationScope,
+    AllocationTag,
+    Disposition,
+    LedgerEntry,
+    LedgerSnapshot,
+    ResourceKind,
+    ResourceRef,
+};
+
+/// Failure returned by a [`LedgerSink`] when it cannot durably record a
+/// snapshot.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("{message}")]
+pub struct LedgerPersistError {
+    /// Human-readable description of the persistence failure.
+    pub message: String,
+}
+
+impl LedgerPersistError {
+    /// Wraps a message in a persistence failure.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+/// Durable destination for ledger snapshots.
+///
+/// The ownership module owns this port; the recovery journal is the adapter
+/// that writes it to disk. Keeping the interface here lets cleanup run with an
+/// in-memory ledger in tests and with a journal in production.
+pub trait LedgerSink: fmt::Debug + Send + Sync {
+    /// Writes `snapshot` durably, replacing any earlier snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerPersistError`] when the snapshot cannot be written.
+    fn persist(&self, snapshot: &LedgerSnapshot) -> Result<(), LedgerPersistError>;
+
+    /// Returns the journal path backing this sink, when it has one.
+    fn location(&self) -> Option<Utf8PathBuf> { None }
+
+    /// Removes the durable record, called only after verified cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerPersistError`] when the record exists but cannot be
+    /// removed.
+    fn clear(&self) -> Result<(), LedgerPersistError> { Ok(()) }
+}
+
+/// Errors raised by ledger queries and promotions.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum LedgerError {
+    /// Raised when a promotion names a resource that was never recorded.
+    #[error("{kind} {id} is not recorded in the ownership ledger")]
+    NotRecorded {
+        /// Kind that was looked up.
+        kind: ResourceKind,
+        /// Identifier that was looked up.
+        id: String,
+    },
+}
+
+/// Mutable ledger contents guarded by the ledger's mutex.
+#[derive(Debug)]
+struct LedgerState {
+    /// Correlation tag shared by every recorded resource.
+    tag: AllocationTag,
+    /// Zone and project that bound the records.
+    scope: AllocationScope,
+    /// Resources recorded so far.
+    entries: Vec<LedgerEntry>,
+    /// Non-fatal persistence failures collected while recording.
+    warnings: Vec<String>,
+    /// Whether a provider allocation may exist without a recorded identifier.
+    outcome_unknown: bool,
+}
+
+impl LedgerState {
+    /// Replaces or appends an entry for `resource`.
+    fn upsert(&mut self, resource: ResourceRef, disposition: Disposition) {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.resource.matches(resource.kind(), resource.id()))
+        {
+            existing.resource = resource;
+            existing.disposition = disposition;
+            return;
+        }
+        self.entries.push(LedgerEntry::new(resource, disposition));
+    }
+
+    /// Builds the snapshot persisted by the sink.
+    fn snapshot(&self) -> LedgerSnapshot {
+        LedgerSnapshot {
+            allocation: self.tag.clone(),
+            scope: self.scope.clone(),
+            entries: self.entries.clone(),
+        }
+    }
+}
+
+/// Cloneable, thread-safe record of the resources one allocation owns.
+#[derive(Clone, Debug)]
+pub struct ResourceLedger {
+    /// Shared ledger contents.
+    state: Arc<Mutex<LedgerState>>,
+    /// Optional durable sink, invoked on every mutation.
+    sink: Option<Arc<dyn LedgerSink>>,
+}
+
+impl ResourceLedger {
+    /// Creates an in-memory ledger with a freshly generated allocation tag.
+    #[must_use]
+    pub fn in_memory(scope: AllocationScope) -> Self {
+        Self::with_tag(scope, AllocationTag::generate(), None)
+    }
+
+    /// Creates a ledger that persists every mutation through `sink`.
+    #[must_use]
+    pub fn with_sink(scope: AllocationScope, sink: Arc<dyn LedgerSink>) -> Self {
+        Self::with_tag(scope, AllocationTag::generate(), Some(sink))
+    }
+
+    /// Creates a ledger with an explicit tag, used when recovering a journal.
+    #[must_use]
+    pub fn with_tag(
+        scope: AllocationScope,
+        tag: AllocationTag,
+        sink: Option<Arc<dyn LedgerSink>>,
+    ) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(LedgerState {
+                tag,
+                scope,
+                entries: Vec::new(),
+                warnings: Vec::new(),
+                outcome_unknown: false,
+            })),
+            sink,
+        }
+    }
+
+    /// Returns the allocation tag shared by this ledger's resources.
+    #[must_use]
+    pub fn tag(&self) -> AllocationTag { self.lock().tag.clone() }
+
+    /// Returns the zone and project this ledger is scoped to.
+    #[must_use]
+    pub fn scope(&self) -> AllocationScope { self.lock().scope.clone() }
+
+    /// Returns the journal path backing this ledger, when it has one.
+    #[must_use]
+    pub fn journal_path(&self) -> Option<Utf8PathBuf> {
+        self.sink.as_ref().and_then(|sink| sink.location())
+    }
+
+    /// Writes the current (possibly empty) snapshot before any provider
+    /// request is made.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerPersistError`] when the initial snapshot cannot be
+    /// written; the caller must not contact the provider in that case.
+    pub fn persist_initial(&self) -> Result<(), LedgerPersistError> {
+        let snapshot = self.lock().snapshot();
+        self.persist(&snapshot)
+    }
+
+    /// Records `resource` with `disposition`, replacing an earlier entry for
+    /// the same resource.
+    ///
+    /// A persistence failure does not lose the in-memory record: cleanup can
+    /// still act on it during this process, and the failure is kept in
+    /// [`ResourceLedger::warnings`] so the eventual report can mention it.
+    pub fn record(&self, resource: ResourceRef, disposition: Disposition) {
+        let mut state = self.lock();
+        state.upsert(resource, disposition);
+        let snapshot = state.snapshot();
+        drop(state);
+        if let Err(err) = self.persist(&snapshot) {
+            self.lock().warnings.push(err.message);
+        }
+    }
+
+    /// Changes the disposition recorded for an already-recorded resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerError::NotRecorded`] when no entry names `kind` and
+    /// `id`.
+    pub fn promote(
+        &self,
+        kind: ResourceKind,
+        id: &str,
+        disposition: Disposition,
+    ) -> Result<(), LedgerError> {
+        let mut state = self.lock();
+        let Some(entry) = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.resource.matches(kind, id))
+        else {
+            return Err(LedgerError::NotRecorded {
+                kind,
+                id: id.to_owned(),
+            });
+        };
+        entry.disposition = disposition;
+        let snapshot = state.snapshot();
+        drop(state);
+        if let Err(err) = self.persist(&snapshot) {
+            self.lock().warnings.push(err.message);
+        }
+        Ok(())
+    }
+
+    /// Replaces the recorded entries with `entries`.
+    ///
+    /// Recovery uses this after rediscovering resources from provider
+    /// metadata, so a journal that never learned an identifier is corrected
+    /// before cleanup runs.
+    pub fn replace_entries(&self, entries: Vec<LedgerEntry>) {
+        let mut state = self.lock();
+        state.entries = entries;
+        let snapshot = state.snapshot();
+        drop(state);
+        if let Err(err) = self.persist(&snapshot) {
+            self.lock().warnings.push(err.message);
+        }
+    }
+
+    /// Returns a copy of every recorded entry.
+    #[must_use]
+    pub fn entries(&self) -> Vec<LedgerEntry> { self.lock().entries.clone() }
+
+    /// Returns the entry for `kind` and `id`, when one exists.
+    #[must_use]
+    pub fn find(&self, kind: ResourceKind, id: &str) -> Option<LedgerEntry> {
+        self.lock()
+            .entries
+            .iter()
+            .find(|entry| entry.resource.matches(kind, id))
+            .cloned()
+    }
+
+    /// Returns every entry of `kind`.
+    #[must_use]
+    pub fn entries_of(&self, kind: ResourceKind) -> Vec<LedgerEntry> {
+        self.lock()
+            .entries
+            .iter()
+            .filter(|entry| entry.resource.kind() == kind)
+            .cloned()
+            .collect()
+    }
+
+    /// Returns every entry with `disposition`.
+    #[must_use]
+    pub fn entries_with(&self, disposition: Disposition) -> Vec<LedgerEntry> {
+        self.lock()
+            .entries
+            .iter()
+            .filter(|entry| entry.disposition == disposition)
+            .cloned()
+            .collect()
+    }
+
+    /// Returns the non-fatal persistence failures collected so far.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<String> { self.lock().warnings.clone() }
+
+    /// Removes the durable journal after verified cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerPersistError`] when the journal exists but cannot be
+    /// removed; the caller must then report the journal path so `mriya
+    /// recover` can find it.
+    pub fn clear_journal(&self) -> Result<(), LedgerPersistError> {
+        if self.lock().outcome_unknown {
+            // The tag is the only durable correlation for an allocation whose
+            // outcome is unknown; dropping the journal now would lose it.
+            return Ok(());
+        }
+        self.sink.as_ref().map_or(Ok(()), |sink| sink.clear())
+    }
+
+    /// Marks that a provider allocation may exist without a recorded
+    /// identifier.
+    ///
+    /// This keeps the journal alive after cleanup, so `mriya recover` can
+    /// reconcile the tag later even when the process exits normally.
+    pub fn mark_outcome_unknown(&self) { self.lock().outcome_unknown = true; }
+
+    /// Reports whether an allocation outcome is unknown.
+    #[must_use]
+    pub fn has_unknown_outcome(&self) -> bool { self.lock().outcome_unknown }
+
+    /// Persists `snapshot` through the sink, if one is configured.
+    fn persist(&self, snapshot: &LedgerSnapshot) -> Result<(), LedgerPersistError> {
+        self.sink
+            .as_ref()
+            .map_or(Ok(()), |sink| sink.persist(snapshot))
+    }
+
+    /// Locks the ledger, recovering the contents if a panic poisoned the lock.
+    ///
+    /// A poisoned ledger still holds the authoritative record of what was
+    /// allocated, so discarding it would leak resources. Recovering the guard
+    /// keeps cleanup able to act on it.
+    fn lock(&self) -> MutexGuard<'_, LedgerState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}

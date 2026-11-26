@@ -30,6 +30,7 @@ pub use types::{
     RemoteCommandOutput,
     StreamingCommandRunner,
     SyncDestination,
+    kill_active_children,
 };
 pub use util::{
     HomeUnavailable,

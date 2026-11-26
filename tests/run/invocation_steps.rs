@@ -40,6 +40,8 @@ enum InvocationRole {
     Rsync,
     /// An SSH call running the scenario's requested command.
     RemoteCommand,
+    /// The cache-release call that runs before cleanup.
+    Release,
     /// Any other SSH call, such as a cloud-init readiness poll.
     OtherSsh,
 }
@@ -70,6 +72,8 @@ fn classify_invocation(
     };
     if payload.contains("mount /dev/vdb") {
         InvocationRole::Mount
+    } else if payload.contains("umount") {
+        InvocationRole::Release
     } else if payload.contains(command) {
         InvocationRole::RemoteCommand
     } else {
@@ -94,6 +98,9 @@ fn classify_invocations(run_context: &RunContext) -> Result<Vec<InvocationRole>,
         .invocations()
         .iter()
         .map(|invocation| classify_invocation(invocation, ssh_bin, command))
+        // The cache release runs after the requested command and is not part
+        // of the provisioning/sync/run sequence under assertion.
+        .filter(|role| *role != InvocationRole::Release)
         .collect())
 }
 

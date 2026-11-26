@@ -218,9 +218,9 @@ fn deletes_servers_without_volumes(janitor_context: &JanitorContext) -> Result<(
             .iter()
             .any(|arg| arg.to_string_lossy() == needle)
     };
-    if !contains("with-volumes=none") {
+    if !contains("with-volumes=root") {
         return Err(StepError::Assertion(format!(
-            "expected with-volumes=none, got args: {:?}",
+            "expected with-volumes=root, got args: {:?}",
             delete_call.args
         )));
     }

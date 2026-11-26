@@ -7,14 +7,14 @@ Feature: mriya init prepares a cache volume
     Then the init result is successful
     And the volume is formatted
     And the config is updated
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface formatting failures and still teardown
+  Scenario: Surface formatting failures and still clean up
     Given a ready init workflow
     And the formatter fails with exit code "1"
     When I prepare the cache volume
     Then the init error kind is "format"
-    And the instance is destroyed
+    And the instance is cleaned up
 
   Scenario: Reject overwriting an existing volume ID without force
     Given a ready init workflow
@@ -44,24 +44,26 @@ Feature: mriya init prepares a cache volume
     When I prepare the cache volume
     Then the init error kind is "provision"
 
-  Scenario: Surface readiness failures and still teardown
+  Scenario: Surface readiness failures and still clean up
     Given a ready init workflow
     And instance readiness fails
     When I prepare the cache volume
     Then the init error kind is "wait"
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface detachment failures and still teardown
+  Scenario: Surface cleanup failures and still report the volume
     Given a ready init workflow
     And the formatter succeeds
-    And volume detachment fails
+    And cleanup fails
     When I prepare the cache volume
-    Then the init error kind is "detach"
-    And the instance is destroyed
+    Then the init error kind is "cleanup"
+    And the retained volume is named with configuration instructions
 
-  Scenario: Surface teardown failures after success
+  Scenario: Keep a formatted volume recoverable when the config write fails
     Given a ready init workflow
     And the formatter succeeds
-    And teardown fails
+    And the configuration write fails
     When I prepare the cache volume
-    Then the init error kind is "teardown"
+    Then the init error kind is "config"
+    And the retained volume is named with configuration instructions
+    And the instance is cleaned up

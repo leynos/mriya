@@ -1,20 +1,31 @@
 //! Scaleway backend implementation of the instance lifecycle.
+//!
+//! Creation records every confirmed allocation in the run's ownership ledger.
+//! Cleanup works from that ledger: it shuts the server down, detaches the
+//! volumes mriya must preserve, deletes the server, then deletes the owned
+//! volumes and public IPs through the API that owns each one, verifying every
+//! postcondition by an identity-checked listing.
 
+mod cleanup;
+mod cleanup_support;
 mod error;
+mod inventory;
 mod lifecycle;
 mod types;
 mod volume;
 
 use std::time::Duration;
 
-use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
-use types::{Action, Zone};
+use types::Zone;
 
 use crate::{
     backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest},
+    cleanup::{CleanupFailure, CleanupReport},
     config::ScalewayConfig,
     janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
+    ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef},
+    scaleway::lifecycle::records::record_server_creation,
     volume::{VolumeBackend, VolumeHandle, VolumeRequest},
 };
 
@@ -26,16 +37,19 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub use error::ScalewayBackendError;
+pub use inventory::ResourceInventory;
 
 /// Backend that provisions instances through the Scaleway Instances API.
 #[derive(Clone)]
 pub struct ScalewayBackend {
-    /// SDK client used for image lookups; instance, volume, and user-data calls
-    /// bypass it and use direct HTTP requests.
+    /// SDK client used for image lookups; every other call uses direct HTTP.
     api: ScalewayApi,
     /// Base URL for the Instances API calls made by direct HTTP request.
     /// Overridable within the crate so tests can target a loopback server.
     instance_api_base: String,
+    /// Base URL for the Block Storage API calls made by direct HTTP request.
+    /// Overridable within the crate so tests can target a loopback server.
+    block_api_base: String,
     /// Validated configuration; supplies the secret key and default request
     /// values.
     config: ScalewayConfig,
@@ -48,6 +62,10 @@ pub struct ScalewayBackend {
     poll_interval: Duration,
     /// Deadline applied to each wait before a timeout error is returned.
     wait_timeout: Duration,
+    /// Test-only seam that replaces the SDK image lookup, so a lifecycle test
+    /// can drive the whole create path against a loopback API.
+    #[cfg(test)]
+    image_id_override: Option<String>,
 }
 
 impl ScalewayBackend {
@@ -58,10 +76,6 @@ impl ScalewayBackend {
         api_err: &scaleway_rs::ScalewayApiError,
         request: &InstanceRequest,
     ) -> bool {
-        // A former third clause (`etype == "invalid_arguments"` with a
-        // `commercial_type` resource) was subsumed by the first check and
-        // has been removed: whenever it held, the first clause had already
-        // classified the error.
         matches!(api_err.resource.as_deref(), Some("commercial_type"))
             || api_err
                 .resource_id
@@ -80,10 +94,6 @@ impl ScalewayBackend {
     }
 
     /// Constructs a new backend, reading the test run ID from `env`.
-    ///
-    /// This is [`ScalewayBackend::new`] with an injectable environment: the
-    /// [`TEST_RUN_ID_ENV`] variable is looked up through `env` rather than the
-    /// process environment.
     ///
     /// # Errors
     ///
@@ -110,12 +120,31 @@ impl ScalewayBackend {
         Ok(Self {
             api: ScalewayApi::new(&config.secret_key),
             instance_api_base: lifecycle::SCALEWAY_INSTANCE_API_BASE.to_owned(),
+            block_api_base: lifecycle::SCALEWAY_BLOCK_API_BASE.to_owned(),
             config,
             test_run_id,
             ssh_port: DEFAULT_SSH_PORT,
             poll_interval: POLL_INTERVAL,
             wait_timeout: WAIT_TIMEOUT,
+            #[cfg(test)]
+            image_id_override: None,
         })
+    }
+
+    /// Resolves the boot image, honouring the test-only resolver seam.
+    ///
+    /// The seam exists because the SDK's image lookup hard-codes the
+    /// production host. With it unset, this is exactly
+    /// [`ScalewayBackend::resolve_image_id`].
+    async fn resolve_image_for_create(
+        &self,
+        request: &InstanceRequest,
+    ) -> Result<String, ScalewayBackendError> {
+        #[cfg(test)]
+        if let Some(image_id) = self.image_id_override.as_deref() {
+            return Ok(image_id.to_owned());
+        }
+        self.resolve_image_id(request).await
     }
 
     /// Builds an instance request using the backend's defaults.
@@ -181,68 +210,95 @@ impl ScalewayBackend {
         Ok(())
     }
 
-    /// Appends the test-run tag to `base_tags` when `test_run_id` is non-blank.
+    /// Appends the test-run tag and allocation tag, in that order.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// // A blank identifier adds nothing; a real one is appended after a trim.
     /// assert_eq!(
-    ///     ScalewayBackend::build_tags(vec![String::from("mriya")], None),
-    ///     vec![String::from("mriya")]
-    /// );
-    /// assert_eq!(
-    ///     ScalewayBackend::build_tags(vec![String::from("mriya")], Some(" abc ")),
+    ///     ScalewayBackend::build_tags(vec![String::from("mriya")], Some(" abc "), None),
     ///     vec![String::from("mriya"), format!("{TEST_RUN_TAG_PREFIX}abc")]
     /// );
     /// ```
-    fn build_tags(base_tags: Vec<String>, test_run_id: Option<&str>) -> Vec<String> {
+    fn build_tags(
+        base_tags: Vec<String>,
+        test_run_id: Option<&str>,
+        allocation: Option<&str>,
+    ) -> Vec<String> {
         let mut tags = base_tags;
-        let Some(id) = test_run_id else {
-            return tags;
-        };
-        let trimmed = id.trim();
-        if trimmed.is_empty() {
-            return tags;
+        if let Some(tag) = allocation.map(str::trim).filter(|tag| !tag.is_empty()) {
+            tags.push(tag.to_owned());
         }
-        tags.push(format!("{TEST_RUN_TAG_PREFIX}{trimmed}"));
+        if let Some(id) = test_run_id.map(str::trim).filter(|id| !id.is_empty()) {
+            tags.push(format!("{TEST_RUN_TAG_PREFIX}{id}"));
+        }
         tags
     }
 
-    /// Tags applied to created instances: `mriya`, `ephemeral`, and the
-    /// optional test-run tag.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// assert_eq!(
-    ///     ScalewayBackend::instance_tags(None),
-    ///     vec![String::from("mriya"), String::from("ephemeral")]
-    /// );
-    /// ```
-    fn instance_tags(test_run_id: Option<&str>) -> Vec<String> {
+    /// Tags applied to created instances: `mriya`, `ephemeral`, the
+    /// allocation tag, and the optional test-run tag.
+    fn instance_tags(test_run_id: Option<&str>, allocation: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("ephemeral")],
             test_run_id,
+            allocation,
         )
     }
 
-    /// Tags applied to created cache volumes: `mriya`, `cache`, and the
-    /// optional test-run tag.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// assert_eq!(
-    ///     ScalewayBackend::volume_tags(None),
-    ///     vec![String::from("mriya"), String::from("cache")]
-    /// );
-    /// ```
-    fn volume_tags(test_run_id: Option<&str>) -> Vec<String> {
+    /// Tags applied to created cache volumes: `mriya`, `cache`, the
+    /// allocation tag, and the optional test-run tag.
+    fn volume_tags(test_run_id: Option<&str>, allocation: Option<&str>) -> Vec<String> {
         Self::build_tags(
             vec![String::from("mriya"), String::from("cache")],
             test_run_id,
+            allocation,
         )
+    }
+
+    /// Records a configured cache volume as retained before it is attached.
+    ///
+    /// A volume the ledger already knows keeps its disposition: `mriya init`
+    /// records its new volume as owned so a failure before formatting still
+    /// deletes it. A volume the caller only borrowed from configuration is
+    /// looked up so the recorded reference names the API family that must
+    /// later detach and preserve it.
+    async fn record_configured_cache(
+        &self,
+        volume_id: &str,
+        zone: &str,
+        ledger: &ResourceLedger,
+    ) -> Result<(), ScalewayBackendError> {
+        if ledger
+            .find(ResourceKind::InstanceVolume, volume_id)
+            .is_some()
+            || ledger.find(ResourceKind::BlockVolume, volume_id).is_some()
+        {
+            return Ok(());
+        }
+
+        match self.get_instance_volume(zone, volume_id).await {
+            Ok(_) => ledger.record(
+                ResourceRef::instance_volume(volume_id, zone),
+                Disposition::Retained,
+            ),
+            Err(ScalewayBackendError::NotFound { .. }) => {
+                match self.get_block_volume(zone, volume_id).await {
+                    Ok(_) => ledger.record(
+                        ResourceRef::block_volume(volume_id, zone),
+                        Disposition::Retained,
+                    ),
+                    Err(ScalewayBackendError::NotFound { .. }) => {
+                        return Err(ScalewayBackendError::VolumeNotFound {
+                            volume_id: volume_id.to_owned(),
+                            zone: zone.to_owned(),
+                        });
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(())
     }
 }
 
@@ -252,47 +308,67 @@ impl Backend for ScalewayBackend {
     fn create<'a>(
         &'a self,
         request: &'a InstanceRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
             request.validate()?;
-            let image_id = self.resolve_image_id(request).await?;
+            ledger
+                .persist_initial()
+                .map_err(|error| ScalewayBackendError::Journal {
+                    message: error.message,
+                })?;
 
-            let server = self.create_instance_stopped(request, &image_id).await?;
+            let image_id = self.resolve_image_for_create(request).await?;
+            ledger.record(
+                ResourceRef::image(&image_id, &request.zone),
+                Disposition::Borrowed,
+            );
+
+            let server = match self
+                .create_instance_stopped(request, &image_id, ledger)
+                .await
+            {
+                Ok(server) => server,
+                Err(error @ ScalewayBackendError::AllocationOutcomeUnknown { .. }) => {
+                    ledger.mark_outcome_unknown();
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+            record_server_creation(&server, ledger);
 
             let handle = InstanceHandle {
                 id: server.id.clone(),
                 zone: request.zone.clone(),
             };
 
-            // Attach cache volume before powering on (instance is stopped)
-            if let Some(ref volume_id) = request.volume_id {
+            if let Some(volume_id) = request.volume_id.as_deref() {
                 let root_volume_id = server
-                    .volumes
-                    .volumes
-                    .get("0")
-                    .map(|v| v.id.clone())
+                    .root_volume()
+                    .map(|volume| volume.id.clone())
                     .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
                         volume_id: String::from("0"),
                         zone: request.zone.clone(),
                     })?;
                 Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
+                self.record_configured_cache(volume_id, &request.zone, ledger)
+                    .await?;
                 self.attach_volume(&handle, volume_id, root_volume_id)
                     .await?;
             }
 
-            let snapshot = InstanceSnapshot {
-                id: server.id.into(),
-                state: server.state.into(),
-                allowed_actions: server
-                    .allowed_actions
-                    .into_iter()
-                    .map(Action::from)
-                    .collect(),
-                public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
-            };
+            let snapshot = server.snapshot();
+            self.power_on_if_needed(&Zone::from(request.zone.as_str()), &snapshot)
+                .await?;
 
-            let zone = Zone::from(request.zone.as_str());
-            self.power_on_if_needed(&zone, &snapshot).await?;
+            // Powering on is when a routed public IP is attached. Recording it
+            // now keeps it owned rather than letting cleanup classify it as a
+            // borrowed address it must preserve. A refresh failure is not
+            // fatal: the server and root volume are already recorded, and the
+            // run can continue.
+            if let Ok(refreshed) = self.get_server(&request.zone, &handle.id).await {
+                record_server_creation(&refreshed, ledger);
+            }
 
             Ok(handle)
         })
@@ -309,11 +385,11 @@ impl Backend for ScalewayBackend {
         })
     }
 
-    fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
-        Box::pin(async move {
-            self.delete_instance(&handle).await?;
-            self.wait_until_gone(&handle).await
-        })
+    fn cleanup<'a>(
+        &'a self,
+        ledger: &'a ResourceLedger,
+    ) -> BackendFuture<'a, CleanupReport, CleanupFailure> {
+        Box::pin(async move { self.cleanup_ledger(ledger).await })
     }
 }
 
@@ -321,16 +397,9 @@ impl VolumeBackend for ScalewayBackend {
     fn create_volume<'a>(
         &'a self,
         request: &'a VolumeRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
-        Box::pin(async move { Self::create_volume(self, request).await })
-    }
-
-    fn detach_volume<'a>(
-        &'a self,
-        handle: &'a InstanceHandle,
-        volume_id: &'a str,
-    ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move { Self::detach_volume(self, handle, volume_id).await })
+        Box::pin(async move { Self::create_volume(self, request, ledger).await })
     }
 }
 

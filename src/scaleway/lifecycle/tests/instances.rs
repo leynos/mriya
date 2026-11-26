@@ -2,9 +2,10 @@
 //! API.
 //!
 //! Creation must reach the substitutable API base rather than the SDK's
-//! hard-coded production host, and the server it posts must start stopped so
-//! cloud-init user-data is in place before first boot. A hard-coded base or a
-//! dropped `stopped` flag therefore fails here instead of in a live account.
+//! hard-coded production host, must name the server after the allocation tag,
+//! and must send that tag as a provider tag so an interrupted allocation can be
+//! rediscovered. A hard-coded base, a dropped `stopped` flag, or a missing
+//! allocation tag therefore fails here instead of in a live account.
 
 use anyhow::{Context, Result};
 use rstest::rstest;
@@ -13,11 +14,9 @@ use super::{
     backend_fixture,
     base_request,
     http_stub::{Reply, only_request, request_body, request_url, with_stub},
+    ledger,
 };
-use crate::{
-    backend::InstanceRequest,
-    scaleway::{ScalewayBackend, ScalewayBackendError},
-};
+use crate::backend::InstanceRequest;
 
 /// A successful creation, reusing the single-server fixture the detach path
 /// also decodes.
@@ -39,18 +38,21 @@ fn rejected() -> Reply {
 /// Scenario: creating an instance before its cache volume is attached.
 ///
 /// Invariant: the POST targets the configured zone on the substitutable base
-/// and sends a stopped server tagged as ephemeral, and the provider's server
-/// is returned to the caller.
+/// and sends a stopped server tagged as ephemeral, carrying the allocation tag,
+/// and named after that tag.
 #[rstest]
 #[tokio::test]
 async fn create_instance_stopped_posts_a_stopped_server(
-    backend_fixture: ScalewayBackend,
+    backend_fixture: crate::scaleway::ScalewayBackend,
     base_request: InstanceRequest,
 ) -> Result<()> {
+    let ledger = ledger();
+    let tag = ledger.tag();
+    let expected_name = format!("mriya-{}", tag.suffix());
     let (result, requests) =
         with_stub(backend_fixture, vec![created_instance()], async |backend| {
             backend
-                .create_instance_stopped(&base_request, "img-test")
+                .create_instance_stopped(&base_request, "img-test", &ledger)
                 .await
         })
         .await?;
@@ -63,19 +65,7 @@ async fn create_instance_stopped_posts_a_stopped_server(
         "/instance/v1/zones/zone/servers"
     );
     let body = request_body(request)?;
-    let instance_name = body
-        .as_object()
-        .context("creation body is not an object")?
-        .get("name")
-        .context("creation body has no name")?;
-    assert!(
-        instance_name
-            .as_str()
-            .is_some_and(|name| name.starts_with("mriya-")),
-        "unexpected instance name: {instance_name}"
-    );
-    // The name is random per call, so the remaining payload is compared as a
-    // whole. That also proves the optional fields stay absent.
+    assert_eq!(body.get("name"), Some(&serde_json::json!(expected_name)));
     assert_eq!(
         without_name(&body)?,
         serde_json::json!({
@@ -84,14 +74,14 @@ async fn create_instance_stopped_posts_a_stopped_server(
             "project": "proj",
             "routed_ip_enabled": true,
             "dynamic_ip_required": true,
-            "tags": ["mriya", "ephemeral"],
+            "tags": ["mriya", "ephemeral", tag.as_str()],
             "stopped": true,
         })
     );
     Ok(())
 }
 
-/// Returns the creation payload minus its random `name` field.
+/// Returns the creation payload minus its `name` field.
 fn without_name(body: &serde_json::Value) -> Result<serde_json::Value> {
     let mut fields = body
         .as_object()
@@ -103,23 +93,31 @@ fn without_name(body: &serde_json::Value) -> Result<serde_json::Value> {
 
 /// Scenario: the provider rejects a creation that is not a type mismatch.
 ///
-/// Invariant: the raw provider message survives as a `Provider` error rather
-/// than being misreported as an unavailable instance type.
+/// Invariant: a 404 survives as a `NotFound` error naming the operation rather
+/// than being misreported as an unavailable instance type or a generic
+/// provider failure.
 #[rstest]
 #[tokio::test]
 async fn create_instance_stopped_preserves_a_provider_rejection(
-    backend_fixture: ScalewayBackend,
+    backend_fixture: crate::scaleway::ScalewayBackend,
     base_request: InstanceRequest,
 ) -> Result<()> {
+    let ledger = ledger();
     let (result, requests) = with_stub(backend_fixture, vec![rejected()], async |backend| {
         backend
-            .create_instance_stopped(&base_request, "img-test")
+            .create_instance_stopped(&base_request, "img-test", &ledger)
             .await
     })
     .await?;
     let error = result.expect_err("a rejected creation must fail");
     assert!(
-        matches!(error, ScalewayBackendError::Provider { ref message } if message.contains("no such image")),
+        matches!(
+            error,
+            crate::scaleway::ScalewayBackendError::NotFound {
+                ref operation,
+                ref message,
+            } if operation == "create server" && message.contains("no such image")
+        ),
         "{error:?}"
     );
     assert_eq!(requests.len(), 1);

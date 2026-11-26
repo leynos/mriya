@@ -9,6 +9,7 @@ use super::InstanceSnapshot;
 use crate::{
     ScalewayConfig,
     backend::{InstanceHandle, InstanceRequest},
+    ownership::{AllocationScope, ResourceLedger},
     scaleway::{
         DEFAULT_SSH_PORT,
         ScalewayBackend,
@@ -104,13 +105,18 @@ fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
+        block_api_base: String::from("http://127.0.0.1:9/block/v1"),
         config: dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
         poll_interval: Duration::from_millis(1),
-        wait_timeout: Duration::from_millis(5),
+        wait_timeout: Duration::from_millis(50),
+        image_id_override: Some(String::from("img-test")),
     }
 }
+
+/// Builds an in-memory ledger scoped to the fixture zone and project.
+fn ledger() -> ResourceLedger { ResourceLedger::in_memory(AllocationScope::new("zone", "proj")) }
 
 #[rstest]
 #[tokio::test]
@@ -153,6 +159,8 @@ fn handle() -> InstanceHandle {
     }
 }
 
+mod cleanup;
+mod fake_api;
 mod image;
 mod wait;
 

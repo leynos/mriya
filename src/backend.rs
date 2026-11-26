@@ -4,7 +4,11 @@ use std::{future::Future, net::IpAddr, pin::Pin};
 
 use thiserror::Error;
 
-use crate::cloud_init;
+use crate::{
+    cleanup::{CleanupFailure, CleanupReport},
+    cloud_init,
+    ownership::ResourceLedger,
+};
 
 /// Parameters required to create a new instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -210,12 +214,17 @@ pub trait Backend {
 
     /// Creates a new instance and returns a handle used for subsequent calls.
     ///
+    /// Every resource the provider confirms is recorded in `ledger` before the
+    /// call returns, including on the error path, so a later
+    /// [`Backend::cleanup`] can act on a partially provisioned run.
+    ///
     /// For example, a valid request yields a handle whose identifier and zone
     /// are then passed to every later call, while an unavailable instance type
     /// returns the backend's error instead of a handle.
     fn create<'a>(
         &'a self,
         request: &'a InstanceRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error>;
 
     /// Blocks until the instance is ready for SSH and returns networking info.
@@ -228,10 +237,24 @@ pub trait Backend {
         handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error>;
 
-    /// Destroys the instance and ensures no provider resources remain.
+    /// Removes every owned resource and verifies the resulting state.
     ///
-    /// For example, a successful teardown resolves once the instance is gone
-    /// from the provider's listing, while a provider rejection returns its
-    /// error so the caller can report a possible leak.
-    fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error>;
+    /// The postconditions are:
+    ///
+    /// - every `Owned` server, volume, and public IP named by `ledger` is confirmed absent;
+    /// - every `Retained` and `Borrowed` volume is confirmed present and detached from any mriya
+    ///   server, with its data untouched;
+    /// - borrowed images and keys are never mutated.
+    ///
+    /// Repeated cleanup is safe: a resource already confirmed absent counts as
+    /// success. A provider denial is a failure, reported with the residual
+    /// resource identifiers.
+    ///
+    /// For example, a ledger holding one server and its root volume resolves
+    /// once both are gone, while a ledger whose volume cannot be detached
+    /// returns [`CleanupFailure`] naming the server and volume that remain.
+    fn cleanup<'a>(
+        &'a self,
+        ledger: &'a ResourceLedger,
+    ) -> BackendFuture<'a, CleanupReport, CleanupFailure>;
 }

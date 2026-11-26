@@ -7,10 +7,12 @@ use std::{
 
 use mockable::{DefaultEnv, Env};
 use mriya::{
+    AllocationScope,
     Backend,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    ResourceLedger,
     ScalewayBackend,
     ScalewayBackendError,
     ScalewayConfig,
@@ -79,12 +81,21 @@ fn base_request(scaleway_config: Option<ScalewayConfig>) -> Option<InstanceReque
     scaleway_config.and_then(|cfg| cfg.as_request().ok())
 }
 
+/// Builds an in-memory ledger for the request's zone and project.
+fn ledger_for(request: &InstanceRequest) -> ResourceLedger {
+    ResourceLedger::in_memory(AllocationScope::new(
+        request.zone.clone(),
+        request.project_id.clone(),
+    ))
+}
+
 fn provision_and_cleanup(
     backend: &ScalewayBackend,
     request: &InstanceRequest,
 ) -> Result<InstanceNetworking, ScalewayBackendError> {
+    let ledger = ledger_for(request);
     block_on(async {
-        let handle: InstanceHandle = match backend.create(request).await {
+        let handle: InstanceHandle = match backend.create(request, &ledger).await {
             Ok(handle) => handle,
             Err(err) if err.to_string().contains("permissions_denied") => {
                 skip!("permissions denied during create: {err}")
@@ -92,15 +103,17 @@ fn provision_and_cleanup(
             Err(err) => return Err(err),
         };
         let ready_result = backend.wait_for_ready(&handle).await;
-        let teardown_result = backend.destroy(handle.clone()).await;
+        let teardown_result = backend.cleanup(&ledger).await;
 
         match (ready_result, teardown_result) {
-            (Ok(networking), Ok(())) => Ok(networking),
-            (Err(wait_err), Ok(())) => Err(wait_err),
-            (Ok(_), Err(destroy_err)) => Err(destroy_err),
-            (Err(wait_err), Err(destroy_err)) => Err(ScalewayBackendError::Provider {
+            (Ok(networking), Ok(_)) => Ok(networking),
+            (Err(wait_err), Ok(_)) => Err(wait_err),
+            (Ok(_), Err(cleanup_err)) => Err(ScalewayBackendError::Provider {
+                message: cleanup_err.to_string(),
+            }),
+            (Err(wait_err), Err(cleanup_err)) => Err(ScalewayBackendError::Provider {
                 message: format!(
-                    "wait_for_ready failed with '{wait_err}' before destroy failed with '{destroy_err}'"
+                    "wait_for_ready failed with '{wait_err}' before cleanup failed with '{cleanup_err}'"
                 ),
             }),
         }
@@ -120,11 +133,16 @@ fn test_invalid_request(
 ) -> Result<(), ScalewayBackendError> {
     let mut request = base_request;
     modify_request(&mut request);
+    let ledger = ledger_for(&request);
 
     block_on(async {
-        match scaleway_backend.create(&request).await {
-            Ok(handle) => {
-                scaleway_backend.destroy(handle).await?;
+        match scaleway_backend.create(&request, &ledger).await {
+            Ok(_handle) => {
+                scaleway_backend.cleanup(&ledger).await.map_err(|failure| {
+                    ScalewayBackendError::Provider {
+                        message: failure.to_string(),
+                    }
+                })?;
                 Err(ScalewayBackendError::Provider {
                     message: String::from("unexpected success"),
                 })

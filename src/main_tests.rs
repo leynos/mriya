@@ -14,14 +14,17 @@ where
     F: Fn(RunCommand) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<i32, CliError>> + Send + 'static,
 {
-    *RUN_COMMAND_HOOK.lock().await = Some(Box::new(move |cmd| Box::pin(hook(cmd))));
-    let result = exec_run(RunCommand {
-        instance_type: None,
-        image: None,
-        cloud_init: None,
-        cloud_init_file: None,
-        command: vec![String::from("echo")],
-    })
+    *RUN_COMMAND_HOOK.lock().await = Some(Box::new(move |cmd, _cancellation| Box::pin(hook(cmd))));
+    let result = exec_run(
+        RunCommand {
+            instance_type: None,
+            image: None,
+            cloud_init: None,
+            cloud_init_file: None,
+            command: vec![String::from("echo")],
+        },
+        &Cancellation::never(),
+    )
     .await;
     // Clear the hook after use to prevent interference with other tests
     *RUN_COMMAND_HOOK.lock().await = None;

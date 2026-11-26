@@ -104,7 +104,13 @@ impl<R: CommandRunner> Janitor<R> {
         self.list_scw_resources(&["instance", "server"], ResourceType::Servers)
     }
 
-    /// Deletes `server`, leaving its IP and volumes to the provider's sweep.
+    /// Deletes `server` and its root volume, leaving other volumes to the
+    /// tagged-volume sweep.
+    ///
+    /// `with-volumes=root` removes the implicitly created local boot volume,
+    /// which carries none of the janitor's tags and would otherwise outlive
+    /// the server as a silent leak. A separately tagged Block Storage volume is
+    /// still found and deleted by the volume sweep.
     ///
     /// The zone comes from the listed server rather than from config, so a
     /// server discovered in another zone is still deleted in its own zone.
@@ -117,7 +123,7 @@ impl<R: CommandRunner> Janitor<R> {
             server.id.as_str(),
             zone_arg.as_str(),
             "with-ip=true",
-            "with-volumes=none",
+            "with-volumes=root",
             "force-shutdown=true",
             "--wait",
         ];

@@ -1,5 +1,6 @@
 //! Run module behavioural test suite.
 
+mod assertion_steps;
 mod bdd_steps;
 mod cache_steps;
 mod invocation_steps;

@@ -1,6 +1,10 @@
 //! Tests through the real lifecycle wrappers and a loopback Scaleway API.
+//!
+//! Reads, readiness, absence checks, and actions all reach the substitutable
+//! base. Absence is only ever confirmed by a successful, identity-checked
+//! listing, so a 404 alone must not settle it.
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::{Context, Result};
 use rstest::rstest;
@@ -8,19 +12,24 @@ use tokio::net::TcpListener;
 
 use super::{
     backend_fixture,
+    base_request,
+    fake_api::FakeApi,
     handle,
     http_stub::{Reply, StubApi, request_url},
+    ledger,
 };
 use crate::{
     backend::{Backend, InstanceHandle},
+    ownership::ResourceRef,
     scaleway::{
         ScalewayBackend,
         ScalewayBackendError,
+        lifecycle::models::Presence,
         types::{Action, Zone},
     },
 };
 
-/// Represents a successful provider response with no listed instances.
+/// A successful provider response with no listed instances.
 fn empty_list() -> Reply {
     Reply {
         status: 200,
@@ -28,7 +37,15 @@ fn empty_list() -> Reply {
     }
 }
 
-/// Loads the complete server response fixture expected by the Scaleway SDK.
+/// Loads the complete single-server response fixture the lifecycle reads.
+fn single_instance() -> Reply {
+    Reply {
+        status: 200,
+        body: include_str!("fixtures/detach-instance.json").to_owned(),
+    }
+}
+
+/// Loads the complete server-list response fixture.
 fn listed_instance() -> Reply {
     Reply {
         status: 200,
@@ -44,15 +61,22 @@ fn provider_error() -> Reply {
     }
 }
 
-/// Checks snapshot mapping and paginated GET request details through the SDK
-/// DTO.
+/// Represents a 404 for a server that may or may not still exist.
+fn not_found() -> Reply {
+    Reply {
+        status: 404,
+        body: String::from(r#"{"type":"not_found","message":"no such server"}"#),
+    }
+}
+
+/// Checks snapshot mapping through the direct server read.
 #[rstest]
 #[tokio::test]
 async fn fetch_instance_maps_the_provider_snapshot(
     mut backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let stub = StubApi::start(vec![listed_instance(), empty_list()]).await?;
+    let stub = StubApi::start(vec![single_instance()]).await?;
     backend_fixture.instance_api_base.clone_from(&stub.base_url);
     let snapshot = backend_fixture
         .fetch_instance(&handle)
@@ -63,26 +87,17 @@ async fn fetch_instance_maps_the_provider_snapshot(
     assert_eq!(snapshot.allowed_actions, vec![Action::from("reboot")]);
     assert_eq!(snapshot.public_ip.as_deref(), Some("127.0.0.1"));
     let requests = stub.finish().await?;
-    assert_eq!(requests.len(), 2);
-    for (index, request) in requests.iter().enumerate() {
-        assert!(request.starts_with("GET "), "{request}");
-        assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("x-auth-token: dummy\r\n")
-        );
-        let url = request_url(request)?;
-        assert_eq!(url.path(), "/instance/v1/zones/zone/servers");
-        let query = url
-            .query_pairs()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query.get("servers").map(AsRef::as_ref), Some("id"));
-        assert_eq!(query.get("per_page").map(AsRef::as_ref), Some("1"));
-        assert_eq!(
-            query.get("page").map(AsRef::as_ref),
-            Some((index + 1).to_string().as_str())
-        );
-    }
+    let request = requests.first().context("read request missing")?;
+    assert!(request.starts_with("GET "), "{request}");
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("x-auth-token: dummy\r\n")
+    );
+    assert_eq!(
+        request_url(request)?.path(),
+        "/instance/v1/zones/zone/servers/id"
+    );
     Ok(())
 }
 
@@ -96,7 +111,7 @@ async fn wait_for_ready_fetches_and_checks_ssh(
 ) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let stub = StubApi::start(vec![listed_instance(), empty_list()]).await?;
+    let stub = StubApi::start(vec![single_instance()]).await?;
     backend_fixture.instance_api_base.clone_from(&stub.base_url);
     backend_fixture.ssh_port = address.port();
     backend_fixture.wait_timeout = Duration::from_secs(2);
@@ -105,59 +120,78 @@ async fn wait_for_ready_fetches_and_checks_ssh(
     assert_eq!(networking.ssh_port, address.port());
     let accepted = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await??;
     drop(accepted);
-    assert_eq!(stub.finish().await?.len(), 2);
+    assert_eq!(stub.finish().await?.len(), 1);
     Ok(())
 }
 
-/// Checks DELETE followed by polling for absence or a residual-resource
-/// timeout.
+/// Scenario: a recorded server returns 404.
+///
+/// Invariant: absence is confirmed only by a successful listing in the recorded
+/// zone and project, so the 404 alone does not settle the check.
 #[rstest]
-#[case::gone(false)]
-#[case::residual(true)]
 #[tokio::test]
-async fn destroy_deletes_then_waits_for_disappearance(
+async fn server_presence_confirms_absence_by_listing(
     mut backend_fixture: ScalewayBackend,
-    handle: InstanceHandle,
-    #[case] residual: bool,
 ) -> Result<()> {
-    let mut replies = vec![Reply {
-        status: 204,
-        body: String::new(),
-    }];
-    if residual {
-        replies.push(listed_instance());
-    }
-    replies.push(empty_list());
-    let stub = StubApi::start(replies).await?;
+    let stub = StubApi::start(vec![not_found(), empty_list()]).await?;
     backend_fixture.instance_api_base.clone_from(&stub.base_url);
-    // One initial fetch completes before the budget; the next tick is beyond
-    // it, so a remaining resource must fail instead of skipping polling.
-    backend_fixture.wait_timeout = Duration::from_secs(2);
-    if residual {
-        backend_fixture.poll_interval = Duration::from_secs(3);
-    }
-    let result = backend_fixture.destroy(handle).await;
-    if residual {
-        assert!(
-            matches!(result, Err(ScalewayBackendError::ResidualResource { ref instance_id }) if instance_id == "id"),
-            "{result:?}"
-        );
-    } else {
-        result?;
-    }
+    let resource = ResourceRef::server("id", "zone");
+    let presence = backend_fixture.server_presence(&resource, "proj").await?;
+    assert!(
+        matches!(presence, Presence::ConfirmedAbsent),
+        "{presence:?}"
+    );
+
     let requests = stub.finish().await?;
-    let first = requests.first().context("DELETE missing")?;
+    assert_eq!(requests.len(), 2);
+    let list = requests.get(1).context("list request missing")?;
+    let url = request_url(list)?;
+    assert_eq!(url.path(), "/instance/v1/zones/zone/servers");
+    let query = url.query_pairs().collect::<BTreeMap<_, _>>();
+    assert_eq!(query.get("project").map(AsRef::as_ref), Some("proj"));
+    assert_eq!(query.get("page").map(AsRef::as_ref), Some("1"));
+    Ok(())
+}
+
+/// Scenario: a 404 after a listing that still contains the server.
+///
+/// Invariant: the server is reported present, because the listing is the
+/// authority and the direct read may have raced a transient failure.
+#[rstest]
+#[tokio::test]
+async fn server_presence_finds_a_server_the_read_missed(
+    mut backend_fixture: ScalewayBackend,
+) -> Result<()> {
+    // Page 2 is empty, which is what ends pagination after the matching page.
+    let stub = StubApi::start(vec![not_found(), listed_instance(), empty_list()]).await?;
+    backend_fixture.instance_api_base.clone_from(&stub.base_url);
+    let resource = ResourceRef::server("id", "zone");
+    let presence = backend_fixture.server_presence(&resource, "proj").await?;
+    assert!(matches!(presence, Presence::Present(_)), "{presence:?}");
+    Ok(())
+}
+
+/// Scenario: a listing returns a server with a different identifier.
+///
+/// Invariant: absence for the requested identifier is decided by comparing ids
+/// locally, so a foreign or mangled identifier in the listing cannot make a
+/// missing server look present.
+#[rstest]
+#[tokio::test]
+async fn server_presence_rejects_a_listed_foreign_id() -> Result<()> {
+    let api = FakeApi::start().await?;
+    let mut backend = backend_fixture();
+    backend.instance_api_base = String::from(api.instance_base());
+    let owned = ledger();
+    backend.create(&base_request(), &owned).await?;
+
+    api.configure(|knobs| knobs.wrong_list_id = true);
+    let missing = ResourceRef::server("srv-does-not-exist", "zone");
+    let presence = backend.server_presence(&missing, "proj").await?;
     assert!(
-        first.starts_with("DELETE /instance/v1/zones/zone/servers/id "),
-        "{first}"
+        matches!(presence, Presence::ConfirmedAbsent),
+        "{presence:?}"
     );
-    assert!(
-        requests
-            .iter()
-            .skip(1)
-            .all(|request| request.starts_with("GET "))
-    );
-    assert_eq!(requests.len(), if residual { 3 } else { 2 });
     Ok(())
 }
 
@@ -172,7 +206,10 @@ async fn fetch_instance_preserves_provider_errors(
     backend_fixture.instance_api_base.clone_from(&stub.base_url);
     let result = backend_fixture.fetch_instance(&handle).await;
     assert!(
-        matches!(result, Err(ScalewayBackendError::Provider { ref message }) if message == "Api: denied - no access"),
+        matches!(
+            result,
+            Err(ScalewayBackendError::AccessDenied { status: 403, .. })
+        ),
         "{result:?}"
     );
     assert_eq!(stub.finish().await?.len(), 1);

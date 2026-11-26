@@ -2,23 +2,36 @@
 
 use std::{sync::LazyLock, time::Duration};
 
+mod block_volumes;
 mod create;
 mod http;
 mod image;
+mod instances;
+mod ips;
+pub(in crate::scaleway) mod models;
+mod power;
+mod reconcile;
+pub(in crate::scaleway) mod records;
 mod volume_attach;
 mod volume_create;
-mod volume_detach;
+mod volumes;
 mod wait;
 
 use crate::scaleway::types::{Action, InstanceId, InstanceState};
 
-/// Per-request timeout for direct HTTP calls to the Instances API.
+/// Per-request timeout for direct HTTP calls to the provider.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Production base URL for the Instances API, used as the default for
 /// `ScalewayBackend::instance_api_base`.
 pub(super) const SCALEWAY_INSTANCE_API_BASE: &str = "https://api.scaleway.com/instance/v1";
+/// Production base URL for the Block Storage API, used as the default for
+/// `ScalewayBackend::block_api_base`.
+///
+/// SBS volumes live in their own API and identifier namespace; the Instances
+/// API cannot read or delete them.
+pub(super) const SCALEWAY_BLOCK_API_BASE: &str = "https://api.scaleway.com/block/v1";
 
-/// Shared HTTP client for direct Instances API calls.
+/// Shared HTTP client for direct provider calls.
 ///
 /// If the timeout-configured builder fails, it falls back to a default
 /// client without the timeout, so callers that must be bounded also set a

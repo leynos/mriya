@@ -8,6 +8,9 @@ use std::sync::LazyLock;
 
 use mockable::{DefaultEnv, Env};
 use mriya::{
+    AllocationScope,
+    Cancellation,
+    ResourceLedger,
     RunOrchestrator,
     ScalewayBackend,
     ScalewayBackendError,
@@ -135,6 +138,10 @@ fn provision_with_cloud_init_and_run(
 
     let orchestrator: RunOrchestrator<ScalewayBackend, ProcessCommandRunner> =
         RunOrchestrator::new(backend, sync_pipeline);
+    let ledger = ResourceLedger::in_memory(AllocationScope::new(
+        request.zone.clone(),
+        request.project_id.clone(),
+    ));
 
     let runtime = RUNTIME.as_ref().map_err(|err| {
         mriya::RunError::Provision(ScalewayBackendError::Provider {
@@ -142,9 +149,17 @@ fn provision_with_cloud_init_and_run(
         })
     })?;
     runtime.block_on(async {
+        let cancellation = Cancellation::never();
         orchestrator
-            .execute(&request, &source, command.as_str())
+            .execute(mriya::run::RunInputs {
+                request: &request,
+                ledger: &ledger,
+                source: &source,
+                remote_command: command.as_str(),
+                cancellation: &cancellation,
+            })
             .await
+            .map(|outcome| outcome.output)
     })
 }
 

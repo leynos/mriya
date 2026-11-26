@@ -1,6 +1,6 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::{InitError, InitOrchestrator, sync::Syncer};
+use mriya::{Cancellation, InitError, InitErrorKind, InitOrchestrator, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
@@ -76,19 +76,19 @@ fn instance_readiness_fails(
     Ok(Ok(init_context))
 }
 
-#[given("volume detachment fails")]
-fn volume_detachment_fails(
-    init_context_result: InitContextResult,
-) -> Result<InitContextResult, StepError> {
+#[given("cleanup fails")]
+fn cleanup_fails(init_context_result: InitContextResult) -> Result<InitContextResult, StepError> {
     let init_context = init_context_result?;
-    init_context.backend.fail_detach();
+    init_context.backend.fail_cleanup();
     Ok(Ok(init_context))
 }
 
-#[given("teardown fails")]
-fn teardown_fails(init_context_result: InitContextResult) -> Result<InitContextResult, StepError> {
+#[given("the configuration write fails")]
+fn configuration_write_fails(
+    init_context_result: InitContextResult,
+) -> Result<InitContextResult, StepError> {
     let init_context = init_context_result?;
-    init_context.backend.fail_destroy();
+    init_context.config_store.fail_write();
     Ok(Ok(init_context))
 }
 
@@ -122,6 +122,10 @@ fn prepare_volume(init_context_result: InitContextResult) -> Result<InitContextR
         config_store,
         ..
     } = init_context;
+    let ledger = mriya::ResourceLedger::in_memory(mriya::AllocationScope::new(
+        request.volume.zone.clone(),
+        request.volume.project_id.clone(),
+    ));
 
     let syncer = Syncer::new(sync_config.clone(), runner.clone())
         .map_err(InitTestError::from)
@@ -129,7 +133,11 @@ fn prepare_volume(init_context_result: InitContextResult) -> Result<InitContextR
     let orchestrator = InitOrchestrator::new(backend.clone(), syncer, config_store.clone());
 
     let request_clone = request.clone();
-    let result = runtime.block_on(async move { orchestrator.execute(&request_clone).await });
+    let result = runtime.block_on(async move {
+        orchestrator
+            .execute(&request_clone, &ledger, &Cancellation::never())
+            .await
+    });
     let outcome = match result {
         Ok(_) => InitResult::Success,
         Err(err) => InitResult::Failure(InitFailure {
@@ -231,14 +239,40 @@ fn config_updated(init_context_result: &InitContextResult) -> Result<(), StepErr
     )
 }
 
-#[then("the instance is destroyed")]
-fn instance_destroyed(init_context_result: &InitContextResult) -> Result<(), StepError> {
+#[then("the instance is cleaned up")]
+fn instance_cleaned_up(init_context_result: &InitContextResult) -> Result<(), StepError> {
     assert_counter_condition(
         init_context_result,
-        |ctx| ctx.backend.destroy_calls(),
+        |ctx| ctx.backend.cleanup_calls(),
         |count| count > 0,
-        "backend.destroy should be invoked",
+        "backend.cleanup should be invoked",
     )
+}
+
+#[then("the retained volume is named with configuration instructions")]
+fn retained_volume_named(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let Some(InitResult::Failure(failure)) = &init_context.outcome else {
+        return Err(StepError::Assertion(String::from(
+            "expected failure outcome",
+        )));
+    };
+    for expected in [
+        "vol-123",
+        "default_volume_id",
+        "SCW_DEFAULT_VOLUME_ID",
+        "mriya recover",
+    ] {
+        if !failure.message.contains(expected) {
+            return Err(StepError::Assertion(format!(
+                "`{expected}` should appear in the message: {message}",
+                message = failure.message
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[then("the volume is not created")]
@@ -251,17 +285,16 @@ fn volume_not_created(init_context_result: &InitContextResult) -> Result<(), Ste
     )
 }
 
-const fn map_failure_kind(
+fn map_failure_kind(
     err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
 ) -> InitFailureKind {
-    match err {
-        InitError::Config(_) => InitFailureKind::Config,
-        InitError::Volume(_) => InitFailureKind::Volume,
-        InitError::Provision(_) => InitFailureKind::Provision,
-        InitError::Wait { .. } => InitFailureKind::Wait,
-        InitError::Format { .. } => InitFailureKind::Format,
-        InitError::Detach { .. } => InitFailureKind::Detach,
-        InitError::Teardown(_) => InitFailureKind::Teardown,
+    match err.kind() {
+        InitErrorKind::Config => InitFailureKind::Config,
+        InitErrorKind::Volume => InitFailureKind::Volume,
+        InitErrorKind::Provision => InitFailureKind::Provision,
+        InitErrorKind::Wait => InitFailureKind::Wait,
+        InitErrorKind::Format => InitFailureKind::Format,
+        InitErrorKind::Cleanup | InitErrorKind::Cancelled => InitFailureKind::Cleanup,
     }
 }
 
@@ -272,8 +305,7 @@ fn parse_failure_kind(kind: &str) -> Result<InitFailureKind, StepError> {
         "provision" => Ok(InitFailureKind::Provision),
         "wait" => Ok(InitFailureKind::Wait),
         "format" => Ok(InitFailureKind::Format),
-        "detach" => Ok(InitFailureKind::Detach),
-        "teardown" => Ok(InitFailureKind::Teardown),
+        "cleanup" => Ok(InitFailureKind::Cleanup),
         _ => Err(StepError::Assertion(format!(
             "unknown failure kind: {kind}"
         ))),

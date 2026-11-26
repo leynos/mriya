@@ -12,7 +12,7 @@ fn scenario_propagate_exit_codes(run_context_result: RunContextResult) { drop(ru
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Surface sync failures and still teardown"
+    name = "Surface sync failures and still clean up"
 )]
 fn scenario_surface_sync_failures(run_context_result: RunContextResult) {
     drop(run_context_result);
@@ -20,11 +20,23 @@ fn scenario_surface_sync_failures(run_context_result: RunContextResult) {
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Surface teardown failure after success"
+    name = "Surface cleanup failure after success"
 )]
-fn scenario_surface_teardown_failures(run_context_result: RunContextResult) {
+fn scenario_surface_cleanup_failures(run_context_result: RunContextResult) {
     drop(run_context_result);
 }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Recover from partial provisioning after the create request"
+)]
+fn scenario_partial_provisioning(run_context_result: RunContextResult) { drop(run_context_result); }
+
+#[scenario(
+    path = "tests/features/run.feature",
+    name = "Cancel a run and still clean up"
+)]
+fn scenario_cancellation(run_context_result: RunContextResult) { drop(run_context_result); }
 
 #[scenario(
     path = "tests/features/run.feature",
@@ -62,13 +74,13 @@ fn scenario_cloud_init_wait(run_context_result: RunContextResult) { drop(run_con
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Surface cloud-init provisioning check failures and still teardown"
+    name = "Surface cloud-init provisioning check failures and still clean up"
 )]
 fn scenario_cloud_init_failure(run_context_result: RunContextResult) { drop(run_context_result); }
 
 #[scenario(
     path = "tests/features/run.feature",
-    name = "Surface cloud-init provisioning timeout and still teardown"
+    name = "Surface cloud-init provisioning timeout and still clean up"
 )]
 fn scenario_cloud_init_timeout(run_context_result: RunContextResult) { drop(run_context_result); }
 

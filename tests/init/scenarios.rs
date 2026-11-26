@@ -12,7 +12,7 @@ fn scenario_prepare_volume(init_context_result: InitContextResult) { drop(init_c
 
 #[scenario(
     path = "tests/features/init.feature",
-    name = "Surface formatting failures and still teardown"
+    name = "Surface formatting failures and still clean up"
 )]
 fn scenario_format_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
@@ -48,18 +48,20 @@ fn scenario_provision_failure(init_context_result: InitContextResult) { drop(ini
 
 #[scenario(
     path = "tests/features/init.feature",
-    name = "Surface readiness failures and still teardown"
+    name = "Surface readiness failures and still clean up"
 )]
 fn scenario_wait_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
-    name = "Surface detachment failures and still teardown"
+    name = "Surface cleanup failures and still report the volume"
 )]
-fn scenario_detach_failure(init_context_result: InitContextResult) { drop(init_context_result); }
+fn scenario_cleanup_failure(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",
-    name = "Surface teardown failures after success"
+    name = "Keep a formatted volume recoverable when the config write fails"
 )]
-fn scenario_teardown_failure(init_context_result: InitContextResult) { drop(init_context_result); }
+fn scenario_config_write_failure(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}

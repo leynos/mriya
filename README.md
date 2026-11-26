@@ -34,8 +34,10 @@ remote command is preserved, so CI integration works out of the box.
   real time.
 - **Exit code preservation** – If `cargo test` fails remotely with status 101,
   you get 101 locally.
-- **Guaranteed cleanup** – The VM is destroyed after every run, successful or
-  not.
+- **Verified cleanup** – Every run records what it allocates in an ownership
+  ledger, then powers the VM off, detaches volumes it keeps, deletes the VM and
+  the resources it owns, and confirms each one is gone. A run that is
+  interrupted can be finished with `mriya recover`.
 
 ## Current status
 

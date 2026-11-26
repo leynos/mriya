@@ -26,6 +26,8 @@ pub struct RunContext {
     pub cloud_init_poll_interval_override: Option<Duration>,
     pub cloud_init_wait_timeout_override: Option<Duration>,
     pub outcome: Option<RunResult>,
+    /// Whether the scenario cancels the run after its first allocation.
+    pub cancel_after_allocation: bool,
     /// The command the scenario asked the orchestrator to run remotely.
     ///
     /// Steps assert against this instead of matching a literal, so a scenario
@@ -42,7 +44,8 @@ pub enum RunFailureKind {
     ProvisioningTimeout,
     Sync,
     Remote,
-    Teardown,
+    Cleanup,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,16 +80,18 @@ pub fn build_run_context() -> RunContextResult {
     let source = Utf8PathBuf::from_path_buf(tmp_dir.path().to_path_buf()).map_err(|path| {
         RunTestError::Workspace(format!("non-utf8 tempdir path: {}", path.display()))
     })?;
+    let request = request()?;
 
     Ok(RunContext {
         backend: ScriptedBackend::new(),
         runner: ScriptedRunner::new(),
         sync_config: sync_config(),
-        request: request()?,
+        request,
         source,
         cloud_init_poll_interval_override: None,
         cloud_init_wait_timeout_override: None,
         outcome: None,
+        cancel_after_allocation: false,
         requested_command: None,
         source_tmp: std::sync::Arc::new(tmp_dir),
     })

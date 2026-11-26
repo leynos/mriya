@@ -15,10 +15,7 @@ use super::{
     super::{ScalewayBackend, ScalewayBackendError},
     InstanceSnapshot,
 };
-use crate::{
-    backend::{InstanceHandle, InstanceNetworking},
-    scaleway::types::Action,
-};
+use crate::backend::{InstanceHandle, InstanceNetworking};
 
 /// Limit for a single TCP connection attempt when probing SSH readiness.
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -26,24 +23,36 @@ const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 impl ScalewayBackend {
     /// Maps the selected provider instance into the snapshot used by lifecycle
     /// polling, preserving absence and provider errors.
+    ///
+    /// The direct read is the normal path. A 404 falls back to an
+    /// identity-checked listing, because a transient read failure and a real
+    /// deletion look alike otherwise.
+    ///
     /// For example, no match returns `Ok(None)` and lookup failures remain
     /// provider errors.
     pub(in crate::scaleway) async fn fetch_instance(
         &self,
         handle: &InstanceHandle,
     ) -> Result<Option<InstanceSnapshot>, ScalewayBackendError> {
-        let instance = self.list_instance(handle).await?;
-
-        Ok(instance.map(|server| InstanceSnapshot {
-            id: server.id.into(),
-            state: server.state.into(),
-            allowed_actions: server
-                .allowed_actions
-                .into_iter()
-                .map(Action::from)
-                .collect(),
-            public_ip: server.public_ip.map(|ip| ip.address),
-        }))
+        match self.get_server(&handle.zone, &handle.id).await {
+            Ok(server) if server.id == handle.id => Ok(Some(server.snapshot())),
+            Ok(server) => Err(ScalewayBackendError::Provider {
+                message: format!(
+                    "get server returned {}, but {} was requested",
+                    server.id, handle.id
+                ),
+            }),
+            Err(ScalewayBackendError::NotFound { .. }) => {
+                let servers = self
+                    .list_servers(&handle.zone, &self.config.default_project_id, None)
+                    .await?;
+                Ok(servers
+                    .into_iter()
+                    .find(|server| server.id == handle.id)
+                    .map(|server| server.snapshot()))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Polls the provider until the instance is running with a public IP.
@@ -115,21 +124,6 @@ impl ScalewayBackend {
             action: String::from("wait_for_ssh_ready"),
             instance_id: handle.id.clone(),
         })
-    }
-
-    /// Polls the provider after deletion until the instance is no longer
-    /// listed.
-    ///
-    /// For example, an empty provider result returns `Ok(())`; a resource that
-    /// remains listed through the deadline returns `ResidualResource`.
-    pub(in crate::scaleway) async fn wait_until_gone(
-        &self,
-        handle: &InstanceHandle,
-    ) -> Result<(), ScalewayBackendError> {
-        poll_until_gone(handle, self.poll_interval, self.wait_timeout, || {
-            self.fetch_instance(handle)
-        })
-        .await
     }
 }
 
@@ -231,37 +225,25 @@ where
 }
 
 /// Polls `fetch` until the instance is no longer listed, or the timeout
-/// elapses, in which case [`ScalewayBackendError::ResidualResource`] is
-/// returned.
+/// elapses, in which case a residual timeout error is returned.
+///
+/// Production cleanup verifies absence through an identity-checked listing
+/// rather than this loop, so the helper is compiled for the scripted polling
+/// tests that pin the loop's timing behaviour (issue #58).
 ///
 /// # Examples
 ///
-/// As with [`poll_for_public_ip`], the example is `ignore`d because the helper
-/// is crate-internal; the executed equivalents live in `super::tests::wait`.
+/// The example is `ignore`d because the helper is crate-internal; the executed
+/// equivalents live in `super::tests::wait`.
 ///
 /// ```ignore
 /// // The instance is already absent, so the first fetch settles the loop.
-/// poll_until_gone(
-///     &handle,
-///     Duration::from_millis(1),
-///     Duration::from_millis(50),
-///     || ready(Ok(None)),
-/// )
+/// poll_until_gone(&handle, Duration::from_millis(1), Duration::from_millis(50), || {
+///     ready(Ok(None))
+/// })
 /// .await?;
-///
-/// // A snapshot that never disappears exhausts the timeout instead.
-/// let residual = poll_until_gone(
-///     &handle,
-///     Duration::from_millis(1),
-///     Duration::from_millis(2),
-///     || ready(Ok(Some(snapshot("id", "running", [], None)))),
-/// )
-/// .await;
-/// assert!(matches!(
-///     residual,
-///     Err(ScalewayBackendError::ResidualResource { .. })
-/// ));
 /// ```
+#[cfg(test)]
 pub(super) async fn poll_until_gone<F, Fut>(
     handle: &InstanceHandle,
     poll_interval: Duration,
@@ -280,7 +262,8 @@ where
         sleep(poll_interval).await;
     }
 
-    Err(ScalewayBackendError::ResidualResource {
+    Err(ScalewayBackendError::Timeout {
+        action: String::from("wait_until_gone"),
         instance_id: handle.id.clone(),
     })
 }

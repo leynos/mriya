@@ -2,9 +2,16 @@
 
 use std::{
     ffi::OsString,
-    io::{BufReader, Read, Write},
-    process::{Command, Stdio},
+    io::{self, BufReader, Read, Write},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        Mutex,
+        MutexGuard,
+        PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
+    time::Duration,
 };
 
 use camino::Utf8PathBuf;
@@ -161,6 +168,85 @@ fn join_forwarder(
     }
 }
 
+/// How often a waiting runner checks whether its child has exited.
+///
+/// The wait polls rather than blocking so the same [`Child`] can be terminated
+/// by the signal listener, which needs the registry lock the waiter would
+/// otherwise hold for the whole command.
+const CHILD_WAIT_INTERVAL: Duration = Duration::from_millis(10);
+
+/// A streaming child that cancellation may terminate.
+#[derive(Debug)]
+struct RegisteredChild {
+    /// Identifier of this registration.
+    id: u64,
+    /// The running child process.
+    child: Child,
+}
+
+/// Identifier source for registrations, unique within the process.
+static NEXT_CHILD_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Streaming children that are currently running.
+static ACTIVE_CHILDREN: Mutex<Vec<RegisteredChild>> = Mutex::new(Vec::new());
+
+/// Terminates every streaming child process currently running.
+///
+/// A child that is already gone is ignored: the registry keeps the entry until
+/// its own waiter reaps it, so a signal that races a natural exit is harmless.
+pub fn kill_active_children() {
+    let mut children = lock_children();
+    for registered in children.iter_mut() {
+        // A child may have exited between the signal and this call; its own
+        // waiter still observes and reports the exit status.
+        drop(registered.child.kill());
+    }
+}
+
+/// Locks the streaming-child registry, recovering a poisoned lock.
+///
+/// The registry holds no invariants that a panic can corrupt beyond the list
+/// itself, so losing a registration because another thread panicked would
+/// leave an unkillable child; recovery keeps it usable.
+fn lock_children() -> MutexGuard<'static, Vec<RegisteredChild>> {
+    ACTIVE_CHILDREN
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Registers `child` so a signal can terminate it.
+fn register_child(child: Child) -> u64 {
+    let id = NEXT_CHILD_ID.fetch_add(1, Ordering::Relaxed);
+    lock_children().push(RegisteredChild { id, child });
+    id
+}
+
+/// Waits until the registered child exits, allowing cancellation to kill it
+/// meanwhile.
+fn wait_for_registered_child(id: u64) -> io::Result<ExitStatus> {
+    loop {
+        let observed = {
+            let mut children = lock_children();
+            match children.iter_mut().find(|entry| entry.id == id) {
+                Some(entry) => entry.child.try_wait()?,
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "streaming child disappeared from the registry",
+                    ));
+                }
+            }
+        };
+
+        if let Some(status) = observed {
+            lock_children().retain(|entry| entry.id != id);
+            return Ok(status);
+        }
+
+        thread::sleep(CHILD_WAIT_INTERVAL);
+    }
+}
+
 /// Command runner that streams subprocess stdout/stderr while capturing them.
 #[derive(Clone, Debug, Default)]
 pub struct StreamingCommandRunner;
@@ -186,7 +272,8 @@ impl CommandRunner for StreamingCommandRunner {
             .take()
             .map(|stderr| forward_stream(stderr, true, program));
 
-        let status = child.wait().map_err(|err| SyncError::Spawn {
+        let id = register_child(child);
+        let status = wait_for_registered_child(id).map_err(|err| SyncError::Spawn {
             program: program.to_owned(),
             message: err.to_string(),
         })?;
