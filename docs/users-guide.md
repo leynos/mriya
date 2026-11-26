@@ -214,7 +214,19 @@ on this volume to persist compiled dependencies across runs.
 
 ### Use an existing volume
 
-An existing, formatted volume can be configured without running `mriya init`:
+> Important: attachment sends only the volume ID and boot flag, but the
+> Instances API expects a `volume_type` alongside the ID for an existing
+> `sbs_volume`. Mriya does not send one, so attaching an `sbs_volume` is
+> expected to be rejected, and the rejection happens after the server already
+> exists, leaving it behind. The procedure below is therefore usable only for
+> storage whose type the current payload already matches. Follow
+> [issue #153](https://github.com/leynos/mriya/issues/153) for the migration
+> that adds the field, and read
+> [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified)
+> before relying on it.
+
+An existing, formatted volume can be configured without running `mriya init`.
+The steps are:
 
 1. Create a Block Storage volume in the Scaleway console or through the Block
    Storage API, in the same availability zone as the instances. To format it,
@@ -237,16 +249,9 @@ An existing, formatted volume can be configured without running `mriya init`:
 3. Run the build command on the remote host, for example
    `mriya run -- cargo build`.
 
-Attachment uses the Instances API server volume map and sends only the volume
-ID and boot flag. The Instances API expects a `volume_type` alongside the ID
-when attaching an existing `sbs_volume`, and Mriya does not send one, so
-attaching an `sbs_volume` is expected to be rejected. The scripted tests assert
-the current payload, so they cannot catch this. Treat the existing-volume
-procedure as complete only for storage the attachment request already matches,
-and follow [issue #153](https://github.com/leynos/mriya/issues/153) for the
-migration that adds the field. A rejected attachment stops the run after the
-server has already been created, which is the pre-handle case described under
-[Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
+The scripted request tests assert the current attachment payload, so they
+cannot detect the missing field; the limitation above is a reading of the
+provider's schema, not an observed live rejection.
 
 ### Create and format a volume with `mriya init`
 

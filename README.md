@@ -50,9 +50,12 @@ code.
   command.
 - **Persistent cache volume** – Attach a Block Storage volume to each ephemeral
   VM and route Cargo, Go, Python, and Node caches onto it so builds stay
-  incremental between runs. Volume creation through `mriya init` currently
-  fails against Scaleway; supply an existing volume ID instead. See
-  [Use an existing volume](docs/users-guide.md#use-an-existing-volume).
+  incremental between runs. Neither half works against Scaleway today: volume
+  creation through `mriya init` fails, and attaching an `sbs_volume` is
+  expected to be rejected because the request omits `volume_type`. See
+  [Use an existing volume](docs/users-guide.md#use-an-existing-volume) for the
+  procedure and its limits, and
+  [issue #153](https://github.com/leynos/mriya/issues/153) for the migration.
 - **Attempted teardown with reported failures** – Whenever provisioning has
   returned a server handle, Mriya asks the provider to delete that server after
   the run, successful or not, and surfaces a teardown failure instead of
