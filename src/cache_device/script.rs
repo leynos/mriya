@@ -156,7 +156,7 @@ pub fn format_script(volume_id: &str) -> String {
 ///
 /// let script = mount_script("11111111-1111-1111-1111-111111111111", "/mriya", "ubuntu");
 /// assert!(script.contains("findmnt -no SOURCE --mountpoint"));
-/// assert!(script.contains(r#"chown "ubuntu":"ubuntu""#));
+/// assert!(script.contains("sudo chown \"$mriya_owner\":\"$mriya_owner\""));
 /// ```
 #[must_use]
 pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
