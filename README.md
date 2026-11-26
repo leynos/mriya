@@ -75,7 +75,11 @@ Implemented in code:
 - Inline and file-based cloud-init user-data, with Mriya waiting for cloud-init
   to finish before the remote command runs.
 - Attaching, mounting, and routing language caches onto a configured Block
-  Storage volume, with scripted coverage only.
+  Storage volume, with scripted coverage only. Attaching an `sbs_volume` is
+  expected to fail until the migration in
+  [issue #153](https://github.com/leynos/mriya/issues/153) adds the missing
+  `volume_type` field, so today only volumes matching the current payload can
+  be attached.
 - Git-aware rsync sync, streamed output, exit-code preservation, and attempted
   teardown.
 
