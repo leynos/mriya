@@ -70,7 +70,7 @@ impl CampaignPlan {
     /// ```
     /// use mriya::bench::{
     ///     campaign::{CampaignPlan, PlannedAttempt},
-    ///     record::CampaignLimits,
+    ///     record::{CampaignLimits, RunRole},
     /// };
     ///
     /// let plan = CampaignPlan {

@@ -32,6 +32,8 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 /// ```
 /// use mriya::bench::{
 ///     campaign::{
+///         AttemptFailure,
+///         AttemptRecords,
 ///         CampaignDriver,
 ///         CampaignError,
 ///         CampaignPlan,
@@ -41,7 +43,7 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 ///         TeardownReport,
 ///         run_campaign,
 ///     },
-///     record::{CampaignLimits, Record, RunRecord},
+///     record::{CampaignLimits, Record, RunRecord, RunRole},
 /// };
 ///
 /// struct NeverCalled;
@@ -50,7 +52,11 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 ///     fn pre_sweep(&self, _: &str) -> Result<SweepReport, String> {
 ///         panic!("the driver must not be called when paid runs are disabled")
 ///     }
-///     fn run_attempt(&self, _: &str, _: &PlannedAttempt) -> Result<AttemptRecords, String> {
+///     fn run_attempt(
+///         &self,
+///         _: &str,
+///         _: &PlannedAttempt,
+///     ) -> Result<AttemptRecords, AttemptFailure> {
 ///         panic!("the driver must not be called when paid runs are disabled")
 ///     }
 ///     fn verify_teardown(
@@ -79,6 +85,8 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 ///     providers: vec![String::from("scaleway")],
 ///     attempts: vec![PlannedAttempt {
 ///         workload_id: String::from("cold-build"),
+///         repetition: 1,
+///         role: RunRole::Timed,
 ///         provider: String::from("scaleway"),
 ///         product: String::from("DEV1-S"),
 ///         planned_lifetime_nanos: 1,

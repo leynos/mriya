@@ -15,7 +15,10 @@ use crate::bench::billing::{NANOS_PER_SECOND, figures_agree, format_currency};
 /// ```
 /// use std::collections::BTreeMap;
 ///
-/// use mriya::bench::{billing::Totals, report::BenchmarkReport};
+/// use mriya::bench::{
+///     billing::Totals,
+///     report::{BenchmarkReport, render},
+/// };
 ///
 /// let report = BenchmarkReport {
 ///     campaign_id: String::from("c"),

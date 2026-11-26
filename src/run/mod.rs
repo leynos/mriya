@@ -38,7 +38,7 @@ struct RunPhase<'a> {
     networking: &'a InstanceNetworking,
     /// The request that created it.
     request: &'a InstanceRequest,
-    /// The workspace to synchronise.
+    /// The workspace to synchronize.
     source: &'a Utf8Path,
     /// The command to run.
     remote_command: &'a str,

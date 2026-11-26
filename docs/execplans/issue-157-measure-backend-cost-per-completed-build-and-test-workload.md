@@ -259,10 +259,10 @@ from `make test` or CI.
   at a 4-second granularity; the implementation was right and the property was
   wrong, so the test now allows either a whole number of granularity units or
   exactly the declared minimum.
-- The shared spelling gate rewrites `artifact` to `artefact` and `-ise` to
-  `-ize`. A blanket substitution corrupted Cargo's `compiler-artifact` message
-  name, which the repository already whitelists in `typos.local.toml`; protocol
-  literals must be restored after any spelling pass.
+- The shared spelling gate prefers the British `artefact` and the Oxford
+  `-ize`, so a blanket substitution corrupted Cargo's `compiler-artifact`
+  message name, which the repository already whitelists in `typos.local.toml`;
+  protocol literals must be restored after any spelling pass.
 - Whitaker enforces a 400-line module budget that counts doc comments, so the
   benchmark modules had to be split by responsibility rather than by file size
   target: `record/run.rs`, `record/pins.rs`, `billing/{money,sheet/pricing}.rs`,

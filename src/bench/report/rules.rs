@@ -157,42 +157,6 @@ fn describe_cache_classes(classes: &BTreeSet<CacheState>) -> String {
 ///
 /// # Examples
 ///
-/// A campaign whose providers the sheet does not describe is charged no
-/// subscription, because there is no plan to charge:
-///
-/// ```
-/// use std::collections::BTreeMap;
-///
-/// use mriya::bench::{
-///     billing::PriceSheet,
-///     record::{CampaignHeader, RecordKind, SCHEMA_VERSION},
-///     report::campaign_subscription_micros,
-///     validate::Campaign,
-/// };
-///
-/// let campaign = Campaign {
-///     header: CampaignHeader {
-///         schema: SCHEMA_VERSION,
-///         kind: RecordKind::CampaignHeader,
-///         campaign_id: String::from("c"),
-///         limits: None,
-///         price_sheet: None,
-///         providers: Vec::new(),
-///     },
-///     runs: Vec::new(),
-///     phases: Vec::new(),
-/// };
-/// let sheet = PriceSheet {
-///     currency: String::from("EUR"),
-///     retrieved: String::from("2026-11-26"),
-///     month_seconds: 2_592_000,
-///     providers: BTreeMap::new(),
-///     fx: BTreeMap::new(),
-/// };
-/// assert_eq!(campaign_subscription_micros(&campaign, &sheet), 0);
-/// ```
-/// # Examples
-///
 /// ```
 /// # use std::collections::BTreeMap;
 /// # use mriya::bench::billing::PriceSheet;

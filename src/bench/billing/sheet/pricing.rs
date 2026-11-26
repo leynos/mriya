@@ -151,6 +151,7 @@ impl StorageRule {
 /// // Two minutes at an hourly granularity bills one whole hour.
 /// let billed = chargeable_nanos(120 * NANOS_PER_SECOND, 3_600, 3_600)?;
 /// assert_eq!(billed, 3_600 * NANOS_PER_SECOND);
+/// # Ok::<(), mriya::bench::billing::PriceSheetError>(())
 /// ```
 pub fn chargeable_nanos(
     measured_nanos: u64,
