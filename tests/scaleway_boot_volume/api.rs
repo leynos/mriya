@@ -10,6 +10,17 @@ use mriya::{BootVolumeRequest, InstanceHandle, InstanceRequest, ScalewayConfig};
 
 use crate::cases::Case;
 
+/// The boot entry the Instances API reports for a server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReportedEntry {
+    /// Provider identifier of the root volume.
+    pub(super) id: String,
+    /// Provider volume type, such as `l_ssd`.
+    pub(super) volume_type: String,
+    /// Reported size in bytes, when the provider sends one.
+    pub(super) size: Option<u64>,
+}
+
 /// Production Instances API base.
 pub(super) const INSTANCE_API: &str = "https://api.scaleway.com/instance/v1";
 
@@ -42,7 +53,7 @@ pub(super) async fn read_server_root(
     client: &reqwest::Client,
     config: &ScalewayConfig,
     handle: &InstanceHandle,
-) -> Result<(String, String, Option<u64>), String> {
+) -> Result<ReportedEntry, String> {
     let url = format!(
         "{}/zones/{}/servers/{}",
         INSTANCE_API, handle.zone, handle.id
@@ -71,7 +82,11 @@ pub(super) async fn read_server_root(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format!("instance {} root volume has no type", handle.id))?;
     let size = entry.get("size").and_then(serde_json::Value::as_u64);
-    Ok((id.to_owned(), volume_type.to_owned(), size))
+    Ok(ReportedEntry {
+        id: id.to_owned(),
+        volume_type: volume_type.to_owned(),
+        size,
+    })
 }
 
 /// Reads an SBS volume from the Block Storage API.

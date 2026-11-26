@@ -7,102 +7,26 @@
 
 use rstest::rstest;
 
+use super::{
+    dual_product,
+    general_range,
+    local_image,
+    local_range,
+    product,
+    resolve,
+    root_image,
+    sbs_image,
+};
 use crate::{
-    boot_volume::{
-        BootVolumePlan,
-        BootVolumeRequest,
-        BootVolumeType,
-        CompatibilityDefault,
-        ImageStorage,
-    },
+    boot_volume::{BootVolumeRequest, BootVolumeType, CompatibilityDefault, ImageStorage},
     scaleway::{
         ScalewayBackendError,
         lifecycle::{
-            boot_plan::{ImageFacts, Resolution, SBS_DEFAULT_FLOOR_BYTES, resolve_boot_volume},
-            products::{
-                ConstraintSizes,
-                ConstraintsByType,
-                ProductCapabilities,
-                ProductServerType,
-            },
+            boot_plan::{Resolution, SBS_DEFAULT_FLOOR_BYTES, resolve_boot_volume},
+            products::ConstraintSizes,
         },
     },
 };
-
-/// A 20-40 GB local range, for types that offer local storage.
-fn local_range() -> ConstraintSizes {
-    ConstraintSizes {
-        min_size: 20_000_000_000,
-        max_size: 40_000_000_000,
-    }
-}
-
-/// A general 10-100 GB range, applied to every volume on the type.
-fn general_range() -> ConstraintSizes {
-    ConstraintSizes {
-        min_size: 10_000_000_000,
-        max_size: 100_000_000_000,
-    }
-}
-
-/// Builds a catalogue entry with the chosen storage support.
-fn product(
-    arch: &str,
-    general: ConstraintSizes,
-    local: Option<ConstraintSizes>,
-    block_storage: Option<bool>,
-) -> ProductServerType {
-    ProductServerType {
-        volumes_constraint: general,
-        per_volume_constraint: local.map(|sizes| ConstraintsByType { l_ssd: Some(sizes) }),
-        arch: arch.to_owned(),
-        end_of_service: false,
-        capabilities: ProductCapabilities { block_storage },
-    }
-}
-
-/// A type offering both local and Block Storage, with the standard ranges.
-fn dual_product() -> ProductServerType {
-    product("x86_64", general_range(), Some(local_range()), Some(true))
-}
-
-/// Image facts for an image whose root is `size_bytes`.
-fn image(size_bytes: u64, storage: ImageStorage, volume_type: &'static str) -> ImageFacts<'static> {
-    ImageFacts {
-        size_bytes,
-        storage,
-        volume_type,
-    }
-}
-
-/// A 10 GB local-only image.
-fn local_image() -> ImageFacts<'static> {
-    image(10_000_000_000, ImageStorage::new(true, false), "l_ssd")
-}
-
-/// A 10 GB Block-Storage-only image.
-fn sbs_image() -> ImageFacts<'static> {
-    image(
-        10_000_000_000,
-        ImageStorage::new(false, true),
-        "sbs_snapshot",
-    )
-}
-
-/// Resolves with the common architecture and a named instance type.
-fn resolve(
-    request: BootVolumeRequest,
-    product: &ProductServerType,
-    image: ImageFacts<'_>,
-) -> Result<BootVolumePlan, ScalewayBackendError> {
-    resolve_boot_volume(Resolution {
-        instance_type: "DEV1-S",
-        request: &request,
-        product,
-        image,
-        requested_architecture: "x86_64",
-    })
-}
 
 /// An unset type and size default to local at the type's maximum when both the
 /// type and the image can do local, and both settings are recorded as
@@ -142,7 +66,7 @@ fn unset_sbs_size_defaults_to_the_image_when_larger() {
         volume_type: Some(BootVolumeType::Sbs),
         size_gb: None,
     };
-    let bigger_image = image(30_000_000_000, ImageStorage::new(false, true), "sbs_volume");
+    let bigger_image = root_image(30_000_000_000, ImageStorage::new(false, true), "sbs_volume");
 
     let plan =
         resolve(request, &dual_product(), bigger_image).expect("the size default should resolve");

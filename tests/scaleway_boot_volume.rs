@@ -14,6 +14,7 @@ use std::io::Write;
 
 use mriya::{
     Backend,
+    BootVolumeAllocation,
     BootVolumePlan,
     BootVolumeType,
     InstanceHandle,
@@ -32,12 +33,55 @@ use api::{
     BLOCK_API,
     HTTP_TIMEOUT,
     INSTANCE_API,
+    ReportedEntry,
     build_request,
     get_json,
     read_block_volume,
     read_server_root,
 };
 use cases::{Case, cases_from_env, enabled};
+
+/// Confirms the handle's recorded root is the plan's.
+fn ensure_record_matches_plan(
+    handle: &InstanceHandle,
+    record: &BootVolumeAllocation,
+    plan: &BootVolumePlan,
+) -> Result<(), String> {
+    if record.root.volume_type == plan.volume_type && record.root.size_bytes == plan.size_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "instance {} recorded {} / {} bytes, but the plan asked for {} / {} bytes",
+        handle.id,
+        record.root.volume_type,
+        record.root.size_bytes,
+        plan.volume_type,
+        plan.size_bytes
+    ))
+}
+
+/// Confirms the server's boot entry is the root the handle recorded.
+fn ensure_entry_matches_record(
+    handle: &InstanceHandle,
+    entry: &ReportedEntry,
+    record: &BootVolumeAllocation,
+) -> Result<(), String> {
+    if entry.id != record.root.id {
+        return Err(format!(
+            "instance {} reports root {} but the handle recorded {}",
+            handle.id, entry.id, record.root.id
+        ));
+    }
+    if entry.volume_type != record.root.volume_type.provider_id() {
+        return Err(format!(
+            "instance {} reports root type {}, expected {}",
+            handle.id,
+            entry.volume_type,
+            record.root.volume_type.provider_id()
+        ));
+    }
+    Ok(())
+}
 
 /// Everything one live run needs, plus what it has learned.
 struct LiveRun<'a> {
@@ -148,10 +192,7 @@ impl LiveRun<'_> {
             .as_ref()
             .map(|allocation| allocation.root.clone());
 
-        if let Err(error) = self
-            .verify_live_root(&handle, plan.volume_type, plan.size_bytes)
-            .await
-        {
+        if let Err(error) = self.verify_live_root(&handle, plan).await {
             self.assertion_failures.push(error);
         }
 
@@ -168,67 +209,73 @@ impl LiveRun<'_> {
     }
 
     /// Compares the handle's record with the plan, then re-reads the provider.
+    ///
+    /// The steps are separate functions so each failure names one comparison:
+    /// the handle against the plan, the server entry against the handle, and
+    /// the reported size against the plan. A single function doing all three
+    /// reads as one long conditional and hides which comparison failed.
     async fn verify_live_root(
         &self,
         handle: &InstanceHandle,
-        planned_type: BootVolumeType,
-        planned_size: u64,
+        plan: &BootVolumePlan,
     ) -> Result<(), String> {
-        let allocation = handle
+        let record = handle
             .boot_volume
             .as_ref()
             .ok_or_else(|| format!("instance {} recorded no boot volume", handle.id))?;
 
-        if allocation.root.volume_type != planned_type || allocation.root.size_bytes != planned_size
-        {
+        ensure_record_matches_plan(handle, record, plan)?;
+
+        let entry = read_server_root(self.client, self.config, handle).await?;
+        ensure_entry_matches_record(handle, &entry, record)?;
+
+        self.ensure_reported_size(handle, &entry, plan).await
+    }
+
+    /// Compares the size the provider reports with the plan.
+    ///
+    /// A Block Storage root's size comes from the Block Storage API, because
+    /// the Instances API does not report it reliably; a local root's size is
+    /// already in the server entry.
+    async fn ensure_reported_size(
+        &self,
+        handle: &InstanceHandle,
+        entry: &ReportedEntry,
+        plan: &BootVolumePlan,
+    ) -> Result<(), String> {
+        if plan.volume_type == BootVolumeType::Sbs {
+            return self
+                .ensure_block_volume(handle, &entry.id, plan.size_bytes)
+                .await;
+        }
+        match entry.size {
+            Some(size) if size == plan.size_bytes => Ok(()),
+            other => Err(format!(
+                "instance {} reports local root size {other:?}, expected {}",
+                handle.id, plan.size_bytes
+            )),
+        }
+    }
+
+    /// Reads the Block Storage volume and compares it with the plan.
+    async fn ensure_block_volume(
+        &self,
+        handle: &InstanceHandle,
+        root_id: &str,
+        planned_size: u64,
+    ) -> Result<(), String> {
+        let (block_size, block_id) =
+            read_block_volume(self.client, self.config, &handle.zone, root_id).await?;
+        if block_id != root_id {
             return Err(format!(
-                "instance {} recorded {} / {} bytes, but the plan asked for {} / {} bytes",
-                handle.id,
-                allocation.root.volume_type,
-                allocation.root.size_bytes,
-                planned_type,
-                planned_size
+                "Block Storage returned volume {block_id} for {root_id}"
             ));
         }
-
-        let (reported_id, reported_type, reported_size) =
-            read_server_root(self.client, self.config, handle).await?;
-
-        if reported_id != allocation.root.id {
+        if block_size != planned_size {
             return Err(format!(
-                "instance {} reports root {} but the handle recorded {}",
-                handle.id, reported_id, allocation.root.id
+                "Block Storage volume {root_id} is {block_size} bytes, expected {planned_size}"
             ));
         }
-        if reported_type != planned_type.provider_id() {
-            return Err(format!(
-                "instance {} reports root type {reported_type}, expected {planned_type}",
-                handle.id
-            ));
-        }
-
-        if planned_type == BootVolumeType::Sbs {
-            let (block_size, block_id) =
-                read_block_volume(self.client, self.config, &handle.zone, &reported_id).await?;
-            if block_id != reported_id {
-                return Err(format!(
-                    "Block Storage returned volume {block_id} for {reported_id}"
-                ));
-            }
-            if block_size != planned_size {
-                return Err(format!(
-                    "Block Storage volume {reported_id} is {block_size} bytes, \
-                     expected {planned_size}"
-                ));
-            }
-        } else if reported_size != Some(planned_size) {
-            return Err(format!(
-                "instance {} reports local root size {reported_size:?}, \
-                 expected {planned_size}",
-                handle.id
-            ));
-        }
-
         Ok(())
     }
 

@@ -51,25 +51,39 @@ impl InstanceRequest {
     /// Validates the request, returning a descriptive error when a required
     /// field is missing.
     ///
+    /// The required fields are checked in a fixed order, so a request with
+    /// several problems reports the first one by name rather than an
+    /// arbitrary one. For example, an empty image label and an empty zone
+    /// report `image_label`.
+    ///
     /// # Errors
     ///
-    /// Returns [`BackendError::Validation`] when any string field is empty.
+    /// Returns [`BackendError::Validation`] when any required string field is
+    /// empty, when the boot size is zero, or when the cloud-init payload is
+    /// not valid user-data.
     pub fn validate(&self) -> Result<(), BackendError> {
-        if self.image_label.is_empty() {
-            return Err(BackendError::Validation("image_label".to_owned()));
+        let required = [
+            ("image_label", self.image_label.as_str()),
+            ("instance_type", self.instance_type.as_str()),
+            ("zone", self.zone.as_str()),
+            ("project_id", self.project_id.as_str()),
+            ("architecture", self.architecture.as_str()),
+        ];
+        for (field, value) in required {
+            if value.is_empty() {
+                return Err(BackendError::Validation(field.to_owned()));
+            }
         }
-        if self.instance_type.is_empty() {
-            return Err(BackendError::Validation("instance_type".to_owned()));
-        }
-        if self.zone.is_empty() {
-            return Err(BackendError::Validation("zone".to_owned()));
-        }
-        if self.project_id.is_empty() {
-            return Err(BackendError::Validation("project_id".to_owned()));
-        }
-        if self.architecture.is_empty() {
-            return Err(BackendError::Validation("architecture".to_owned()));
-        }
+        self.validate_optional_fields()
+    }
+
+    /// Validates the settings that are allowed to be absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Validation`] when a supplied boot size is zero,
+    /// or when a supplied cloud-init payload is not valid user-data.
+    fn validate_optional_fields(&self) -> Result<(), BackendError> {
         if self.boot_volume.size_gb == Some(0) {
             return Err(BackendError::Validation("boot_volume_size_gb".to_owned()));
         }
