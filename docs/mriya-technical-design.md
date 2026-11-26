@@ -257,6 +257,32 @@ provisioning) that will guide subsequent optimizations.
   value the program cannot decode is an error naming the file it was needed
   for, not a silent pass-through.
 
+#### Status notes (26 November 2026)
+
+- **Volume creation contract:** Cache volumes are still created by posting to
+  the Instances API volume endpoint with the hard-coded `b_ssd` type, and the
+  format command assumes the `scsi-0SCW_BSSD_` device prefix. Scaleway's
+  changelog records the removal of new Block Storage creation through the
+  Instances API on 30 April 2025, so this path rests on a retired creation
+  contract even though attachment remains at the documented server boundary.
+  Migration is tracked in
+  [issue #153](https://github.com/leynos/mriya/issues/153).
+- **Boot storage is implicit:** the create-server body carries no `volumes`
+  object, so the boot-volume type and size are provider defaults that Mriya
+  neither chooses nor reports. A live inspection reported a 10 GB SBS root
+  volume with 5.9 GB free after boot. Making the choice explicit is tracked in
+  [issue #155](https://github.com/leynos/mriya/issues/155).
+- **Teardown is server disappearance only:** `destroy` sends the delete request
+  and polls until the instance stops being listed. It does not inventory
+  attached storage or public IP addresses, and a failure after the create
+  request succeeds but before `create` returns a handle — volume validation,
+  attachment, or power-on — leaves a stopped server that nothing tracked. Both
+  gaps are tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
+- **Volume size is binary:** `[init].volume_size_gb` is multiplied by 1024³ in
+  `src/init/helpers.rs`, so the configured number counts gibibytes (GiB), not
+  decimal gigabytes. The `_gb` and `_GB` identifiers keep their current
+  spelling for compatibility.
+
 ### Scaleway HTTP boundary decision (15 October 2026)
 
 Snapshot listing, the single-instance read, power-on, deletion, server
@@ -1505,7 +1531,11 @@ pair. We give flexibility:
 ensure that we don’t leak resources:
 
 - If VM creation fails (API error or no quota), we propagate that error and
-  nothing needs cleanup (no VM was created).
+  nothing needs cleanup (no VM was created). This holds only when the create
+  request itself fails: a request that succeeds and is then followed by a
+  volume or power-on failure is outside it. See the status notes under
+  [Implementation status (October 2026)](#implementation-status-october-2026)
+  and [issue #154](https://github.com/leynos/mriya/issues/154).
 
 - If VM created but we fail to SSH (maybe cloud-init misconfigured the key, or
   network issue), Mriya will **destroy the VM** and report the error. We will
