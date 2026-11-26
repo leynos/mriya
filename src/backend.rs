@@ -4,7 +4,10 @@ use std::{future::Future, net::IpAddr, pin::Pin};
 
 use thiserror::Error;
 
-use crate::cloud_init;
+use crate::{
+    boot_volume::{BootVolumeAllocation, BootVolumePlan, BootVolumeRequest},
+    cloud_init,
+};
 
 /// Parameters required to create a new instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +26,15 @@ pub struct InstanceRequest {
     /// CPU architecture requested for the instance.
     pub architecture: String,
     /// Optional volume ID to attach for persistent storage.
+    ///
+    /// This is the retained cache volume. It is never the boot volume: the
+    /// boot disk is described by [`InstanceRequest::boot_volume`].
     pub volume_id: Option<String>,
+    /// Boot-storage settings for the instance's root volume.
+    ///
+    /// Unset settings follow the backend's documented compatibility default,
+    /// which the resolved [`BootVolumePlan`] records.
+    pub boot_volume: BootVolumeRequest,
     /// Optional cloud-init user-data payload (cloud-config YAML or script).
     ///
     /// When provided, the backend passes the blob through to the provider so
@@ -59,6 +70,9 @@ impl InstanceRequest {
         if self.architecture.is_empty() {
             return Err(BackendError::Validation("architecture".to_owned()));
         }
+        if self.boot_volume.size_gb == Some(0) {
+            return Err(BackendError::Validation("boot_volume_size_gb".to_owned()));
+        }
         if let Some(payload) = self.cloud_init_user_data.as_deref()
             && cloud_init::validate_payload(payload).is_err()
         {
@@ -88,6 +102,8 @@ pub struct InstanceRequestBuilder {
     architecture: String,
     /// Optional cache volume ID; trimmed on build when present.
     volume_id: Option<String>,
+    /// Boot-storage settings; carried through unchanged.
+    boot_volume: BootVolumeRequest,
     /// Optional cloud-init payload; kept verbatim, with no trimming.
     cloud_init_user_data: Option<String>,
 }
@@ -146,6 +162,17 @@ impl InstanceRequestBuilder {
         self
     }
 
+    /// Sets the boot-storage settings for the instance's root volume.
+    ///
+    /// For example, a builder given a 20 GB local request sends that plan,
+    /// while one given [`BootVolumeRequest::default`] accepts the backend's
+    /// compatibility default.
+    #[must_use]
+    pub const fn boot_volume(mut self, value: BootVolumeRequest) -> Self {
+        self.boot_volume = value;
+        self
+    }
+
     /// Sets optional cloud-init user-data content.
     #[must_use]
     pub fn cloud_init_user_data(mut self, value: Option<String>) -> Self {
@@ -167,6 +194,7 @@ impl InstanceRequestBuilder {
             organisation_id: self.organisation_id.map(|value| value.trim().to_owned()),
             architecture: self.architecture.trim().to_owned(),
             volume_id: self.volume_id.map(|value| value.trim().to_owned()),
+            boot_volume: self.boot_volume,
             cloud_init_user_data: self.cloud_init_user_data,
         };
         request.validate()?;
@@ -181,6 +209,11 @@ pub struct InstanceHandle {
     pub id: String,
     /// Zone in which the instance was created.
     pub zone: String,
+    /// The boot volume the instance actually reported.
+    ///
+    /// Absent only for a backend or a test double that records no root
+    /// volume; a real Scaleway create always fills it in.
+    pub boot_volume: Option<BootVolumeAllocation>,
 }
 
 /// Connection details for reaching an instance once it is ready.
@@ -207,6 +240,20 @@ pub type BackendFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + S
 pub trait Backend {
     /// Provider specific error type returned by the backend.
     type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Resolves and validates the boot-volume plan without creating anything.
+    ///
+    /// Callers use this to reject an impossible combination before a billable
+    /// resource exists. `create` performs the same resolution, so a preflight
+    /// that succeeds and a create that follows cannot disagree.
+    ///
+    /// For example, a 20 GB local plan succeeds where the instance type
+    /// offers local storage and the image fits, while a size above the type's
+    /// maximum fails before any request is made.
+    fn preflight<'a>(
+        &'a self,
+        request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error>;
 
     /// Creates a new instance and returns a handle used for subsequent calls.
     ///

@@ -8,6 +8,9 @@ use std::{
 use camino::Utf8PathBuf;
 use mriya::{
     Backend,
+    BootVolumePlan,
+    BootVolumeType,
+    CompatibilityDefault,
     ConfigStoreError,
     ConfigWriter,
     InstanceHandle,
@@ -187,6 +190,22 @@ pub enum ScriptedVolumeBackendError {
 impl Backend for ScriptedVolumeBackend {
     type Error = ScriptedVolumeBackendError;
 
+    /// Reports a fixed local plan. The init scenarios care about ordering and
+    /// failure classification, not storage details, so one plan serves them
+    /// all; the backend's own tests assert resolution.
+    fn preflight<'a>(
+        &'a self,
+        _request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
+        Box::pin(async move {
+            Ok(BootVolumePlan::new(
+                BootVolumeType::Local,
+                20_000_000_000,
+                CompatibilityDefault::default(),
+            ))
+        })
+    }
+
     fn create<'a>(
         &'a self,
         _request: &'a InstanceRequest,
@@ -201,6 +220,7 @@ impl Backend for ScriptedVolumeBackend {
             || InstanceHandle {
                 id: String::from("instance-123"),
                 zone: String::from("test-zone"),
+                boot_volume: None,
             },
         )
     }

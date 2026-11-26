@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::{
     backend::InstanceRequest,
+    boot_volume::{BootVolumeError, BootVolumeRequest, BootVolumeType},
     cloud_init::{CloudInitError, resolve_cloud_init_user_data_with_env},
 };
 
@@ -50,7 +51,22 @@ pub struct ScalewayConfig {
     pub default_architecture: String,
     /// Optional Block Storage volume ID to attach for persistent caching.
     /// The volume must exist in the same zone as the instance.
+    ///
+    /// This is the retained cache volume. It never selects the boot disk; use
+    /// `boot_volume_type` and `boot_volume_size_gb` for that.
     pub default_volume_id: Option<String>,
+    /// Boot-volume storage type: `l_ssd` (local SSD) or `sbs_volume` (Block
+    /// Storage).
+    ///
+    /// When unset, the backend applies its documented compatibility default
+    /// and reports that it did so.
+    pub boot_volume_type: Option<String>,
+    /// Boot-volume capacity in decimal gigabytes (10^9 bytes).
+    ///
+    /// When unset, the backend applies its documented compatibility default
+    /// and reports that it did so. Note that this unit differs from the cache
+    /// volume's `volume_size_gb`, which is binary gibibytes.
+    pub boot_volume_size_gb: Option<u32>,
     /// Optional cloud-init user-data payload (cloud-config YAML or script).
     pub cloud_init_user_data: Option<String>,
     /// Optional path to a file containing cloud-init user-data.
@@ -167,9 +183,48 @@ impl ScalewayConfig {
             .organisation_id(self.default_organization_id.clone())
             .architecture(&self.default_architecture)
             .volume_id(self.default_volume_id.clone())
+            .boot_volume(self.resolve_boot_volume()?)
             .cloud_init_user_data(cloud_init_user_data)
             .build()
             .map_err(|err| ConfigError::Parse(err.to_string()))
+    }
+
+    /// Resolves the boot-volume settings, refusing values the backend cannot
+    /// request.
+    ///
+    /// Each failure names both the environment variable and the TOML key, so
+    /// a user can correct either route.
+    ///
+    /// For example, `boot_volume_type = "l_ssd"` with a size of 20 yields a
+    /// fully explicit request, while `"b_ssd"` is refused by name because the
+    /// provider no longer accepts it for new volumes.
+    pub fn resolve_boot_volume(&self) -> Result<BootVolumeRequest, ConfigError> {
+        let volume_type = self
+            .boot_volume_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<BootVolumeType>().map_err(|err| {
+                    ConfigError::Parse(format!(
+                        "{err}; set SCW_BOOT_VOLUME_TYPE or add boot_volume_type \
+                         to [scaleway] in mriya.toml"
+                    ))
+                })
+            })
+            .transpose()?;
+
+        if self.boot_volume_size_gb == Some(0) {
+            return Err(ConfigError::Parse(BootVolumeError::describe_zero_size(
+                "SCW_BOOT_VOLUME_SIZE_GB",
+                "boot_volume_size_gb",
+            )));
+        }
+
+        Ok(BootVolumeRequest {
+            volume_type,
+            size_gb: self.boot_volume_size_gb,
+        })
     }
 
     /// Resolves the inline and file settings into user-data, rewording each

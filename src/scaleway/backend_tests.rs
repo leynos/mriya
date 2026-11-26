@@ -35,6 +35,7 @@ fn request_with_type(instance_type: &str) -> InstanceRequest {
         organisation_id: None,
         architecture: String::from("x86_64"),
         volume_id: None,
+        boot_volume: Default::default(),
         cloud_init_user_data: None,
     }
 }
@@ -44,6 +45,7 @@ fn handle() -> InstanceHandle {
     InstanceHandle {
         id: String::from("instance-1"),
         zone: String::from("zone"),
+        boot_volume: None,
     }
 }
 
@@ -171,6 +173,8 @@ fn backend_config() -> crate::ScalewayConfig {
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        boot_volume_type: None,
+        boot_volume_size_gb: None,
         cloud_init_user_data: None,
         cloud_init_user_data_file: None,
     }

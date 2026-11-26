@@ -8,7 +8,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use mriya::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest, backend::BackendFuture};
+use mriya::{
+    Backend,
+    BootVolumePlan,
+    BootVolumeRequest,
+    BootVolumeType,
+    CompatibilityDefault,
+    InstanceHandle,
+    InstanceNetworking,
+    InstanceRequest,
+    backend::BackendFuture,
+};
 use thiserror::Error;
 
 /// Test double for [`Backend`] that wraps shared [`State`] to record teardown
@@ -59,6 +69,16 @@ pub enum ScriptedBackendError {
 impl Backend for ScriptedBackend {
     type Error = ScriptedBackendError;
 
+    /// Reports a fixed local plan, which is enough for the run scenarios: none
+    /// of them constrain storage, and the plan's exact values are asserted by
+    /// the backend's own tests.
+    fn preflight<'a>(
+        &'a self,
+        _request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
+        Box::pin(async move { Ok(scripted_plan()) })
+    }
+
     fn create<'a>(
         &'a self,
         _request: &'a InstanceRequest,
@@ -67,6 +87,7 @@ impl Backend for ScriptedBackend {
             Ok(InstanceHandle {
                 id: String::from("scripted-id"),
                 zone: String::from("test-zone"),
+                boot_volume: None,
             })
         })
     }
@@ -97,3 +118,17 @@ impl Backend for ScriptedBackend {
         })
     }
 }
+
+/// The plan the run double reports and records.
+pub fn scripted_plan() -> BootVolumePlan {
+    BootVolumePlan::new(
+        BootVolumeType::Local,
+        20_000_000_000,
+        CompatibilityDefault::default(),
+    )
+}
+
+/// The plan the run double records, exposed so a scenario can assert the
+/// handle carries it unchanged.
+#[allow(dead_code)]
+pub fn scripted_request() -> BootVolumeRequest { BootVolumeRequest::default() }

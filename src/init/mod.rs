@@ -104,6 +104,7 @@ impl InitRequest {
             .project_id(&scaleway.default_project_id)
             .organisation_id(scaleway.default_organization_id.clone())
             .architecture(&scaleway.default_architecture)
+            .boot_volume(scaleway.resolve_boot_volume()?)
             .cloud_init_user_data(None)
             .build()
             .map_err(|err| InitRequestError::RequestBuild(err.to_string()))?;

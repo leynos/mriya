@@ -2,9 +2,12 @@
 
 use std::{sync::LazyLock, time::Duration};
 
+mod boot_capture;
+mod boot_plan;
 mod create;
 mod http;
 mod image;
+mod products;
 mod volume_attach;
 mod volume_create;
 mod volume_detach;
@@ -17,6 +20,9 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Production base URL for the Instances API, used as the default for
 /// `ScalewayBackend::instance_api_base`.
 pub(super) const SCALEWAY_INSTANCE_API_BASE: &str = "https://api.scaleway.com/instance/v1";
+/// Production base URL for the Block Storage API, used as the default for
+/// `ScalewayBackend::block_api_base`.
+pub(super) const SCALEWAY_BLOCK_API_BASE: &str = "https://api.scaleway.com/block/v1";
 
 /// Shared HTTP client for direct Instances API calls.
 ///

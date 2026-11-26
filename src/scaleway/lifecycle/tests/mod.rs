@@ -78,6 +78,8 @@ fn dummy_config() -> ScalewayConfig {
         default_image: String::from("img"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        boot_volume_type: None,
+        boot_volume_size_gb: None,
         cloud_init_user_data: None,
         cloud_init_user_data_file: None,
     }
@@ -93,6 +95,7 @@ fn base_request() -> InstanceRequest {
         organisation_id: None,
         architecture: "x86_64".to_owned(),
         volume_id: None,
+        boot_volume: Default::default(),
         cloud_init_user_data: None,
     }
 }
@@ -104,6 +107,7 @@ fn backend_fixture() -> ScalewayBackend {
     ScalewayBackend {
         api: ScalewayApi::new("dummy"),
         instance_api_base: String::from("http://127.0.0.1:9/instance/v1"),
+        block_api_base: String::from("http://127.0.0.1:9/block/v1"),
         config: dummy_config(),
         test_run_id: None,
         ssh_port: DEFAULT_SSH_PORT,
@@ -150,9 +154,11 @@ fn handle() -> InstanceHandle {
     InstanceHandle {
         id: String::from("id"),
         zone: String::from("zone"),
+        boot_volume: None,
     }
 }
 
+mod boot_plan;
 mod image;
 mod wait;
 

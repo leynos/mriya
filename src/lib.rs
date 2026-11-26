@@ -5,6 +5,7 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod boot_volume;
 pub mod cloud_init;
 pub mod config;
 pub mod config_store;
@@ -25,6 +26,16 @@ pub use backend::{
     InstanceNetworking,
     InstanceRequest,
     InstanceRequestBuilder,
+};
+pub use boot_volume::{
+    BootVolumeAllocation,
+    BootVolumeError,
+    BootVolumeMismatch,
+    BootVolumePlan,
+    BootVolumeRequest,
+    BootVolumeType,
+    CompatibilityDefault,
+    RootVolume,
 };
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};

@@ -47,7 +47,7 @@ struct GetInstanceResponse {
 ///
 /// For example, a connection timeout becomes a provider error prefixed
 /// `Request:`.
-fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
+pub(super) fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
     ScalewayBackendError::Provider {
         message: format!("Request: {error}"),
     }
@@ -57,7 +57,9 @@ fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
 ///
 /// For example, a 403 `{"type":"denied","message":"no access"}` response
 /// becomes a provider error with the message `Api: denied - no access`.
-async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
+pub(super) async fn checked_response(
+    request: RequestBuilder,
+) -> Result<Response, ScalewayBackendError> {
     // Retain the per-request budget if the shared client fell back to an
     // unconfigured client after its builder failed.
     let response = request

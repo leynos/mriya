@@ -6,6 +6,8 @@
 //! supplying both the configuration and the environment so no test reads or
 //! mutates the process environment.
 
+use mriya::{BootVolumeRequest, BootVolumeType};
+
 use super::*;
 
 /// The Scaleway secret key a request build needs; the value is never sent.
@@ -31,6 +33,8 @@ fn default_config() -> ScalewayConfig {
         default_image: String::from("Ubuntu 24.04 Noble Numbat"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        boot_volume_type: None,
+        boot_volume_size_gb: None,
         cloud_init_user_data: None,
         cloud_init_user_data_file: None,
     }
@@ -198,4 +202,33 @@ fn run_request_applies_instance_type_and_image_overrides() {
 
     assert_eq!(request.instance_type, "DEV1-M");
     assert_eq!(request.image_label, "Debian 12 Bookworm");
+}
+
+/// Boot-storage settings from the profile reach the request the run would send.
+///
+/// The dump-request surface and these assertions cover the same seam: what the
+/// binary makes of its configuration. A run with no boot settings asks for the
+/// backend's compatibility default rather than inventing a type.
+#[test]
+fn run_request_carries_the_configured_boot_volume() {
+    let config = ScalewayConfig {
+        boot_volume_type: Some(String::from("sbs_volume")),
+        boot_volume_size_gb: Some(25),
+        ..default_config()
+    };
+
+    let request = request_from_args(&config, &["mriya", "run", "--", "echo", "ok"]);
+
+    assert_eq!(request.boot_volume.volume_type, Some(BootVolumeType::Sbs));
+    assert_eq!(request.boot_volume.size_gb, Some(25));
+    assert_eq!(request.volume_id, None, "no cache volume was configured");
+}
+
+/// A run with no boot settings leaves both unset for the backend to default.
+#[test]
+fn run_request_leaves_unset_boot_volume_unset() {
+    let request = request_from_args(&default_config(), &["mriya", "run", "--", "echo", "ok"]);
+
+    assert_eq!(request.boot_volume, BootVolumeRequest::default());
+    assert!(request.boot_volume.is_unset());
 }

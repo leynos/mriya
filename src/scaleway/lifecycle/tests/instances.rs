@@ -16,6 +16,7 @@ use super::{
 };
 use crate::{
     backend::InstanceRequest,
+    boot_volume::{BootVolumePlan, BootVolumeType, CompatibilityDefault},
     scaleway::{ScalewayBackend, ScalewayBackendError},
 };
 
@@ -36,6 +37,15 @@ fn rejected() -> Reply {
     }
 }
 
+/// A 20 GB local plan, used wherever a create needs a boot specification.
+fn local_plan() -> BootVolumePlan {
+    BootVolumePlan::new(
+        BootVolumeType::Local,
+        20_000_000_000,
+        CompatibilityDefault::default(),
+    )
+}
+
 /// Scenario: creating an instance before its cache volume is attached.
 ///
 /// Invariant: the POST targets the configured zone on the substitutable base
@@ -50,7 +60,7 @@ async fn create_instance_stopped_posts_a_stopped_server(
     let (result, requests) =
         with_stub(backend_fixture, vec![created_instance()], async |backend| {
             backend
-                .create_instance_stopped(&base_request, "img-test")
+                .create_instance_stopped(&base_request, "img-test", &local_plan())
                 .await
         })
         .await?;
@@ -75,7 +85,8 @@ async fn create_instance_stopped_posts_a_stopped_server(
         "unexpected instance name: {instance_name}"
     );
     // The name is random per call, so the remaining payload is compared as a
-    // whole. That also proves the optional fields stay absent.
+    // whole. That also proves the optional fields stay absent and that the
+    // boot volume is present with exactly the plan's type and size.
     assert_eq!(
         without_name(&body)?,
         serde_json::json!({
@@ -86,7 +97,86 @@ async fn create_instance_stopped_posts_a_stopped_server(
             "dynamic_ip_required": true,
             "tags": ["mriya", "ephemeral"],
             "stopped": true,
+            "volumes": {
+                "0": {
+                    "volume_type": "l_ssd",
+                    "size": 20_000_000_000u64,
+                    "boot": true,
+                }
+            },
         })
+    );
+    Ok(())
+}
+
+/// Scenario: creating an instance with a Block Storage boot volume.
+///
+/// Invariant: the `volumes["0"]` entry carries `sbs_volume`, the planned byte
+/// size, and the boot flag, so the provider creates the disk that was priced
+/// rather than one of its defaults.
+#[rstest]
+#[tokio::test]
+async fn create_instance_stopped_sends_an_sbs_boot_volume(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let plan = BootVolumePlan::new(
+        BootVolumeType::Sbs,
+        30_000_000_000,
+        CompatibilityDefault::default(),
+    );
+    let (result, requests) =
+        with_stub(backend_fixture, vec![created_instance()], async |backend| {
+            backend
+                .create_instance_stopped(&base_request, "img-test", &plan)
+                .await
+        })
+        .await?;
+    result?;
+    let request = only_request(&requests)?;
+    assert_eq!(
+        request_body(request)?["volumes"]["0"],
+        serde_json::json!({
+            "volume_type": "sbs_volume",
+            "size": 30_000_000_000u64,
+            "boot": true,
+        })
+    );
+    Ok(())
+}
+
+/// Scenario: the create request must not smuggle the cache volume into the
+/// boot entry.
+///
+/// Invariant: a request carrying a cache volume ID still sends only the boot
+/// volume at index `"0"`; the cache is attached later, by the PATCH, and never
+/// appears as `size` or `id` of the boot entry.
+#[rstest]
+#[tokio::test]
+async fn create_instance_stopped_keeps_the_cache_volume_out_of_the_boot_entry(
+    backend_fixture: ScalewayBackend,
+    mut base_request: InstanceRequest,
+) -> Result<()> {
+    base_request.volume_id = Some(String::from("vol-cache"));
+    let (result, requests) =
+        with_stub(backend_fixture, vec![created_instance()], async |backend| {
+            backend
+                .create_instance_stopped(&base_request, "img-test", &local_plan())
+                .await
+        })
+        .await?;
+    result?;
+    let body = request_body(only_request(&requests)?)?;
+    let boot_entry = body["volumes"]["0"]
+        .as_object()
+        .context("boot entry is not an object")?;
+    assert!(
+        !boot_entry.contains_key("id"),
+        "the boot entry must not carry a volume ID: {boot_entry:?}"
+    );
+    assert!(
+        !body.to_string().contains("vol-cache"),
+        "the cache volume must not appear in the create body: {body}"
     );
     Ok(())
 }
@@ -113,7 +203,7 @@ async fn create_instance_stopped_preserves_a_provider_rejection(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![rejected()], async |backend| {
         backend
-            .create_instance_stopped(&base_request, "img-test")
+            .create_instance_stopped(&base_request, "img-test", &local_plan())
             .await
     })
     .await?;

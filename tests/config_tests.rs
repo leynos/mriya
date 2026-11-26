@@ -6,7 +6,7 @@ mod test_constants;
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use mockable::MockEnv;
-use mriya::{ScalewayConfig, config::ConfigError};
+use mriya::{BootVolumeType, ScalewayConfig, config::ConfigError};
 use rstest::*;
 use tempfile::TempDir;
 use test_constants::DEFAULT_INSTANCE_TYPE;
@@ -40,6 +40,8 @@ fn valid_config() -> ScalewayConfig {
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        boot_volume_type: None,
+        boot_volume_size_gb: None,
         cloud_init_user_data: None,
         cloud_init_user_data_file: None,
     }
@@ -303,4 +305,93 @@ fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConf
         request.cloud_init_user_data,
         Some(String::from("tilde-user-data"))
     );
+}
+
+/// Boot-volume settings reach the request unchanged, keeping the cache volume
+/// separate.
+///
+/// The cache volume ID and the boot-storage settings travel on different
+/// fields: a request that sets both must show both, and a request that sets
+/// only one must leave the other at its default.
+#[rstest]
+#[case::both_explicit(Some("l_ssd"), Some(20), Some(BootVolumeType::Local), Some(20))]
+#[case::type_only(Some("sbs_volume"), None, Some(BootVolumeType::Sbs), None)]
+#[case::size_only(None, Some(30), None, Some(30))]
+#[case::neither(None, None, None, None)]
+fn boot_volume_settings_reach_the_request(
+    valid_config: ScalewayConfig,
+    #[case] configured_type: Option<&str>,
+    #[case] configured_size: Option<u32>,
+    #[case] expected_type: Option<BootVolumeType>,
+    #[case] expected_size: Option<u32>,
+) {
+    let cfg = ScalewayConfig {
+        default_volume_id: Some(String::from("vol-cache")),
+        boot_volume_type: configured_type.map(str::to_owned),
+        boot_volume_size_gb: configured_size,
+        ..valid_config
+    };
+
+    let request = cfg
+        .as_request_with_env(&env_with_home(Err(std::env::VarError::NotPresent)))
+        .expect("boot-volume settings should produce a request");
+
+    assert_eq!(request.boot_volume.volume_type, expected_type);
+    assert_eq!(request.boot_volume.size_gb, expected_size);
+    assert_eq!(
+        request.volume_id.as_deref(),
+        Some("vol-cache"),
+        "the cache volume must be unaffected by the boot settings"
+    );
+}
+
+/// A boot-volume type the provider no longer accepts is refused by name,
+/// naming both routes a user can change.
+#[rstest]
+fn boot_volume_type_rejects_unsupported_identifiers(valid_config: ScalewayConfig) {
+    let cfg = ScalewayConfig {
+        boot_volume_type: Some(String::from("b_ssd")),
+        ..valid_config
+    };
+
+    let error = cfg
+        .resolve_boot_volume()
+        .expect_err("a deprecated volume type must be refused");
+    let message = error.to_string();
+    assert!(message.contains("b_ssd"), "{message}");
+    assert!(message.contains("SCW_BOOT_VOLUME_TYPE"), "{message}");
+    assert!(message.contains("boot_volume_type"), "{message}");
+}
+
+/// A blank boot-volume type is treated as unset rather than refused, so an
+/// empty environment variable cannot break a run.
+#[rstest]
+#[case::blank("   ")]
+#[case::empty("")]
+fn blank_boot_volume_type_is_unset(valid_config: ScalewayConfig, #[case] value: &str) {
+    let cfg = ScalewayConfig {
+        boot_volume_type: Some(value.to_owned()),
+        ..valid_config
+    };
+
+    let resolved = cfg
+        .resolve_boot_volume()
+        .expect("a blank type should be treated as unset");
+    assert_eq!(resolved.volume_type, None);
+}
+
+/// A zero boot-volume size is refused, naming the variable and the key.
+#[rstest]
+fn boot_volume_size_rejects_zero(valid_config: ScalewayConfig) {
+    let cfg = ScalewayConfig {
+        boot_volume_size_gb: Some(0),
+        ..valid_config
+    };
+
+    let error = cfg
+        .resolve_boot_volume()
+        .expect_err("a zero size must be refused");
+    let message = error.to_string();
+    assert!(message.contains("SCW_BOOT_VOLUME_SIZE_GB"), "{message}");
+    assert!(message.contains("boot_volume_size_gb"), "{message}");
 }
