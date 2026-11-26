@@ -321,6 +321,46 @@ async fn wait_until_gone(harness: &CacheHarness, volume: &VolumeHandle) -> Resul
     Ok(false)
 }
 
+/// Formats the new volume through the guarded cache-device script.
+fn format_volume(
+    syncer: &Syncer<ProcessCommandRunner>,
+    networking: &InstanceNetworking,
+    volume: &VolumeHandle,
+) -> Result<()> {
+    let script = cache_device::format_script(&volume.id);
+    let output = syncer
+        .run_remote_raw(networking, &script)
+        .context("run format script")?;
+    let report = cache_device::parse_report(&output.stdout).context("parse format status")?;
+    if report.status() != &CacheDeviceStatus::Formatted {
+        bail!("cache format failed: {}", report.describe());
+    }
+    Ok(())
+}
+
+/// A sentinel file to write and the value it should contain.
+struct Sentinel<'a> {
+    /// Guest path of the sentinel file.
+    path: &'a str,
+    /// Value written to and read from the file.
+    value: &'a str,
+}
+
+/// Initializes the volume on the first VM, writes sentinel A and tears down.
+async fn first_lifetime(
+    harness: &CacheHarness,
+    syncer: &Syncer<ProcessCommandRunner>,
+    volume: &VolumeHandle,
+    sentinel: &Sentinel<'_>,
+) -> Result<String> {
+    let (handle, networking) = provision(harness, volume).await?;
+    format_volume(syncer, &networking, volume)?;
+    mount(harness, syncer, &networking, volume)?;
+    write_file(syncer, &networking, sentinel.path, sentinel.value)?;
+    unmount(syncer, &networking, &harness.sync_config.volume_mount_path)?;
+    teardown_and_check(harness, handle, volume).await
+}
+
 /// Creates, mounts and tears down one VM, returning its volume status.
 async fn one_lifetime(
     harness: &CacheHarness,
@@ -347,10 +387,11 @@ async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
     let path_b = format!("{mount_path}/sentinel-b");
     let mut volume_statuses = Vec::with_capacity(3);
 
-    let first = one_lifetime(harness, &syncer, &volume, |networking| {
-        write_file(&syncer, networking, &path_a, &sentinel_a)
-    })
-    .await?;
+    let first_sentinel = Sentinel {
+        path: &path_a,
+        value: &sentinel_a,
+    };
+    let first = first_lifetime(harness, &syncer, &volume, &first_sentinel).await?;
     volume_statuses.push(first);
 
     let mut read_a_on_second = false;

@@ -223,6 +223,17 @@ updates.
 - `power_off_if_needed` returns immediately for an already-stopped server
   rather than entering the separate stopped-state wait, which keeps teardown to
   one fetch in the common case.
+- An attach failure after a successful POST may still have attached the
+  volume. Rollback therefore treats every attach error except a rejected
+  `VolumeAttachmentFailed` request as possibly attached, and detaches before it
+  destroys the server.
+- The live three-VM suite must format the new volume on the first VM before it
+  mounts; a brand-new Block Storage volume has no filesystem signature, and the
+  mount script correctly refuses a non-ext4 source.
+- The trybuild UI fixture rebuild can exceed nextest's 600-second per-test
+  allowance when the host's compile queue is saturated. Running the UI test
+  once with plain `cargo test --test ui` pre-warms the fixture tree outside
+  that per-test limit; a gate timeout in that fixture is not a code failure.
 
 ## Decision log
 
@@ -247,6 +258,12 @@ updates.
 - Map every init formatting refusal to its own `InitError` variant while
   keeping the BDD failure kind `format`, so operators get a precise message
   without changing the scenario vocabulary.
+- Box the backend error carried by `InitError` and `RunError`: the CLI's error
+  enum wraps both, and an inline backend error pushed every `Result` over the
+  `result_large_err` threshold.
+- Split `volume`, `run` and `init` into module directories rather than adding
+  lint suppressions. Whitaker's module budget also counts test modules, so the
+  loopback and BDD suites are split by scenario family as well.
 
 ## Outcomes & Retrospective
 
