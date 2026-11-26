@@ -236,8 +236,9 @@ from `make test` or CI.
   updates. 113 unit tests, 10 CLI tests and 4 observer tests pass.
 - [x] 2026-11-26: Independent review of the whole diff; its findings are
   recorded under `Surprises & Discoveries` and were all remediated.
-- [ ] Deterministic gates pass (`make check-fmt`, `make lint`, `make test`,
-  `make markdownlint`, `make spelling`).
+- [x] 2026-11-27: `make check-fmt`, `make lint`, `make markdownlint` and
+  `make spelling` pass.
+- [ ] `make test` passes on the final tree.
 - [ ] CodeRabbit review cleared and draft pull request opened.
 
 ## Surprises & Discoveries
@@ -292,6 +293,11 @@ from `make test` or CI.
   to see each workload's share. The report divides the subscription across the
   groups in proportion to their timed attempts and gives the remainder to the
   first group, so the shares always add back to the total.
+- The trybuild UI fixture can exceed nextest's 600-second per-test allowance
+  when the host's compile queue is saturated. Running
+  `cargo test -p mriya-test-macros --test ui` once warms the fixture tree
+  outside that limit; the later `make test` passes in about 40 seconds. This is
+  a host-load effect, not a defect in the change.
 
 ## Decision log
 

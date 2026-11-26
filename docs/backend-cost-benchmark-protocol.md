@@ -36,6 +36,24 @@ Every workload record names the exact command vector it ran. A campaign that
 changes a command must start a new campaign identifier, because two different
 commands are not the same completed work.
 
+The commands the harness runs are:
+
+- `cold-build`: `sh -c 'export CARGO_BUILD_JOBS=8; if [ -n "$CARGO_TARGET_DIR" ];
+  then rm -rf "$CARGO_TARGET_DIR"; else rm -rf target; fi; cargo build
+  --workspace --all-targets --all-features'`
+- `warm-incremental`: the same export and build, preceded by
+  `touch src/lib.rs`
+- `link-heavy`: `sh -c 'export CARGO_BUILD_JOBS=8; cargo test --workspace
+  --all-features --no-run'`
+- `test-execution`: `sh -c 'export CARGO_BUILD_JOBS=8; cargo nextest run
+  --workspace --all-targets --all-features'`
+
+The warm-incremental workload assumes a Rust library crate with a `src/lib.rs`.
+A different workload repository needs its own workload definitions and a new
+campaign identifier. `test-execution` needs `cargo-nextest` on the guest; the
+campaign's cloud-init must install it, and a missing toolchain shows up as a
+failed attempt rather than as a fast one.
+
 ### 2.1 Input data
 
 The input is the workload repository at a pinned commit. The record carries the
