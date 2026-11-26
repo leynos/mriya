@@ -211,6 +211,9 @@ pub fn parse_mount_status(output: &str) -> Result<bool, ProbeError> {
 /// ```
 pub fn allocation_from(outputs: &ProbeOutputs<'_>) -> Result<Allocation, ProbeError> {
     Ok(Allocation {
+        // The guest probe cannot know what was requested; the driver fills this
+        // from the request it sent.
+        requested_architecture: String::new(),
         cpu_count: u32::try_from(parse_unsigned(CPU_COUNT_COMMAND, outputs.cpu_count)?).map_err(
             |_| ProbeError::NotANumber {
                 probe: CPU_COUNT_COMMAND,

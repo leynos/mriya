@@ -23,7 +23,7 @@ pub(super) fn check_runs(runs: &[(usize, RunRecord)], complaints: &mut Vec<Compl
 
 /// Names each pin the record leaves empty.
 fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Complaint>) {
-    let pins: [(&'static str, bool); 21] = [
+    let pins: &[(&'static str, bool)] = &[
         ("campaign_id", run.campaign_id.trim().is_empty()),
         ("workload_id", run.workload_id.trim().is_empty()),
         ("command", run.command.is_empty()),
@@ -53,6 +53,10 @@ fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Compla
             "allocation.guest_architecture",
             run.allocation.guest_architecture == GuestArchitecture::Other,
         ),
+        (
+            "allocation.requested_architecture",
+            run.allocation.requested_architecture.trim().is_empty(),
+        ),
         ("allocation.cpu_count", run.allocation.cpu_count == 0),
         ("allocation.memory_bytes", run.allocation.memory_bytes == 0),
         ("allocation.disk_bytes", run.allocation.disk_bytes == 0),
@@ -68,7 +72,7 @@ fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Compla
         ("tree.file_count", run.tree.file_count == 0),
     ];
     for (field, missing) in pins {
-        if missing {
+        if *missing {
             complaints.push(Complaint::MissingPin { line, field });
         }
     }

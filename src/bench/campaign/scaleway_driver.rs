@@ -26,6 +26,7 @@ use crate::{
     bench::{
         probe::parse_probe_report,
         record::{
+            Allocation,
             Concurrency,
             Lifetime,
             ProviderProduct,
@@ -171,7 +172,10 @@ impl CampaignDriver for ScalewayDriver {
                     product: attempt.product.clone(),
                     location: self.config.default_zone.clone(),
                 },
-                allocation: probe.allocation(),
+                allocation: Allocation {
+                    requested_architecture: request.architecture.clone(),
+                    ..probe.allocation()
+                },
                 concurrency: Concurrency {
                     intended_workers: intended_workers(),
                     effective_workers: probe.cpu_count,

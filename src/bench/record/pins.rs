@@ -31,7 +31,7 @@ pub struct TreePin {
 ///
 /// These are measured from the guest, not copied from the provider's product
 /// page, because a product name does not determine what was handed over.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Allocation {
     /// Logical CPUs the guest reported.
     pub cpu_count: u32,
@@ -39,6 +39,12 @@ pub struct Allocation {
     pub memory_bytes: u64,
     /// Disk available to the workspace, in bytes.
     pub disk_bytes: u64,
+    /// Architecture the provider was asked to provide, as the request named it.
+    ///
+    /// Kept beside the guest's own report because a provider that silently
+    /// substitutes a different architecture would otherwise produce a record
+    /// that looks like an intentional choice.
+    pub requested_architecture: String,
     /// Architecture the guest reported, for example `x86_64`.
     pub guest_architecture: GuestArchitecture,
 }

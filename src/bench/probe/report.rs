@@ -62,6 +62,8 @@ impl ProbeReport {
     #[must_use]
     pub const fn allocation(&self) -> Allocation {
         Allocation {
+            // The probe knows only what the guest reported.
+            requested_architecture: String::new(),
             cpu_count: self.cpu_count,
             memory_bytes: self.memory_bytes,
             disk_bytes: self.disk_bytes,
