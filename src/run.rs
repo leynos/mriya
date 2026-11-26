@@ -7,6 +7,7 @@
 
 use std::{
     fmt::Display,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -17,6 +18,7 @@ use tokio::time::sleep;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    provisioning::ProvisioningReporter,
     sync::{
         CommandRunner,
         RemoteCommandOutput,
@@ -99,6 +101,9 @@ pub struct RunOrchestrator<B, R: CommandRunner> {
     cloud_init_poll_interval: Duration,
     /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
     cloud_init_wait_timeout: Duration,
+    /// Optional sink for the boot and cache allocation facts. Absent means
+    /// nothing is reported.
+    reporter: Option<Arc<dyn ProvisioningReporter>>,
 }
 
 impl<B, R> RunOrchestrator<B, R>
@@ -115,7 +120,21 @@ where
             syncer,
             cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
             cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
+            reporter: None,
         }
+    }
+
+    /// Installs a reporter for the boot and cache allocation facts.
+    ///
+    /// Without one the orchestrator reports nothing, which keeps an embedder
+    /// that owns its own output silent.
+    ///
+    /// For example, `with_reporter(Arc::new(StderrReporter::new(io::stderr())))`
+    /// makes each run print its allocation before readiness checks start.
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Arc<dyn ProvisioningReporter>) -> Self {
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Overrides the cloud-init polling interval.
@@ -157,6 +176,12 @@ where
             .create(request)
             .await
             .map_err(RunError::Provision)?;
+        // Report before readiness checks: the instance is billing from this
+        // point, and the cache setting is the request's, never the boot
+        // record's.
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.instance_created(&handle, request.volume_id.as_deref());
+        }
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
 
         self.mount_volume_if_needed(&handle, &networking, request)

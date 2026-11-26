@@ -1,6 +1,6 @@
 //! Volume initialization orchestration for `mriya init`.
 
-use std::{ffi::OsString, fmt::Display};
+use std::{ffi::OsString, fmt::Display, sync::Arc};
 
 use camino::Utf8PathBuf;
 use helpers::{format_command, volume_name_for_project, volume_size_bytes};
@@ -11,6 +11,7 @@ use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
     config::ScalewayConfig,
     config_store::{ConfigStoreError, ConfigWriter},
+    provisioning::ProvisioningReporter,
     sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
     teardown::append_teardown_note,
     volume::{VolumeBackend, VolumeHandle, VolumeRequest},
@@ -151,6 +152,8 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     syncer: Syncer<R>,
     /// Records the new volume ID in the configuration file.
     config_writer: W,
+    /// Optional sink for the boot plan and the created allocation.
+    reporter: Option<Arc<dyn ProvisioningReporter>>,
 }
 
 impl<B, R, W> InitOrchestrator<B, R, W>
@@ -167,7 +170,19 @@ where
             backend,
             syncer,
             config_writer,
+            reporter: None,
         }
+    }
+
+    /// Installs a reporter for the boot plan and the created allocation.
+    ///
+    /// For example, wiring a [`crate::provisioning::StderrReporter`] makes
+    /// `mriya init` state the boot disk it will format before it creates the
+    /// cache volume.
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Arc<dyn ProvisioningReporter>) -> Self {
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Executes the cache volume preparation workflow.
@@ -178,6 +193,17 @@ where
     /// configuration updates fail.
     pub async fn execute(&self, request: &InitRequest) -> Result<InitOutcome, InitError<B::Error>> {
         self.ensure_configurable(request)?;
+
+        // Reject an impossible boot-storage combination before creating the
+        // cache volume, so a failed init leaves no billable volume behind.
+        let plan = self
+            .backend
+            .preflight(&request.instance_request)
+            .await
+            .map_err(InitError::Provision)?;
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.plan_resolved(&plan);
+        }
 
         let volume = self
             .backend
@@ -250,6 +276,13 @@ where
             .create(&instance_request)
             .await
             .map_err(InitError::Provision)?;
+
+        // The instance is billing from here, so its allocation is reported
+        // before readiness checks. The cache line is the volume this run is
+        // preparing, taken from the request rather than the boot record.
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.instance_created(&handle, instance_request.volume_id.as_deref());
+        }
 
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
         Ok((handle, networking))

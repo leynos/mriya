@@ -49,6 +49,15 @@ fn formatter_fails(
     Ok(Ok(init_context))
 }
 
+#[given("the boot-volume preflight fails")]
+fn boot_volume_preflight_fails(
+    init_context_result: InitContextResult,
+) -> Result<InitContextResult, StepError> {
+    let init_context = init_context_result?;
+    init_context.backend.fail_preflight();
+    Ok(Ok(init_context))
+}
+
 #[given("volume creation fails")]
 fn volume_creation_fails(
     init_context_result: InitContextResult,

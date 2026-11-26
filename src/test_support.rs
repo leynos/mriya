@@ -213,3 +213,73 @@ pub fn json_volumes(volumes: &[(&str, &str, &[&str])]) -> String {
         volumes.len()
     )
 }
+
+/// Reporter that records every fact it is given.
+///
+/// Used by the orchestration tests to assert what a run or init reports
+/// without capturing a process stream. Cloneable so a test can keep reading
+/// while the orchestrator holds its own handle.
+#[derive(Clone, Debug, Default)]
+pub struct RecordingReporter {
+    plans: std::sync::Arc<std::sync::Mutex<Vec<crate::boot_volume::BootVolumePlan>>>,
+    allocations: std::sync::Arc<std::sync::Mutex<Vec<ReportedAllocation>>>,
+}
+
+/// One `instance_created` report, reduced to what the assertions read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportedAllocation {
+    /// The boot record the handle carried, or `None` when it had none.
+    pub boot_volume: Option<String>,
+    /// The cache volume identifier the request named.
+    pub cache_volume_id: Option<String>,
+}
+
+impl RecordingReporter {
+    /// Creates a reporter with nothing recorded.
+    #[must_use]
+    pub fn new() -> Self { Self::default() }
+
+    /// Returns the plans reported so far, in order.
+    #[must_use]
+    pub fn plans(&self) -> Vec<crate::boot_volume::BootVolumePlan> {
+        self.plans
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns the allocations reported so far, in order.
+    #[must_use]
+    pub fn allocations(&self) -> Vec<ReportedAllocation> {
+        self.allocations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl crate::provisioning::ProvisioningReporter for RecordingReporter {
+    fn plan_resolved(&self, plan: &crate::boot_volume::BootVolumePlan) {
+        self.plans
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(*plan);
+    }
+
+    fn instance_created(
+        &self,
+        handle: &crate::backend::InstanceHandle,
+        cache_volume_id: Option<&str>,
+    ) {
+        self.allocations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(ReportedAllocation {
+                boot_volume: handle
+                    .boot_volume
+                    .as_ref()
+                    .map(|allocation| allocation.root.id.clone()),
+                cache_volume_id: cache_volume_id.map(str::to_owned),
+            });
+    }
+}

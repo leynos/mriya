@@ -11,6 +11,7 @@ pub mod config;
 pub mod config_store;
 pub mod init;
 pub mod janitor;
+pub mod provisioning;
 pub mod run;
 pub mod scaleway;
 pub mod sync;
@@ -48,6 +49,7 @@ pub use janitor::{
     TEST_RUN_ID_ENV,
     TEST_RUN_TAG_PREFIX,
 };
+pub use provisioning::{NoopReporter, ProvisioningReporter, StderrReporter};
 pub use run::{RunError, RunOrchestrator};
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
 pub use sync::{

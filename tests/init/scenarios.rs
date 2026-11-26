@@ -34,6 +34,12 @@ fn scenario_existing_volume_forced(init_context_result: InitContextResult) {
 
 #[scenario(
     path = "tests/features/init.feature",
+    name = "Reject an impossible boot-volume request before allocating cache"
+)]
+fn scenario_preflight_failure(init_context_result: InitContextResult) { drop(init_context_result); }
+
+#[scenario(
+    path = "tests/features/init.feature",
     name = "Surface volume creation failures"
 )]
 fn scenario_volume_create_failure(init_context_result: InitContextResult) {

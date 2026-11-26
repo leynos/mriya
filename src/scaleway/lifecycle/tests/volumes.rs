@@ -17,9 +17,28 @@ use super::{
 };
 use crate::{
     backend::InstanceHandle,
+    boot_volume::{BootVolumeType, RootVolume},
     scaleway::{ScalewayBackend, ScalewayBackendError},
     volume::{VolumeHandle, VolumeRequest},
 };
+
+/// A local root volume, the historical case.
+fn local_root() -> RootVolume {
+    RootVolume {
+        id: String::from("vol-root"),
+        volume_type: BootVolumeType::Local,
+        size_bytes: 10_000_000_000,
+    }
+}
+
+/// A Block Storage root volume, which the PATCH must label.
+fn sbs_root() -> RootVolume {
+    RootVolume {
+        id: String::from("vol-root"),
+        volume_type: BootVolumeType::Sbs,
+        size_bytes: 10_000_000_000,
+    }
+}
 
 /// A provider response confirming a volume patch.
 fn patched() -> Reply {
@@ -83,7 +102,7 @@ async fn attach_volume_patches_root_and_cache_indices(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![patched()], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("vol-root"))
+            .attach_volume(&handle, "vol-cache", &local_root())
             .await
     })
     .await?;
@@ -118,7 +137,15 @@ async fn attach_volume_rejects_a_missing_root_volume(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("   "))
+            .attach_volume(
+                &handle,
+                "vol-cache",
+                &RootVolume {
+                    id: String::from("   "),
+                    volume_type: BootVolumeType::Local,
+                    size_bytes: 1,
+                },
+            )
             .await
     })
     .await?;
@@ -154,7 +181,7 @@ impl Rejection {
         match self {
             Self::Attach => {
                 backend
-                    .attach_volume(handle, "vol-cache", String::from("vol-root"))
+                    .attach_volume(handle, "vol-cache", &local_root())
                     .await
             }
             Self::Detach => backend.detach_volume(handle, "vol-cache").await,
@@ -351,4 +378,84 @@ async fn create_volume_posts_the_request_and_returns_the_handle(
         })
     );
     Ok(())
+}
+
+/// Scenario: attaching a cache volume to an instance with an SBS root.
+///
+/// Invariant: the root entry keeps its boot flag and gains
+/// `volume_type: "sbs_volume"`, which the Instances API requires for a Block
+/// Storage entry, while the cache entry stays unlabelled.
+#[rstest]
+#[tokio::test]
+async fn attach_volume_labels_an_sbs_root(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+) -> Result<()> {
+    let (result, requests) = with_stub(backend_fixture, vec![patched()], async |backend| {
+        backend
+            .attach_volume(&handle, "vol-cache", &sbs_root())
+            .await
+    })
+    .await?;
+    result?;
+    assert_eq!(
+        request_body(only_request(&requests)?)?,
+        serde_json::json!({
+            "volumes": {
+                "0": {
+                    "id": "vol-root",
+                    "boot": true,
+                    "volume_type": "sbs_volume",
+                },
+                "1": {"id": "vol-cache"},
+            }
+        })
+    );
+    Ok(())
+}
+
+/// Scenario: detaching a cache volume from an instance with an SBS root.
+///
+/// Invariant: detaching preserves the root entry with its Block Storage type,
+/// so the provider does not reject the replacement payload for a missing type.
+#[rstest]
+#[tokio::test]
+async fn detach_volume_labels_an_sbs_root(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+) -> Result<()> {
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![attached_sbs_instance(), patched()],
+        async |backend| backend.detach_volume(&handle, "vol-cache").await,
+    )
+    .await?;
+    result?;
+    let patch = requests.get(1).context("detachment patch missing")?;
+    assert_eq!(
+        request_body(patch)?,
+        serde_json::json!({
+            "volumes": {
+                "0": {
+                    "id": "vol-root",
+                    "boot": true,
+                    "volume_type": "sbs_volume",
+                }
+            }
+        })
+    );
+    Ok(())
+}
+
+/// The instance fixture with the root volume reported as Block Storage.
+fn attached_sbs_instance() -> Reply {
+    let mut instance: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/detach-instance.json"))
+            .expect("detach fixture is JSON");
+    instance["server"]["volumes"]["0"]["volume_type"] =
+        serde_json::Value::String(String::from("sbs_volume"));
+    Reply {
+        status: 200,
+        body: serde_json::to_string(&instance).expect("serialize fixture"),
+    }
 }

@@ -31,6 +31,7 @@ pub struct ScriptedVolumeBackend {
 
 #[derive(Clone, Copy, Debug)]
 enum FailureMode {
+    Preflight,
     CreateVolume,
     Provision,
     Wait,
@@ -39,19 +40,20 @@ enum FailureMode {
 }
 
 impl FailureMode {
-    const fn flag(self) -> u8 {
+    const fn flag(self) -> u16 {
         match self {
-            Self::CreateVolume => 0b00001,
-            Self::Provision => 0b00010,
-            Self::Wait => 0b00100,
-            Self::Detach => 0b01000,
-            Self::Destroy => 0b10000,
+            Self::Preflight => 0b000001,
+            Self::CreateVolume => 0b000010,
+            Self::Provision => 0b000100,
+            Self::Wait => 0b001000,
+            Self::Detach => 0b010000,
+            Self::Destroy => 0b100000,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Failures(u8);
+struct Failures(u16);
 
 impl Failures {
     const fn set(&mut self, mode: FailureMode) { self.0 |= mode.flag(); }
@@ -78,6 +80,14 @@ impl ScriptedVolumeBackend {
         Self {
             state: Arc::new(Mutex::new(State::default())),
         }
+    }
+
+    pub fn fail_preflight(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .failures
+            .set(FailureMode::Preflight);
     }
 
     pub fn fail_create_volume(&self) {
@@ -173,6 +183,8 @@ impl ScriptedVolumeBackend {
 /// Errors raised by the scripted backend to model failure points.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ScriptedVolumeBackendError {
+    #[error("preflight failure")]
+    Preflight,
     #[error("volume create failure")]
     VolumeCreate,
     #[error("provision failure")]
@@ -197,13 +209,21 @@ impl Backend for ScriptedVolumeBackend {
         &'a self,
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
-        Box::pin(async move {
-            Ok(BootVolumePlan::new(
-                BootVolumeType::Local,
-                20_000_000_000,
-                CompatibilityDefault::default(),
-            ))
-        })
+        self.run_operation(
+            OperationSpec {
+                context: "preflight",
+                failure_mode: FailureMode::Preflight,
+                error: ScriptedVolumeBackendError::Preflight,
+            },
+            |_| {},
+            || {
+                BootVolumePlan::new(
+                    BootVolumeType::Local,
+                    20_000_000_000,
+                    CompatibilityDefault::default(),
+                )
+            },
+        )
     }
 
     fn create<'a>(

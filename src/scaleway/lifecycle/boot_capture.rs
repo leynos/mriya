@@ -143,10 +143,10 @@ impl ScalewayBackend {
         handle.boot_volume = Some(allocation);
 
         if let Some(cache_volume_id) = request.volume_id.as_deref() {
-            let root_volume_id = handle
+            let root = handle
                 .boot_volume
                 .as_ref()
-                .map(|allocation| allocation.root.id.clone())
+                .map(|allocation| allocation.root.clone())
                 .ok_or_else(|| {
                     (
                         ScalewayBackendError::VolumeNotFound {
@@ -156,9 +156,9 @@ impl ScalewayBackend {
                         handle.clone(),
                     )
                 })?;
-            Self::validate_cache_volume_id(cache_volume_id, &root_volume_id, &handle)
+            Self::validate_cache_volume_id(cache_volume_id, &root.id, &handle)
                 .map_err(|error| (error, handle.clone()))?;
-            self.attach_volume(&handle, cache_volume_id, root_volume_id)
+            self.attach_volume(&handle, cache_volume_id, &root)
                 .await
                 .map_err(|error| (error, handle.clone()))?;
         }

@@ -53,11 +53,14 @@ fn image(spec: ImageSpec) -> ScalewayImage {
         project: String::new(),
         tags: vec![],
         zone: String::new(),
+        // A local root by default: the selection cases are about dates and
+        // sources, not storage, and an empty type would now be refused by the
+        // storage filter before selection ran.
         root_volume: scaleway_rs::ScalewayImageRootVolume {
             id: String::new(),
             name: String::new(),
-            size: 0,
-            volume_type: String::new(),
+            size: 10_000_000_000,
+            volume_type: String::from("l_ssd"),
         },
         default_bootscript: None,
         extra_volumes: scaleway_rs::ScalewayImageExtraVolumes {
@@ -166,4 +169,5 @@ mod http_stub;
 mod instances;
 mod network;
 mod properties;
+mod root_volume;
 mod volumes;

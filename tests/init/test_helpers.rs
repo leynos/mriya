@@ -64,7 +64,7 @@ pub type InitContextResult = Result<InitContext, InitTestError>;
 #[fixture]
 pub fn init_context_result() -> InitContextResult { build_init_context() }
 
-fn build_init_context() -> Result<InitContext, InitTestError> {
+pub fn build_init_context() -> Result<InitContext, InitTestError> {
     let sync_config = sync_config();
 
     let instance_request = InstanceRequestBuilder::new()
