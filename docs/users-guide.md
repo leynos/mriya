@@ -217,14 +217,18 @@ on this volume to persist compiled dependencies across runs.
 An existing, formatted volume can be configured without running `mriya init`:
 
 1. Create a Block Storage volume in the Scaleway console or through the Block
-   Storage API, in the same availability zone as the instances, and give it an
-   ext4 filesystem. `mriya init` formats with `sudo mkfs.ext4 -F`; a volume
-   formatted the same way elsewhere works equally well. Detach the volume from
-   any other server first, because a volume can be attached to only one
-   instance at a time. Mriya does not check the filesystem or the attachment
-   state: an unformatted volume fails to mount silently (the mount discards its
-   error), and cache routing is then skipped, so builds write to the root disk
-   instead.
+   Storage API, in the same availability zone as the instances. To format it,
+   attach it to a temporary instance and run `sudo mkfs.ext4 -F` on its device
+   from that instance, then detach it; Scaleway's
+   [mount-a-volume guide](https://www.scaleway.com/en/docs/block-storage/how-to/mount-a-volume/)
+   covers identifying the device. Formatting erases the volume, so confirm the
+   device name before running the command. `mriya init` would run the same
+   `mkfs.ext4 -F` invocation, but its creation step does not currently succeed.
+   Detach the volume from any other server before recording its ID, because a
+   volume can be attached to only one instance at a time. Mriya does not check
+   the filesystem or the attachment state: an unformatted volume fails to mount
+   silently (the mount discards its error), and cache routing is then skipped,
+   so builds write to the root disk instead.
 2. Record its ID in configuration, either by exporting
    `SCW_DEFAULT_VOLUME_ID` with the volume's UUID as its value, or by setting
    `default_volume_id` under `[scaleway]` in `mriya.toml`.
@@ -241,17 +245,19 @@ the pre-handle case described under
 
 ### Create and format a volume with `mriya init`
 
-`mriya init` creates and formats a volume in the configured zone and writes the
-new volume ID into `mriya.toml`. Use `mriya init --force` to replace an
-existing configured volume ID. Once the formatter instance handle exists, any
-later failure — including the instance read it performs before detaching the
-volume — makes the command attempt to destroy that instance before reporting
-the error, and adds a note when the teardown also fails. A teardown failure
-therefore still leaves a VM billing. A failure during instance creation itself,
-after the server request succeeds but before a handle is returned, has no
-handle to destroy. `mriya init` never deletes the volume it created either: a
-failed run can leave an unrecorded volume that only manual cleanup removes,
-because the janitor sweeps only resources carrying a `mriya-test-run-<id>` tag.
+`mriya init` is intended to create and format a volume in the configured zone
+and write the new volume ID into `mriya.toml`, but its creation call does not
+currently succeed against Scaleway, as described above. Use
+`mriya init --force` to replace an existing configured volume ID. Once the
+formatter instance handle exists, any later failure — including the instance
+read it performs before detaching the volume — makes the command attempt to
+destroy that instance before reporting the error, and adds a note when the
+teardown also fails. A teardown failure therefore still leaves a VM billing. A
+failure during instance creation itself, after the server request succeeds but
+before a handle is returned, has no handle to destroy. `mriya init` never
+deletes the volume it created either: a failed run can leave an unrecorded
+volume that only manual cleanup removes, because the janitor sweeps only
+resources carrying a `mriya-test-run-<id>` tag.
 
 Mriya attempts the mount at the configured path, `/mriya` by default, and keeps
 going when it fails. If the mount fails — for example, because the volume has
@@ -263,17 +269,26 @@ time; the remote command tests it with `mountpoint -q` before exporting
 anything. An earlier mount can satisfy that test, and a path that is not a
 mount point exports nothing. When routing is active, Mriya:
 
-1. Creates cache subdirectories under the mount point so toolchains can write
-   immediately (`cargo`, `rustup`, `target`, `go/pkg/mod`, `go/build-cache`,
-   `pip/cache`, `npm/cache`, `yarn/cache`, `pnpm/store`). Creation is attempted
-   only: it runs under the same mount-point guard, discards errors, and
-   tolerates a read-only or full filesystem, so a toolchain must still cope
-   with a missing directory.
+1. Creates cache subdirectories under the mount point (`cargo`, `rustup`,
+   `target`, `go/pkg/mod`, `go/build-cache`, `pip/cache`, `npm/cache`,
+   `yarn/cache`, `pnpm/store`). Creation is attempted only: it runs under the
+   same mount-point guard, discards errors, and tolerates a read-only or full
+   filesystem, so a toolchain must still cope with a missing directory. The
+   directories are created with `sudo mkdir -p`, and Mriya never changes their
+   ownership, so they belong to `root`.
 2. Exports environment variables in the remote session to route common language
    caches to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
    `CARGO_TARGET_DIR` (Rust/Cargo); `GOMODCACHE` and `GOCACHE` (Go);
    `PIP_CACHE_DIR` (Python/pip); `npm_config_cache`, `YARN_CACHE_FOLDER`, and
    `PNPM_STORE_PATH` (Node tooling).
+
+Because the directories and the mount point are root-owned, a non-root
+`ssh_user` cannot necessarily write to them. The default `ssh_user` is `root`,
+where this does not arise, but the example configuration above sets `ubuntu`;
+with that setting a cache-routed build can fail with a permission error. Either
+keep the SSH user as `root`, arrange for the mount point to be writable by the
+chosen user, or set `MRIYA_SYNC_ROUTE_BUILD_CACHES=false` and place caches
+manually.
 
 ### Volume size units
 
@@ -506,6 +521,10 @@ this guide hard-coding a price:
 - `M` — the provider's minimum billing period per resource, in minutes.
 - `g` — the provider's billing granularity, in minutes.
 - `R_vm` — the instance-type rate per billed hour.
+- `R_storage` — the storage rate per gibibyte-hour, as published by the
+  provider. If a provider publishes its rate per decimal gigabyte instead,
+  convert the GiB capacity to that definition before multiplying, or the
+  estimate will be off by the 1024³ / 10⁹ ratio.
 
 `M`, `g`, `s`, `c`, and `t` are all in minutes, so the billed duration must be
 divided by 60 before an hourly rate is applied. Per-run billed compute, in
