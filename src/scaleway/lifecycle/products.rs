@@ -115,7 +115,7 @@ impl ProductServerType {
 ///
 /// Entries stay undecoded until one is actually needed. The page describes
 /// every type in the zone, including shapes this backend does not model, and
-/// deserialising all of them would let one unfamiliar entry fail a lookup for
+/// deserializing all of them would let one unfamiliar entry fail a lookup for
 /// a perfectly ordinary type.
 ///
 /// # Examples
