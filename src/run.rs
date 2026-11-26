@@ -7,6 +7,7 @@
 
 use std::{
     fmt::Display,
+    future::Future,
     time::{Duration, Instant},
 };
 
@@ -17,6 +18,10 @@ use tokio::time::sleep;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    bench::{
+        observe::{NoopObserver, Observation, RunObserver},
+        record::PhaseKind,
+    },
     sync::{
         CommandRunner,
         RemoteCommandOutput,
@@ -89,7 +94,6 @@ where
 }
 
 /// Executes the remote run flow using the provided backend and syncer.
-#[derive(Debug)]
 pub struct RunOrchestrator<B, R: CommandRunner> {
     /// Backend that creates, waits for, and destroys the instance.
     backend: B,
@@ -99,6 +103,28 @@ pub struct RunOrchestrator<B, R: CommandRunner> {
     cloud_init_poll_interval: Duration,
     /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
     cloud_init_wait_timeout: Duration,
+    /// Receives the phase timings of each run.
+    ///
+    /// Defaults to [`NoopObserver`], so a caller that does not ask for
+    /// observation gets the same behaviour, the same return values, and the
+    /// same phase order as before this field existed.
+    observer: Box<dyn RunObserver>,
+}
+
+impl<B, R> std::fmt::Debug for RunOrchestrator<B, R>
+where
+    B: std::fmt::Debug,
+    R: CommandRunner + std::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RunOrchestrator")
+            .field("backend", &self.backend)
+            .field("syncer", &self.syncer)
+            .field("cloud_init_poll_interval", &self.cloud_init_poll_interval)
+            .field("cloud_init_wait_timeout", &self.cloud_init_wait_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<B, R> RunOrchestrator<B, R>
@@ -109,14 +135,38 @@ where
 {
     /// Creates a new orchestrator.
     #[must_use]
-    pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
+    pub fn new(backend: B, syncer: Syncer<R>) -> Self {
         Self {
             backend,
             syncer,
             cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
             cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
+            observer: Box::new(NoopObserver),
         }
     }
+
+    /// Replaces the observer that receives this orchestrator's phase timings.
+    ///
+    /// The observer receives one start and one finish per phase, in the order
+    /// the phases run. It cannot change what the run does: nothing the
+    /// orchestrator does depends on anything it reports.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let observer = std::sync::Arc::new(RecordingObserver::default());
+    /// let orchestrator = RunOrchestrator::new(backend, syncer)
+    ///     .with_observer(Box::new(SharedObserver::new(observer.clone())));
+    /// ```
+    #[must_use]
+    pub fn with_observer(mut self, observer: Box<dyn RunObserver>) -> Self {
+        self.observer = observer;
+        self
+    }
+
+    /// Returns the observer this orchestrator reports to.
+    #[must_use]
+    pub fn observer(&self) -> &dyn RunObserver { self.observer.as_ref() }
 
     /// Overrides the cloud-init polling interval.
     ///
@@ -153,8 +203,7 @@ where
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
         let handle = self
-            .backend
-            .create(request)
+            .observe_async(PhaseKind::Allocate, self.backend.create(request))
             .await
             .map_err(RunError::Provision)?;
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
@@ -173,12 +222,67 @@ where
             .run_remote_or_destroy(&handle, &networking, remote_command)
             .await?;
 
-        self.backend
-            .destroy(handle)
-            .await
-            .map_err(RunError::Teardown)?;
+        self.destroy_observed(handle).await?;
 
         Ok(output)
+    }
+
+    /// Awaits `work` and reports it to the observer as one phase.
+    ///
+    /// The future is created before the phase starts, so a caller's own
+    /// arguments are evaluated outside the measurement and only the provider's
+    /// work is timed.
+    ///
+    /// # Examples
+    ///
+    /// With a recording observer, `observe_async(PhaseKind::Allocate, future)`
+    /// yields the future's value and records exactly one finished `Allocate`
+    /// phase, whatever the future resolves to.
+    async fn observe_async<T, E, F>(&self, phase: PhaseKind, work: F) -> Result<T, E>
+    where
+        F: Future<Output = Result<T, E>>,
+    {
+        self.observer.observe(Observation::PhaseStarted(phase));
+        let started = Instant::now();
+        let result = work.await;
+        self.observer.observe(Observation::PhaseFinished {
+            phase,
+            duration: started.elapsed(),
+            succeeded: result.is_ok(),
+        });
+        result
+    }
+
+    /// Reports a synchronous phase to the observer.
+    ///
+    /// The sync path and the cache mount are blocking calls, so they are timed
+    /// around the call rather than inside a future.
+    fn observe_sync<T, E>(
+        &self,
+        phase: PhaseKind,
+        work: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
+        self.observer.observe(Observation::PhaseStarted(phase));
+        let started = Instant::now();
+        let result = work();
+        self.observer.observe(Observation::PhaseFinished {
+            phase,
+            duration: started.elapsed(),
+            succeeded: result.is_ok(),
+        });
+        result
+    }
+
+    /// Destroys the instance as the final phase.
+    ///
+    /// Teardown is the phase whose success cannot be assumed: the backend's
+    /// `destroy` resolves once the provider has confirmed the resource is
+    /// gone, so a resolved call is a verified teardown and a rejected one is
+    /// not.
+    async fn destroy_observed(&self, handle: InstanceHandle) -> Result<(), RunError<B::Error>> {
+        self.observe_async(PhaseKind::Teardown, self.backend.destroy(handle))
+            .await
+            .map_err(RunError::Teardown)
     }
 
     /// Waits for the backend to report SSH readiness, destroying the instance
@@ -193,7 +297,10 @@ where
         &self,
         handle: &InstanceHandle,
     ) -> Result<InstanceNetworking, RunError<B::Error>> {
-        match self.backend.wait_for_ready(handle).await {
+        match self
+            .observe_async(PhaseKind::Bootstrap, self.backend.wait_for_ready(handle))
+            .await
+        {
             Ok(net) => Ok(net),
             Err(err) => {
                 let message = self.destroy_with_note(handle, &err).await;
@@ -217,7 +324,11 @@ where
         request: &InstanceRequest,
     ) -> Result<(), RunError<B::Error>> {
         if request.volume_id.is_some() {
-            self.mount_cache_volume(handle, networking).await?;
+            self.observe_async(
+                PhaseKind::CacheRestore,
+                self.mount_cache_volume(handle, networking),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -233,7 +344,8 @@ where
         source: &Utf8Path,
         dest: &crate::sync::SyncDestination,
     ) -> Result<(), RunError<B::Error>> {
-        if let Err(err) = self.syncer.sync(source, dest) {
+        let synced = self.observe_sync(PhaseKind::Sync, || self.syncer.sync(source, dest));
+        if let Err(err) = synced {
             let message = self.destroy_with_note(handle, &err).await;
             return Err(RunError::Sync {
                 message,
@@ -257,7 +369,9 @@ where
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
-        match self.syncer.run_remote(networking, remote_command) {
+        match self.observe_sync(PhaseKind::RemoteExecution, || {
+            self.syncer.run_remote(networking, remote_command)
+        }) {
             Ok(result) => Ok(result),
             Err(err) => {
                 let message = self.destroy_with_note(handle, &err).await;
@@ -342,6 +456,32 @@ where
     /// appearing ends the wait successfully, while the deadline passing
     /// destroys the instance and reports the timeout.
     async fn wait_for_cloud_init(
+        &self,
+        handle: &InstanceHandle,
+        networking: &InstanceNetworking,
+    ) -> Result<(), RunError<B::Error>> {
+        // Cloud-init readiness is part of bootstrap: it is the guest still
+        // becoming usable, and the protocol times it there rather than opening
+        // an eighth phase for a wait that only some runs perform.
+        self.observer
+            .observe(Observation::PhaseStarted(PhaseKind::Bootstrap));
+        let started = Instant::now();
+        let outcome = self.poll_cloud_init(handle, networking).await;
+        let succeeded = outcome.is_ok();
+        self.observer.observe(Observation::PhaseFinished {
+            phase: PhaseKind::Bootstrap,
+            duration: started.elapsed(),
+            succeeded,
+        });
+        outcome
+    }
+
+    /// Polls for cloud-init's completion marker, destroying the instance on
+    /// failure or timeout.
+    ///
+    /// Split from [`RunOrchestrator::wait_for_cloud_init`] so the observation
+    /// wraps every exit path, including the ones that destroy the instance.
+    async fn poll_cloud_init(
         &self,
         handle: &InstanceHandle,
         networking: &InstanceNetworking,

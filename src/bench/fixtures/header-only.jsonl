@@ -1,0 +1,1 @@
+{"schema":1,"kind":"campaign-header","campaign_id":"empty-2026-11-26","limits":{"max_spend_micros":1000000,"max_attempts":1,"max_attempt_nanos":600000000000},"price_sheet":null,"providers":["scaleway"]}
