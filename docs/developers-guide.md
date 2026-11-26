@@ -480,6 +480,24 @@ CodeScene's ceiling. `dylint.toml` opts in with
 `[whitaker] experimental = ["macro_aware_cognitive_complexity"]`. Fix a finding
 by extracting named helpers, never by raising the threshold.
 
+### Release identity
+
+The release workflow resolves the Linux package maintainer and the macOS
+package identifier once, in the `metadata` job, and passes the results to the
+packaging steps. Each value follows the same precedence: the optional
+`workflow_call` input (`maintainer` or `macos-identifier`), then the repository
+variable (`RELEASE_MAINTAINER` or `RELEASE_MACOS_IDENTIFIER`), then a default.
+A tag push has no `inputs` context, so it reads the variable or the default.
+
+The defaults reproduce the values the workflow used before these inputs existed:
+`Payton McIntosh <pmcintosh@df12.net>` for the maintainer, and
+`net.df12.<bin_name>` for the identifier, which is `net.df12.mriya` here. The
+identifier names the macOS installer package, and Installer matches upgrades by
+it. Keep it stable across releases: a changed identifier makes Installer treat
+the new package as a different product, so an upgrade no longer replaces the
+installed version. `tests/workflow_contracts/release_identity_test.py` holds
+the wiring.
+
 ### Installed tooling and the preflight
 
 On Linux the configuration names `mold`, and rustc reaches it through
@@ -546,6 +564,9 @@ installer produced.
   before the suite. An empty reading is refused.
 - `tests/workflow_contracts/release_flags_test.py` holds the release step's
   explicit `rustflags`.
+- `tests/workflow_contracts/release_identity_test.py` holds the release
+  maintainer and macOS identifier: both inputs, both metadata outputs and both
+  packaging-step inputs.
 
 The contract runs `make -n`, so a direct `cargo test` needs GNU make on the
 `PATH`; it fails when `make` is missing instead of skipping. The decision is

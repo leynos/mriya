@@ -22,6 +22,22 @@ name: Release Binary
         required: false
         type: boolean
         default: false
+      maintainer:
+        description: >-
+          Maintainer recorded in the Linux packages. Defaults to the
+          `RELEASE_MAINTAINER` repository variable, then to the project
+          maintainer.
+        required: false
+        type: string
+        default: ''
+      macos-identifier:
+        description: >-
+          Reverse-DNS identifier of the macOS installer package. Defaults to
+          the `RELEASE_MACOS_IDENTIFIER` repository variable, then to
+          `net.df12.<bin_name>`.
+        required: false
+        type: string
+        default: ''
     outputs:
       bin_name:
         description: Binary name extracted from Cargo.toml
@@ -54,6 +70,8 @@ jobs:
       dry_run: ${{ steps.release_modes.outputs.dry-run }}
       should_upload_workflow_artifacts: >-
         ${{ steps.release_modes.outputs.should-upload-workflow-artifacts }}
+      maintainer: ${{ steps.release_identity.outputs.maintainer }}
+      macos_identifier: ${{ steps.release_identity.outputs.macos_identifier }}
     steps:
       - uses: actions/checkout@v7
 
@@ -79,6 +97,51 @@ jobs:
         with:
           fields: bin-name
           export-to-env: 'false'
+
+      - id: release_identity
+        name: Resolve release identity
+        env:
+          MAINTAINER_CANDIDATE: >-
+            ${{ inputs.maintainer || vars.RELEASE_MAINTAINER ||
+            'Payton McIntosh <pmcintosh@df12.net>' }}
+          MACOS_IDENTIFIER_CANDIDATE: >-
+            ${{ inputs.macos-identifier || vars.RELEASE_MACOS_IDENTIFIER ||
+            format('net.df12.{0}', steps.bin_name.outputs.bin-name) }}
+        run: |
+          set -euo pipefail
+
+          # Variable content is untrusted input for the shell and for the
+          # packaging tools, so trim it and refuse what neither can carry.
+          maintainer="${MAINTAINER_CANDIDATE#"${MAINTAINER_CANDIDATE%%[![:space:]]*}"}"
+          maintainer="${maintainer%"${maintainer##*[![:space:]]}"}"
+          identifier="${MACOS_IDENTIFIER_CANDIDATE#"${MACOS_IDENTIFIER_CANDIDATE%%[![:space:]]*}"}"
+          identifier="${identifier%"${identifier##*[![:space:]]}"}"
+
+          if [[ -z "$maintainer" ]]; then
+            echo "::error::The release maintainer is empty."
+            echo "Set the maintainer input or the RELEASE_MAINTAINER variable."
+            exit 1
+          fi
+          if [[ "$maintainer" == *$'\n'* ]]; then
+            echo "::error::The release maintainer must be a single line."
+            exit 1
+          fi
+          if [[ -z "$identifier" ]]; then
+            echo "::error::The macOS package identifier is empty."
+            echo "Set the macos-identifier input or RELEASE_MACOS_IDENTIFIER."
+            exit 1
+          fi
+          if [[ "$identifier" == *$'\n'* ]]; then
+            echo "::error::The macOS package identifier must be a single line."
+            exit 1
+          fi
+          if [[ "$identifier" == *[[:space:]]* ]]; then
+            echo "::error::The macOS package identifier must not contain whitespace."
+            exit 1
+          fi
+
+          printf 'maintainer=%s\n' "$maintainer" >> "$GITHUB_OUTPUT"
+          printf 'macos_identifier=%s\n' "$identifier" >> "$GITHUB_OUTPUT"
 
   build:
     needs: metadata
@@ -225,7 +288,7 @@ jobs:
           target: ${{ matrix.target }}
           version: ${{ needs.metadata.outputs.version }}
           formats: deb,rpm
-          maintainer: Payton McIntosh <pmcintosh@df12.net>
+          maintainer: ${{ needs.metadata.outputs.maintainer }}
           license: ISC
           description: CLI cloud compute instance runner
           outdir: dist
@@ -270,7 +333,7 @@ jobs:
           leynos/shared-actions/.github/actions/macos-package@6d29e3a48219305d2b1d7e7416fc81f13a6dbbd8
         with:
           name: ${{ needs.metadata.outputs.bin_name }}
-          identifier: net.df12.mriya
+          identifier: ${{ needs.metadata.outputs.macos_identifier }}
           binary: staging/release/${{ needs.metadata.outputs.bin_name }}
           license-file: LICENSE
           version: ${{ needs.metadata.outputs.version }}
