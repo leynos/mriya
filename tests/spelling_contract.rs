@@ -38,8 +38,6 @@
 // repository's other integration tests do.
 #[path = "spelling_contract/checks.rs"]
 mod checks;
-#[path = "spelling_contract/compiler_hash.rs"]
-mod compiler_hash;
 #[path = "spelling_contract/configuration.rs"]
 mod configuration;
 #[path = "spelling_contract/engine_setup.rs"]
@@ -62,5 +60,3 @@ const CARGO_KIND: &str = "artifact";
 const LINKER_NAME: &str = "mold";
 /// The spelling the dictionary reports for `flavour`, which is Tokio's key name.
 const RUNTIME_KEY: &str = "flavor";
-/// The letter pair the dictionary reports inside the pinned nightly's hash.
-const COMPILER_HASH: &str = "ba";

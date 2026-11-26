@@ -5,8 +5,9 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: COMPLETE (draft pull request
-[#239](https://github.com/leynos/mriya/pull/239) open; not merged)
+Status: COMPLETE (pull request [#239](https://github.com/leynos/mriya/pull/239)
+open; rebased onto a target that moved to `ortho_config` 0.11.0 and
+`nightly-2026-11-25`)
 
 ## Purpose / big picture
 
@@ -17,7 +18,9 @@ defaults, then configuration files, then environment variables, then
 command-line arguments.
 
 This plan migrates Mriya from `ortho_config` v0.9.0 to the published v0.10.0
-release and proves the migration with tests. After the change a user can:
+release and proves the migration with tests. The target branch later resolved
+0.11.0, which the rebased branch keeps; every v0.10.0 migration-guide item was
+re-checked against it. After the change a user can:
 
 1. run `mriya run -- <command>` and `mriya init` with the same configuration
    precedence as before, including the v0.10.0 fix that an explicit
@@ -38,12 +41,12 @@ The migration is observable by running the repository gates (`make check-fmt`,
 
 - Do not disable `ortho_config` default features. The YAML and JSON5 features
   must stay enabled
-  (`ortho_config = { version = "0.10.0", features = ["yaml", "json5"] }`).
+  (`ortho_config = { version = "0.11.0", features = ["yaml", "json5"] }`).
   Upstream issue leynos/ortho-config#627 records that the crate does not build
   with `default-features = false`.
-- Do not downgrade `ortho_config`. The working tree already declares and
-  resolves 0.10.0; the remaining work is behavioural validation, documentation,
-  and the compiler floor.
+- Do not downgrade `ortho_config`. The target branch already resolves 0.11.0;
+  the remaining work is behavioural validation, documentation, and the compiler
+  floor.
 - Preserve the configuration precedence contract: defaults < configuration
   files < environment < command-line arguments.
 - Preserve the exit-status and stream contract: remote exit codes are mirrored,
@@ -108,6 +111,10 @@ The migration is observable by running the repository gates (`make check-fmt`,
 
 - [x] (2026-11-12) Confirm the working tree already declares and resolves
   `ortho_config` 0.10.0; record the discrepancy with the task's stated baseline.
+- [x] (2026-11-26) Rebase onto the moved target, which now resolves 0.11.0 and
+  pins `nightly-2026-11-25`; resolve three conflicting files by keeping the
+  branch's root-level file shape, and drop the compiler-hash spelling exemption
+  that the newer compiler hash made redundant.
 - [x] (2026-11-12) Verify the upstream tag object `996e5a1c...` peels to commit
   `38812c56...` and download the two documents from that commit.
 - [x] (2026-11-12) Establish that the source compiles unchanged against 0.10.0
@@ -131,15 +138,18 @@ The migration is observable by running the repository gates (`make check-fmt`,
 - [x] (2026-11-12) Declare the compiler floor and document the
   application/development split (`Cargo.toml`, `docs/developers-guide.md`).
 - [x] (2026-11-12) Run all gates and compare test inventories. Baseline
-  `make test` ran 460 tests across 18 binaries; the migrated tree runs 489
-  across 20 binaries, all passing. `make check-fmt`, `make lint`, `make test`,
+  `make test` ran 460 tests across 18 binaries; the branch adds 25 tests across
+  two new binaries. `make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make nixie`, and `make test-workflow-contracts` all exit
-  0. Logs are under `/tmp/*-mriya-issue-159*.out`.
+  0. Logs are under `/tmp/*-mriya-issue-159*.out`; the rebased candidate's gates
+  are recorded under
+  `/tmp/*-mriya-issue-159-migrate-from-ortho-config-v0-9-0-to-v0-10-0.out`,
+  where `make test` reports 537 passed across 23 binaries.
 - [x] (2026-11-12) Inspect the final dependency graph.
       `cargo tree -i ortho_config` shows only `mriya`; all three `ortho_*`
-      crates resolve 0.10.0;
+      crates resolve together (0.11.0 after the rebase);
       `Cargo.lock` has no Git-sourced package. The remaining duplicates
-      (`reqwest` 0.11/0.12, `thiserror` 1/2, `toml` 0.5/0.8/0.9/1.1, `cap-std`
+      (`reqwest` 0.11/0.12, `thiserror` 1/2, `toml` 0.5/0.8/1.1, `cap-std`
       3/4) are transitive and predate this migration.
 - [x] (2026-11-12) Commit, push, open a draft pull request, and clear CodeRabbit
   concerns. Draft pull request [#239](https://github.com/leynos/mriya/pull/239)
@@ -166,10 +176,17 @@ The migration is observable by running the repository gates (`make check-fmt`,
   shape the loader never read. This is a pre-existing defect surfaced by the
   migration validation, and it must be fixed for loading and writing to select
   compatible locations.
-- Observation: the pinned nightly is `nightly-2026-11-10`, not the
-  `nightly-2025-11-26` named in the task description. Evidence:
+- Observation: the pinned nightly was `nightly-2026-11-10` at the branch's
+  start, not the `nightly-2025-11-26` named in the task description. Evidence:
   `rust-toolchain.toml` and `rustc -Vv` (`1.102.0-nightly`). Impact: no nightly
-  change is needed; record the actual identity.
+  change was needed; the actual identity was recorded at the time.
+- Observation: the target branch later moved to `ortho_config` 0.11.0 and to
+  `nightly-2026-11-25` (`rustc 1.102.0-nightly (739adecd4 2026-11-24)`), and
+  rebasing the branch took both. Impact: the provenance notes now record 0.11.0
+  as the resolved version and re-state the toolchain identity. The
+  compiler-hash spelling exemption, which existed only because the older
+  nightly's hash contained a letter pair the dictionary reports, became dead
+  weight and was removed with its contract checks.
 
 ## Decision log
 
@@ -227,12 +244,19 @@ The migration is observable by running the repository gates (`make check-fmt`,
   `let` statement, deleting the fixture directory before the write and leaking
   its recreated replacement. Both fixes are minimal and covered by tests.
   Date/Author: 2026-11-12, implementation agent.
+- Decision: rebase onto the moved target instead of merging it, and drop the
+  compiler-hash spelling exemption the rebase made redundant. Rationale: the
+  branch's changes are a coherent series over an old base, so a rebase keeps
+  one reviewable diff and avoids a merge commit; and the exemption existed only
+  for a compiler hash the newer pin no longer carries. The imported v0.10.0
+  guides stay byte-identical, and the provenance notes now state 0.11.0 as the
+  resolved version. Date/Author: 2026-11-26, implementation agent.
 
 ## Outcomes & retrospective
 
-Delivered. The branch compiles against `ortho_config` 0.10.0 with the YAML and
-JSON5 features and default features intact, and the three observable outcomes
-in the purpose hold:
+Delivered. The branch compiles against `ortho_config` 0.11.0 as resolved on the
+target branch, with the YAML and JSON5 features and default features intact,
+and the three observable outcomes in the purpose hold:
 
 1. `mriya run` and `mriya init` keep the documented precedence, including the
    v0.10.0 rule that an explicit command-line value equal to the default still
@@ -397,11 +421,12 @@ focused unit tests.
   the first case asserts `instance_type` is `None` while the command contains
   the flag text.
 
-Axioms: `ortho_config` 0.10.0 implements the documented layering and
-source-injection interfaces; `clap` 4 parses `--flag=false` for boolean flags
-generated by the derive; the filesystem behaves normally for temporary
-directories. These are treated as documented third-party interfaces and are
-exercised through real calls rather than mocked.
+Axioms: `ortho_config` implements the documented layering and source-injection
+interfaces at the version the lockfile resolves (0.11.0 after the rebase; the
+0.10.0 guide's items were re-checked against it); `clap` 4 parses
+`--flag=false` for boolean flags generated by the derive; the filesystem
+behaves normally for temporary directories. These are treated as documented
+third-party interfaces and are exercised through real calls rather than mocked.
 
 ## Plan of work
 
@@ -559,3 +584,11 @@ manifest change is the addition of `rust-version = "1.89.0"`.
 the working tree already resolves 0.10.0 and that the file layer reads
 root-level keys. Remaining work is behavioural validation, the store fix,
 documentation, and the compiler floor.
+
+2026-11-26: rebased onto a target that had moved to `ortho_config` 0.11.0 and
+`nightly-2026-11-25`. Three files conflicted; each was resolved to keep this
+branch's root-level file shape while taking the target's environment-injection
+changes. The compiler-hash spelling exemption and its three contract checks
+were removed: the newer compiler's hash no longer needs them. The imported
+v0.10.0 guides remain byte-identical, and the provenance notes now state 0.11.0
+as the resolved version.

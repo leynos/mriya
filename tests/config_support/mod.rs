@@ -45,9 +45,7 @@ impl Workspace {
     }
 }
 
-pub fn path_text(path: &camino::Utf8Path) -> String {
-    path.as_str().to_owned()
-}
+pub fn path_text(path: &camino::Utf8Path) -> String { path.as_str().to_owned() }
 
 /// Builds one map, shared as both the discovery lookup and the merge scanner.
 pub fn shared_env(vars: &[(&str, &str)]) -> (SharedEnvSource, SharedScanEnvSource) {

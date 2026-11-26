@@ -100,95 +100,38 @@ fn write_volume_id_uses_root_level_key(
     Ok(())
 }
 
-/// Confirms a file written by an earlier release is still detected.
+/// Selects the volume ID a file records: the root-level key when it holds a
+/// value, otherwise a usable legacy `[scaleway]` value, and `None` when neither
+/// does. A blank root value records nothing, so it must not hide an ID an
+/// earlier release recorded.
 #[rstest]
-fn read_volume_id_reads_legacy_section(
+#[case::root_key_wins(
+    "default_volume_id = \"root-volume\"\n[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
+    Some("root-volume")
+)]
+#[case::legacy_section_is_detected(
+    "[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
+    Some("legacy-volume")
+)]
+#[case::blank_root_is_unset("default_volume_id = \"  \"\n", None)]
+#[case::blank_root_falls_back_to_legacy(
+    "default_volume_id = \"\"\n[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
+    Some("legacy-volume")
+)]
+fn read_volume_id_selects_the_recorded_volume(
     config_fixture: anyhow::Result<ConfigFixture>,
+    #[case] contents: &str,
+    #[case] expected: Option<&str>,
 ) -> anyhow::Result<()> {
     let fixture = config_fixture?;
-    let value = parse_toml(
-        &fixture.path,
-        "[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
-    )
-    .context("parse legacy config should succeed")?;
-
-    let volume_id =
-        read_volume_id(&fixture.path, &value).context("read legacy volume id should succeed")?;
-
-    ensure!(
-        volume_id.as_deref() == Some("legacy-volume"),
-        "legacy section should still be detected"
-    );
-    Ok(())
-}
-
-/// Confirms an empty value records no volume, so `mriya init` may set one.
-#[rstest]
-fn read_volume_id_treats_empty_value_as_unset(
-    config_fixture: anyhow::Result<ConfigFixture>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let value = parse_toml(&fixture.path, "default_volume_id = \"  \"\n")
-        .context("parse empty config should succeed")?;
-
-    let volume_id =
-        read_volume_id(&fixture.path, &value).context("read empty volume id should succeed")?;
-
-    ensure!(
-        volume_id.is_none(),
-        "a blank volume id should be treated as unset"
-    );
-    Ok(())
-}
-
-/// Confirms a blank root value does not hide an ID an earlier release recorded.
-#[rstest]
-fn read_volume_id_falls_back_to_legacy_when_root_is_blank(
-    config_fixture: anyhow::Result<ConfigFixture>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let value = parse_toml(
-        &fixture.path,
-        concat!(
-            "default_volume_id = \"\"\n",
-            "[scaleway]\n",
-            "default_volume_id = \"legacy-volume\"\n"
-        ),
-    )
-    .context("parse mixed config should succeed")?;
+    let value = parse_toml(&fixture.path, contents).context("parse config should succeed")?;
 
     let volume_id =
         read_volume_id(&fixture.path, &value).context("read volume id should succeed")?;
 
     ensure!(
-        volume_id.as_deref() == Some("legacy-volume"),
-        "a blank root value should fall back to the legacy record"
-    );
-    Ok(())
-}
-
-/// Confirms the root-level key wins when both shapes are present.
-#[rstest]
-fn read_volume_id_prefers_root_level_key(
-    config_fixture: anyhow::Result<ConfigFixture>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let value = parse_toml(
-        &fixture.path,
-        concat!(
-            "default_volume_id = \"root-volume\"\n",
-            "[scaleway]\n",
-            "default_volume_id = \"legacy-volume\"\n"
-        ),
-    )
-    .context("parse mixed config should succeed")?;
-
-    let volume_id =
-        read_volume_id(&fixture.path, &value).context("read volume id should succeed")?;
-
-    ensure!(
-        volume_id.as_deref() == Some("root-volume"),
-        "root-level key should take precedence"
+        volume_id.as_deref() == expected,
+        "expected {expected:?}, got {volume_id:?}"
     );
     Ok(())
 }

@@ -395,4 +395,3 @@ fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreE
 
 #[cfg(test)]
 mod tests;
-// weave: run 'weave explain src/config_store/mod.rs' for per-hunk detail, 'weave check' to verify your resolution

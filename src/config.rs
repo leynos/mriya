@@ -291,4 +291,3 @@ pub enum ConfigError {
 impl From<ortho_config::OrthoError> for ConfigError {
     fn from(value: ortho_config::OrthoError) -> Self { Self::Parse(value.to_string()) }
 }
-// weave: run 'weave explain src/config.rs' for per-hunk detail, 'weave check' to verify your resolution

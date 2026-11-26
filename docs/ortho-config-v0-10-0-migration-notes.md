@@ -1,5 +1,11 @@
 # ortho_config v0.10.0 migration notes
 
+The imported guides are the v0.10.0 release's own documents. The dependency
+graph has since moved to 0.11.0 on the target branch, and every v0.10.0
+migration-guide item was re-checked against it; the `0.11.0` rows below record
+what the rebase changed. Where this document says a behaviour was verified, it
+was verified on the version the repository actually builds against.
+
 This document records the provenance of the imported `ortho_config` v0.10.0
 documentation, the dependency and compiler state before and after the
 migration, which migration-guide items apply to Mriya, and the validation
@@ -88,12 +94,17 @@ for the dependency group. The task description's stated baseline
 (`ortho_config = "0.9.0"`) was therefore already superseded. No downgrade was
 performed.
 
-| Manifest or lockfile  | Before this branch                                                       | After this branch         |
-| --------------------- | ------------------------------------------------------------------------ | ------------------------- |
-| `Cargo.toml` declared | `ortho_config = { version = "0.10.0", features = ["yaml", "json5"] }`    | unchanged                 |
-| `Cargo.lock` resolved | `ortho_config` 0.10.0, `ortho_config_macros` 0.10.0, `ortho_l10n` 0.10.0 | unchanged                 |
-| `Cargo.toml` compiler | no `rust-version`                                                        | `rust-version = "1.89.0"` |
-| `rust-toolchain.toml` | `nightly-2026-11-10`                                                     | unchanged                 |
+The target branch then moved to `ortho_config` 0.11.0 while this branch was
+open. The rebase keeps the 0.11.0 resolution, which also raises the floor named
+in the imported v0.10.0 guide's own terms: 0.11.0 requires Rust 1.89.0, the
+same floor declared below.
+
+| Manifest or lockfile  | Before this branch                                                       | After the rebase                       |
+| --------------------- | ------------------------------------------------------------------------ | -------------------------------------- |
+| `Cargo.toml` declared | `ortho_config = { version = "0.10.0", features = ["yaml", "json5"] }`    | `0.11.0`, same features                |
+| `Cargo.lock` resolved | `ortho_config` 0.10.0, `ortho_config_macros` 0.10.0, `ortho_l10n` 0.10.0 | `ortho_config` 0.11.0 and its siblings |
+| `Cargo.toml` compiler | no `rust-version`                                                        | `rust-version = "1.89.0"`              |
+| `rust-toolchain.toml` | `nightly-2026-11-10`                                                     | `nightly-2026-11-25` (from the target) |
 
 `cargo tree -i ortho_config` shows `mriya` as the only dependent, and
 `Cargo.lock` contains no Git-sourced package. The YAML and JSON5 features and
@@ -104,7 +115,7 @@ because `ortho_config` does not build that way (leynos/ortho-config#627).
 
 | Migration-guide item                         | Status               | Evidence or reason                                                                                                                        |
 | -------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Update dependency versions                | Already done         | `Cargo.toml` and `Cargo.lock` resolve 0.10.0 for all three crates.                                                                        |
+| 1. Update dependency versions                | Done                 | `Cargo.toml` and `Cargo.lock` resolve 0.11.0 for all three crates; the target branch had already moved past the guide's 0.10.0.           |
 | 2. Explicit CLI values win                   | Applicable, verified | `tests/config_sources.rs::explicit_command_line_value_equal_to_default_wins` and `environment_value_applies_when_command_line_is_absent`. |
 | 3. Re-key Fluent catalogues for IR 2.0       | Not applicable       | The repository has no Fluent catalogues, localizers, `OrthoConfigLocalization` use, or `ORTHO_DOCS_IR_VERSION` handling.                  |
 | 4. `AgentContext` and `DocMetadata` literals | Not applicable       | Neither type is referenced in the repository.                                                                                             |
@@ -130,11 +141,12 @@ $ RUSTFLAGS="" cargo +1.89.0 check --lib --bins
 ```
 
 The full test suite has a higher floor: the exact-pinned
-`typos-cli = "=1.50.2"` dev-dependency requires Rust 1.95. The development
+`typos-cli = "=1.52.2"` dev-dependency requires Rust 1.95. The development
 build standard also uses the nightly pinned in `rust-toolchain.toml`
-(`nightly-2026-11-10`, `rustc 1.102.0-nightly (ac8310ba6 2026-11-09)`), because
-`.cargo/config.toml` passes nightly-only flags. The pin was retained: it builds
-the workspace and no evidence showed it incompatible with 0.10.0.
+(`nightly-2026-11-25`, `rustc 1.102.0-nightly (739adecd4 2026-11-24)`), because
+`.cargo/config.toml` passes nightly-only flags. Both pins are inherited from
+the target branch, which moved them after this branch first documented them;
+they were not changed by this migration.
 
 ## Repository defect found and fixed
 
@@ -159,27 +171,31 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The migrated tree runs 489 tests across
-20 binaries, all passing. The two new binaries are `config_sources` and
-`config_discovery`; the 29 added tests are 12 integration tests in
+tests across 18 binaries, all passing. The branch adds 25 tests across two new
+binaries, `config_sources` and `config_discovery`: 11 integration tests in
 `tests/config_sources.rs`, 5 integration tests in `tests/config_discovery.rs`,
-4 parser tests in `src/cli/mod.rs`, 5 store tests in
-`src/config_store/tests.rs`, and 3 spelling-contract checks for the
-compiler-hash exemption (two probe cases in `tests/spelling_contract/probes.rs`
-and one engine test in `tests/spelling_contract/compiler_hash.rs`). One
-existing test,
+4 parser tests in `src/cli/mod.rs`, and 5 store tests in
+`src/config_store/tests.rs`. One existing test,
 `src/sync/tests/config.rs::volume_mount_path_uses_default_when_unset`, was
 converted from process-environment loading to injected sources without changing
-its count. Documentation tests are unchanged at 2 passed and 5 ignored.
+its count.
+
+A compiler-hash spelling exemption existed earlier in this branch's life, for a
+pinned nightly whose hash contained a letter pair the dictionary reports. The
+rebase took the target branch's newer nightly pin, whose hash the dictionary
+accepts, so the exemption and its three contract checks were removed rather
+than kept as dead weight. The final counts are therefore recorded from the
+gates on the rebased candidate rather than from an earlier run. The rebased
+target adds tests of its own, so the whole-workspace total is larger than the
+baseline plus this branch's additions.
 
 ```console
 $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
-test result: ok. 2 passed; 0 failed; 5 ignored
 
-$ make test   # migrated tree
-Summary [   7.693s] 489 tests run: 489 passed, 0 skipped
-test result: ok. 2 passed; 0 failed; 5 ignored
+$ make test   # rebased candidate
+Summary [ 428.056s] 537 tests run: 537 passed (2 slow), 0 skipped
+test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 
 ## Residual transitive versions
@@ -191,8 +207,9 @@ reasons outside this migration:
   `reqwest` 0.12 directly.
 - `thiserror` 1 and 2 coexist because `scaleway-rs` and some dev-dependencies
   still use 1.x.
-- `toml` 0.5, 0.8, 0.9, and 1.1 appear through `scaleway-rs`, `figment`, the
-  `toml` dev-dependency, and `ortho_config` respectively.
+- `toml` 0.5, 0.8, and 1.1 appear through `scaleway-rs`, `figment`, the `toml`
+  dev-dependency, and `ortho_config` respectively. The rebased target no longer
+  resolves a `toml` 0.9.
 - `cap-std` 3 and 4 coexist because `rstest-bdd-macros` and the build script
   pull 3.x while the application uses 4.x.
 

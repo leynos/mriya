@@ -12,6 +12,7 @@ use anyhow::{bail, ensure};
 use config_support::{Workspace, shared_env};
 use mriya::{ScalewayConfig, SyncConfig};
 use ortho_config::OrthoConfig;
+use rstest::rstest;
 use serde::Deserialize;
 
 fn collected_env<'a>(
@@ -26,30 +27,23 @@ fn collected_env<'a>(
     vars
 }
 
-fn load_sync(
+/// Loads a configuration type through the generated loader with injected
+/// sources, naming the type in any failure.
+fn load<T>(
     workspace: &Workspace,
+    label: &str,
     extra_env: &[(&str, &str)],
     extra_args: &[&str],
-) -> anyhow::Result<SyncConfig> {
+) -> anyhow::Result<T>
+where
+    T: OrthoConfig,
+{
     let vars = collected_env(workspace, extra_env);
     let (discovery, merge) = shared_env(&vars);
     let mut args = vec!["mriya"];
     args.extend_from_slice(extra_args);
-    SyncConfig::load_from_iter_with_sources(args, discovery, merge)
-        .map_err(|err| anyhow::anyhow!("sync configuration failed: {err}"))
-}
-
-fn load_scaleway(
-    workspace: &Workspace,
-    extra_env: &[(&str, &str)],
-    extra_args: &[&str],
-) -> anyhow::Result<ScalewayConfig> {
-    let vars = collected_env(workspace, extra_env);
-    let (discovery, merge) = shared_env(&vars);
-    let mut args = vec!["mriya"];
-    args.extend_from_slice(extra_args);
-    ScalewayConfig::load_from_iter_with_sources(args, discovery, merge)
-        .map_err(|err| anyhow::anyhow!("scaleway configuration failed: {err}"))
+    T::load_from_iter_with_sources(args, discovery, merge)
+        .map_err(|err| anyhow::anyhow!("{label} configuration failed: {err}"))
 }
 
 /// A minimal locally derived configuration used to reach the whole-command-line
@@ -92,34 +86,51 @@ fn load_probe(
         .map_err(|err| anyhow::anyhow!("probe configuration failed: {err}"))
 }
 
-#[test]
-fn sync_config_reads_root_level_file_keys() -> anyhow::Result<()> {
+/// The volume mount path seen at each tier, with each source winning over the
+/// one below it. The sectioned-file row proves the file layer ignores a
+/// `[sync]` table even when it holds the same key.
+#[rstest]
+#[case::default_value(None, &[], &[], mriya::sync::DEFAULT_VOLUME_MOUNT_PATH)]
+#[case::root_level_file(
+    Some("volume_mount_path = \"/from-file\"\n"),
+    &[],
+    &[],
+    "/from-file",
+)]
+#[case::sectioned_file_is_ignored(
+    Some("[sync]\nvolume_mount_path = \"/from-section\"\n"),
+    &[],
+    &[],
+    mriya::sync::DEFAULT_VOLUME_MOUNT_PATH,
+)]
+#[case::environment_overrides_file(
+    Some("volume_mount_path = \"/from-file\"\n"),
+    &[("MRIYA_SYNC_VOLUME_MOUNT_PATH", "/from-env")],
+    &[],
+    "/from-env",
+)]
+#[case::command_line_overrides_environment(
+    Some("volume_mount_path = \"/from-file\"\n"),
+    &[("MRIYA_SYNC_VOLUME_MOUNT_PATH", "/from-env")],
+    &["--volume-mount-path", "/from-cli"],
+    "/from-cli",
+)]
+fn sync_volume_mount_path_follows_the_precedence_order(
+    #[case] file: Option<&str>,
+    #[case] extra_env: &[(&str, &str)],
+    #[case] extra_args: &[&str],
+    #[case] expected: &str,
+) -> anyhow::Result<()> {
     let workspace = Workspace::new()?;
-    workspace.write("mriya.toml", "volume_mount_path = \"/from-file\"\n")?;
+    if let Some(contents) = file {
+        workspace.write("mriya.toml", contents)?;
+    }
 
-    let config = load_sync(&workspace, &[], &[])?;
+    let config = load::<SyncConfig>(&workspace, "sync", extra_env, extra_args)?;
 
     ensure!(
-        config.volume_mount_path == "/from-file",
-        "root-level key should load, got {}",
-        config.volume_mount_path
-    );
-    Ok(())
-}
-
-#[test]
-fn sync_config_ignores_sectioned_file_keys() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-    workspace.write(
-        "mriya.toml",
-        "[sync]\nvolume_mount_path = \"/from-section\"\n",
-    )?;
-
-    let config = load_sync(&workspace, &[], &[])?;
-
-    ensure!(
-        config.volume_mount_path == mriya::sync::DEFAULT_VOLUME_MOUNT_PATH,
-        "sectioned key must be ignored, got {}",
+        config.volume_mount_path == expected,
+        "expected {expected}, got {}",
         config.volume_mount_path
     );
     Ok(())
@@ -137,7 +148,7 @@ fn scaleway_config_reads_root_level_file_keys() -> anyhow::Result<()> {
         ),
     )?;
 
-    let config = load_scaleway(&workspace, &[], &[])?;
+    let config = load::<ScalewayConfig>(&workspace, "scaleway", &[], &[])?;
 
     ensure!(config.secret_key == "secret", "secret key should load");
     ensure!(
@@ -156,7 +167,7 @@ fn scaleway_config_ignores_sectioned_file_keys() -> anyhow::Result<()> {
         "[scaleway]\nsecret_key = \"secret\"\ndefault_project_id = \"project\"\n",
     )?;
 
-    let Err(err) = load_scaleway(&workspace, &[], &[]) else {
+    let Err(err) = load::<ScalewayConfig>(&workspace, "scaleway", &[], &[]) else {
         bail!("a sectioned file must not satisfy required credentials");
     };
     let message = err.to_string();
@@ -165,65 +176,6 @@ fn scaleway_config_ignores_sectioned_file_keys() -> anyhow::Result<()> {
         message.contains("secret_key"),
         "error should name the missing root-level key: {message}"
     );
-    Ok(())
-}
-
-#[test]
-fn file_value_overrides_default() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-    workspace.write("mriya.toml", "volume_mount_path = \"/from-file\"\n")?;
-
-    let config = load_sync(&workspace, &[], &[])?;
-
-    ensure!(config.volume_mount_path == "/from-file");
-    Ok(())
-}
-
-#[test]
-fn environment_value_overrides_file() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-    workspace.write("mriya.toml", "volume_mount_path = \"/from-file\"\n")?;
-
-    let config = load_sync(
-        &workspace,
-        &[("MRIYA_SYNC_VOLUME_MOUNT_PATH", "/from-env")],
-        &[],
-    )?;
-
-    ensure!(
-        config.volume_mount_path == "/from-env",
-        "environment should win over the file, got {}",
-        config.volume_mount_path
-    );
-    Ok(())
-}
-
-#[test]
-fn command_line_overrides_environment() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-    workspace.write("mriya.toml", "volume_mount_path = \"/from-file\"\n")?;
-
-    let config = load_sync(
-        &workspace,
-        &[("MRIYA_SYNC_VOLUME_MOUNT_PATH", "/from-env")],
-        &["--volume-mount-path", "/from-cli"],
-    )?;
-
-    ensure!(
-        config.volume_mount_path == "/from-cli",
-        "command line should win over the environment, got {}",
-        config.volume_mount_path
-    );
-    Ok(())
-}
-
-#[test]
-fn default_value_applies_without_other_sources() -> anyhow::Result<()> {
-    let workspace = Workspace::new()?;
-
-    let config = load_sync(&workspace, &[], &[])?;
-
-    ensure!(config.volume_mount_path == mriya::sync::DEFAULT_VOLUME_MOUNT_PATH);
     Ok(())
 }
 

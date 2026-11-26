@@ -74,8 +74,9 @@ fn sync_config_validate_accepts_none_ssh_identity(base_config: SyncConfig) {
 /// process environment or a developer's real configuration files.
 #[test]
 fn volume_mount_path_uses_default_when_unset() {
-    use ortho_config::{MapEnv, OrthoConfig as _, SharedEnvSource, SharedScanEnvSource};
     use std::sync::Arc;
+
+    use ortho_config::{MapEnv, OrthoConfig as _, SharedEnvSource, SharedScanEnvSource};
 
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let home = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
