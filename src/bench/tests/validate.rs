@@ -70,7 +70,7 @@ fn a_header_with_no_runs_is_reported() {
     "campaign stopped with unverified resources",
     "a residual record is a cleanup doubt"
 )]
-#[case("no run records", "no acceptable run survives the other defects")]
+#[case("missing pin toolchain.compiler", "an empty compiler name is named")]
 #[case("malformed record", "a non-JSON line is reported")]
 fn the_defective_fixture_reports_each_named_defect(#[case] needle: &str, #[case] why: &str) {
     let complaints =
@@ -80,6 +80,18 @@ fn the_defective_fixture_reports_each_named_defect(#[case] needle: &str, #[case]
         rendered.contains(needle),
         "{why}: expected {needle:?} in\n{rendered}"
     );
+}
+
+#[test]
+fn a_file_whose_every_run_line_is_unreadable_has_no_run_records() {
+    let text = format!(
+        "{}\nnot a record\n",
+        fixture("header-only.jsonl").trim_end()
+    );
+    let complaints = validate_str(&text).expect_err("an unreadable run is not a run");
+    let rendered = messages(&complaints);
+    assert!(rendered.contains("malformed record"), "{rendered}");
+    assert!(rendered.contains("no run records"), "{rendered}");
 }
 
 #[test]
@@ -134,17 +146,30 @@ fn a_line_without_a_kind_is_reported_as_missing_one() {
 }
 
 #[test]
-fn a_run_with_a_chargeable_lifetime_beyond_its_measurement_is_incoherent() {
+fn a_run_charged_less_than_its_measured_lifetime_is_incoherent() {
     let mut run = valid_run();
-    run.lifetime.total_nanos = 10;
-    run.lifetime.chargeable_nanos = 20;
+    run.lifetime.total_nanos = 20;
+    run.lifetime.chargeable_nanos = 10;
     let text = campaign_with_run(&run);
     let complaints = validate_str(&text).expect_err("the lifetime contradicts itself");
     assert!(
-        messages(&complaints).contains("chargeable lifetime exceeds"),
+        messages(&complaints).contains("shorter than the measured lifetime"),
         "{}",
         messages(&complaints)
     );
+}
+
+#[test]
+fn a_run_charged_more_than_its_measured_lifetime_is_accepted() {
+    // A provider's granularity or minimum legitimately rounds a short attempt
+    // up, so a longer chargeable lifetime is the normal case rather than a
+    // defect.
+    let mut run = valid_run();
+    run.lifetime.total_nanos = 120_000_000_000;
+    run.lifetime.chargeable_nanos = 3_600_000_000_000;
+    let campaign =
+        validate_str(&campaign_with_run(&run)).expect("rounding up to a whole hour is normal");
+    assert_eq!(campaign.runs.len(), 1);
 }
 
 #[test]

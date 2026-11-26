@@ -28,6 +28,9 @@ pub const MEMORY_COMMAND: &str = "awk '/^MemTotal:/ {print $2 * 1024}' /proc/mem
 pub const DISK_COMMAND: &str = "df -B1 --output=size \"$PWD\" | tail -n 1";
 
 /// Prints whether the cache mount path is a mount point, as `0` or `1`.
+///
+/// `mountpoint -q` reports its answer as an exit status, so the status has to
+/// be echoed for a probe that captures standard output to see it.
 pub const CACHE_MOUNTED_COMMAND: &str = "mountpoint -q \"$MRIYA_SYNC_VOLUME_MOUNT_PATH\"; echo $?";
 
 /// Prints the used bytes of the cache mount path, or `0` when it is absent.
@@ -75,7 +78,10 @@ impl fmt::Display for ProbeError {
         match self {
             Self::Empty { probe } => write!(formatter, "probe {probe} printed nothing usable"),
             Self::NotANumber { probe, found } => {
-                write!(formatter, "probe {probe} printed {found:?}, which is not a number")
+                write!(
+                    formatter,
+                    "probe {probe} printed {found:?}, which is not a number"
+                )
             }
             Self::MalformedMessage { found } => {
                 write!(formatter, "cargo message {found:?} is not a known shape")
@@ -126,13 +132,9 @@ pub fn parse_unsigned(probe: &'static str, output: &str) -> Result<u64, ProbeErr
 /// # Examples
 ///
 /// ```
-/// use mriya::bench::probe::parse_architecture;
-/// use mriya::bench::record::GuestArchitecture;
+/// use mriya::bench::{probe::parse_architecture, record::GuestArchitecture};
 ///
-/// assert_eq!(
-///     parse_architecture("aarch64\n")?,
-///     GuestArchitecture::Aarch64
-/// );
+/// assert_eq!(parse_architecture("aarch64\n")?, GuestArchitecture::Aarch64);
 /// # Ok::<(), mriya::bench::probe::ProbeError>(())
 /// ```
 pub fn parse_architecture(output: &str) -> Result<GuestArchitecture, ProbeError> {
@@ -178,8 +180,10 @@ pub fn parse_mount_status(output: &str) -> Result<bool, ProbeError> {
 /// # Examples
 ///
 /// ```
-/// use mriya::bench::probe::{ProbeOutputs, allocation_from};
-/// use mriya::bench::record::GuestArchitecture;
+/// use mriya::bench::{
+///     probe::{ProbeOutputs, allocation_from},
+///     record::GuestArchitecture,
+/// };
 ///
 /// let observed = allocation_from(&ProbeOutputs {
 ///     architecture: "x86_64\n",
@@ -231,8 +235,7 @@ pub struct ProbeOutputs<'a> {
 /// # Examples
 ///
 /// ```
-/// use mriya::bench::probe::cache_from;
-/// use mriya::bench::record::CacheState;
+/// use mriya::bench::{probe::cache_from, record::CacheState};
 ///
 /// let absent = cache_from("1\n", "0\n")?;
 /// assert_eq!(absent.state, CacheState::Absent);
@@ -282,13 +285,17 @@ fn cache_state(mounted: bool, size_bytes: u64) -> CacheState {
 /// assert_eq!(observed.effective_workers, 2);
 /// # Ok::<(), mriya::bench::probe::ProbeError>(())
 /// ```
-pub fn concurrency_from(intended_workers: u32, cpu_output: &str) -> Result<Concurrency, ProbeError> {
-    let effective = u32::try_from(parse_unsigned(CPU_COUNT_COMMAND, cpu_output)?).map_err(|_| {
-        ProbeError::NotANumber {
-            probe: CPU_COUNT_COMMAND,
-            found: truncate(cpu_output),
-        }
-    })?;
+pub fn concurrency_from(
+    intended_workers: u32,
+    cpu_output: &str,
+) -> Result<Concurrency, ProbeError> {
+    let effective =
+        u32::try_from(parse_unsigned(CPU_COUNT_COMMAND, cpu_output)?).map_err(|_| {
+            ProbeError::NotANumber {
+                probe: CPU_COUNT_COMMAND,
+                found: truncate(cpu_output),
+            }
+        })?;
     Ok(Concurrency {
         intended_workers,
         effective_workers: effective,
@@ -318,7 +325,10 @@ impl BuildMessageCounts {
     /// ```
     /// use mriya::bench::probe::BuildMessageCounts;
     ///
-    /// let counts = BuildMessageCounts { fresh: 1, rebuilt: 0 };
+    /// let counts = BuildMessageCounts {
+    ///     fresh: 1,
+    ///     rebuilt: 0,
+    /// };
     /// assert!(counts.reused_anything());
     /// ```
     #[must_use]
@@ -331,7 +341,14 @@ impl BuildMessageCounts {
     /// ```
     /// use mriya::bench::probe::BuildMessageCounts;
     ///
-    /// assert_eq!(BuildMessageCounts { fresh: 2, rebuilt: 3 }.total(), 5);
+    /// assert_eq!(
+    ///     BuildMessageCounts {
+    ///         fresh: 2,
+    ///         rebuilt: 3
+    ///     }
+    ///     .total(),
+    ///     5
+    /// );
     /// ```
     #[must_use]
     pub const fn total(&self) -> u32 { self.fresh.saturating_add(self.rebuilt) }
@@ -367,7 +384,11 @@ impl BuildMessageCounts {
 /// ```
 pub fn count_build_messages(stream: &str) -> Result<BuildMessageCounts, ProbeError> {
     let mut counts = BuildMessageCounts::default();
-    for line in stream.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in stream
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let Some(reason) = compiler_artifact_reason(line)? else {
             continue;
         };
@@ -449,7 +470,10 @@ pub fn parse_version_banner(output: &str) -> Result<String, ProbeError> {
 ///
 /// assert_eq!(
 ///     split_banner("cargo 1.93.0-nightly (abc 2026-11-01)")?,
-///     ("cargo".to_owned(), "1.93.0-nightly (abc 2026-11-01)".to_owned())
+///     (
+///         "cargo".to_owned(),
+///         "1.93.0-nightly (abc 2026-11-01)".to_owned()
+///     )
 /// );
 /// # Ok::<(), mriya::bench::probe::ProbeError>(())
 /// ```

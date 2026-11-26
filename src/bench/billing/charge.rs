@@ -305,7 +305,7 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
         compute_micros,
         start_micros,
         storage_micros,
-        subscription_micros: usage.subscription_share_micros,
+        subscription_micros,
         absorbed_nanos,
         marginal_micros,
         total_account_micros,

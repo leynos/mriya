@@ -7,6 +7,7 @@
 //! agreeing with itself.
 
 mod billing;
+mod probe;
 mod record;
 mod validate;
 

@@ -48,6 +48,14 @@ pub struct ScalewayBackend {
     poll_interval: Duration,
     /// Deadline applied to each wait before a timeout error is returned.
     wait_timeout: Duration,
+    /// Optional benchmark sink that receives the identifiers of the resources
+    /// this backend creates and tears down.
+    ///
+    /// `None` on every ordinary run. The sink is constructor-injected rather
+    /// than added to the `Backend` port because only a benchmark needs it, and
+    /// a port that returned provider identifiers would force every future
+    /// adapter to invent them.
+    lifecycle_sink: Option<crate::bench::lifecycle::SharedLifecycleSink>,
 }
 
 impl ScalewayBackend {
@@ -115,7 +123,34 @@ impl ScalewayBackend {
             ssh_port: DEFAULT_SSH_PORT,
             poll_interval: POLL_INTERVAL,
             wait_timeout: WAIT_TIMEOUT,
+            lifecycle_sink: None,
         })
+    }
+
+    /// Attaches a benchmark lifecycle sink.
+    ///
+    /// The sink receives the identifier of every resource this backend creates
+    /// and the outcome of every teardown. Nothing reads back from it, so an
+    /// attached sink cannot change what the backend does.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let sink = Arc::new(RecordingSink::default());
+    /// let backend = ScalewayBackend::new(config)?.with_lifecycle_sink(sink);
+    /// ```
+    #[must_use]
+    pub fn with_lifecycle_sink(
+        mut self,
+        sink: crate::bench::lifecycle::SharedLifecycleSink,
+    ) -> Self {
+        self.lifecycle_sink = Some(sink);
+        self
+    }
+
+    /// Reports an event to the configured sink, if any.
+    fn notify_lifecycle(&self, event: &crate::bench::lifecycle::LifecycleEvent) {
+        crate::bench::lifecycle::notify(self.lifecycle_sink.as_ref(), event);
     }
 
     /// Builds an instance request using the backend's defaults.
@@ -244,6 +279,120 @@ impl ScalewayBackend {
             test_run_id,
         )
     }
+
+    /// Creates a stopped instance and reports the outcome to the sink.
+    ///
+    /// The provider's create call is the point at which a resource may begin
+    /// to bill. A response that cannot be read or parsed therefore reports an
+    /// uncertain allocation even though the call returned an error, because
+    /// the request may well have been applied.
+    async fn create_instance_stopped_observed(
+        &self,
+        request: &InstanceRequest,
+        image_id: &str,
+    ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
+        use crate::bench::lifecycle::LifecycleEvent;
+
+        match self.create_instance_stopped(request, image_id).await {
+            Ok(server) => {
+                self.notify_lifecycle(&LifecycleEvent::ResourceCreated {
+                    provider: String::from(PROVIDER_NAME),
+                    resource_id: server.id.clone(),
+                    location: request.zone.clone(),
+                    product: request.instance_type.clone(),
+                });
+                Ok(server)
+            }
+            Err(err) => {
+                if may_have_created(&err) {
+                    self.notify_lifecycle(&LifecycleEvent::AllocationUncertain {
+                        provider: String::from(PROVIDER_NAME),
+                        location: request.zone.clone(),
+                        reason: err.to_string(),
+                    });
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Attaches the requested cache volume and powers the instance on.
+    ///
+    /// Split from [`Backend::create`] so the failure path can report the
+    /// resource it leaves behind without repeating the finish steps.
+    async fn finish_creation(
+        &self,
+        request: &InstanceRequest,
+        server: &scaleway_rs::ScalewayInstance,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        // Attach cache volume before powering on (instance is stopped)
+        if let Some(ref volume_id) = request.volume_id {
+            let root_volume_id = server
+                .volumes
+                .volumes
+                .get("0")
+                .map(|v| v.id.clone())
+                .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
+                    volume_id: String::from("0"),
+                    zone: request.zone.clone(),
+                })?;
+            Self::validate_cache_volume_id(volume_id, &root_volume_id, handle)?;
+            self.attach_volume(handle, volume_id, root_volume_id)
+                .await?;
+        }
+
+        let snapshot = InstanceSnapshot {
+            id: server.id.clone().into(),
+            state: server.state.clone().into(),
+            allowed_actions: server
+                .allowed_actions
+                .iter()
+                .map(|action| Action::from(action.clone()))
+                .collect(),
+            public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
+        };
+
+        let zone = Zone::from(request.zone.as_str());
+        self.power_on_if_needed(&zone, &snapshot).await
+    }
+
+    /// Reports the resources a failed creation leaves behind and returns the
+    /// original error unchanged.
+    fn abandon_creation(
+        &self,
+        handle: &InstanceHandle,
+        err: ScalewayBackendError,
+    ) -> ScalewayBackendError {
+        use crate::bench::lifecycle::LifecycleEvent;
+        self.notify_lifecycle(&LifecycleEvent::AllocationUncertain {
+            provider: String::from(PROVIDER_NAME),
+            location: handle.zone.clone(),
+            reason: format!(
+                "instance {} was created but could not be finished: {err}",
+                handle.id
+            ),
+        });
+        err
+    }
+}
+
+/// Provider name every Scaleway lifecycle event carries.
+const PROVIDER_NAME: &str = "scaleway";
+
+/// Returns whether a create failure might still have created a resource.
+///
+/// A validation failure or a rejected instance type cannot have created
+/// anything; a transport, response-read, or response-parse failure can have.
+fn may_have_created(err: &ScalewayBackendError) -> bool {
+    matches!(
+        err,
+        ScalewayBackendError::Provider { .. }
+            | ScalewayBackendError::InstanceTypeUnavailable { .. }
+            | ScalewayBackendError::VolumeAttachmentFailed { .. }
+            | ScalewayBackendError::VolumeNotFound { .. }
+            | ScalewayBackendError::PowerOnNotAllowed { .. }
+    )
 }
 
 impl Backend for ScalewayBackend {
@@ -257,44 +406,23 @@ impl Backend for ScalewayBackend {
             request.validate()?;
             let image_id = self.resolve_image_id(request).await?;
 
-            let server = self.create_instance_stopped(request, &image_id).await?;
+            let server = self
+                .create_instance_stopped_observed(request, &image_id)
+                .await?;
 
             let handle = InstanceHandle {
                 id: server.id.clone(),
                 zone: request.zone.clone(),
             };
 
-            // Attach cache volume before powering on (instance is stopped)
-            if let Some(ref volume_id) = request.volume_id {
-                let root_volume_id = server
-                    .volumes
-                    .volumes
-                    .get("0")
-                    .map(|v| v.id.clone())
-                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
-                        volume_id: String::from("0"),
-                        zone: request.zone.clone(),
-                    })?;
-                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
-                self.attach_volume(&handle, volume_id, root_volume_id)
-                    .await?;
+            // A server that exists but cannot be finished is still a resource
+            // that will bill. Report the failure as an uncertain allocation so
+            // the benchmark records an identifier to look for, rather than
+            // reporting that nothing was created.
+            match self.finish_creation(request, &server, &handle).await {
+                Ok(()) => Ok(handle),
+                Err(err) => Err(self.abandon_creation(&handle, err)),
             }
-
-            let snapshot = InstanceSnapshot {
-                id: server.id.into(),
-                state: server.state.into(),
-                allowed_actions: server
-                    .allowed_actions
-                    .into_iter()
-                    .map(Action::from)
-                    .collect(),
-                public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
-            };
-
-            let zone = Zone::from(request.zone.as_str());
-            self.power_on_if_needed(&zone, &snapshot).await?;
-
-            Ok(handle)
         })
     }
 
@@ -311,8 +439,37 @@ impl Backend for ScalewayBackend {
 
     fn destroy(&self, handle: InstanceHandle) -> BackendFuture<'_, (), Self::Error> {
         Box::pin(async move {
-            self.delete_instance(&handle).await?;
-            self.wait_until_gone(&handle).await
+            use crate::bench::lifecycle::LifecycleEvent;
+
+            self.notify_lifecycle(&LifecycleEvent::TeardownRequested {
+                provider: String::from(PROVIDER_NAME),
+                resource_id: handle.id.clone(),
+            });
+            if let Err(err) = self.delete_instance(&handle).await {
+                self.notify_lifecycle(&LifecycleEvent::TeardownUnverified {
+                    provider: String::from(PROVIDER_NAME),
+                    resource_id: handle.id.clone(),
+                    reason: err.to_string(),
+                });
+                return Err(err);
+            }
+            match self.wait_until_gone(&handle).await {
+                Ok(()) => {
+                    self.notify_lifecycle(&LifecycleEvent::TeardownVerified {
+                        provider: String::from(PROVIDER_NAME),
+                        resource_id: handle.id.clone(),
+                    });
+                    Ok(())
+                }
+                Err(err) => {
+                    self.notify_lifecycle(&LifecycleEvent::TeardownUnverified {
+                        provider: String::from(PROVIDER_NAME),
+                        resource_id: handle.id.clone(),
+                        reason: err.to_string(),
+                    });
+                    Err(err)
+                }
+            }
         })
     }
 }

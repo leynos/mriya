@@ -21,7 +21,9 @@
 //! ```
 
 pub mod billing;
+pub mod lifecycle;
 pub mod observe;
+pub mod probe;
 pub mod record;
 pub mod validate;
 

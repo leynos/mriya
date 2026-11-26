@@ -340,8 +340,8 @@ fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Compla
 /// Reports the contradictions a driver or reader could not otherwise notice.
 ///
 /// Each check exists because the alternative is a record that reads as evidence
-/// but cannot be compared: a repetition zero, a chargeable lifetime longer than
-/// the attempt, or a GPU class without accelerator details.
+/// but cannot be compared: a repetition zero, a chargeable lifetime shorter
+/// than the attempt, or a GPU class without accelerator details.
 fn report_incoherence(line: usize, run: &RunRecord, complaints: &mut Vec<Complaint>) {
     if run.repetition == 0 {
         complaints.push(Complaint::Incoherent {
@@ -349,12 +349,17 @@ fn report_incoherence(line: usize, run: &RunRecord, complaints: &mut Vec<Complai
             message: String::from("repetition numbers start at one"),
         });
     }
-    if run.lifetime.chargeable_nanos > run.lifetime.total_nanos && run.lifetime.total_nanos != 0 {
+    // A provider bills at least the time measured, and legitimately bills more
+    // when a granularity or a minimum period rounds up: a two-minute Scaleway
+    // run is charged for an hour. Billing less than the measurement is the
+    // contradiction, because it would mean the figure came from somewhere
+    // other than this attempt.
+    if run.lifetime.chargeable_nanos < run.lifetime.total_nanos {
         complaints.push(Complaint::Incoherent {
             line,
             message: String::from(
-                "chargeable lifetime exceeds the measured lifetime, so the record was not \
-                 priced from its own measurement",
+                "chargeable lifetime is shorter than the measured lifetime, so the record was \
+                 not priced from its own measurement",
             ),
         });
     }

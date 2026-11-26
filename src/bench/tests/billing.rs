@@ -78,6 +78,25 @@ fn hourly_storage() -> StorageRule {
     }
 }
 
+/// The same sheet, but with a plan that includes `included_starts` starts and
+/// charges EUR 0.01 for each start beyond them.
+fn sheet_with_plan(product: ProductRule, included_starts: u64) -> PriceSheet {
+    let mut sheet = sheet_with(product, hourly_storage());
+    let plan = super::super::billing::PlanRule {
+        name: String::from("fixture plan"),
+        monthly_price_micros: 0,
+        included_compute_nanos: 0,
+        included_starts,
+    };
+    if let Some(provider) = sheet.providers.get_mut("prov") {
+        provider.plan = Some(plan);
+        if let Some(rule) = provider.products.get_mut("p") {
+            rule.start_charge_micros = 10_000;
+        }
+    }
+    sheet
+}
+
 #[rstest]
 #[case(0, 1, 0, 0)]
 #[case(1, 1, 0, NANOS_PER_SECOND)]
@@ -151,10 +170,17 @@ fn boat_absorbs_a_gate_inside_its_plan_and_reports_the_subscription() {
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
     assert_eq!(breakdown.absorbed_nanos, 60 * NANOS_PER_SECOND);
     assert_eq!(breakdown.compute_micros, 0);
-    assert_eq!(breakdown.marginal_micros, 0);
-    // The plan's USD 20 share converts at 0.92 EUR per USD.
+    // The example plan includes no starts, so the start charge still applies:
+    // the plan covers time, not starts.
+    assert_eq!(breakdown.start_micros, 27_600);
+    assert_eq!(breakdown.marginal_micros, 27_600);
+    // The plan's USD 20 share converts at 0.92 EUR per USD, and is what makes
+    // the total-account figure exceed the marginal one.
     assert_eq!(breakdown.subscription_micros, 18_400_000);
-    assert_eq!(breakdown.total_account_micros, 18_400_000);
+    assert_eq!(
+        breakdown.total_account_micros,
+        breakdown.marginal_micros.saturating_add(18_400_000)
+    );
     assert!(!figures_agree(
         breakdown.marginal_micros,
         breakdown.total_account_micros
@@ -162,11 +188,67 @@ fn boat_absorbs_a_gate_inside_its_plan_and_reports_the_subscription() {
 }
 
 #[test]
-fn boat_charges_a_start_once_the_included_allowance_is_used() {
+fn a_plan_that_includes_starts_absorbs_the_start_charge() {
+    let sheet = example_sheet();
+    let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND)
+        .with_plan_allowance(NANOS_PER_HOUR)
+        .with_starts_used(0)
+        .with_subscription_share(20_000_000);
+    // Boat's plan rule in the example sheet includes no starts, so this asserts
+    // the opposite case through a sheet that does.
+    let mut sheet = sheet;
+    if let Some(provider) = sheet.providers.get_mut("boat")
+        && let Some(plan) = provider.plan.as_mut()
+    {
+        plan.included_starts = 5;
+    }
+    let breakdown = charge(&sheet, &usage).expect("the rule exists");
+    assert_eq!(breakdown.compute_micros, 0);
+    assert_eq!(breakdown.start_micros, 0);
+    assert_eq!(breakdown.marginal_micros, 0);
+    assert_eq!(
+        breakdown.total_account_micros, breakdown.subscription_micros,
+        "when the plan covers the gate, the bill is the plan's share"
+    );
+}
+
+#[test]
+fn the_subscription_share_is_converted_into_the_sheet_currency() {
+    let sheet = example_sheet();
+    // Boat publishes its plan in USD; the sheet reports in EUR.
+    let usage = Usage::new("boat", "default", 0).with_subscription_share(20_000_000);
+    let breakdown = charge(&sheet, &usage).expect("the rule exists");
+    assert_eq!(breakdown.provider_currency, "USD");
+    assert_eq!(breakdown.subscription_micros, 18_400_000);
+}
+
+#[test]
+fn a_start_inside_the_plan_allowance_is_free() {
+    let sheet = sheet_with_plan(hourly_product(), 3);
+    let usage = Usage::new("prov", "p", NANOS_PER_HOUR).with_starts_used(0);
+    let breakdown = charge(&sheet, &usage).expect("the rule exists");
+    assert_eq!(breakdown.start_micros, 0, "the plan included this start");
+}
+
+#[test]
+fn a_start_beyond_the_plan_allowance_is_charged() {
+    let sheet = sheet_with_plan(hourly_product(), 3);
+    let usage = Usage::new("prov", "p", NANOS_PER_HOUR).with_starts_used(3);
+    let breakdown = charge(&sheet, &usage).expect("the rule exists");
+    assert_eq!(
+        breakdown.start_micros, 10_000,
+        "the fourth start is beyond the three the plan includes"
+    );
+}
+
+#[test]
+fn boat_charges_its_start_charge_when_no_start_is_included() {
     let sheet = example_sheet();
     let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND).with_starts_used(0);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
-    assert_eq!(breakdown.start_micros, 0);
+    // The example plan includes no starts, so the USD 0.03 start applies and
+    // converts at 0.92 EUR per USD.
+    assert_eq!(breakdown.start_micros, 27_600);
 }
 
 #[test]
@@ -190,8 +272,10 @@ fn retained_storage_is_priced_over_the_window_it_was_held() {
         held_nanos: NANOS_PER_HOUR,
     }]);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
-    // A tenth of a month at EUR 0.008 per GB-month for ten GB is EUR 0.008.
-    assert_eq!(breakdown.storage_micros, 8_000);
+    // Ten GB at EUR 0.008 per GB-month is EUR 0.08 for a month. One hour is
+    // 1/720 of the sheet's 30-day month, so the charge rounds up to the
+    // nearest micro-unit: 80,000 / 720 = 111.1, so 112.
+    assert_eq!(breakdown.storage_micros, 112);
 }
 
 #[test]
@@ -309,8 +393,15 @@ proptest! {
         prop_assert_eq!(billed, oracle);
     }
 
-    /// Billing never charges less than the time measured, and always charges a
-    /// whole number of granularity units.
+    /// Billing never charges less than the time measured, and charges either a
+    /// whole number of granularity units or exactly the declared minimum.
+    ///
+    /// The second disjunct is not a loophole. A provider states its
+    /// granularity and its minimum period independently, and nothing requires
+    /// one to divide the other: a 17-second minimum at a 4-second granularity
+    /// bills 17 seconds, which is not a multiple of 4. Requiring a multiple
+    /// would force the implementation to invent a rounding rule the provider
+    /// never published.
     #[test]
     fn chargeable_time_is_never_below_the_measurement(
         measured_seconds in 0_u64..1_000_000,
@@ -322,7 +413,12 @@ proptest! {
             .expect("granularity is non-zero");
         prop_assert!(billed >= measured);
         let granularity = granularity_seconds.saturating_mul(NANOS_PER_SECOND);
-        prop_assert_eq!(billed.checked_rem(granularity), Some(0));
+        let minimum = minimum_seconds.saturating_mul(NANOS_PER_SECOND);
+        prop_assert!(
+            billed.checked_rem(granularity) == Some(0) || billed == minimum,
+            "billed {billed} is neither a whole number of {granularity}-nanosecond units nor the \
+             {minimum}-nanosecond minimum"
+        );
     }
 
     /// A longer gate never costs less than a shorter one at the same rate.
