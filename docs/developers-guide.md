@@ -496,7 +496,7 @@ identifier names the macOS installer package, and Installer matches upgrades by
 it. Keep it stable across releases: a changed identifier makes Installer treat
 the new package as a different product, so an upgrade no longer replaces the
 installed version. `tests/workflow_contracts/release_identity_test.py` holds
-the wiring.
+the wiring and runs the resolver script.
 
 ### Installed tooling and the preflight
 
@@ -566,7 +566,8 @@ installer produced.
   explicit `rustflags`.
 - `tests/workflow_contracts/release_identity_test.py` holds the release
   maintainer and macOS identifier: both inputs, both metadata outputs and both
-  packaging-step inputs.
+  packaging-step inputs. Its rules live in `release_identity_rules.py`, which
+  also runs the resolver script against valid and unusable candidates.
 
 The contract runs `make -n`, so a direct `cargo test` needs GNU make on the
 `PATH`; it fails when `make` is missing instead of skipping. The decision is
