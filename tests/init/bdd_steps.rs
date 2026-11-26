@@ -1,19 +1,13 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::{InitError, InitOrchestrator, sync::Syncer};
+use mriya::{InitOrchestrator, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
 use super::{
-    test_doubles::MemoryConfigStore,
-    test_helpers::{
-        InitContext,
-        InitContextResult,
-        InitFailure,
-        InitFailureKind,
-        InitResult,
-        InitTestError,
-    },
+    config_store_double::MemoryConfigStore,
+    failure_kind::{map_failure_kind, parse_failure_kind},
+    test_helpers::{InitContext, InitContextResult, InitFailure, InitResult, InitTestError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -202,7 +196,8 @@ fn init_error_kind(init_context_result: &InitContextResult, kind: String) -> Res
     let init_context = init_context_result
         .as_ref()
         .map_err(|err| StepError::Assertion(err.to_string()))?;
-    let expected = parse_failure_kind(&kind)?;
+    let expected = parse_failure_kind(&kind)
+        .ok_or_else(|| StepError::Assertion(format!("unknown failure kind: {kind}")))?;
     let Some(InitResult::Failure(failure)) = &init_context.outcome else {
         return Err(StepError::Assertion(String::from(
             "expected failure outcome",
@@ -363,41 +358,4 @@ fn no_volume_deleted(init_context_result: &InitContextResult) -> Result<(), Step
         |count| count == 0,
         "a pre-existing volume must never be deleted",
     )
-}
-
-fn map_failure_kind(
-    err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
-) -> InitFailureKind {
-    match err {
-        InitError::Config(_) => InitFailureKind::Config,
-        InitError::Volume(_) | InitError::VolumeReady { .. } => InitFailureKind::Volume,
-        InitError::Provision(_) => InitFailureKind::Provision,
-        InitError::Wait { .. } => InitFailureKind::Wait,
-        InitError::FormatDeviceNotFound { .. }
-        | InitError::FormatDeviceAmbiguous { .. }
-        | InitError::FormatRootDisk { .. }
-        | InitError::FormatRootUnknown { .. }
-        | InitError::FormatSignaturePresent { .. }
-        | InitError::FormatFailed { .. } => InitFailureKind::Format,
-        InitError::Detach { .. } => InitFailureKind::Detach,
-        InitError::Teardown(_) => InitFailureKind::Teardown,
-        InitError::Rollback { original, .. } => original
-            .downcast_ref::<InitError<super::test_doubles::ScriptedVolumeBackendError>>()
-            .map_or(InitFailureKind::Format, map_failure_kind),
-    }
-}
-
-fn parse_failure_kind(kind: &str) -> Result<InitFailureKind, StepError> {
-    match kind {
-        "config" => Ok(InitFailureKind::Config),
-        "volume" => Ok(InitFailureKind::Volume),
-        "provision" => Ok(InitFailureKind::Provision),
-        "wait" => Ok(InitFailureKind::Wait),
-        "format" => Ok(InitFailureKind::Format),
-        "detach" => Ok(InitFailureKind::Detach),
-        "teardown" => Ok(InitFailureKind::Teardown),
-        _ => Err(StepError::Assertion(format!(
-            "unknown failure kind: {kind}"
-        ))),
-    }
 }

@@ -10,7 +10,7 @@ use mriya::{
 use rstest::fixture;
 use thiserror::Error;
 
-use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
+use super::{config_store_double::MemoryConfigStore, test_doubles::ScriptedVolumeBackend};
 use crate::{
     size_constants::BYTES_PER_GB,
     sync_config::sync_config,

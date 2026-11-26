@@ -106,6 +106,12 @@ fn position(roles: &[InvocationRole], wanted: &InvocationRole) -> Option<usize> 
     roles.iter().position(|role| role == wanted)
 }
 
+/// Reports whether any cache-directory call sits between mount and rsync.
+fn directories_are_ordered(roles: &[InvocationRole], mount: usize, rsync: usize) -> bool {
+    position(roles, &InvocationRole::CacheDirectories)
+        .is_none_or(|directories| mount < directories && directories < rsync)
+}
+
 #[then("the cache volume is mounted before files are synced")]
 fn mount_precedes_sync(run_context_result: &RunContextResult) -> Result<(), StepError> {
     let roles = classify_invocations(context(run_context_result)?)?;
@@ -117,20 +123,17 @@ fn mount_precedes_sync(run_context_result: &RunContextResult) -> Result<(), Step
         StepError::Assertion(format!("missing remote command invocation: {roles:?}"))
     })?;
 
-    if mount < rsync && rsync < remote {
-        if let Some(directories) = position(&roles, &InvocationRole::CacheDirectories)
-            && !(mount < directories && directories < rsync)
-        {
-            return Err(StepError::Assertion(format!(
-                "expected cache directories between mount and rsync, got {roles:?}"
-            )));
-        }
-        Ok(())
-    } else {
-        Err(StepError::Assertion(format!(
+    if !(mount < rsync && rsync < remote) {
+        return Err(StepError::Assertion(format!(
             "expected mount, rsync, requested remote command in that order, got {roles:?}"
-        )))
+        )));
     }
+    if !directories_are_ordered(&roles, mount, rsync) {
+        return Err(StepError::Assertion(format!(
+            "expected cache directories between mount and rsync, got {roles:?}"
+        )));
+    }
+    Ok(())
 }
 
 #[then("the run stops before syncing when the cache cannot be verified")]

@@ -157,10 +157,14 @@ fn handle() -> InstanceHandle {
 mod image;
 mod wait;
 
+mod block_readiness;
 mod http_stub;
 mod instances;
 mod network;
+mod preflight;
 mod properties;
 mod provision;
+mod rollback;
 mod volume_attach;
+mod volume_detach;
 mod volumes;

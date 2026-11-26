@@ -321,8 +321,73 @@ async fn wait_until_gone(harness: &CacheHarness, volume: &VolumeHandle) -> Resul
     Ok(false)
 }
 
+/// Creates, mounts and tears down one VM, returning its volume status.
+async fn one_lifetime(
+    harness: &CacheHarness,
+    syncer: &Syncer<ProcessCommandRunner>,
+    volume: &VolumeHandle,
+    action: impl FnOnce(&InstanceNetworking) -> Result<()>,
+) -> Result<String> {
+    let (handle, networking) = provision(harness, volume).await?;
+    mount(harness, syncer, &networking, volume)?;
+    action(&networking)?;
+    unmount(syncer, &networking, &harness.sync_config.volume_mount_path)?;
+    teardown_and_check(harness, handle, volume).await
+}
+
 /// Runs the full three-VM flow and returns the collected evidence.
 async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
+    let volume = create_volume(harness).await?;
+    let syncer =
+        Syncer::with_process_runner(harness.sync_config.clone()).context("build syncer")?;
+    let mount_path = harness.sync_config.volume_mount_path.clone();
+    let sentinel_a = format!("sentinel-a-{}", uuid::Uuid::new_v4().simple());
+    let sentinel_b = format!("sentinel-b-{}", uuid::Uuid::new_v4().simple());
+    let path_a = format!("{mount_path}/sentinel-a");
+    let path_b = format!("{mount_path}/sentinel-b");
+    let mut volume_statuses = Vec::with_capacity(3);
+
+    let first = one_lifetime(harness, &syncer, &volume, |networking| {
+        write_file(&syncer, networking, &path_a, &sentinel_a)
+    })
+    .await?;
+    volume_statuses.push(first);
+
+    let mut read_a_on_second = false;
+    let second = one_lifetime(harness, &syncer, &volume, |networking| {
+        read_a_on_second = read_file(&syncer, networking, &path_a)?.trim() == sentinel_a;
+        write_file(&syncer, networking, &path_b, &sentinel_b)
+    })
+    .await?;
+    volume_statuses.push(second);
+
+    let mut read_b_on_third = false;
+    let third = one_lifetime(harness, &syncer, &volume, |networking| {
+        read_b_on_third = read_file(&syncer, networking, &path_b)?.trim() == sentinel_b;
+        Ok(())
+    })
+    .await?;
+    volume_statuses.push(third);
+
+    harness
+        .backend
+        .delete_volume(&volume)
+        .await
+        .context("delete cache volume")?;
+    let volume_gone = wait_until_gone(harness, &volume).await?;
+
+    Ok(CacheEvidence {
+        sentinel_a,
+        sentinel_b,
+        read_a_on_second,
+        read_b_on_third,
+        volume_statuses,
+        volume_gone,
+    })
+}
+
+/// Creates a dedicated volume and waits until it is available.
+async fn create_volume(harness: &CacheHarness) -> Result<VolumeHandle> {
     let name = format!("mriya-cache-{}", uuid::Uuid::new_v4().simple());
     let request = VolumeRequest::new(
         name,
@@ -340,54 +405,5 @@ async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
         .wait_for_volume_status(&volume.zone, &volume.id, VolumeStatus::Available)
         .await
         .context("wait for volume availability")?;
-
-    let syncer =
-        Syncer::with_process_runner(harness.sync_config.clone()).context("build syncer")?;
-    let mount_path = harness.sync_config.volume_mount_path.clone();
-
-    let sentinel_a = format!("sentinel-a-{}", uuid::Uuid::new_v4().simple());
-    let sentinel_b = format!("sentinel-b-{}", uuid::Uuid::new_v4().simple());
-    let path_a = format!("{mount_path}/sentinel-a");
-    let path_b = format!("{mount_path}/sentinel-b");
-    let mut volume_statuses = Vec::with_capacity(3);
-
-    // VM 1: write and flush sentinel A.
-    let (handle, networking) = provision(harness, &volume).await?;
-    mount(harness, &syncer, &networking, &volume)?;
-    write_file(&syncer, &networking, &path_a, &sentinel_a)?;
-    unmount(&syncer, &networking, &mount_path)?;
-    volume_statuses.push(teardown_and_check(harness, handle, &volume).await?);
-
-    // VM 2: read A, write B.
-    let (second_handle, second_networking) = provision(harness, &volume).await?;
-    mount(harness, &syncer, &second_networking, &volume)?;
-    let read_a = read_file(&syncer, &second_networking, &path_a)?;
-    let read_a_on_second = read_a.trim() == sentinel_a;
-    write_file(&syncer, &second_networking, &path_b, &sentinel_b)?;
-    unmount(&syncer, &second_networking, &mount_path)?;
-    volume_statuses.push(teardown_and_check(harness, second_handle, &volume).await?);
-
-    // VM 3: read B.
-    let (third_handle, third_networking) = provision(harness, &volume).await?;
-    mount(harness, &syncer, &third_networking, &volume)?;
-    let read_b = read_file(&syncer, &third_networking, &path_b)?;
-    let read_b_on_third = read_b.trim() == sentinel_b;
-    unmount(&syncer, &third_networking, &mount_path)?;
-    volume_statuses.push(teardown_and_check(harness, third_handle, &volume).await?);
-
-    harness
-        .backend
-        .delete_volume(&volume)
-        .await
-        .context("delete cache volume")?;
-    let volume_gone = wait_until_gone(harness, &volume).await?;
-
-    Ok(CacheEvidence {
-        sentinel_a,
-        sentinel_b,
-        read_a_on_second,
-        read_b_on_third,
-        volume_statuses,
-        volume_gone,
-    })
+    Ok(volume)
 }

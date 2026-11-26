@@ -5,11 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use camino::Utf8PathBuf;
 use mriya::{
     Backend,
-    ConfigStoreError,
-    ConfigWriter,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
@@ -22,44 +19,12 @@ use mriya::{
 };
 use thiserror::Error;
 
+use super::doubles_support::{FailureMode, Failures, volume_state};
+
 /// Scripted backend that simulates volume and instance lifecycle operations.
 #[derive(Clone, Debug)]
 pub struct ScriptedVolumeBackend {
     state: Arc<Mutex<State>>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FailureMode {
-    CreateVolume,
-    VolumeReady,
-    Provision,
-    Wait,
-    Detach,
-    Destroy,
-    DeleteVolume,
-}
-
-impl FailureMode {
-    const fn flag(self) -> u8 {
-        match self {
-            Self::CreateVolume => 0b0000_0001,
-            Self::VolumeReady => 0b0000_0010,
-            Self::Provision => 0b0000_0100,
-            Self::Wait => 0b0000_1000,
-            Self::Detach => 0b0001_0000,
-            Self::Destroy => 0b0010_0000,
-            Self::DeleteVolume => 0b0100_0000,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct Failures(u8);
-
-impl Failures {
-    const fn set(&mut self, mode: FailureMode) { self.0 |= mode.flag(); }
-
-    const fn contains(self, mode: FailureMode) -> bool { self.0 & mode.flag() != 0 }
 }
 
 #[derive(Debug, Default)]
@@ -70,20 +35,6 @@ struct State {
     delete_volume_calls: u32,
     teardown_calls: u32,
     destroy_calls: u32,
-}
-
-/// Builds the available volume state the doubles report.
-fn volume_state() -> VolumeState {
-    VolumeState {
-        id: String::from("vol-123"),
-        zone: String::from("test-zone"),
-        project_id: String::from("project"),
-        status: VolumeStatus::Available,
-        volume_type: String::from("sbs_5k"),
-        storage_class: Some(String::from("sbs")),
-        size_bytes: 10_000_000_000,
-        references: Vec::new(),
-    }
 }
 
 #[derive(Clone)]
@@ -430,79 +381,5 @@ impl VolumeBackend for ScriptedVolumeBackend {
         _volume_id: Option<&'a str>,
     ) -> BackendFuture<'a, (), Self::Error> {
         Box::pin(async move { self.run_teardown() })
-    }
-}
-
-/// In-memory config store for behavioural tests.
-#[derive(Clone, Debug)]
-pub struct MemoryConfigStore {
-    state: Arc<Mutex<ConfigState>>,
-}
-
-#[derive(Debug, Default)]
-struct ConfigState {
-    existing_volume_id: Option<String>,
-    write_calls: u32,
-}
-
-impl MemoryConfigStore {
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(ConfigState::default())),
-        }
-    }
-
-    pub fn with_existing(volume_id: &str) -> Self {
-        let store = Self::new();
-        store
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .existing_volume_id = Some(volume_id.to_owned());
-        store
-    }
-
-    pub fn write_calls(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .write_calls
-    }
-
-    fn lock_state(
-        &self,
-        context: &str,
-    ) -> Result<std::sync::MutexGuard<'_, ConfigState>, ConfigStoreError> {
-        self.state.lock().map_err(|err| ConfigStoreError::Io {
-            path: Utf8PathBuf::from("in-memory"),
-            message: format!("lock poisoned in {context}: {err}"),
-        })
-    }
-}
-
-impl ConfigWriter for MemoryConfigStore {
-    fn current_volume_id(&self) -> Result<Option<String>, ConfigStoreError> {
-        Ok(self
-            .lock_state("current_volume_id")?
-            .existing_volume_id
-            .clone())
-    }
-
-    fn write_volume_id(
-        &self,
-        volume_id: &str,
-        force: bool,
-    ) -> Result<Utf8PathBuf, ConfigStoreError> {
-        let mut state = self.lock_state("write_volume_id")?;
-        if let Some(existing) = state.existing_volume_id.as_ref()
-            && !force
-        {
-            return Err(ConfigStoreError::VolumeAlreadyConfigured {
-                volume_id: existing.clone(),
-            });
-        }
-        state.existing_volume_id = Some(volume_id.to_owned());
-        state.write_calls += 1;
-        Ok(Utf8PathBuf::from("mriya.toml"))
     }
 }
