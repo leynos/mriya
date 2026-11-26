@@ -1642,9 +1642,10 @@ and kills the job, we rely on our earlier point about catching kill signals –
 we may not catch a forced kill from a CI system, but hopefully CI will allow a
 grace period with SIGTERM first.
 
-**Example Failure Scenario Walk-through:** Consider the scenario: user runs
-`mriya test` and nothing happens for a while, then they hit Ctrl+C. Mriya’s
-signal handler triggers:
+**Example Failure Scenario Walk-through (planned; the MVP has no signal
+handler, so Ctrl+C currently exits without a delete):** Consider the scenario:
+user runs `mriya test` and nothing happens for a while, then they hit Ctrl+C.
+Once the v1.0 signal handling lands, Mriya’s signal handler will trigger:
 
 - If VM was already created, we log “Cancelling… destroying instance” to
   inform user.
