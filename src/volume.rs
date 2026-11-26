@@ -30,9 +30,10 @@ pub const MAX_VOLUME_SIZE_GB: u64 = 15_000;
 /// assert_eq!(VolumeTier::Sbs5k.perf_iops(), 5_000);
 /// assert_eq!(VolumeTier::Sbs15k.as_str(), "sbs_15k");
 /// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum VolumeTier {
     /// Block Storage 5K, the default tier.
+    #[default]
     Sbs5k,
     /// Block Storage 15K, for higher-throughput workloads.
     Sbs15k,
@@ -84,10 +85,6 @@ impl VolumeTier {
             }),
         }
     }
-}
-
-impl Default for VolumeTier {
-    fn default() -> Self { Self::Sbs5k }
 }
 
 impl fmt::Display for VolumeTier {
@@ -395,7 +392,7 @@ impl VolumeStatus {
 
     /// Returns the provider spelling of the status.
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::Creating => "creating",
             Self::Available => "available",
@@ -413,11 +410,11 @@ impl VolumeStatus {
 
     /// Reports whether the volume is ready for attachment.
     #[must_use]
-    pub fn is_available(&self) -> bool { matches!(self, Self::Available) }
+    pub const fn is_available(&self) -> bool { matches!(self, Self::Available) }
 
     /// Reports whether the volume is attached to a reference.
     #[must_use]
-    pub fn is_in_use(&self) -> bool { matches!(self, Self::InUse) }
+    pub const fn is_in_use(&self) -> bool { matches!(self, Self::InUse) }
 }
 
 impl fmt::Display for VolumeStatus {

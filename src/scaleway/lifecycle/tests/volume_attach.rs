@@ -79,7 +79,7 @@ fn rejected() -> Reply {
 }
 
 /// Builds an attach response with an arbitrary volume map body.
-fn server_with(volumes: serde_json::Value) -> Reply {
+fn server_with(volumes: &serde_json::Value) -> Reply {
     Reply {
         status: 200,
         body: serde_json::json!({"server": {"id": "id", "volumes": volumes}}).to_string(),
@@ -168,7 +168,7 @@ async fn attach_volume_rejects_a_changed_root_entry(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let reply = server_with(serde_json::json!({
+    let reply = server_with(&serde_json::json!({
         "0": {"id": "different-root", "volume_type": "sbs_volume"},
         "1": {"id": CACHE_ID, "volume_type": "sbs_volume"},
     }));
@@ -209,7 +209,7 @@ async fn attach_volume_rejects_the_root_index(backend_fixture: ScalewayBackend) 
             volume_type: Some(String::from("sbs_volume")),
         },
     )]);
-    let reply = server_with(serde_json::json!({
+    let reply = server_with(&serde_json::json!({
         "0": {"id": CACHE_ID, "volume_type": "sbs_volume"},
     }));
     let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
@@ -233,7 +233,7 @@ async fn attach_volume_rejects_a_missing_cache_entry(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let reply = server_with(serde_json::json!({
+    let reply = server_with(&serde_json::json!({
         "0": {"id": "root-id", "volume_type": "sbs_volume"},
     }));
     let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
@@ -303,7 +303,7 @@ async fn detach_volume_rejects_a_map_that_still_holds_the_cache(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let reply = server_with(serde_json::json!({
+    let reply = server_with(&serde_json::json!({
         "0": {"id": "root-id", "volume_type": "sbs_volume"},
         "1": {"id": CACHE_ID, "volume_type": "sbs_volume"},
     }));
@@ -361,7 +361,7 @@ async fn detach_volume_rejects_a_missing_root_entry(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let reply = server_with(serde_json::json!({}));
+    let reply = server_with(&serde_json::json!({}));
     let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
         backend.detach_volume(&handle, CACHE_ID).await
     })
@@ -389,7 +389,7 @@ async fn attach_volume_requires_the_sbs_volume_type(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let reply = server_with(serde_json::json!({
+    let reply = server_with(&serde_json::json!({
         "0": {"id": "root-id", "volume_type": "sbs_volume"},
         "1": {"id": CACHE_ID, "volume_type": "l_ssd"},
     }));

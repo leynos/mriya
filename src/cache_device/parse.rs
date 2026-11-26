@@ -79,7 +79,7 @@ impl CacheDeviceStatus {
 
     /// Returns the script token.
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::Verified => "verified",
             Self::Formatted => "formatted",

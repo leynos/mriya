@@ -167,8 +167,8 @@ impl PrefailStage {
             Self::Config => CliError::Config(String::from("fake")),
             Self::Sync => CliError::Sync(String::from("fake")),
             Self::Backend => CliError::Backend(String::from("fake")),
-            Self::Run => CliError::Run(RunError::Provision(ScalewayBackendError::Config(
-                String::from("fake"),
+            Self::Run => CliError::Run(RunError::Provision(Box::new(
+                ScalewayBackendError::Config(String::from("fake")),
             ))),
         }
     }

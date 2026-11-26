@@ -370,8 +370,7 @@ fn map_failure_kind(
 ) -> InitFailureKind {
     match err {
         InitError::Config(_) => InitFailureKind::Config,
-        InitError::Volume(_) => InitFailureKind::Volume,
-        InitError::VolumeReady { .. } => InitFailureKind::Volume,
+        InitError::Volume(_) | InitError::VolumeReady { .. } => InitFailureKind::Volume,
         InitError::Provision(_) => InitFailureKind::Provision,
         InitError::Wait { .. } => InitFailureKind::Wait,
         InitError::FormatDeviceNotFound { .. }

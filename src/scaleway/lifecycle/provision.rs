@@ -53,30 +53,24 @@ impl ScalewayBackend {
         };
         let expected = expected_map(&server.volumes.volumes);
 
-        let mut is_attached = false;
+        let mut attached_cache = None;
         if let Some(id) = volume_id {
             let Some(root) = expected.get("0") else {
                 let error = ScalewayBackendError::VolumeNotFound {
                     volume_id: String::from("0"),
                     zone: handle.zone.clone(),
                 };
-                return Err(self
-                    .rollback_after_create(&handle, Some(id), false, error)
-                    .await);
+                return Err(self.rollback_after_create(&handle, None, error).await);
             };
 
             if let Err(error) = Self::validate_cache_volume_id(id, &root.id, &handle) {
-                return Err(self
-                    .rollback_after_create(&handle, Some(id), false, error)
-                    .await);
+                return Err(self.rollback_after_create(&handle, None, error).await);
             }
 
             if let Err(error) = self.attach_volume(&handle, id, &expected).await {
-                return Err(self
-                    .rollback_after_create(&handle, Some(id), false, error)
-                    .await);
+                return Err(self.rollback_after_create(&handle, None, error).await);
             }
-            is_attached = true;
+            attached_cache = Some(AttachedCache { volume_id: id });
         }
 
         let snapshot = InstanceSnapshot {
@@ -93,7 +87,7 @@ impl ScalewayBackend {
         let zone = Zone::from(request.zone.as_str());
         if let Err(error) = self.power_on_if_needed(&zone, &snapshot).await {
             return Err(self
-                .rollback_after_create(&handle, volume_id, is_attached, error)
+                .rollback_after_create(&handle, attached_cache, error)
                 .await);
         }
 
@@ -208,25 +202,25 @@ impl ScalewayBackend {
     async fn rollback_after_create(
         &self,
         handle: &InstanceHandle,
-        volume_id: Option<&str>,
-        is_attached: bool,
+        cache: Option<AttachedCache<'_>>,
         original: ScalewayBackendError,
     ) -> ScalewayBackendError {
-        if is_attached && let Some(volume_id) = volume_id {
+        if let Some(attached) = cache {
+            let id = attached.volume_id;
             if let Err(error) = self.power_off_if_needed(handle).await {
                 return ScalewayBackendError::RollbackFailed {
                     original: Box::new(original),
                     cleanup: format!(
-                        "could not stop server {} before detaching volume {volume_id}: {error}; the server was retained",
+                        "could not stop server {} before detaching volume {id}: {error}; the server was retained",
                         handle.id
                     ),
                 };
             }
-            if let Err(error) = self.detach_volume(handle, volume_id).await {
+            if let Err(error) = self.detach_volume(handle, id).await {
                 return ScalewayBackendError::RollbackFailed {
                     original: Box::new(original),
                     cleanup: format!(
-                        "could not detach volume {volume_id} from server {}: {error}; the server was retained to protect the cache",
+                        "could not detach volume {id} from server {}: {error}; the server was retained to protect the cache",
                         handle.id
                     ),
                 };
@@ -241,4 +235,11 @@ impl ScalewayBackend {
             },
         }
     }
+}
+
+/// Cache volume known to be attached during a failed create.
+#[derive(Clone, Copy)]
+struct AttachedCache<'a> {
+    /// Volume that must be detached before the server can be destroyed.
+    volume_id: &'a str,
 }

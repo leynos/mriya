@@ -233,23 +233,9 @@ where
     /// configuration updates fail.
     pub async fn execute(&self, request: &InitRequest) -> Result<InitOutcome, InitError<B::Error>> {
         let file_volume_id = self.config_writer.current_volume_id()?;
-        self.ensure_configurable(request, file_volume_id.as_deref())?;
+        Self::ensure_configurable(request, file_volume_id.as_deref())?;
 
-        let volume = self
-            .backend
-            .create_volume(&request.volume)
-            .await
-            .map_err(InitError::Volume)?;
-
-        if let Err(source) = self
-            .backend
-            .wait_for_volume_status(&volume.zone, &volume.id, VolumeStatus::Available)
-            .await
-        {
-            let message = source.to_string();
-            let error = InitError::VolumeReady { message, source };
-            return Err(self.rollback(&volume, None, error).await);
-        }
+        let volume = self.create_ready_volume(request).await?;
 
         let mut instance_request = request.instance_request.clone();
         instance_request.volume_id = Some(volume.id.clone());
@@ -258,7 +244,7 @@ where
         let handle = match self.backend.create(&instance_request).await {
             Ok(handle) => handle,
             Err(source) => {
-                let error = InitError::Provision(source);
+                let error = InitError::Provision(Box::new(source));
                 return Err(self.rollback(&volume, None, error).await);
             }
         };
@@ -267,7 +253,10 @@ where
             Ok(networking) => networking,
             Err(source) => {
                 let message = source.to_string();
-                let error = InitError::Wait { message, source };
+                let error = InitError::Wait {
+                    message,
+                    source: Box::new(source),
+                };
                 return Err(self.rollback(&volume, Some(&handle), error).await);
             }
         };
@@ -278,7 +267,7 @@ where
         }
 
         if let Err(source) = self.backend.teardown(&handle, Some(&volume.id)).await {
-            return Err(InitError::Teardown(source));
+            return Err(InitError::Teardown(Box::new(source)));
         }
 
         let config_path = match self
@@ -309,6 +298,36 @@ where
         })
     }
 
+    /// Creates the cache volume and waits for its documented ready state.
+    ///
+    /// A failure after creation rolls the owned volume back, so a volume that
+    /// never becomes available does not outlive the command that made it.
+    async fn create_ready_volume(
+        &self,
+        request: &InitRequest,
+    ) -> Result<VolumeHandle, InitError<B::Error>> {
+        let volume = self
+            .backend
+            .create_volume(&request.volume)
+            .await
+            .map_err(|source| InitError::Volume(Box::new(source)))?;
+
+        if let Err(source) = self
+            .backend
+            .wait_for_volume_status(&volume.zone, &volume.id, VolumeStatus::Available)
+            .await
+        {
+            let message = source.to_string();
+            let error = InitError::VolumeReady {
+                message,
+                source: Box::new(source),
+            };
+            return Err(self.rollback(&volume, None, error).await);
+        }
+
+        Ok(volume)
+    }
+
     /// Fails before creating anything when an effective volume ID is already
     /// configured and overwriting was not requested.
     ///
@@ -316,7 +335,6 @@ where
     /// prefers over the file, so creating a new volume while it is set would
     /// silently leave the new cache unused.
     fn ensure_configurable(
-        &self,
         request: &InitRequest,
         file_volume_id: Option<&str>,
     ) -> Result<(), InitError<B::Error>> {
@@ -359,12 +377,12 @@ where
     ) -> InitError<B::Error> {
         let mut cleanup = Vec::new();
 
-        if let Some(handle) = handle
-            && let Err(error) = self.backend.teardown(handle, Some(&volume.id)).await
+        if let Some(formatter) = handle
+            && let Err(error) = self.backend.teardown(formatter, Some(&volume.id)).await
         {
             cleanup.push(format!(
                 "tearing down formatter {} failed: {error}",
-                handle.id
+                formatter.id
             ));
         }
 
@@ -378,9 +396,8 @@ where
         if cleanup.is_empty() {
             original
         } else {
-            let original: Box<dyn std::error::Error + Send + Sync + 'static> = Box::new(original);
             InitError::Rollback {
-                original,
+                original: Box::new(original),
                 cleanup: cleanup.join("; "),
             }
         }
@@ -457,7 +474,7 @@ fn format_error<BackendError: std::error::Error + 'static>(
         FormatFailure::Spawn { message, source } => InitError::FormatFailed {
             volume_id: volume_id.to_owned(),
             message,
-            source: Some(source),
+            source: Some(Box::new(source)),
         },
         FormatFailure::Protocol { message } => InitError::FormatFailed {
             volume_id: volume_id.to_owned(),

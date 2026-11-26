@@ -119,17 +119,17 @@ fn provision_with_cloud_init_and_run(
 
     let mut request = backend
         .default_request()
-        .map_err(mriya::RunError::Provision)?;
+        .map_err(|error| mriya::RunError::Provision(Box::new(error)))?;
     request.cloud_init_user_data = Some(String::from(CLOUD_INIT_JQ));
 
     let temp_source_dir = temp_source_dir_result.map_err(|message| {
-        mriya::RunError::Provision(ScalewayBackendError::Provider { message })
+        mriya::RunError::Provision(Box::new(ScalewayBackendError::Provider { message }))
     })?;
     let source = camino::Utf8PathBuf::from_path_buf(temp_source_dir.path().to_path_buf()).map_err(
         |path| {
-            mriya::RunError::Provision(ScalewayBackendError::Provider {
+            mriya::RunError::Provision(Box::new(ScalewayBackendError::Provider {
                 message: format!("temp dir should be utf8: {}", path.display()),
-            })
+            }))
         },
     )?;
 
@@ -137,9 +137,9 @@ fn provision_with_cloud_init_and_run(
         RunOrchestrator::new(backend, sync_pipeline);
 
     let runtime = RUNTIME.as_ref().map_err(|err| {
-        mriya::RunError::Provision(ScalewayBackendError::Provider {
+        mriya::RunError::Provision(Box::new(ScalewayBackendError::Provider {
             message: format!("tokio runtime should start for integration tests: {err}"),
-        })
+        }))
     })?;
     runtime.block_on(async {
         orchestrator

@@ -63,7 +63,7 @@ where
     Config(#[from] ConfigStoreError),
     /// Raised when volume creation fails.
     #[error("failed to create volume: {0}")]
-    Volume(#[source] BackendError),
+    Volume(#[source] Box<BackendError>),
     /// Raised when the new volume never becomes available.
     #[error("new volume did not become available: {message}")]
     VolumeReady {
@@ -71,11 +71,11 @@ where
         message: String,
         /// Provider-specific error.
         #[source]
-        source: BackendError,
+        source: Box<BackendError>,
     },
     /// Raised when instance creation fails.
     #[error("failed to provision formatter instance: {0}")]
-    Provision(#[source] BackendError),
+    Provision(#[source] Box<BackendError>),
     /// Raised when instance readiness checks fail.
     #[error("instance did not become ready: {message}")]
     Wait {
@@ -83,7 +83,7 @@ where
         message: String,
         /// Provider-specific error.
         #[source]
-        source: BackendError,
+        source: Box<BackendError>,
     },
     /// Raised when no guest disk carries the new volume's serial.
     #[error("cannot format volume {volume_id}: no disk reports its serial ({message})")]
@@ -140,7 +140,7 @@ where
         message: String,
         /// Underlying sync error, if any.
         #[source]
-        source: Option<SyncError>,
+        source: Option<Box<SyncError>>,
     },
     /// Raised when volume detachment fails.
     #[error("failed to detach volume: {message}")]
@@ -149,11 +149,11 @@ where
         message: String,
         /// Provider-specific error.
         #[source]
-        source: BackendError,
+        source: Box<BackendError>,
     },
     /// Raised when teardown fails after formatting succeeds.
     #[error("failed to destroy formatter instance: {0}")]
-    Teardown(#[source] BackendError),
+    Teardown(#[source] Box<BackendError>),
     /// Raised when cleanup after a failed init could not remove everything.
     #[error("{original} (rollback also failed: {cleanup})")]
     Rollback {

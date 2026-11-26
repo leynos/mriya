@@ -429,7 +429,14 @@ async fn delete_volume_reports_a_rejection(backend_fixture: ScalewayBackend) -> 
 #[rstest]
 fn legacy_fixture_is_classified_as_legacy() -> Result<()> {
     let state = fixture_state(include_str!("fixtures/block-volume-legacy.json"))?;
-    assert!(state.is_legacy());
-    assert_eq!(state.status, VolumeStatus::Available);
+    anyhow::ensure!(
+        state.is_legacy(),
+        "legacy fixture was not classified as legacy"
+    );
+    anyhow::ensure!(
+        state.status == VolumeStatus::Available,
+        "legacy fixture should be available, got {}",
+        state.status
+    );
     Ok(())
 }

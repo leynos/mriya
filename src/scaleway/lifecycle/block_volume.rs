@@ -52,11 +52,11 @@ impl ScalewayBackend {
         if status.is_client_error() {
             return Err(super::http::api_error(response).await);
         }
-        let response = response
+        let checked = response
             .error_for_status()
             .map_err(|err| super::http::request_error(&err))?;
         let volume: SbsVolume =
-            response
+            checked
                 .json()
                 .await
                 .map_err(|err| ScalewayBackendError::Provider {

@@ -137,7 +137,12 @@ fn with_project(project: &str) -> Reply {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/block-volume-available.json"))
             .expect("volume fixture is JSON");
-    value["project_id"] = serde_json::Value::String(project.to_owned());
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            String::from("project_id"),
+            serde_json::Value::String(project.to_owned()),
+        );
+    }
     Reply {
         status: 200,
         body: value.to_string(),
@@ -442,7 +447,7 @@ async fn rollback_retains_the_server_when_detachment_fails(
     assert!(
         requests
             .iter()
-            .all(|request| !request.starts_with("DELETE /instance/")),
+            .all(|captured| !captured.starts_with("DELETE /instance/")),
         "a retained server must not be deleted: {requests:?}"
     );
     Ok(())

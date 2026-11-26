@@ -191,6 +191,23 @@ impl ScriptedVolumeBackend {
             .teardown_calls
     }
 
+    /// Records one ordered-teardown attempt and reports its scripted failure.
+    fn run_teardown(&self) -> Result<(), ScriptedVolumeBackendError> {
+        let mut state = self.state.lock().map_err(|err| {
+            ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}"))
+        })?;
+        state.teardown_calls += 1;
+        state.destroy_calls += 1;
+
+        if state.failures.contains(FailureMode::Detach) {
+            return Err(ScriptedVolumeBackendError::Detach);
+        }
+        if state.failures.contains(FailureMode::Destroy) {
+            return Err(ScriptedVolumeBackendError::Destroy);
+        }
+        Ok(())
+    }
+
     /// Execute an operation with scripted failure checking.
     fn execute_with_failure_check<T>(
         &self,
@@ -412,24 +429,7 @@ impl VolumeBackend for ScriptedVolumeBackend {
         _handle: &'a InstanceHandle,
         _volume_id: Option<&'a str>,
     ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move {
-            let outcome = {
-                let mut state = self.state.lock().map_err(|err| {
-                    ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}"))
-                })?;
-                state.teardown_calls += 1;
-                state.destroy_calls += 1;
-
-                if state.failures.contains(FailureMode::Detach) {
-                    Err(ScriptedVolumeBackendError::Detach)
-                } else if state.failures.contains(FailureMode::Destroy) {
-                    Err(ScriptedVolumeBackendError::Destroy)
-                } else {
-                    Ok(())
-                }
-            };
-            outcome
-        })
+        Box::pin(async move { self.run_teardown() })
     }
 }
 

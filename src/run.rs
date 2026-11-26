@@ -42,7 +42,7 @@ where
 {
     /// Raised when provisioning a new instance fails.
     #[error("failed to create instance: {0}")]
-    Provision(#[source] BackendError),
+    Provision(#[source] Box<BackendError>),
     /// Raised when the instance does not become reachable over SSH.
     #[error("instance did not become ready: {message}")]
     Wait {
@@ -50,7 +50,7 @@ where
         message: String,
         /// Provider-specific error.
         #[source]
-        source: BackendError,
+        source: Box<BackendError>,
     },
     /// Raised when cloud-init provisioning does not complete.
     #[error("instance provisioning did not complete: {message}")]
@@ -101,7 +101,7 @@ where
         message: String,
         /// Provider-specific error.
         #[source]
-        source: BackendError,
+        source: Box<BackendError>,
     },
 }
 
@@ -173,53 +173,46 @@ where
             .backend
             .create(request)
             .await
-            .map_err(RunError::Provision)?;
-        let networking = self
-            .wait_for_ready_or_destroy(&handle, request.volume_id.as_deref())
-            .await?;
+            .map_err(|error| RunError::Provision(Box::new(error)))?;
+        let instance = ProvisionedInstance {
+            handle: &handle,
+            volume_id: request.volume_id.as_deref(),
+        };
+        let networking = self.wait_for_ready_or_destroy(instance).await?;
 
-        let cache_verified = self
-            .mount_volume_if_needed(&handle, &networking, request)
+        let cache_routing = self
+            .mount_volume_if_needed(instance, &networking, request)
             .await?;
+        let context = StepContext {
+            instance,
+            networking: &networking,
+        };
 
         let dest = self.syncer.destination_for(&networking);
-        self.sync_or_destroy(
-            &handle,
-            &networking,
-            source,
-            &dest,
-            request.volume_id.as_deref(),
-        )
-        .await?;
+        self.sync_or_destroy(context, source, &dest).await?;
 
         if request.cloud_init_user_data.is_some() {
-            self.wait_for_cloud_init(&handle, &networking, request.volume_id.as_deref())
-                .await?;
+            self.wait_for_cloud_init(context).await?;
         }
 
         let output = self
-            .run_remote_or_destroy(
-                &handle,
-                &networking,
-                remote_command,
-                request.volume_id.as_deref(),
-                cache_verified,
-            )
+            .run_remote_or_destroy(context, remote_command, cache_routing)
             .await?;
 
-        let unmount_note = self
-            .unmount_cache(&networking, request.volume_id.as_deref())
-            .await;
-        if let Err(source) = self
+        let unmount_note = self.unmount_cache(&networking, instance.volume_id);
+        if let Err(teardown_error) = self
             .backend
-            .teardown(&handle, request.volume_id.as_deref())
+            .teardown(instance.handle, instance.volume_id)
             .await
         {
-            let message = match unmount_note {
-                Some(note) => format!("{source} ({note})"),
-                None => source.to_string(),
-            };
-            return Err(RunError::Teardown { message, source });
+            let message = unmount_note.map_or_else(
+                || teardown_error.to_string(),
+                |note| format!("{teardown_error} ({note})"),
+            );
+            return Err(RunError::Teardown {
+                message,
+                source: Box::new(teardown_error),
+            });
         }
 
         Ok(output)
@@ -235,16 +228,15 @@ where
     /// the caller sees both problems rather than only the first.
     async fn wait_for_ready_or_destroy(
         &self,
-        handle: &InstanceHandle,
-        volume_id: Option<&str>,
+        instance: ProvisionedInstance<'_>,
     ) -> Result<InstanceNetworking, RunError<B::Error>> {
-        match self.backend.wait_for_ready(handle).await {
+        match self.backend.wait_for_ready(instance.handle).await {
             Ok(net) => Ok(net),
             Err(err) => {
-                let message = self.teardown_with_note(handle, volume_id, None, &err).await;
+                let message = self.teardown_with_note(instance, None, &err).await;
                 Err(RunError::Wait {
                     message,
-                    source: err,
+                    source: Box::new(err),
                 })
             }
         }
@@ -258,34 +250,32 @@ where
     /// after the mount is verified.
     async fn mount_volume_if_needed(
         &self,
-        handle: &InstanceHandle,
+        instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
         request: &InstanceRequest,
     ) -> Result<bool, RunError<B::Error>> {
         let Some(volume_id) = request.volume_id.as_deref() else {
             return Ok(true);
         };
-        self.mount_cache_volume(handle, networking, volume_id)
+        self.mount_cache_volume(instance, networking, volume_id)
             .await?;
         Ok(true)
     }
 
-    /// Syncs the workspace to `dest`, destroying the instance if that fails.
+    /// Syncs the workspace to `dest`, tearing the instance down if that fails.
     ///
     /// For example, a failed rsync returns the sync error with the teardown
     /// outcome appended, so a leaked instance is never reported as a plain
     /// sync failure.
     async fn sync_or_destroy(
         &self,
-        handle: &InstanceHandle,
-        networking: &InstanceNetworking,
+        context: StepContext<'_>,
         source: &Utf8Path,
         dest: &crate::sync::SyncDestination,
-        volume_id: Option<&str>,
     ) -> Result<(), RunError<B::Error>> {
         if let Err(err) = self.syncer.sync(source, dest) {
             let message = self
-                .teardown_with_note(handle, volume_id, Some(networking), &err)
+                .teardown_with_note(context.instance, Some(context.networking), &err)
                 .await;
             return Err(RunError::Sync {
                 message,
@@ -295,7 +285,7 @@ where
         Ok(())
     }
 
-    /// Runs `remote_command`, destroying the instance only if it could not be
+    /// Runs `remote_command`, tearing the instance down only if it could not be
     /// started.
     ///
     /// A non-zero exit code from the command is a successful result here.
@@ -305,20 +295,18 @@ where
     /// the instance and returns the error text.
     async fn run_remote_or_destroy(
         &self,
-        handle: &InstanceHandle,
-        networking: &InstanceNetworking,
+        context: StepContext<'_>,
         remote_command: &str,
-        volume_id: Option<&str>,
-        cache_verified: bool,
+        cache_routing: bool,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
         match self
             .syncer
-            .run_remote_with_cache(networking, remote_command, cache_verified)
+            .run_remote_with_cache(context.networking, remote_command, cache_routing)
         {
             Ok(result) => Ok(result),
             Err(err) => {
                 let message = self
-                    .teardown_with_note(handle, volume_id, Some(networking), &err)
+                    .teardown_with_note(context.instance, Some(context.networking), &err)
                     .await;
                 Err(RunError::Remote {
                     message,
@@ -341,7 +329,7 @@ where
     /// immediately. The `mountpoint -q` guard remains as a second check.
     async fn mount_cache_volume(
         &self,
-        handle: &InstanceHandle,
+        instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
         volume_id: &str,
     ) -> Result<(), RunError<B::Error>> {
@@ -353,7 +341,7 @@ where
             Ok(output) => output,
             Err(err) => {
                 let message = self
-                    .teardown_with_note(handle, Some(volume_id), Some(networking), &err)
+                    .teardown_with_note(instance, Some(networking), &err)
                     .await;
                 return Err(RunError::CacheMount {
                     message,
@@ -367,7 +355,7 @@ where
             Err(error) => {
                 let failure = format!("cache mount script produced no usable status: {error}");
                 let message = self
-                    .teardown_with_note(handle, Some(volume_id), Some(networking), &failure)
+                    .teardown_with_note(instance, Some(networking), &failure)
                     .await;
                 return Err(RunError::CacheMount {
                     message,
@@ -382,7 +370,7 @@ where
                 report.describe()
             );
             let message = self
-                .teardown_with_note(handle, Some(volume_id), Some(networking), &failure)
+                .teardown_with_note(instance, Some(networking), &failure)
                 .await;
             return Err(RunError::CacheMount {
                 message,
@@ -398,7 +386,7 @@ where
             );
             if let Err(err) = self.syncer.run_remote_raw(networking, &command) {
                 let message = self
-                    .teardown_with_note(handle, Some(volume_id), Some(networking), &err)
+                    .teardown_with_note(instance, Some(networking), &err)
                     .await;
                 return Err(RunError::CacheMount {
                     message,
@@ -420,20 +408,18 @@ where
     /// destroys the instance and reports the timeout.
     async fn wait_for_cloud_init(
         &self,
-        handle: &InstanceHandle,
-        networking: &InstanceNetworking,
-        volume_id: Option<&str>,
+        context: StepContext<'_>,
     ) -> Result<(), RunError<B::Error>> {
         let deadline = Instant::now() + self.cloud_init_wait_timeout;
         let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
         let command = format!("sudo test -f {cloud_init_finished_marker}");
 
         while Instant::now() <= deadline {
-            let finished = match self.syncer.run_remote(networking, &command) {
+            let finished = match self.syncer.run_remote(context.networking, &command) {
                 Ok(output) => matches!(output.exit_code, Some(0)),
                 Err(err) => {
                     let message = self
-                        .teardown_with_note(handle, volume_id, Some(networking), &err)
+                        .teardown_with_note(context.instance, Some(context.networking), &err)
                         .await;
                     return Err(RunError::Provisioning {
                         message,
@@ -454,7 +440,7 @@ where
             self.cloud_init_wait_timeout.as_secs()
         );
         let message_with_teardown = self
-            .teardown_with_note(handle, volume_id, Some(networking), &timeout_message)
+            .teardown_with_note(context.instance, Some(context.networking), &timeout_message)
             .await;
         Err(RunError::ProvisioningTimeout {
             message: message_with_teardown,
@@ -466,12 +452,12 @@ where
     /// Returns a description of the failure, if any. The caller still requests
     /// the power-off fallback, which teardown performs; this note keeps the
     /// unmount outcome visible when teardown also fails.
-    async fn unmount_cache(
+    fn unmount_cache(
         &self,
         networking: &InstanceNetworking,
         volume_id: Option<&str>,
     ) -> Option<String> {
-        let volume_id = volume_id?;
+        let id = volume_id?;
         let mount_path = &self.syncer.config().volume_mount_path;
         let script = cache_device::unmount_script(mount_path);
 
@@ -479,15 +465,15 @@ where
             Ok(output) => match cache_device::parse_report(&output.stdout) {
                 Ok(report) if report.status() == &CacheDeviceStatus::Unmounted => None,
                 Ok(report) => Some(format!(
-                    "unmount of {mount_path} for volume {volume_id} reported {}",
+                    "unmount of {mount_path} for volume {id} reported {}",
                     report.describe()
                 )),
                 Err(error) => Some(format!(
-                    "unmount of {mount_path} for volume {volume_id} produced no usable status: {error}"
+                    "unmount of {mount_path} for volume {id} produced no usable status: {error}"
                 )),
             },
             Err(error) => Some(format!(
-                "unmount request for {mount_path} (volume {volume_id}) failed: {error}"
+                "unmount request for {mount_path} (volume {id}) failed: {error}"
             )),
         }
     }
@@ -503,19 +489,40 @@ where
     /// ...)"` rather than discarding the original error.
     async fn teardown_with_note<E: Display>(
         &self,
-        handle: &InstanceHandle,
-        volume_id: Option<&str>,
+        instance: ProvisionedInstance<'_>,
         networking: Option<&InstanceNetworking>,
         err: &E,
     ) -> String {
         let mut message = err.to_string();
-        if let Some(networking) = networking
-            && let Some(note) = self.unmount_cache(networking, volume_id).await
+        if let Some(reachable) = networking
+            && let Some(note) = self.unmount_cache(reachable, instance.volume_id)
         {
             message = format!("{message} ({note})");
         }
 
-        let teardown_error = self.backend.teardown(handle, volume_id).await.err();
+        let teardown_error = self
+            .backend
+            .teardown(instance.handle, instance.volume_id)
+            .await
+            .err();
         append_teardown_note(message, teardown_error.as_ref())
     }
+}
+
+/// Instance references shared by the steps after provisioning.
+#[derive(Clone, Copy)]
+struct ProvisionedInstance<'a> {
+    /// Server created for this run.
+    handle: &'a InstanceHandle,
+    /// Configured cache volume, when one was attached.
+    volume_id: Option<&'a str>,
+}
+
+/// A provisioned instance plus its reachable networking details.
+#[derive(Clone, Copy)]
+struct StepContext<'a> {
+    /// Instance created for this run.
+    instance: ProvisionedInstance<'a>,
+    /// Public address and port used for SSH.
+    networking: &'a InstanceNetworking,
 }

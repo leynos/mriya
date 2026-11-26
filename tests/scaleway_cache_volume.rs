@@ -359,21 +359,21 @@ async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
     volume_statuses.push(teardown_and_check(harness, handle, &volume).await?);
 
     // VM 2: read A, write B.
-    let (handle, networking) = provision(harness, &volume).await?;
-    mount(harness, &syncer, &networking, &volume)?;
-    let read_a = read_file(&syncer, &networking, &path_a)?;
+    let (second_handle, second_networking) = provision(harness, &volume).await?;
+    mount(harness, &syncer, &second_networking, &volume)?;
+    let read_a = read_file(&syncer, &second_networking, &path_a)?;
     let read_a_on_second = read_a.trim() == sentinel_a;
-    write_file(&syncer, &networking, &path_b, &sentinel_b)?;
-    unmount(&syncer, &networking, &mount_path)?;
-    volume_statuses.push(teardown_and_check(harness, handle, &volume).await?);
+    write_file(&syncer, &second_networking, &path_b, &sentinel_b)?;
+    unmount(&syncer, &second_networking, &mount_path)?;
+    volume_statuses.push(teardown_and_check(harness, second_handle, &volume).await?);
 
     // VM 3: read B.
-    let (handle, networking) = provision(harness, &volume).await?;
-    mount(harness, &syncer, &networking, &volume)?;
-    let read_b = read_file(&syncer, &networking, &path_b)?;
+    let (third_handle, third_networking) = provision(harness, &volume).await?;
+    mount(harness, &syncer, &third_networking, &volume)?;
+    let read_b = read_file(&syncer, &third_networking, &path_b)?;
     let read_b_on_third = read_b.trim() == sentinel_b;
-    unmount(&syncer, &networking, &mount_path)?;
-    volume_statuses.push(teardown_and_check(harness, handle, &volume).await?);
+    unmount(&syncer, &third_networking, &mount_path)?;
+    volume_statuses.push(teardown_and_check(harness, third_handle, &volume).await?);
 
     harness
         .backend

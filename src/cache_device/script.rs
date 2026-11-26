@@ -35,8 +35,8 @@ fn quoted(value: &str) -> String { escape(value.into()).into_owned() }
 /// root mount source to its parent disk and refuses the candidate when it is
 /// that disk, the root device itself, or an ancestor of either.
 fn shared_prelude(volume_id: &str) -> String {
-    let serial = format!("volume-{}", volume_id.trim());
-    let serial = quoted(&serial);
+    let serial_name = format!("volume-{}", volume_id.trim());
+    let serial = quoted(&serial_name);
     format!(
         concat!(
             "mriya_serial={serial}\n",

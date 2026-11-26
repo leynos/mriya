@@ -32,11 +32,11 @@ impl ScalewayBackend {
         handle: &InstanceHandle,
         volume_id: Option<&str>,
     ) -> Result<(), ScalewayBackendError> {
-        if let Some(volume_id) = volume_id {
+        if let Some(id) = volume_id {
             self.power_off_if_needed(handle).await?;
-            if let Err(error) = self.detach_volume(handle, volume_id).await {
+            if let Err(error) = self.detach_volume(handle, id).await {
                 return Err(ScalewayBackendError::VolumeDetachRetainsServer {
-                    volume_id: volume_id.to_owned(),
+                    volume_id: id.to_owned(),
                     instance_id: handle.id.clone(),
                     zone: handle.zone.clone(),
                     message: error.to_string(),

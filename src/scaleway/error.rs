@@ -206,7 +206,7 @@ pub enum ScalewayBackendError {
     #[error("{original} (rollback also failed: {cleanup})")]
     RollbackFailed {
         /// Original failure that triggered the rollback.
-        original: Box<ScalewayBackendError>,
+        original: Box<Self>,
         /// Description of the failed cleanup step.
         cleanup: String,
     },
@@ -228,8 +228,8 @@ impl From<BackendError> for ScalewayBackendError {
     fn from(value: BackendError) -> Self {
         match value {
             BackendError::Validation(field) => Self::Validation(field),
-            BackendError::VolumeIdNotUuid { value } => {
-                Self::Validation(format!("volume_id '{value}' is not a canonical UUID"))
+            BackendError::VolumeIdNotUuid { value: id } => {
+                Self::Validation(format!("volume_id '{id}' is not a canonical UUID"))
             }
         }
     }
