@@ -29,6 +29,22 @@ pub struct InitRequest {
 impl InitRequest {
     /// Builds an init request from configuration and the project name.
     ///
+    /// `project_name` seeds the slug in the cache volume name, and
+    /// `overwrite_existing_volume_id` is carried into the request so the
+    /// orchestrator can refuse or replace an existing configured ID.
+    ///
+    /// # Parameters
+    ///
+    /// - `scaleway`: credentials, zone, project and instance defaults.
+    /// - `init_config`: size and tier settings for the new volume.
+    /// - `project_name`: directory name used to build the volume name.
+    /// - `overwrite_existing_volume_id`: whether `--force` was supplied.
+    ///
+    /// # Returns
+    ///
+    /// A request carrying the volume parameters, the formatter request and the
+    /// effective merged volume ID.
+    ///
     /// # Errors
     ///
     /// Returns [`InitRequestError`] when configuration or validation fails.

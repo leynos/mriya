@@ -10,198 +10,264 @@
 mod guest;
 #[path = "cache_device_support/sandbox.rs"]
 mod sandbox;
+#[path = "cache_device_support/shell.rs"]
+mod shell;
 
 use anyhow::{Result, ensure};
-use guest::{Guest, MOUNT_PATH, VOLUME_ID, format_case, mount_case, serial_line, status_of};
+use guest::{
+    Guest,
+    MOUNT_PATH,
+    StateFile,
+    VOLUME_ID,
+    format_case,
+    mount_case,
+    serial_line,
+    status_of,
+};
 use mriya::cache_device::unmount_script;
 use rstest::rstest;
 
-#[test]
-fn format_resolves_the_serial_and_formats_the_disk() -> Result<()> {
-    let guest = Guest::new()?;
-    ensure!(format_case(&guest)? == "formatted", "expected formatted");
-    let log = guest.log()?;
-    ensure!(
-        log.contains("mkfs.ext4 -F -L mriya-cache /dev/sdb"),
-        "{log}"
-    );
-    ensure!(log.contains("sync"), "{log}");
-    Ok(())
+/// One format scenario, the state it sets, and the status it must report.
+struct FormatCase {
+    /// State files written before the script runs.
+    state: &'static [(&'static str, &'static str)],
+    /// Status the script must report.
+    status: &'static str,
+    /// Whether `mkfs.ext4` must appear in the call log.
+    formats: bool,
 }
 
-#[test]
-fn format_refuses_a_missing_serial_without_formatting() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.clear("scsi")?;
-    ensure!(format_case(&guest)? == "not-found");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
+impl FormatCase {
+    /// Reports whether this case formats successfully.
+    fn succeeds(&self) -> bool { self.status == "formatted" }
 }
 
-#[test]
-fn format_refuses_a_duplicate_serial_without_formatting() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set(
-        "scsi",
-        &format!(
-            "{}{}",
-            serial_line("sdb", VOLUME_ID),
-            serial_line("sdc", VOLUME_ID)
-        ),
-    )?;
-    ensure!(format_case(&guest)? == "ambiguous");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
+/// Format scenarios covering every refusal and the formatting path.
+const FORMAT_CASES: &[FormatCase] = &[
+    FormatCase {
+        state: &[],
+        status: "formatted",
+        formats: true,
+    },
+    FormatCase {
+        state: &[("scsi", "")],
+        status: "not-found",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("scsi", "duplicate")],
+        status: "ambiguous",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("scsi", "root-disk")],
+        status: "root-disk",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("scsi", "root-partition")],
+        status: "root-disk",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("signature-TYPE", "ext4\n")],
+        status: "signature-present",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("signature-PTTYPE", "gpt\n")],
+        status: "signature-present",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("signature-TYPE", "code=8\n")],
+        status: "probe-failed",
+        formats: false,
+    },
+    FormatCase {
+        state: &[
+            ("root-source", "/dev/mapper/vg-root\n"),
+            ("pkname-vg-root", "dm-0\n"),
+            ("pkname-dm-0", "sda\n"),
+            ("scsi", "root-disk"),
+        ],
+        status: "root-disk",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("root-source", "/dev/mapper/vg-root\n")],
+        status: "root-unknown",
+        formats: false,
+    },
+    FormatCase {
+        state: &[("mkfs-exit", "1\n")],
+        status: "format-failed",
+        formats: true,
+    },
+];
+
+/// Applies one format case's state to a fresh guest.
+fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
+    for &(name, raw) in case.state {
+        let value = raw.trim_end();
+        match name {
+            "scsi" if value == "duplicate" => {
+                let duplicate = format!(
+                    "{}{}",
+                    serial_line("sdb", VOLUME_ID),
+                    serial_line("sdc", VOLUME_ID)
+                );
+                guest.set(StateFile::Scsi(&duplicate))?;
+            }
+            "scsi" if value == "root-disk" => {
+                guest.set(StateFile::Scsi(&serial_line("sda", VOLUME_ID)))?;
+            }
+            "scsi" if value == "root-partition" => {
+                guest.set(StateFile::Scsi(&serial_line("sda1", VOLUME_ID)))?;
+            }
+            "scsi" => guest.set(StateFile::Scsi(value))?,
+            "root-source" => guest.set(StateFile::RootSource(value))?,
+            "pkname-vg-root" => guest.set(StateFile::PknameVgRoot(value))?,
+            "pkname-dm-0" => guest.set(StateFile::PknameDm0(value))?,
+            "signature-TYPE" => guest.set(StateFile::SignatureType(value))?,
+            "signature-PTTYPE" => guest.set(StateFile::SignaturePartitionTable(value))?,
+            "mkfs-exit" => guest.set(StateFile::MkfsExit(value))?,
+            "umount-exit" => guest.set(StateFile::UmountExit(value))?,
+            "chown-exit" => guest.set(StateFile::ChownExit(value))?,
+            "mount-source" => guest.set(StateFile::MountSource(value))?,
+            "mount-source-override" => {
+                guest.set(StateFile::MountSourceOverride(value))?;
+            }
+            _ => return Err(anyhow::anyhow!("unknown state file: {name}")),
+        }
+    }
     Ok(())
 }
 
 #[rstest]
-#[case::root_disk("sda", "root-disk")]
-#[case::root_partition("sda1", "root-disk")]
-fn format_refuses_the_root_device(#[case] disk: &str, #[case] expected: &str) -> Result<()> {
+fn format_refuses_unsafe_devices(
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)] index: usize,
+) -> Result<()> {
+    let case = FORMAT_CASES
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("format case {index} is out of range"))?;
     let guest = Guest::new()?;
-    guest.set("scsi", &serial_line(disk, VOLUME_ID))?;
-    ensure!(format_case(&guest)? == expected);
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_refuses_an_existing_signature() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    ensure!(format_case(&guest)? == "signature-present");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_refuses_a_partition_table() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-PTTYPE", "gpt\n")?;
-    ensure!(format_case(&guest)? == "signature-present");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_refuses_an_ambiguous_probe() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "code=8\n")?;
-    ensure!(format_case(&guest)? == "probe-failed");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_refuses_a_device_mapper_root_disk() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("root-source", "/dev/mapper/vg-root\n")?;
-    guest.set("pkname-vg-root", "dm-0\n")?;
-    guest.set("pkname-dm-0", "sda\n")?;
-    guest.set("scsi", &serial_line("sda", VOLUME_ID))?;
-    ensure!(format_case(&guest)? == "root-disk");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_refuses_an_unresolvable_root() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("root-source", "/dev/mapper/vg-root\n")?;
-    ensure!(format_case(&guest)? == "root-unknown");
-    ensure!(!guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn format_reports_a_mkfs_failure() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("mkfs-exit", "1\n")?;
-    ensure!(format_case(&guest)? == "format-failed");
-    ensure!(guest.log()?.contains("mkfs.ext4"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn mount_verifies_the_source_and_sets_ownership() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    ensure!(mount_case(&guest)? == "verified");
+    apply_format_state(&guest, case)?;
+    ensure!(
+        format_case(&guest)? == case.status,
+        "case {index} expected {}",
+        case.status
+    );
     let log = guest.log()?;
-    ensure!(log.contains("mount -o defaults /dev/sdb /mriya"), "{log}");
-    ensure!(log.contains("chown ubuntu:ubuntu /mriya"), "{log}");
-    Ok(())
-}
-
-#[test]
-fn mount_refuses_a_non_ext4_source() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "xfs\n")?;
-    ensure!(mount_case(&guest)? == "not-ext4");
     ensure!(
-        !guest.log()?.contains("mount -o defaults"),
-        "{}",
-        guest.log()?
+        log.contains("mkfs.ext4") == case.formats,
+        "case {index} formatting mismatch: {log}"
     );
+    if case.formats {
+        ensure!(
+            log.contains("mkfs.ext4 -F -L mriya-cache /dev/sdb"),
+            "{log}"
+        );
+    }
+    if case.succeeds() {
+        ensure!(log.contains("sync"), "{log}");
+    }
     Ok(())
 }
 
-#[test]
-fn mount_refuses_an_occupied_path() -> Result<()> {
+/// One mount scenario, the state it sets, and the status it must report.
+struct MountCase {
+    /// State files written before the script runs.
+    state: &'static [(&'static str, &'static str)],
+    /// Status the script must report.
+    status: &'static str,
+    /// Whether the mount command must appear in the call log.
+    mounts: bool,
+}
+
+/// Mount scenarios covering every refusal and the verified path.
+const MOUNT_CASES: &[MountCase] = &[
+    MountCase {
+        state: &[("signature-TYPE", "ext4\n")],
+        status: "verified",
+        mounts: true,
+    },
+    MountCase {
+        state: &[("signature-TYPE", "xfs\n")],
+        status: "not-ext4",
+        mounts: false,
+    },
+    MountCase {
+        state: &[("signature-TYPE", "ext4\n"), ("signature-PTTYPE", "gpt\n")],
+        status: "not-ext4",
+        mounts: false,
+    },
+    MountCase {
+        state: &[("signature-TYPE", "code=8\n")],
+        status: "probe-failed",
+        mounts: false,
+    },
+    MountCase {
+        state: &[("signature-TYPE", "ext4\n"), ("mount-source", "/dev/sdc\n")],
+        status: "mount-occupied",
+        mounts: false,
+    },
+    MountCase {
+        state: &[
+            ("signature-TYPE", "ext4\n"),
+            ("mount-source-override", "/dev/sdc\n"),
+        ],
+        status: "wrong-source",
+        // This case mounts the device, then refuses because the mount source
+        // is not the resolved device.
+        mounts: true,
+    },
+    MountCase {
+        state: &[("scsi", "root-disk"), ("signature-TYPE", "ext4\n")],
+        status: "root-disk",
+        mounts: false,
+    },
+];
+
+#[rstest]
+fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6)] index: usize) -> Result<()> {
+    let case = MOUNT_CASES
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("mount case {index} is out of range"))?;
     let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    guest.set("mount-source", "/dev/sdc\n")?;
-    ensure!(mount_case(&guest)? == "mount-occupied");
+    apply_format_state(
+        &guest,
+        &FormatCase {
+            state: case.state,
+            status: "",
+            formats: false,
+        },
+    )?;
+    let observed = mount_case(&guest)?;
     ensure!(
-        !guest.log()?.contains("mount -o defaults"),
-        "{}",
-        guest.log()?
+        observed == case.status,
+        "case {index} expected {} but observed {observed}",
+        case.status
     );
-    Ok(())
-}
-
-#[test]
-fn mount_refuses_a_wrong_source_without_chowning() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    guest.set("mount-source-override", "/dev/sdc\n")?;
-    ensure!(mount_case(&guest)? == "wrong-source");
-    ensure!(!guest.log()?.contains("chown"), "{}", guest.log()?);
-    Ok(())
-}
-
-#[test]
-fn mount_refuses_a_partitioned_device() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    guest.set("signature-PTTYPE", "gpt\n")?;
-    ensure!(mount_case(&guest)? == "not-ext4");
+    let log = guest.log()?;
     ensure!(
-        !guest.log()?.contains("mount -o defaults"),
-        "{}",
-        guest.log()?
+        log.contains("mount -o defaults") == case.mounts,
+        "case {index} mount mismatch: {log}"
     );
-    Ok(())
-}
-
-#[test]
-fn mount_refuses_an_ambiguous_probe() -> Result<()> {
-    let guest = Guest::new()?;
-    guest.set("signature-TYPE", "code=8\n")?;
-    ensure!(mount_case(&guest)? == "probe-failed");
-    ensure!(
-        !guest.log()?.contains("mount -o defaults"),
-        "{}",
-        guest.log()?
-    );
+    if case.mounts {
+        ensure!(log.contains("mount -o defaults /dev/sdb /mriya"), "{log}");
+    }
+    if case.status == "verified" {
+        ensure!(log.contains("chown ubuntu:ubuntu /mriya"), "{log}");
+    }
     Ok(())
 }
 
 #[test]
 fn mount_refuses_when_ownership_fails() -> Result<()> {
     let guest = Guest::new()?;
-    guest.set("signature-TYPE", "ext4\n")?;
-    guest.set("chown-exit", "1\n")?;
+    guest.set(StateFile::SignatureType("ext4"))?;
+    guest.set(StateFile::ChownExit("1"))?;
     ensure!(mount_case(&guest)? == "ownership-failed");
     ensure!(guest.log()?.contains("chown"), "{}", guest.log()?);
     Ok(())
@@ -210,8 +276,8 @@ fn mount_refuses_when_ownership_fails() -> Result<()> {
 #[test]
 fn mount_refuses_the_root_disk_without_mounting() -> Result<()> {
     let guest = Guest::new()?;
-    guest.set("scsi", &serial_line("sda", VOLUME_ID))?;
-    guest.set("signature-TYPE", "ext4\n")?;
+    guest.set(StateFile::Scsi(&serial_line("sda", VOLUME_ID)))?;
+    guest.set(StateFile::SignatureType("ext4"))?;
     ensure!(mount_case(&guest)? == "root-disk");
     let log = guest.log()?;
     ensure!(!log.contains("mount -o defaults"), "{log}");
@@ -222,7 +288,7 @@ fn mount_refuses_the_root_disk_without_mounting() -> Result<()> {
 #[test]
 fn unmount_flushes_and_unmounts() -> Result<()> {
     let guest = Guest::new()?;
-    guest.set("mount-source", "/dev/sdb\n")?;
+    guest.set(StateFile::MountSource("/dev/sdb"))?;
     ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "unmounted");
     let log = guest.log()?;
     ensure!(log.contains("sync"), "{log}");
@@ -233,7 +299,7 @@ fn unmount_flushes_and_unmounts() -> Result<()> {
 #[test]
 fn unmount_refuses_a_foreign_source() -> Result<()> {
     let guest = Guest::new()?;
-    guest.set("mount-source", "/dev/sdc\n")?;
+    guest.set(StateFile::MountSource("/dev/sdc"))?;
     ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "wrong-source");
     ensure!(!guest.log()?.contains("umount"), "{}", guest.log()?);
     Ok(())
@@ -242,8 +308,8 @@ fn unmount_refuses_a_foreign_source() -> Result<()> {
 #[test]
 fn unmount_refuses_a_missing_serial() -> Result<()> {
     let guest = Guest::new()?;
-    guest.clear("scsi")?;
-    guest.set("mount-source", "/dev/sdb\n")?;
+    guest.set(StateFile::Scsi(""))?;
+    guest.set(StateFile::MountSource("/dev/sdb"))?;
     ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "not-found");
     ensure!(!guest.log()?.contains("umount"), "{}", guest.log()?);
     Ok(())
@@ -252,8 +318,8 @@ fn unmount_refuses_a_missing_serial() -> Result<()> {
 #[test]
 fn unmount_reports_a_failure() -> Result<()> {
     let guest = Guest::new()?;
-    guest.set("mount-source", "/dev/sdb\n")?;
-    guest.set("umount-exit", "1\n")?;
+    guest.set(StateFile::MountSource("/dev/sdb"))?;
+    guest.set(StateFile::UmountExit("1"))?;
     ensure!(status_of(&unmount_script(VOLUME_ID, MOUNT_PATH), &guest)? == "unmount-failed");
     Ok(())
 }

@@ -193,38 +193,53 @@ pub(crate) fn verify_detached(
     volume_id: &str,
     expected: &ExpectedVolumeMap,
 ) -> Result<(), String> {
+    verify_cache_removed(returned, volume_id)?;
+    verify_surviving_entries(returned, expected, volume_id)?;
+    verify_root_present(returned)
+}
+
+/// Rejects a detachment response that still contains the cache entry.
+fn verify_cache_removed(returned: &ServerVolumeMap, volume_id: &str) -> Result<(), String> {
     if returned.values().any(|entry| entry.id == volume_id) {
         return Err(format!(
             "cache volume {volume_id} is still present after detachment"
         ));
     }
+    Ok(())
+}
 
+/// Verifies that every unrelated entry survives the detachment unchanged.
+fn verify_surviving_entries(
+    returned: &ServerVolumeMap,
+    expected: &ExpectedVolumeMap,
+    volume_id: &str,
+) -> Result<(), String> {
     for (index, before) in expected {
         if before.id == volume_id {
             continue;
         }
-        match returned.get(index) {
-            Some(after) if after.id == before.id => {}
-            Some(after) => {
-                return Err(format!(
-                    "volume index {index} changed from {} to {} during detachment",
-                    before.id, after.id
-                ));
-            }
-            None if index.as_str() == "0" => {
-                return Err(String::from(
-                    "root volume is missing from the map after detachment",
-                ));
-            }
-            None => {
-                return Err(format!(
+        let Some(after) = returned.get(index) else {
+            return Err(if index.as_str() == "0" {
+                String::from("root volume is missing from the map after detachment")
+            } else {
+                format!(
                     "volume index {index} ({}) disappeared after detachment",
                     before.id
-                ));
-            }
+                )
+            });
+        };
+        if after.id != before.id {
+            return Err(format!(
+                "volume index {index} changed from {} to {} during detachment",
+                before.id, after.id
+            ));
         }
     }
+    Ok(())
+}
 
+/// Verifies that the returned map still has a non-blank root entry.
+fn verify_root_present(returned: &ServerVolumeMap) -> Result<(), String> {
     match returned.get("0") {
         Some(root) if !root.id.trim().is_empty() => Ok(()),
         Some(_) => Err(String::from(

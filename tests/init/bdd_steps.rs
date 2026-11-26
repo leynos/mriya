@@ -6,6 +6,7 @@ use tokio::runtime::Runtime;
 
 use super::{
     config_store_double::MemoryConfigStore,
+    doubles_support::LifecycleEvent,
     failure_kind::{map_failure_kind, parse_failure_kind},
     test_helpers::{InitContext, InitContextResult, InitFailure, InitResult, InitTestError},
 };
@@ -332,12 +333,28 @@ fn formatter_torn_down(init_context_result: &InitContextResult) -> Result<(), St
 
 #[then("the new volume is waited for before attachment")]
 fn new_volume_waited_for(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    assert_counter_condition(
-        init_context_result,
-        |ctx| ctx.backend.volume_ready_calls(),
-        |count| count > 0,
-        "the new volume should be polled until available",
-    )
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    let ready = events
+        .iter()
+        .position(|event| *event == LifecycleEvent::VolumeReady);
+    let created = events
+        .iter()
+        .position(|event| *event == LifecycleEvent::InstanceCreated);
+    match (ready, created) {
+        (Some(ready_index), Some(created_index)) if ready_index < created_index => Ok(()),
+        (None, _) => Err(StepError::Assertion(String::from(
+            "the new volume was never polled until available",
+        ))),
+        (_, None) => Err(StepError::Assertion(String::from(
+            "the formatter instance was never created",
+        ))),
+        _ => Err(StepError::Assertion(format!(
+            "the volume must reach available before attachment; events: {events:?}"
+        ))),
+    }
 }
 
 #[then("the owned volume is deleted")]

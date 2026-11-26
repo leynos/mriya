@@ -26,6 +26,10 @@ pub struct VolumeState {
 impl VolumeState {
     /// Reports whether the volume belongs to the legacy Block Storage class.
     ///
+    /// # Returns
+    ///
+    /// `true` for a `b_ssd` type or a `bssd` storage class.
+    ///
     /// # Examples
     ///
     /// ```ignore
@@ -94,6 +98,15 @@ pub enum VolumeStatus {
 impl VolumeStatus {
     /// Maps a provider status string to the typed value.
     ///
+    /// # Parameters
+    ///
+    /// - `value`: status string reported by the provider.
+    ///
+    /// # Returns
+    ///
+    /// A known status, or [`VolumeStatus::Unknown`] carrying the original
+    /// value so a new provider state is not lost.
+    ///
     /// # Examples
     ///
     /// ```
@@ -126,6 +139,10 @@ impl VolumeStatus {
     }
 
     /// Returns the provider spelling of the status.
+    ///
+    /// # Returns
+    ///
+    /// The lower-case status string used by the API.
     #[must_use]
     pub const fn as_str(&self) -> &str {
         match self {
@@ -144,10 +161,18 @@ impl VolumeStatus {
     }
 
     /// Reports whether the volume is ready for attachment.
+    ///
+    /// # Returns
+    ///
+    /// `true` only for [`VolumeStatus::Available`].
     #[must_use]
     pub const fn is_available(&self) -> bool { matches!(self, Self::Available) }
 
     /// Reports whether the volume is attached to a reference.
+    ///
+    /// # Returns
+    ///
+    /// `true` only for [`VolumeStatus::InUse`].
     #[must_use]
     pub const fn is_in_use(&self) -> bool { matches!(self, Self::InUse) }
 }

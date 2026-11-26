@@ -45,6 +45,15 @@ where
     R: CommandRunner,
 {
     /// Creates a new orchestrator.
+    ///
+    /// # Parameters
+    ///
+    /// - `backend`: provisions, waits for and tears down the instance.
+    /// - `syncer`: transfers the workspace and runs remote commands.
+    ///
+    /// # Returns
+    ///
+    /// A new orchestrator with the default cloud-init timing.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
         Self {
@@ -58,6 +67,14 @@ where
     /// Overrides the cloud-init polling interval.
     ///
     /// This is primarily used by tests to keep timeout scenarios fast.
+    ///
+    /// # Parameters
+    ///
+    /// - `interval`: delay between cloud-init completion checks.
+    ///
+    /// # Returns
+    ///
+    /// The orchestrator with the interval replaced.
     #[must_use]
     pub const fn with_cloud_init_poll_interval(mut self, interval: Duration) -> Self {
         self.cloud_init_poll_interval = interval;
@@ -67,6 +84,14 @@ where
     /// Overrides the cloud-init wait timeout.
     ///
     /// This is primarily used by tests to keep timeout scenarios fast.
+    ///
+    /// # Parameters
+    ///
+    /// - `timeout`: total time allowed for cloud-init to finish.
+    ///
+    /// # Returns
+    ///
+    /// The orchestrator with the timeout replaced.
     #[must_use]
     pub const fn with_cloud_init_wait_timeout(mut self, timeout: Duration) -> Self {
         self.cloud_init_wait_timeout = timeout;
@@ -79,10 +104,21 @@ where
     /// always attempted; when teardown fails the error is surfaced even if
     /// the remote command succeeded.
     ///
+    /// # Parameters
+    ///
+    /// - `request`: instance parameters, including an optional cache volume.
+    /// - `source`: local working tree to synchronize.
+    /// - `remote_command`: command to execute over SSH.
+    ///
+    /// # Returns
+    ///
+    /// The remote command's output. A non-zero remote exit code is preserved
+    /// when teardown succeeds.
+    ///
     /// # Errors
     ///
-    /// Returns [`RunError`] when provisioning, readiness checks,
-    /// synchronization, remote execution, or teardown fail.
+    /// Returns [`RunError`] when provisioning, readiness checks, cache mount
+    /// verification, synchronization, remote execution, or teardown fail.
     pub async fn execute(
         &self,
         request: &InstanceRequest,
@@ -100,13 +136,11 @@ where
         };
         let networking = self.wait_for_ready_or_destroy(instance).await?;
 
-        let cache_routing = self
-            .mount_volume_if_needed(instance, &networking, request)
-            .await?;
         let context = StepContext {
             instance,
             networking: &networking,
         };
+        self.mount_volume_if_needed(context, request).await?;
 
         let dest = self.syncer.destination_for(&networking);
         self.sync_or_destroy(context, source, &dest).await?;
@@ -115,9 +149,7 @@ where
             self.wait_for_cloud_init(context).await?;
         }
 
-        let output = self
-            .run_remote_or_destroy(context, remote_command, cache_routing)
-            .await?;
+        let output = self.run_remote_or_destroy(context, remote_command).await?;
 
         let unmount_note = self.unmount_cache(&networking, instance.volume_id);
         if let Err(failure) = self

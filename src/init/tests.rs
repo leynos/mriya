@@ -57,15 +57,48 @@ fn validate_accepts_both_supported_tiers() {
     }
 }
 
-/// Covers each cache-device refusal and the typed error it produces.
+/// The exact typed error a cache-device refusal must produce.
+#[derive(Clone, Copy, Debug)]
+enum Refusal {
+    Signature,
+    RootDisk,
+    NotFound,
+    Ambiguous,
+    RootUnknown,
+    Failed,
+}
+
+impl Refusal {
+    /// Reports whether `error` is this refusal's variant.
+    fn matches(self, error: &InitError<std::io::Error>) -> bool {
+        match self {
+            Self::Signature => matches!(error, InitError::FormatSignaturePresent { .. }),
+            Self::RootDisk => matches!(error, InitError::FormatRootDisk { .. }),
+            Self::NotFound => matches!(error, InitError::FormatDeviceNotFound { .. }),
+            Self::Ambiguous => matches!(error, InitError::FormatDeviceAmbiguous { .. }),
+            Self::RootUnknown => matches!(error, InitError::FormatRootUnknown { .. }),
+            Self::Failed => matches!(error, InitError::FormatFailed { .. }),
+        }
+    }
+}
+
+/// Covers each cache-device refusal and the exact error it produces.
 #[rstest]
-#[case("signature-present DEVICE=/dev/sdb FSTYPE=ext4", "signature")]
-#[case("root-disk DEVICE=/dev/sda", "root")]
-#[case("not-found DEVICE=serial:volume-1", "not-found")]
-#[case("ambiguous DEVICE=serial:volume-1", "ambiguous")]
-#[case("root-unknown DEVICE=/dev/sdb", "root")]
-#[case("format-failed DEVICE=/dev/sdb", "format")]
-fn format_refusals_map_to_typed_errors(#[case] line: &str, #[case] marker: &str) {
+#[case(
+    "signature-present DEVICE=/dev/sdb FSTYPE=ext4",
+    Refusal::Signature,
+    "signature"
+)]
+#[case("root-disk DEVICE=/dev/sda", Refusal::RootDisk, "root")]
+#[case("not-found DEVICE=serial:volume-1", Refusal::NotFound, "not-found")]
+#[case("ambiguous DEVICE=serial:volume-1", Refusal::Ambiguous, "ambiguous")]
+#[case("root-unknown DEVICE=/dev/sdb", Refusal::RootUnknown, "root")]
+#[case("format-failed DEVICE=/dev/sdb", Refusal::Failed, "format")]
+fn format_refusals_map_to_typed_errors(
+    #[case] line: &str,
+    #[case] expected: Refusal,
+    #[case] marker: &str,
+) {
     let report = parse_report(&format!("MRIYA_CACHE_STATUS={line}\n")).expect("status parses");
     let error = format_error::<std::io::Error>("volume-1", FormatFailure::Report(report));
     let rendered = error.to_string();
@@ -74,15 +107,10 @@ fn format_refusals_map_to_typed_errors(#[case] line: &str, #[case] marker: &str)
         "expected `{marker}` in {rendered}"
     );
     assert!(rendered.contains("volume-1"), "{rendered}");
-    assert!(matches!(
-        error,
-        InitError::FormatSignaturePresent { .. }
-            | InitError::FormatRootDisk { .. }
-            | InitError::FormatDeviceNotFound { .. }
-            | InitError::FormatDeviceAmbiguous { .. }
-            | InitError::FormatRootUnknown { .. }
-            | InitError::FormatFailed { .. }
-    ));
+    assert!(
+        expected.matches(&error),
+        "expected {expected:?}, got {error:?}"
+    );
 }
 
 /// Proves the `init` diagnostic keeps the cause and the remedy.

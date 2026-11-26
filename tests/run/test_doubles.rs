@@ -34,6 +34,7 @@ use thiserror::Error;
 #[derive(Clone, Debug)]
 pub struct ScriptedBackend {
     state: Arc<Mutex<State>>,
+    event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 /// Internal mutable state tracked by the scripted backend.
@@ -48,29 +49,40 @@ impl ScriptedBackend {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(State::default())),
+            event_log: None,
         }
     }
 
-    pub fn fail_on_destroy(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .fail_on_destroy = true;
+    /// Creates a backend that appends lifecycle events to a shared log.
+    pub fn with_event_log(event_log: Arc<Mutex<Vec<String>>>) -> Self {
+        Self {
+            event_log: Some(event_log),
+            ..Self::new()
+        }
     }
 
-    pub fn destroy_calls(&self) -> u32 {
+    /// Records one lifecycle event when a shared log is attached.
+    fn record(&self, event: &str) {
+        if let Some(log) = &self.event_log
+            && let Ok(mut events) = log.lock()
+        {
+            events.push(event.to_owned());
+        }
+    }
+
+    /// Locks the shared state, recovering from a poisoned mutex.
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .destroy_calls
     }
+
+    pub fn fail_on_destroy(&self) { self.lock_state().fail_on_destroy = true; }
+
+    pub fn destroy_calls(&self) -> u32 { self.lock_state().destroy_calls }
 
     pub fn teardown_volume_id(&self) -> Option<String> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .teardown_volume_id
-            .clone()
+        self.lock_state().teardown_volume_id.clone()
     }
 }
 
@@ -83,6 +95,11 @@ pub enum ScriptedBackendError {
     Destroy,
 }
 
+/// Wraps an already-computed value in a ready backend future.
+fn immediate<'a, T: Send + 'a>(value: T) -> BackendFuture<'a, T, ScriptedBackendError> {
+    Box::pin(async move { Ok(value) })
+}
+
 impl Backend for ScriptedBackend {
     type Error = ScriptedBackendError;
 
@@ -90,11 +107,9 @@ impl Backend for ScriptedBackend {
         &'a self,
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
-        Box::pin(async move {
-            Ok(InstanceHandle {
-                id: String::from("scripted-id"),
-                zone: String::from("test-zone"),
-            })
+        immediate(InstanceHandle {
+            id: String::from("scripted-id"),
+            zone: String::from("test-zone"),
         })
     }
 
@@ -102,11 +117,9 @@ impl Backend for ScriptedBackend {
         &'a self,
         _handle: &'a InstanceHandle,
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error> {
-        Box::pin(async move {
-            Ok(InstanceNetworking {
-                public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                ssh_port: 22,
-            })
+        immediate(InstanceNetworking {
+            public_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ssh_port: 22,
         })
     }
 
@@ -130,11 +143,9 @@ impl VolumeBackend for ScriptedBackend {
         &'a self,
         _request: &'a VolumeRequest,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error> {
-        Box::pin(async move {
-            Ok(VolumeHandle {
-                id: String::from("vol-123"),
-                zone: String::from("test-zone"),
-            })
+        immediate(VolumeHandle {
+            id: String::from("vol-123"),
+            zone: String::from("test-zone"),
         })
     }
 
@@ -143,7 +154,7 @@ impl VolumeBackend for ScriptedBackend {
         _zone: &'a str,
         _volume_id: &'a str,
     ) -> BackendFuture<'a, VolumeState, Self::Error> {
-        Box::pin(async move { Ok(volume_state()) })
+        immediate(volume_state())
     }
 
     fn wait_for_volume_status<'a>(
@@ -152,14 +163,14 @@ impl VolumeBackend for ScriptedBackend {
         _volume_id: &'a str,
         _status: VolumeStatus,
     ) -> BackendFuture<'a, VolumeState, Self::Error> {
-        Box::pin(async move { Ok(volume_state()) })
+        immediate(volume_state())
     }
 
     fn delete_volume<'a>(
         &'a self,
         _handle: &'a VolumeHandle,
     ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move { Ok(()) })
+        immediate(())
     }
 
     fn attach_volume<'a>(
@@ -167,7 +178,7 @@ impl VolumeBackend for ScriptedBackend {
         _handle: &'a InstanceHandle,
         _volume_id: &'a str,
     ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move { Ok(()) })
+        immediate(())
     }
 
     fn detach_volume<'a>(
@@ -175,7 +186,7 @@ impl VolumeBackend for ScriptedBackend {
         _handle: &'a InstanceHandle,
         _volume_id: &'a str,
     ) -> BackendFuture<'a, (), Self::Error> {
-        Box::pin(async move { Ok(()) })
+        immediate(())
     }
 
     fn teardown<'a>(
@@ -184,10 +195,8 @@ impl VolumeBackend for ScriptedBackend {
         volume_id: Option<&'a str>,
     ) -> BackendFuture<'a, (), TeardownFailure<Self::Error>> {
         Box::pin(async move {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.record("teardown");
+            let mut state = self.lock_state();
             state.destroy_calls += 1;
             state.teardown_volume_id = volume_id.map(str::to_owned);
             if state.fail_on_destroy {

@@ -204,9 +204,16 @@ updates.
   guard is in place, and run uses the ordered teardown on every path.
 - [x] EP-M5 implemented: the live three-VM suite, migration guide and price
   notes are written.
-- [ ] Deterministic gates pass (`make check-fmt`, `make lint`, `make test`).
-- [ ] CodeRabbit review concerns cleared.
-- [ ] Draft pull request opened.
+- [x] 2026-11-26: Deterministic gates pass: `make check-fmt`, `make lint`
+  (Clippy, rustdoc, Whitaker and interrogate), `make test` (571 nextest tests
+  and 18 doctests), `make markdownlint`, `make spelling` and `make nixie`.
+  CodeScene's local delta against `origin/main` reports `no-issues-found` over
+  75 eligible files.
+- [x] 2026-11-26: First CodeRabbit review pass cleared, including its
+  provider-safety, documentation and test-harness findings.
+- [x] 2026-11-26: Draft pull request #275 opened, linked to Lody session
+  `2a050576-8c80-47cd-9e03-8a32fdfc268b`.
+- [ ] Second CodeRabbit review pass after the remediation push.
 
 ## Surprises & discoveries
 
@@ -234,6 +241,17 @@ updates.
   allowance when the host's compile queue is saturated. Running the UI test
   once with plain `cargo test --test ui` pre-warms the fixture tree outside
   that per-test limit; a gate timeout in that fixture is not a code failure.
+- Clippy denies `indexing_slicing`, so an `rstest` case table read by index
+  must use `.get(index)` and report the out-of-range case as an error.
+- `build_remote_command` with `cache_verified = false` is now unreachable from
+  the run workflow: a configured cache that does not verify fails the mount
+  step before the remote command runs, so the step always passes `true` and the
+  guarded historical preamble remains the only run-time behaviour. The
+  unverified branch is still covered directly at the sync layer.
+- Whitaker's module budget counts test modules, so splitting the BDD steps,
+  the init and run doubles and the cache-device state fixtures into directory
+  modules is part of keeping the suite inside 400 lines per file rather than a
+  stylistic preference.
 
 ## Decision log
 
@@ -264,11 +282,49 @@ updates.
 - Split `volume`, `run` and `init` into module directories rather than adding
   lint suppressions. Whitaker's module budget also counts test modules, so the
   loopback and BDD suites are split by scenario family as well.
+- Make the instance step context the single source of the cache volume ID.
+  `mount_volume_if_needed` rejects a request that disagrees with the context,
+  so the mount, sync, unmount and teardown steps cannot act on different volume
+  IDs.
+- Verify a detach response with three separate checks (cache removed,
+  unrelated entries preserved, root present) rather than one nested loop, so
+  each refusal is independently named and testable.
+- Treat a mount whose `findmnt` source is not the resolved device as
+  `wrong-source` even when the mount command itself succeeded: the path could
+  have been over-mounted or redirected, and proceeding would write to the wrong
+  filesystem.
+- Type the shell-test state files instead of writing ad hoc key/value pairs.
+  The `StateFile` enum gives every fake a named state, so a case cannot typo a
+  state file name or leave the base state half-set.
+- Bound every SSH call with `ConnectTimeout` and keepalives, so a dead peer is
+  noticed within three keepalive intervals instead of hanging a readiness probe
+  past its deadline.
 
 ## Outcomes & Retrospective
 
-To be completed when the work is done. Record what shipped, what was deferred,
-and which assumptions survived contact with the implementation.
+Shipped: the Block Storage v1 creation, lookup, readiness and deletion path;
+Instances v1 attach and detach with `volume_type: sbs_volume`; tier, size, zone
+and project validation; legacy `b_ssd` refusal with migration guidance; guest
+device resolution by the `volume-<uuid>` serial; root-disk and signature guards
+for format and mount; verified mount before cache routing; unmount before
+ordered teardown; and an opt-in three-VM live suite.
+
+Deferred: no legacy attach path was kept, because no ID-preserving conversion
+exists and reinterpreting or reformatting deployed data is exactly the outcome
+the issue forbids. `sbs_1k` is not offered; the issue scopes `sbs_5k` and
+`sbs_15k`.
+
+Assumptions that survived: the provider's published OpenAPI schemas match the
+live paths, the create response is the unwrapped `Volume`, every attached
+volume is deleted with its server, and readiness must be confirmed on the Block
+Storage endpoint before attachment. Assumptions corrected during implementation:
+`list_instance` pagination consumes two loopback responses, a powered-off
+server still accepts a power-off request, and an attach POST can succeed while
+returning a map the client cannot verify.
+
+Residual risk: the live suite needs Scaleway credentials and a test-run id, so
+it is not part of the default gate. The loopback suite is the deterministic
+substitute and covers every HTTP path named in the acceptance criteria.
 
 ## Revision note
 
@@ -280,4 +336,10 @@ Revision 2 (26 November 2026) records the implemented milestones, the
 pagination discovery that affects loopback scripts, the power-off fast path,
 and the decision to expose the polling loop and the preflight at the backend
 boundary. Remaining work is gate evidence, review remediation and the pull
+request.
+
+Revision 3 (26 November 2026) records the first review remediation (typed
+refusals, verified detach and mount, ordered teardown, the single cache volume
+ID source, the bounded SSH options, the typed shell-test state files and the
+module splits), the full gate evidence, the CodeScene result and the draft pull
 request.

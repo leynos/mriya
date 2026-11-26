@@ -25,6 +25,10 @@ pub enum VolumeTier {
 
 impl VolumeTier {
     /// Returns the provider type name, such as `sbs_5k`.
+    ///
+    /// # Returns
+    ///
+    /// The stable type string used by the Block Storage API.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -34,6 +38,10 @@ impl VolumeTier {
     }
 
     /// Returns the `perf_iops` value the provider expects.
+    ///
+    /// # Returns
+    ///
+    /// `5000` for [`VolumeTier::Sbs5k`], `15000` for [`VolumeTier::Sbs15k`].
     #[must_use]
     pub const fn perf_iops(self) -> u32 {
         match self {
@@ -43,6 +51,14 @@ impl VolumeTier {
     }
 
     /// Parses a tier from its provider type name.
+    ///
+    /// # Parameters
+    ///
+    /// - `value`: type string such as `sbs_5k`; surrounding whitespace is ignored.
+    ///
+    /// # Returns
+    ///
+    /// The matching tier.
     ///
     /// # Errors
     ///

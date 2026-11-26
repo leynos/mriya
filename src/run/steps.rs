@@ -27,22 +27,28 @@ where
 {
     /// Mounts the cache volume only when the request attached one.
     ///
-    /// Returns whether cache routing is allowed. A request without an attached
-    /// volume keeps the historical behaviour: the preamble is emitted with its
-    /// `mountpoint -q` guard. A request with a volume is allowed to route only
-    /// after the mount is verified.
+    /// The instance context is the single source of the cache volume ID: the
+    /// request must agree with it, so mount and teardown can never read
+    /// different values. A request without an attached volume is the unchanged
+    /// no-cache path.
     pub(super) async fn mount_volume_if_needed(
         &self,
-        instance: ProvisionedInstance<'_>,
-        networking: &InstanceNetworking,
+        context: StepContext<'_>,
         request: &InstanceRequest,
-    ) -> Result<bool, RunError<B::Error>> {
-        let Some(volume_id) = request.volume_id.as_deref() else {
-            return Ok(true);
+    ) -> Result<(), RunError<B::Error>> {
+        let Some(volume_id) = context.instance.volume_id else {
+            return Ok(());
         };
-        self.mount_cache_volume(instance, networking, volume_id)
-            .await?;
-        Ok(true)
+        if request.volume_id.as_deref() != Some(volume_id) {
+            return Err(RunError::CacheMount {
+                message: String::from(
+                    "internal error: the configured volume and the instance context disagree",
+                ),
+                source: None,
+            });
+        }
+        self.mount_cache_volume(context.instance, context.networking, volume_id)
+            .await
     }
 
     /// Syncs the workspace to `dest`, tearing the instance down if that fails.
@@ -73,6 +79,10 @@ where
     ///
     /// A non-zero exit code from the command is a successful result here.
     ///
+    /// Cache routing is always allowed at this point: a configured cache that
+    /// did not verify has already failed the run, and a run without one keeps
+    /// the guarded preamble.
+    ///
     /// For example, a command exiting 7 returns that status in
     /// [`RemoteCommandOutput`], while a failure to start the command destroys
     /// the instance and returns the error text.
@@ -80,11 +90,10 @@ where
         &self,
         context: StepContext<'_>,
         remote_command: &str,
-        cache_routing: bool,
     ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
         match self
             .syncer
-            .run_remote_with_cache(context.networking, remote_command, cache_routing)
+            .run_remote_with_cache(context.networking, remote_command, true)
         {
             Ok(result) => Ok(result),
             Err(err) => {

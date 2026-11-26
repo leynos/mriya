@@ -153,7 +153,6 @@ impl ScalewayBackend {
                 zone: zone.to_owned(),
             });
         }
-
         if !state.project_id.trim().is_empty() && state.project_id != project_id {
             return Err(ScalewayBackendError::VolumeProjectMismatch {
                 volume_id: volume_id.to_owned(),
@@ -161,37 +160,18 @@ impl ScalewayBackend {
                 actual_project_id: state.project_id.clone(),
             });
         }
-
         if state.is_legacy() {
             return Err(ScalewayBackendError::VolumeLegacy {
                 volume_id: volume_id.to_owned(),
             });
         }
-
-        if state.status.is_in_use() || !state.references.is_empty() {
-            let references = if state.references.is_empty() {
-                String::from("provider reports status in_use")
-            } else {
-                state
-                    .references
-                    .iter()
-                    .map(crate::volume::VolumeReference::describe)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            return Err(ScalewayBackendError::VolumeAlreadyAttached {
-                volume_id: volume_id.to_owned(),
-                references,
-            });
-        }
-
+        check_attached(&state, volume_id)?;
         if !state.status.is_available() {
             return Err(ScalewayBackendError::VolumeUnavailable {
                 volume_id: volume_id.to_owned(),
                 status: state.status.to_string(),
             });
         }
-
         Ok(())
     }
 
@@ -286,4 +266,28 @@ struct PartialCreateFailure<'a> {
     cache: Option<AttachedCache<'a>>,
     /// Original error to report once cleanup finishes.
     error: ScalewayBackendError,
+}
+
+/// Rejects a volume that is attached or carries any reference.
+fn check_attached(
+    state: &crate::volume::VolumeState,
+    volume_id: &str,
+) -> Result<(), ScalewayBackendError> {
+    if !state.status.is_in_use() && state.references.is_empty() {
+        return Ok(());
+    }
+    let references = if state.references.is_empty() {
+        String::from("provider reports status in_use")
+    } else {
+        state
+            .references
+            .iter()
+            .map(crate::volume::VolumeReference::describe)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(ScalewayBackendError::VolumeAlreadyAttached {
+        volume_id: volume_id.to_owned(),
+        references,
+    })
 }

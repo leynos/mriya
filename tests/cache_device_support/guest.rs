@@ -22,36 +22,50 @@ pub(super) struct Guest {
 
 impl Guest {
     pub(super) fn new() -> Result<Self> {
+        let guest = Self::write_base_state()?;
+        for (name, body) in super::shell::fakes(guest.sandbox.root()) {
+            guest.write_tool(name, body)?;
+        }
+        Ok(guest)
+    }
+
+    /// Creates the sandbox and its default guest state.
+    fn write_base_state() -> Result<Self> {
         let sandbox = Sandbox::new().map_err(anyhow::Error::msg)?;
         sandbox
             .link_tools(&["bash", "awk"])
             .map_err(anyhow::Error::msg)?;
-        for (name, contents) in [
-            ("root-source", "/dev/sda1\n"),
-            ("pkname-sda1", "sda\n"),
-            ("scsi", &serial_line("sdb", VOLUME_ID)),
-            ("mkfs-exit", "0\n"),
-            ("umount-exit", "0\n"),
+        let guest = Self { sandbox };
+        for state in [
+            StateFile::RootSource("/dev/sda1"),
+            StateFile::PknameSda1("sda"),
+            StateFile::Scsi(serial_line("sdb", VOLUME_ID).trim_end()),
+            // A brand-new volume has no signature, so both probes exit 2.
+            StateFile::SignatureType("code=2"),
+            StateFile::SignaturePartitionTable("code=2"),
+            StateFile::MkfsExit("0"),
+            StateFile::UmountExit("0"),
         ] {
-            sandbox
-                .write_file(name, contents.as_bytes())
-                .map_err(anyhow::Error::msg)?;
+            guest.set(state)?;
         }
-
-        for (name, body) in fakes(sandbox.root()) {
-            sandbox.write_tool(name, body).map_err(anyhow::Error::msg)?;
-        }
-        Ok(Self { sandbox })
+        Ok(guest)
     }
 
-    pub(super) fn set(&self, name: &str, contents: &str) -> Result<()> {
+    /// Writes one fake utility into the sandbox's `bin`.
+    fn write_tool(&self, name: &str, body: String) -> Result<()> {
         self.sandbox
-            .write_file(name, contents.as_bytes())
+            .write_tool(name, body)
             .map_err(anyhow::Error::msg)
     }
 
-    pub(super) fn clear(&self, name: &str) -> Result<()> { self.set(name, "") }
+    /// Replaces one state file for the next script run.
+    pub(super) fn set(&self, state: StateFile<'_>) -> Result<()> {
+        self.sandbox
+            .write_file(state.name(), state.contents().as_bytes())
+            .map_err(anyhow::Error::msg)
+    }
 
+    /// Runs `script` through `sh` under the restricted `PATH`.
     pub(super) fn run(&self, script: &str) -> Result<(String, Option<i32>)> {
         let mut command = self.sandbox.command().map_err(anyhow::Error::msg)?;
         command.arg("-c").arg(script);
@@ -73,185 +87,78 @@ impl Guest {
     }
 }
 
+/// One fake-utility state file and the value it should hold.
+#[derive(Clone, Copy)]
+pub(super) enum StateFile<'a> {
+    /// The root mount source reported by `findmnt`.
+    RootSource(&'a str),
+    /// The parent kernel name reported for `sda1`.
+    PknameSda1(&'a str),
+    /// The parent kernel name reported for the `vg-root` mapper device.
+    PknameVgRoot(&'a str),
+    /// The parent kernel name reported for the `dm-0` mapper device.
+    PknameDm0(&'a str),
+    /// The `lsblk --scsi` output listing candidate disks.
+    Scsi(&'a str),
+    /// The exit status the `mkfs.ext4` fake returns.
+    MkfsExit(&'a str),
+    /// The exit status the `umount` fake returns.
+    UmountExit(&'a str),
+    /// The mount source `findmnt --mountpoint` reports.
+    MountSource(&'a str),
+    /// The source the `mount` fake substitutes after mounting.
+    MountSourceOverride(&'a str),
+    /// The `blkid -s TYPE` result, with an optional `code=` line.
+    SignatureType(&'a str),
+    /// The `blkid -s PTTYPE` result, with an optional `code=` line.
+    SignaturePartitionTable(&'a str),
+    /// The exit status the `chown` fake returns.
+    ChownExit(&'a str),
+}
+
+impl StateFile<'_> {
+    /// Returns the state file name the fakes read.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::RootSource(_) => "root-source",
+            Self::PknameSda1(_) => "pkname-sda1",
+            Self::PknameVgRoot(_) => "pkname-vg-root",
+            Self::PknameDm0(_) => "pkname-dm-0",
+            Self::Scsi(_) => "scsi",
+            Self::MkfsExit(_) => "mkfs-exit",
+            Self::UmountExit(_) => "umount-exit",
+            Self::MountSource(_) => "mount-source",
+            Self::MountSourceOverride(_) => "mount-source-override",
+            Self::SignatureType(_) => "signature-TYPE",
+            Self::SignaturePartitionTable(_) => "signature-PTTYPE",
+            Self::ChownExit(_) => "chown-exit",
+        }
+    }
+
+    /// Returns the file contents for this state value.
+    fn contents(&self) -> String {
+        match self {
+            Self::RootSource(value)
+            | Self::PknameSda1(value)
+            | Self::PknameVgRoot(value)
+            | Self::PknameDm0(value)
+            | Self::Scsi(value)
+            | Self::MkfsExit(value)
+            | Self::UmountExit(value)
+            | Self::MountSource(value)
+            | Self::MountSourceOverride(value)
+            | Self::SignatureType(value)
+            | Self::SignaturePartitionTable(value)
+            | Self::ChownExit(value) => format!("{value}\n"),
+        }
+    }
+}
+
 /// Renders one `lsblk -P` record for a disk.
 pub(super) fn serial_line(name: &str, volume_id: &str) -> String {
     format!(
         "NAME=\"{name}\" VENDOR=\"SCW\" MODEL=\"sbs\" SERIAL=\"volume-{volume_id}\" TYPE=\"disk\"\n"
     )
-}
-
-/// Reads a state file, printing nothing when it is absent.
-fn read_state(root: &str, name: &str) -> String {
-    format!(
-        concat!(
-            "if [ -f '{root}/{name}' ]; then ",
-            "while IFS= read -r line; do printf '%s\\n' \"$line\"; done < '{root}/{name}'; fi"
-        ),
-        root = root,
-        name = name,
-    )
-}
-
-/// Builds the resolver and root-guard `lsblk` fake.
-fn fake_lsblk(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'lsblk %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "case \"$*\" in\n",
-            "  *PKNAME*)\n",
-            "    for arg in \"$@\"; do target=\"$arg\"; done\n",
-            "    name=\"${{target##*/}}\"\n",
-            "    file=\"{root}/pkname-$name\"\n",
-            "    if [ -f \"$file\" ]; then while IFS= read -r line; do ",
-            "printf '%s\\n' \"$line\"; done < \"$file\"; fi\n",
-            "    ;;\n",
-            "  *)\n",
-            "    {scsi}\n",
-            "    ;;\n",
-            "esac"
-        ),
-        root = root,
-        scsi = read_state(root, "scsi"),
-    )
-}
-
-/// Builds the `findmnt` fake for the root source and mount-point queries.
-fn fake_findmnt(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'findmnt %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "case \"$*\" in\n",
-            "  *--mountpoint*)\n",
-            "    {mount}\n",
-            "    ;;\n",
-            "  *)\n",
-            "    {root_source}\n",
-            "    ;;\n",
-            "esac"
-        ),
-        root = root,
-        mount = read_state(root, "mount-source"),
-        root_source = read_state(root, "root-source"),
-    )
-}
-
-/// Builds the `blkid` fake, which reports the configured signature.
-///
-/// The fake distinguishes the `TYPE` and `PTTYPE` probes so a case can model a
-/// filesystem, a partition table, an ambiguous low-level result or an
-/// operational failure independently.
-fn fake_blkid(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'blkid %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "tag='TYPE'\n",
-            "prev=''\n",
-            "for arg in \"$@\"; do\n",
-            "  if [ \"$prev\" = '-s' ]; then tag=\"$arg\"; fi\n",
-            "  prev=\"$arg\"\n",
-            "done\n",
-            "file=\"{root}/signature-$tag\"\n",
-            "if [ -f \"$file\" ]; then\n",
-            "  value=''; code=0\n",
-            "  while IFS= read -r line; do\n",
-            "    case \"$line\" in\n",
-            "      code=*) code=\"${{line#code=}}\" ;;\n",
-            "      *) value=\"$line\" ;;\n",
-            "    esac\n",
-            "  done < \"$file\"\n",
-            "  if [ -n \"$value\" ]; then printf '%s\\n' \"$value\"; fi\n",
-            "  exit \"$code\"\n",
-            "fi\n",
-            "exit 2"
-        ),
-        root = root
-    )
-}
-
-/// Builds a fake that logs its arguments and exits successfully.
-fn fake_logger(root: &str, name: &str) -> String {
-    format!("printf '{name} %s\\n' \"$*\" >> '{root}/tools.log'\nexit 0")
-}
-
-/// Builds the `sudo` fake, which logs and runs the wrapped command.
-fn fake_sudo(root: &str) -> String {
-    format!("printf 'sudo %s\\n' \"$*\" >> '{root}/tools.log'\nexec \"$@\"")
-}
-
-/// Builds the `chown` fake, whose exit status comes from a state file.
-fn fake_chown(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'chown %s\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/chown-exit' ]; then read -r code < '{root}/chown-exit'; fi\n",
-            "exit \"${{code:-0}}\""
-        ),
-        root = root
-    )
-}
-
-/// Builds the `mkfs.ext4` fake, whose exit status comes from a state file.
-fn fake_mkfs(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'mkfs.ext4 %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/mkfs-exit' ]; then read -r code < '{root}/mkfs-exit'; fi\n",
-            "exit \"${{code:-0}}\""
-        ),
-        root = root
-    )
-}
-
-/// Builds the `mount` fake, which records the source it was given.
-fn fake_mount(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'mount %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "if [ -f '{root}/mount-source-override' ]; then\n",
-            "  while IFS= read -r line; do printf '%s\\n' \"$line\"; done ",
-            "< '{root}/mount-source-override' > '{root}/mount-source'\n",
-            "else\n",
-            "  printf '%s\\n' \"$3\" > '{root}/mount-source'\n",
-            "fi\n",
-            "exit 0"
-        ),
-        root = root
-    )
-}
-
-/// Builds the `umount` fake, whose exit status comes from a state file.
-fn fake_umount(root: &str) -> String {
-    format!(
-        concat!(
-            "printf 'umount %s\\n' \"$*\" >> '{root}/tools.log'\n",
-            "code=0\n",
-            "if [ -f '{root}/umount-exit' ]; then read -r code < '{root}/umount-exit'; fi\n",
-            "if [ \"${{code:-0}}\" -ne 0 ]; then exit \"$code\"; fi\n",
-            ": > '{root}/mount-source'\n",
-            "exit 0"
-        ),
-        root = root
-    )
-}
-
-/// Builds the full set of fake tools.
-fn fakes(root: &str) -> Vec<(&'static str, String)> {
-    vec![
-        ("lsblk", fake_lsblk(root)),
-        ("findmnt", fake_findmnt(root)),
-        ("blkid", fake_blkid(root)),
-        ("udevadm", fake_logger(root, "udevadm")),
-        ("sleep", fake_logger(root, "sleep")),
-        ("sync", fake_logger(root, "sync")),
-        ("mkdir", fake_logger(root, "mkdir")),
-        ("chown", fake_chown(root)),
-        ("sudo", fake_sudo(root)),
-        ("mkfs.ext4", fake_mkfs(root)),
-        ("mount", fake_mount(root)),
-        ("umount", fake_umount(root)),
-    ]
 }
 
 /// Runs a script and requires the parsed status.

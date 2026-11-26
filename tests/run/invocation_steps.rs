@@ -160,11 +160,24 @@ fn unmount_after_remote_command(run_context_result: &RunContextResult) -> Result
     })?;
     let unmount = position(&roles, &InvocationRole::Unmount)
         .ok_or_else(|| StepError::Assertion(format!("missing unmount invocation: {roles:?}")))?;
-    if unmount > remote {
+    let run_context = context(run_context_result)?;
+    let events = run_context
+        .event_log
+        .lock()
+        .map_err(|error| StepError::Assertion(format!("event log poisoned: {error}")))?;
+    let teardown = events
+        .iter()
+        .position(|event| event == "teardown")
+        .ok_or_else(|| StepError::Assertion(format!("missing teardown event: {events:?}")))?;
+    let unmount_event = events
+        .iter()
+        .position(|event| event == "unmount")
+        .ok_or_else(|| StepError::Assertion(format!("missing unmount event: {events:?}")))?;
+    if unmount > remote && unmount_event < teardown {
         Ok(())
     } else {
         Err(StepError::Assertion(format!(
-            "expected unmount after the remote command, got {roles:?}"
+            "expected remote command, unmount, teardown order; roles {roles:?}, events {events:?}"
         )))
     }
 }

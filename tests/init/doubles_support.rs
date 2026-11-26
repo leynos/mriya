@@ -36,6 +36,19 @@ impl Failures {
     pub(super) const fn contains(self, mode: FailureMode) -> bool { self.0 & mode.flag() != 0 }
 }
 
+/// Lifecycle event recorded by the init backend double, in order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LifecycleEvent {
+    /// The new volume reached `available`.
+    VolumeReady,
+    /// A formatter server was created, which attaches the cache.
+    InstanceCreated,
+    /// The formatter was torn down through the ordered teardown.
+    Teardown,
+    /// The owned volume was deleted.
+    VolumeDeleted,
+}
+
 /// Builds the available volume state the doubles report.
 pub(super) fn volume_state() -> VolumeState {
     VolumeState {

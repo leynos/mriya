@@ -79,34 +79,40 @@ fn remote_command_does_not_route_cargo_caches(
 /// The mount script and the directory creation are separate SSH calls now, so
 /// the step cannot assume the first SSH invocation is the one it inspects.
 fn cache_directories_command(run_context: &RunContext) -> Result<String, StepError> {
-    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    let subdir = CACHE_SUBDIRECTORIES
-        .first()
-        .ok_or_else(|| StepError::Assertion(String::from("no cache subdirectories")))?;
-    let expected = format!("/mriya/{subdir}");
     run_context
         .runner
         .invocations()
         .into_iter()
         .rev()
-        .find(|invocation| {
-            invocation.program == ssh_bin
-                && invocation.args.last().is_some_and(|arg| {
-                    let payload = arg.to_string_lossy();
-                    payload.contains("mkdir -p") && payload.contains(&expected)
-                })
-        })
-        .and_then(|invocation| {
-            invocation
-                .args
-                .last()
-                .map(|arg| arg.to_string_lossy().into_owned())
-        })
+        .filter(|invocation| invocation.program == run_context.sync_config.ssh_bin)
+        .filter_map(|invocation| invocation.args.last().cloned())
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .find(|payload| is_cache_directory_command(payload))
         .ok_or_else(|| {
-            StepError::Assertion(format!(
-                "missing cache-directory invocation containing {expected}"
+            StepError::Assertion(String::from(
+                "missing cache-directory invocation with mkdir and a known subdirectory",
             ))
         })
+}
+
+/// Returns the first SSH payload that creates a known cache subdirectory.
+fn offending_cache_directory(run_context: &RunContext) -> Option<String> {
+    run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .filter(|invocation| invocation.program == run_context.sync_config.ssh_bin)
+        .filter_map(|invocation| invocation.args.last().cloned())
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .find(|payload| is_cache_directory_command(payload))
+}
+
+/// Reports whether `payload` creates a known cache subdirectory.
+fn is_cache_directory_command(payload: &str) -> bool {
+    payload.contains("mkdir -p")
+        && CACHE_SUBDIRECTORIES
+            .iter()
+            .any(|subdir| payload.contains(&format!("/mriya/{subdir}")))
 }
 
 #[then("the mount command creates cache subdirectories")]
@@ -148,34 +154,10 @@ fn mount_command_does_not_create_cache_subdirectories(
     run_context_result: &RunContextResult,
 ) -> Result<(), StepError> {
     let run_context = context(run_context_result)?;
-    // Verify no SSH invocation creates a cache subdirectory, using the
-    // production constant.
-    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    for invocation in run_context.runner.invocations() {
-        if invocation.program != ssh_bin {
-            continue;
-        }
-        let Some(payload) = invocation
-            .args
-            .last()
-            .map(|arg| arg.to_string_lossy().into_owned())
-        else {
-            continue;
-        };
-        // The routing preamble exports these paths without creating them; only
-        // a command that also creates directories is a violation.
-        if !payload.contains("mkdir -p") {
-            continue;
-        }
-        for subdir in CACHE_SUBDIRECTORIES {
-            let path = format!("/mriya/{subdir}");
-            if payload.contains(&path) {
-                return Err(StepError::Assertion(format!(
-                    "expected no invocation to create cache directory '{path}', got: {payload}"
-                )));
-            }
-        }
+    if let Some(payload) = offending_cache_directory(run_context) {
+        return Err(StepError::Assertion(format!(
+            "expected no invocation to create cache directories, got: {payload}"
+        )));
     }
-
     Ok(())
 }

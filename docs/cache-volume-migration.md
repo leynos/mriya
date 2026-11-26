@@ -121,8 +121,8 @@ scw instance snapshot delete 22222222-2222-2222-2222-222222222222 zone=fr-par-1
 scw instance volume delete 11111111-1111-1111-1111-111111111111 zone=fr-par-1
 ```
 
-The exported QCOW2 object is not covered by those commands. Remove it from
-the bucket once the new volume is verified, for example with an S3 client:
+The exported QCOW2 object is not covered by those commands. Remove it from the
+bucket once the new volume is verified, for example with an S3 client:
 
 ```bash
 aws --endpoint-url https://s3.fr-par.scw.cloud s3 rm \

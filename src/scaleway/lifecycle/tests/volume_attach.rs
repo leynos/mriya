@@ -158,37 +158,66 @@ async fn attach_volume_reports_a_provider_rejection(
     Ok(())
 }
 
-/// Scenario: the returned map changed an unrelated entry.
-///
-/// Invariant: the attachment fails as `VolumeAttachmentFailed` and no status
-/// read follows, so a provider-side map rewrite cannot pass silently.
+/// One unverifiable attach response and the fragment its error must contain.
+#[derive(Clone, Copy)]
+struct UnverifiedCase {
+    /// Volume map returned by a 2xx attach response.
+    volumes: &'static str,
+    /// Fragment the unverified error must name.
+    marker: &'static str,
+}
+
+/// Covers every way a 2xx attachment response can violate the map contract.
 #[rstest]
+#[case::changed_root(UnverifiedCase {
+    volumes: r#"{
+        "0": {"id": "different-root", "volume_type": "sbs_volume"},
+        "1": {"id": "11111111-1111-1111-1111-111111111111", "volume_type": "sbs_volume"}
+    }"#,
+    marker: "changed",
+})]
+#[case::missing_cache(UnverifiedCase {
+    volumes: r#"{"0": {"id": "root-id", "volume_type": "sbs_volume"}}"#,
+    marker: "absent",
+})]
+#[case::wrong_type(UnverifiedCase {
+    volumes: r#"{
+        "0": {"id": "root-id", "volume_type": "sbs_volume"},
+        "1": {"id": "11111111-1111-1111-1111-111111111111", "volume_type": "l_ssd"}
+    }"#,
+    marker: "l_ssd",
+})]
 #[tokio::test]
-async fn attach_volume_rejects_a_changed_root_entry(
+async fn attach_volume_rejects_an_unverifiable_map(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
+    #[case] case: UnverifiedCase,
 ) -> Result<()> {
-    let reply = server_with(&serde_json::json!({
-        "0": {"id": "different-root", "volume_type": "sbs_volume"},
-        "1": {"id": CACHE_ID, "volume_type": "sbs_volume"},
-    }));
-    let (result, requests) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend
-            .attach_volume(&handle, CACHE_ID, &expected_map())
-            .await
-    })
+    let volumes: serde_json::Value =
+        serde_json::from_str(case.volumes).expect("case volumes are JSON");
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![server_with(&volumes)],
+        async |backend| {
+            backend
+                .attach_volume(&handle, CACHE_ID, &expected_map())
+                .await
+        },
+    )
     .await?;
 
-    let error = result.expect_err("a changed root entry must fail");
+    let error = result.expect_err("an unverifiable map must fail the attach");
+    let rendered = format!("{error:?}");
     assert!(
         matches!(
             error,
             ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
-                if message.contains("changed")
+                if message.contains(case.marker)
         ),
-        "{error:?}"
+        "expected `{}` in {rendered}",
+        case.marker
     );
-    assert_eq!(requests.len(), 1);
+    assert_eq!(requests.len(), 1, "no status read may follow a failure");
     Ok(())
 }
 
@@ -221,70 +250,5 @@ async fn attach_volume_rejects_the_root_index(backend_fixture: ScalewayBackend) 
         result.expect_err("the root index must be refused"),
         ScalewayBackendError::VolumeAttachmentUnverified { .. }
     ));
-    Ok(())
-}
-
-/// Scenario: the cache entry is missing from the response.
-///
-/// Invariant: an unchanged map without the cache fails the contract.
-#[rstest]
-#[tokio::test]
-async fn attach_volume_rejects_a_missing_cache_entry(
-    backend_fixture: ScalewayBackend,
-    handle: InstanceHandle,
-) -> Result<()> {
-    let reply = server_with(&serde_json::json!({
-        "0": {"id": "root-id", "volume_type": "sbs_volume"},
-    }));
-    let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend
-            .attach_volume(&handle, CACHE_ID, &expected_map())
-            .await
-    })
-    .await?;
-
-    let error = result.expect_err("a missing cache entry must fail");
-    let rendered = format!("{error:?}");
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
-                if message.contains("absent")
-        ),
-        "{rendered}"
-    );
-    Ok(())
-}
-
-/// Scenario: the cache entry is present but typed as another volume type.
-///
-/// Invariant: attach refuses a response that did not declare `sbs_volume`.
-#[rstest]
-#[tokio::test]
-async fn attach_volume_requires_the_sbs_volume_type(
-    backend_fixture: ScalewayBackend,
-    handle: InstanceHandle,
-) -> Result<()> {
-    let reply = server_with(&serde_json::json!({
-        "0": {"id": "root-id", "volume_type": "sbs_volume"},
-        "1": {"id": CACHE_ID, "volume_type": "l_ssd"},
-    }));
-    let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend
-            .attach_volume(&handle, CACHE_ID, &expected_map())
-            .await
-    })
-    .await?;
-
-    let error = result.expect_err("a non-SBS entry must fail");
-    let rendered = format!("{error:?}");
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
-                if message.contains("l_ssd")
-        ),
-        "{rendered}"
-    );
     Ok(())
 }

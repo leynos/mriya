@@ -64,20 +64,8 @@ impl InstanceRequest {
     /// assert!(request.is_err());
     /// ```
     pub fn validate(&self) -> Result<(), BackendError> {
-        if self.image_label.is_empty() {
-            return Err(BackendError::Validation("image_label".to_owned()));
-        }
-        if self.instance_type.is_empty() {
-            return Err(BackendError::Validation("instance_type".to_owned()));
-        }
-        if self.zone.is_empty() {
-            return Err(BackendError::Validation("zone".to_owned()));
-        }
-        if self.project_id.is_empty() {
-            return Err(BackendError::Validation("project_id".to_owned()));
-        }
-        if self.architecture.is_empty() {
-            return Err(BackendError::Validation("architecture".to_owned()));
+        if let Some(field) = self.first_missing_field() {
+            return Err(BackendError::Validation(field.to_owned()));
         }
         if let Some(volume_id) = self.volume_id.as_deref()
             && !is_canonical_uuid(volume_id)
@@ -94,6 +82,25 @@ impl InstanceRequest {
             )));
         }
         Ok(())
+    }
+
+    /// Returns the first required string field that is empty, if any.
+    ///
+    /// # Returns
+    ///
+    /// The field name used in [`BackendError::Validation`], or `None` when all
+    /// required fields are present.
+    fn first_missing_field(&self) -> Option<&'static str> {
+        [
+            ("image_label", self.image_label.as_str()),
+            ("instance_type", self.instance_type.as_str()),
+            ("zone", self.zone.as_str()),
+            ("project_id", self.project_id.as_str()),
+            ("architecture", self.architecture.as_str()),
+        ]
+        .into_iter()
+        .find(|(_, value)| value.is_empty())
+        .map(|(field, _)| field)
     }
 }
 

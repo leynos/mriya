@@ -153,6 +153,17 @@ impl<R: CommandRunner> Syncer<R> {
     /// exports and the `mountpoint -q` guard are omitted, so build output
     /// cannot be silently redirected onto the root filesystem.
     ///
+    /// # Parameters
+    ///
+    /// - `networking`: public address and SSH port of the instance.
+    /// - `remote_command`: command to execute after the optional cache prefix.
+    /// - `cache_verified`: whether the configured cache mount was verified; `true` for a run
+    ///   without a configured cache, which keeps the guarded historical preamble.
+    ///
+    /// # Returns
+    ///
+    /// The remote exit code and captured streams.
+    ///
     /// # Errors
     ///
     /// Propagates any failure to spawn or execute the SSH command.

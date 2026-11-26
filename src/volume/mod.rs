@@ -237,20 +237,62 @@ impl TeardownStage {
 
 /// Backend operations required for volume management.
 pub trait VolumeBackend: Backend {
-    /// Creates a new volume and returns its handle.
+    /// Creates a new volume.
+    ///
+    /// # Parameters
+    ///
+    /// - `request`: name, decimal size, zone, project and tier.
+    ///
+    /// # Returns
+    ///
+    /// A handle naming the new volume and its zone.
+    ///
+    /// # Errors
+    ///
+    /// The implementor rejects an invalid request, an unavailable tier or a
+    /// provider failure before returning a handle.
     fn create_volume<'a>(
         &'a self,
         request: &'a VolumeRequest,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error>;
 
     /// Reads one volume from the zone that holds it.
+    ///
+    /// # Parameters
+    ///
+    /// - `zone`: Availability Zone to search.
+    /// - `volume_id`: provider volume identifier.
+    ///
+    /// # Returns
+    ///
+    /// The provider's current state for that volume.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the volume is absent from the zone or the provider rejects
+    /// the read.
     fn get_volume<'a>(
         &'a self,
         zone: &'a str,
         volume_id: &'a str,
     ) -> BackendFuture<'a, VolumeState, Self::Error>;
 
-    /// Polls until the volume reaches `status`, returning its final state.
+    /// Polls until the volume reaches `status`.
+    ///
+    /// # Parameters
+    ///
+    /// - `zone`: Availability Zone that holds the volume.
+    /// - `volume_id`: provider volume identifier.
+    /// - `status`: terminal status to wait for.
+    ///
+    /// # Returns
+    ///
+    /// The final state, whose status equals the requested one.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a terminal provider status, a lookup failure or the wait
+    /// deadline.
     fn wait_for_volume_status<'a>(
         &'a self,
         zone: &'a str,
@@ -259,9 +301,38 @@ pub trait VolumeBackend: Backend {
     ) -> BackendFuture<'a, VolumeState, Self::Error>;
 
     /// Deletes a volume that the current operation owns.
+    ///
+    /// # Parameters
+    ///
+    /// - `handle`: the volume created by this operation.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the volume is gone, including an already-absent volume.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the provider rejects the deletion, such as an attached
+    /// volume. Never pass a pre-existing volume here.
     fn delete_volume<'a>(&'a self, handle: &'a VolumeHandle) -> BackendFuture<'a, (), Self::Error>;
 
     /// Attaches a volume to a stopped instance and waits for `in_use`.
+    ///
+    /// # Parameters
+    ///
+    /// - `handle`: instance that will receive the volume.
+    /// - `volume_id`: provider volume identifier.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the returned volume map verifies and the status is
+    /// `in_use`.
+    ///
+    /// # Errors
+    ///
+    /// A rejected request means nothing was attached. An unverifiable success
+    /// response means the volume may be attached, so the caller must detach it
+    /// before destroying the server.
     fn attach_volume<'a>(
         &'a self,
         handle: &'a InstanceHandle,
@@ -269,6 +340,21 @@ pub trait VolumeBackend: Backend {
     ) -> BackendFuture<'a, (), Self::Error>;
 
     /// Detaches a volume from a stopped instance and waits for `available`.
+    ///
+    /// # Parameters
+    ///
+    /// - `handle`: instance that currently holds the volume.
+    /// - `volume_id`: provider volume identifier.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the cache is absent from the map and the status is
+    /// `available`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the root or an unrelated entry is lost, the request is
+    /// rejected, or the status never becomes available.
     fn detach_volume<'a>(
         &'a self,
         handle: &'a InstanceHandle,
@@ -280,6 +366,20 @@ pub trait VolumeBackend: Backend {
     ///
     /// The volume is left in `available` before the server is deleted, so the
     /// provider does not delete the cache with the server.
+    ///
+    /// # Parameters
+    ///
+    /// - `handle`: server to tear down.
+    /// - `volume_id`: configured cache volume, or `None` for a plain destroy.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` once the server is gone.
+    ///
+    /// # Errors
+    ///
+    /// A [`TeardownFailure`] names the failed stage. A stop or detach failure
+    /// means the volume may still be attached and the server is retained.
     fn teardown<'a>(
         &'a self,
         handle: &'a InstanceHandle,
