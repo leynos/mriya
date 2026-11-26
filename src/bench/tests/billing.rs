@@ -3,99 +3,22 @@
 use proptest::prelude::*;
 use rstest::rstest;
 
-use super::super::billing::{
-    BYTES_PER_GB,
-    NANOS_PER_HOUR,
-    NANOS_PER_SECOND,
-    PriceSheet,
-    PriceSheetError,
-    ProductRule,
-    RetainedStorage,
-    StorageRule,
-    Usage,
-    charge,
-    chargeable_nanos,
-    figures_agree,
-    format_micros,
-    load_price_sheet,
+use super::{
+    super::billing::{
+        BYTES_PER_GB,
+        NANOS_PER_HOUR,
+        NANOS_PER_SECOND,
+        PriceSheetError,
+        RetainedStorage,
+        Usage,
+        charge,
+        chargeable_nanos,
+        figures_agree,
+        format_micros,
+        load_price_sheet,
+    },
+    support::{example_sheet, hourly_product, hourly_storage, sheet_with, sheet_with_plan},
 };
-
-/// The example sheet shipped with the repository, so the tests exercise the
-/// same text an operator would price a campaign against.
-fn example_sheet() -> PriceSheet {
-    let path = format!(
-        "{}/benchmarks/price-sheet.example.toml",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let text = std::fs::read_to_string(&path).expect("the example price sheet should read");
-    load_price_sheet(&text).expect("the example price sheet should parse")
-}
-
-/// A minimal sheet with one provider, one product, and one storage class.
-fn sheet_with(product: ProductRule, storage: StorageRule) -> PriceSheet {
-    let mut provider_storage = std::collections::BTreeMap::new();
-    provider_storage.insert(String::from("disk"), storage);
-    let mut products = std::collections::BTreeMap::new();
-    products.insert(String::from("p"), product);
-    let mut providers = std::collections::BTreeMap::new();
-    providers.insert(
-        String::from("prov"),
-        super::super::billing::ProviderRules {
-            display_name: String::from("Provider"),
-            source: String::from("https://example.test"),
-            currency: String::from("EUR"),
-            products,
-            storage: provider_storage,
-            plan: None,
-        },
-    );
-    PriceSheet {
-        currency: String::from("EUR"),
-        retrieved: String::from("2026-11-26"),
-        month_seconds: super::super::billing::DEFAULT_MONTH_SECONDS,
-        providers,
-        fx: std::collections::BTreeMap::new(),
-    }
-}
-
-/// A product that bills a whole hour at EUR 0.036.
-fn hourly_product() -> ProductRule {
-    ProductRule {
-        price_per_hour_micros: 36_000,
-        granularity_seconds: 3_600,
-        minimum_seconds: 3_600,
-        monthly_cap_micros: None,
-        start_charge_micros: 0,
-    }
-}
-
-/// A storage class that bills a whole hour at EUR 0.008 per GB-month.
-fn hourly_storage() -> StorageRule {
-    StorageRule {
-        price_per_gb_month_micros: 8_000,
-        granularity_seconds: 3_600,
-        minimum_seconds: 3_600,
-    }
-}
-
-/// The same sheet, but with a plan that includes `included_starts` starts and
-/// charges EUR 0.01 for each start beyond them.
-fn sheet_with_plan(product: ProductRule, included_starts: u64) -> PriceSheet {
-    let mut sheet = sheet_with(product, hourly_storage());
-    let plan = super::super::billing::PlanRule {
-        name: String::from("fixture plan"),
-        monthly_price_micros: 0,
-        included_compute_nanos: 0,
-        included_starts,
-    };
-    if let Some(provider) = sheet.providers.get_mut("prov") {
-        provider.plan = Some(plan);
-        if let Some(rule) = provider.products.get_mut("p") {
-            rule.start_charge_micros = 10_000;
-        }
-    }
-    sheet
-}
 
 #[rstest]
 #[case(0, 1, 0, 0)]
@@ -196,13 +119,13 @@ fn a_plan_that_includes_starts_absorbs_the_start_charge() {
         .with_subscription_share(20_000_000);
     // Boat's plan rule in the example sheet includes no starts, so this asserts
     // the opposite case through a sheet that does.
-    let mut sheet = sheet;
-    if let Some(provider) = sheet.providers.get_mut("boat")
+    let mut patched = sheet;
+    if let Some(provider) = patched.providers.get_mut("boat")
         && let Some(plan) = provider.plan.as_mut()
     {
         plan.included_starts = 5;
     }
-    let breakdown = charge(&sheet, &usage).expect("the rule exists");
+    let breakdown = charge(&patched, &usage).expect("the rule exists");
     assert_eq!(breakdown.compute_micros, 0);
     assert_eq!(breakdown.start_micros, 0);
     assert_eq!(breakdown.marginal_micros, 0);

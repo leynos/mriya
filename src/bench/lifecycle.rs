@@ -189,7 +189,7 @@ impl<T: LifecycleSink + ?Sized> LifecycleSink for Box<T> {
 /// assert_eq!(sink.created_ids(), vec![String::from("srv-1")]);
 /// ```
 pub fn notify(sink: Option<&SharedLifecycleSink>, event: &LifecycleEvent) {
-    if let Some(sink) = sink {
-        sink.record(event);
+    if let Some(configured) = sink {
+        configured.record(event);
     }
 }

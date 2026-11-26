@@ -1302,6 +1302,50 @@ something (v0.1 taught volume usage, v0.2 taught provisioning, v0.4 taught
 image management, v1.0 solidified connectivity and safety, v1.x broadened
 compatibility), informing the next design decision.
 
+## Cost measurement architecture (November 2026)
+
+Choosing a backend is a purchasing decision, and a published VM-hour rate is
+not evidence for it. This section records how Mriya measures the cost of a
+completed gate, and why the measurement is shaped the way it is.
+
+The contract is a protocol plus a persisted record format, both defined in
+`docs/backend-cost-benchmark-protocol.md` and `src/bench/record.rs`. The split
+is deliberate: the protocol states what must be pinned and how phases are
+bounded, and the record states what a file must carry. A validator
+(`src/bench/validate.rs`) and a billing calculator (`src/bench/billing.rs`)
+read the records without a provider, a credential, or a clock, so a campaign
+can be checked and priced by a reviewer who cannot run it.
+
+Three ports connect the harness to the pipeline:
+
+- `RunObserver` receives each phase's start and finish. It is a reporting port:
+  the orchestrator never reads anything back from it, so no observer can change
+  a run's outcome. The default is a no-op, which is what `mriya run` uses.
+- `LifecycleSink` receives the provider identifiers of created resources and
+  the outcome of every teardown. It is injected into `ScalewayBackend` rather
+  than added to the `Backend` port, because only the benchmark needs it and a
+  port returning provider identifiers would force every future adapter to
+  invent them.
+- `CampaignDriver` and `RecordSink` are the harness's own ports. The harness
+  owns the policy — opt-in, limits, one instance at a time, fail-closed
+  cleanup, append immediately — and the driver owns the provider calls. That is
+  what makes the policy testable without spending money.
+
+The billing model is integer-only and per-provider. A provider declares a list
+rate, a billing granularity, a minimum chargeable period, an optional monthly
+cap, and an optional plan with included usage. Chargeable lifetime is the
+measured lifetime rounded up to the granularity and floored at the minimum, so
+a two-minute Scaleway run is correctly priced as an hour. Marginal cost is what
+one more identical gate costs; total-account cost is what the campaign adds to
+the bill. They differ exactly when a plan includes usage, and both are printed.
+
+Comparison rules are enforced in `src/bench/report.rs`: equal command,
+revision, and architecture; CPU results never ranked against GPU ones; and a
+difference in cache class or storage capability printed as a capability
+difference rather than averaged into a cost. A backend adapter may claim a
+measured advantage only after passing the protocol's conformance checklist,
+which for Scaleway depends on issues #153–#155.
+
 ## Toolchain and Performance Optimization
 
 Performance is critical for Mriya’s use-case (rapidly provisioning and running

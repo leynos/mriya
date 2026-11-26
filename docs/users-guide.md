@@ -291,6 +291,96 @@ The target:
 The underlying `cargo test` uses `--test-threads=1` to keep only one instance
 alive at a time.
 
+## Measuring backend cost per completed gate
+
+A published VM-hour rate does not say what a finished build or test costs.
+Provisioning, cache restoration, linking, and the provider's own billing
+granularity can each dominate a short run, and a nominal vCPU count is not a
+throughput measurement.
+
+`mriya-bench` implements the protocol in
+[Backend cost benchmark protocol](backend-cost-benchmark-protocol.md) in three
+subcommands, separated by what they can cost.
+
+### Check a campaign without spending
+
+`mriya-bench validate` reads a campaign file and reports every defect it finds.
+It never contacts a provider and needs no credentials.
+
+```bash
+mriya-bench validate results.jsonl
+```
+
+A clean file prints one summary line:
+
+```plaintext
+example-2026-11-26: 1 runs, 7 phases, 1 campaign header
+```
+
+A defective file prints one line per defect and exits 1. A file with no run
+records is defective rather than empty-but-acceptable, because it cannot
+support any claim.
+
+### Price a campaign against a dated sheet
+
+`mriya-bench report` prices a validated campaign against a TOML price sheet and
+prints the comparison. It is equally offline.
+
+```bash
+mriya-bench report results.jsonl \
+  --price-sheet benchmarks/price-sheet.example.toml
+```
+
+Every rate in a sheet carries its source and the date it was read, and a
+provider quoting in a different currency needs a declared conversion rate under
+`[fx.<CODE>]`. Without one, the report refuses to price that provider rather
+than adding two currencies together.
+
+Two figures are printed for every result:
+
+- **Marginal cost per completed gate** is what one more identical gate costs
+  once the plan and its included usage are already paid for.
+- **Total-account cost** is what the campaign adds to the bill, including a
+  plan's monthly price.
+
+The two differ exactly when a platform charges for a plan. The report prints
+both, and shows the compute time a plan absorbed, rather than printing one
+number under two headings.
+
+The report refuses to compare work that is not equal. A different command,
+revision, or architecture is reported as a comparability problem, a mixed CPU
+and GPU set is refused outright, and differing cache classes are printed as a
+capability difference instead of being averaged away.
+
+### Run a paid campaign
+
+`mriya-bench run` is the only route that allocates resources, and it is
+deliberately hard to start by accident. It refuses unless both of the following
+hold:
+
+- `MRIYA_BENCH_ENABLE_PAID_RUNS` is set to `1`. The value `true`, `yes`, or `0`
+  is refused.
+- The campaign file declares `max_spend_micros`, `max_attempts`, and
+  `max_attempt_nanos`, and its attempts fit inside them.
+
+```bash
+MRIYA_BENCH_ENABLE_PAID_RUNS=1 \
+  mriya-bench run \
+  --campaign benchmarks/campaign.example.toml \
+  --out results.jsonl
+```
+
+The harness runs one instance at a time. It sweeps for resources left by an
+earlier run of the same campaign before it allocates anything, appends each
+record as soon as it exists, and stops at the first cleanup doubt. On a doubt
+it appends a residual record naming every identifier it could not verify gone,
+so an operator can clean up by hand. A retained cache volume is never deleted
+by a campaign teardown.
+
+The equivalent Make routes are `make bench-validate`, `make bench-report`, and
+`make bench-campaign BENCH_CAMPAIGN=... BENCH_RESULTS=...`. Only the last one
+allocates, and none of them is part of `make all`, `make test`, or any CI job.
+
 ## Building from source
 
 Building needs `rustup`, which installs the nightly toolchain that

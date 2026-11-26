@@ -17,12 +17,12 @@ vCPUs and provider-specific snapshot exclusions, and Mriya already routes build
 caches to a persistent volume, so cache and storage capability change the
 answer as much as the nominal vCPU count.
 
-After this change an operator can run one explicitly enabled, repeatedly
-timed campaign of four pinned CPU workloads against a provider, keep every
-attempt's record — successes and failures — in one JSON Lines file, validate
-that file offline, and price it with a dated, source-cited price sheet. Two
-providers can then be compared on equal completed work with cache and storage
-capability differences stated rather than assumed away.
+After this change an operator can run one explicitly enabled, repeatedly timed
+campaign of four pinned CPU workloads against a provider, keep every attempt's
+record — successes and failures — in one JSON Lines file, validate that file
+offline, and price it with a dated, source-cited price sheet. Two providers can
+then be compared on equal completed work with cache and storage capability
+differences stated rather than assumed away.
 
 The observable success is:
 
@@ -85,8 +85,9 @@ The observable success is:
   `billing.rs` therefore applies a provider-declared granularity and a
   provider-declared minimum period, and reports the chargeable lifetime it used.
 - Hetzner rounds each server's hourly usage up to a whole hour and caps at the
-  monthly price, so a campaign that runs many short servers pays per server, not
-  per second. The price sheet models a per-resource minimum and a monthly cap.
+  monthly price, so a campaign that runs many short servers pays per server,
+  not per second. The price sheet models a per-resource minimum and a monthly
+  cap.
 - Boat bills per second while a sandbox runs and includes VM time in a monthly
   plan, so marginal cost is zero until the plan's included hours are exhausted.
   The report therefore prints marginal and total-account costs as separate
@@ -135,10 +136,10 @@ definitions and observer phase events; `#157-AC-phases` -> `EP-M2` -> phase
 records around the named calls; `#157-AC-allocation` -> `EP-M2` -> hardware,
 cache and toolchain probes; `#157-AC-billing` -> `EP-M1` -> integer billing
 calculator and price-sheet tests; `#157-AC-total-vs-marginal` -> `EP-M1` and
-`EP-M3` -> plan-aware cost report; `#157-AC-equal-work` -> `EP-M3` -> equal-work
-comparison and capability differences; `#157-AC-gpu` -> `EP-M1` -> GPU class
-separation and accelerator pins; `#157-AC-optin` -> `EP-M3` -> opt-in and
-limit refusal paths.
+`EP-M3` -> plan-aware cost report; `#157-AC-equal-work` -> `EP-M3` ->
+equal-work comparison and capability differences; `#157-AC-gpu` -> `EP-M1` ->
+GPU class separation and accelerator pins; `#157-AC-opt-in` -> `EP-M3` ->
+opt-in and limit refusal paths.
 
 ## Verification plan
 
@@ -165,8 +166,7 @@ Methods and artefacts:
 - Invariants 1–2: `src/bench/validate.rs` with valid and defective fixtures
   under `src/bench/fixtures/`, driven by `rstest` case tables that name the
   expected complaint set. Negative control: a fixture with a valid run record
-  must report no complaint, so a validator that complains unconditionally
-  fails.
+  must report no complaint, so a validator that complains unconditionally fails.
 - Invariant 3–4: `src/bench/billing.rs` unit and `rstest` tables for published
   provider rules, plus a `proptest` oracle that recomputes the charge with an
   independent formulation (integer division plus remainder adjustment) and
@@ -191,16 +191,17 @@ a real provider, and they are opt-in.
 
 `src/run.rs` holds `RunOrchestrator`, which creates an instance, waits for
 readiness, mounts an optional cache volume, syncs, optionally waits for
-cloud-init, runs one remote command, and destroys the instance. `src/backend.rs`
-defines the `Backend` port and `src/scaleway/mod.rs` implements it.
-`src/sync/` owns rsync and SSH execution plus the cache-routing preamble.
-`src/janitor/` deletes test-run-tagged Scaleway resources by tag. `src/lib.rs`
-exports the library surface. The Makefile owns the gate routes and `docs/`
-holds the user, developer, design and roadmap documents.
+cloud-init, runs one remote command, and destroys the instance.
+`src/backend.rs` defines the `Backend` port and `src/scaleway/mod.rs`
+implements it. `src/sync/` owns rsync and SSH execution plus the cache-routing
+preamble. `src/janitor/` deletes test-run-tagged Scaleway resources by tag.
+`src/lib.rs` exports the library surface. The Makefile owns the gate routes and
+`docs/` holds the user, developer, design and roadmap documents.
 
 The benchmark work adds a sibling `src/bench/` module, a `mriya-bench` binary
-under `src/bin/`, and a protocol document under `docs/`. It touches `src/run.rs`
-and `src/scaleway/mod.rs` only to add observation seams that default to no-ops.
+under `src/bin/`, and a protocol document under `docs/`. It touches
+`src/run.rs` and `src/scaleway/mod.rs` only to add observation seams that
+default to no-ops.
 
 ## Plan of work
 
@@ -213,19 +214,28 @@ lifecycle sink, benchmark-only pre- and post-workload hooks, and the probe
 parsers. End state: an observer records every phase separately and `mriya run`
 behaves exactly as before.
 
-Milestone `EP-M3` (gated campaign and report): add the `mriya-bench` binary, the
-campaign harness with fail-closed cleanup, the offline equal-work report, the
-Makefile routes and the documentation updates. End state: an operator can run a
-declared campaign and produce a comparison, and nothing paid is reachable from
-`make test` or CI.
+Milestone `EP-M3` (gated campaign and report): add the `mriya-bench` binary,
+the campaign harness with fail-closed cleanup, the offline equal-work report,
+the Makefile routes and the documentation updates. End state: an operator can
+run a declared campaign and produce a comparison, and nothing paid is reachable
+from `make test` or CI.
 
 ## Progress
 
-- [ ] 2026-11-26: Reconnaissance, provider research and ExecPlan draft.
-- [ ] EP-M1 implemented.
-- [ ] EP-M2 implemented.
-- [ ] EP-M3 implemented.
-- [ ] Deterministic gates pass.
+- [x] 2026-11-26: Reconnaissance, provider research and ExecPlan draft.
+- [x] 2026-11-26: EP-M1 implemented: protocol document, versioned records,
+  validator with valid and defective fixtures, integer billing calculator, and
+  the source-cited example price sheet. 60 unit tests pass.
+- [x] 2026-11-26: EP-M2 implemented: `RunObserver` with a no-op default,
+  `LifecycleSink` injected into `ScalewayBackend`, pre- and post-workload probe
+  hooks, and the probe parsers. `tests/bench_observer.rs` proves the phase
+  order and that a failed teardown is reported as failed.
+- [x] 2026-11-26: EP-M3 implemented: `mriya-bench` with `validate`, `report`
+  and paid `run`; the fail-closed campaign harness; the offline equal-work
+  report; the Makefile routes; and the user, developer, design and roadmap
+  updates. 113 unit tests, 10 CLI tests and 4 observer tests pass.
+- [ ] Deterministic gates pass (`make check-fmt`, `make lint`, `make test`,
+  `make markdownlint`, `make spelling`).
 - [ ] CodeRabbit review cleared and draft pull request opened.
 
 ## Surprises & Discoveries
@@ -242,6 +252,26 @@ declared campaign and produce a comparison, and nothing paid is reachable from
 - Boat does not save `~/.cache` in a snapshot, except Playwright and Deno, so a
   Cargo cache placed in the default `~/.cargo` does not survive a Boat stop
   unless it is relocated under `/home/user` or a folder created at `/`.
+- A provider's minimum chargeable period need not be a multiple of its billing
+  granularity. A property test assumed it was and failed on a 17-second minimum
+  at a 4-second granularity; the implementation was right and the property was
+  wrong, so the test now allows either a whole number of granularity units or
+  exactly the declared minimum.
+- The shared spelling gate rewrites `artifact` to `artefact` and `-ise` to
+  `-ize`. A blanket substitution corrupted Cargo's `compiler-artifact` message
+  name, which the repository already whitelists in `typos.local.toml`; protocol
+  literals must be restored after any spelling pass.
+- Whitaker enforces a 400-line module budget that counts doc comments, so the
+  benchmark modules had to be split by responsibility rather than by file size
+  target: `record/run.rs`, `record/pins.rs`, `billing/{money,sheet/pricing}.rs`,
+  `probe/{report,cargo}.rs`, `validate/run_checks.rs`,
+  `report/{render,rules}.rs`, and `campaign/{plan,ports,runner,scaleway_*}.rs`.
+- A campaign's plan price is charged once per campaign, not once per attempt.
+  Attributing it per run would multiply the subscription by the number of
+  repetitions and make the total-account figure meaningless.
+- The paid driver's `run_attempt` must return phase records as well as the run
+  record. An observer that captured durations and then discarded them would
+  leave the harness with phase names and no measurements.
 
 ## Decision log
 

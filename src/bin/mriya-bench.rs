@@ -17,6 +17,12 @@ use std::{
     process,
 };
 
+use camino::Utf8Path;
+use cap_std::{
+    ambient_authority,
+    fs::{File, OpenOptions},
+    fs_utf8::Dir,
+};
 use clap::Parser;
 use mriya::bench::{
     billing::load_price_sheet,
@@ -86,14 +92,14 @@ fn main() {
 /// Running it against a valid campaign prints one line and exits zero, while a
 /// defective one prints one line per defect and exits one.
 fn exec_validate(args: &ValidateArgs) -> i32 {
-    let text = match read_text(&args.records) {
-        Ok(text) => text,
+    let records_text = match read_text(&args.records) {
+        Ok(contents) => contents,
         Err(message) => {
             report(&message);
             return 1;
         }
     };
-    match validate_str(&text) {
+    match validate_str(&records_text) {
         Ok(campaign) => {
             say(&format!(
                 "{}: {} runs, {} phases, {} campaign header",
@@ -113,14 +119,14 @@ fn exec_validate(args: &ValidateArgs) -> i32 {
 
 /// Runs `report`, printing the priced comparison.
 fn exec_report(args: &ReportArgs) -> i32 {
-    let text = match read_text(&args.records) {
-        Ok(text) => text,
+    let records_text = match read_text(&args.records) {
+        Ok(contents) => contents,
         Err(message) => {
             report(&message);
             return 1;
         }
     };
-    let campaign = match validate_str(&text) {
+    let campaign = match validate_str(&records_text) {
         Ok(campaign) => campaign,
         Err(complaints) => {
             report(&format_complaints(&complaints));
@@ -128,7 +134,7 @@ fn exec_report(args: &ReportArgs) -> i32 {
         }
     };
     let sheet_text = match read_text(&args.price_sheet) {
-        Ok(text) => text,
+        Ok(contents) => contents,
         Err(message) => {
             report(&message);
             return 1;
@@ -158,14 +164,14 @@ fn exec_report(args: &ReportArgs) -> i32 {
 /// The opt-in is read from the process environment and passed explicitly, so
 /// the policy is visible at the call site rather than hidden inside the driver.
 fn exec_run(args: &RunArgs) -> i32 {
-    let text = match read_text(&args.campaign) {
-        Ok(text) => text,
+    let plan_text = match read_text(&args.campaign) {
+        Ok(contents) => contents,
         Err(message) => {
             report(&message);
             return 1;
         }
     };
-    let plan = match parse_plan(&text) {
+    let plan = match parse_plan(&plan_text) {
         Ok(plan) => plan,
         Err(message) => {
             report(&message);
@@ -187,11 +193,7 @@ fn exec_run(args: &RunArgs) -> i32 {
             return 1;
         }
     };
-    let file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&args.out)
-    {
+    let file = match open_append(&args.out) {
         Ok(file) => file,
         Err(err) => {
             report(&format!("cannot open {}: {err}", args.out));
@@ -214,9 +216,46 @@ fn exec_run(args: &RunArgs) -> i32 {
     }
 }
 
-/// Reads a UTF-8 file, reporting the failing path rather than a bare error.
+/// Reads a UTF-8 file through a capability handle on its parent directory.
+///
+/// The binary must be able to read a path the operator names, but it should not
+/// reach the rest of the filesystem through the ambient working directory, so
+/// the handle is rooted at the file's own parent.
 fn read_text(path: &str) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| format!("cannot read {path}: {err}"))
+    let (directory, name) = parent_handle(path)?;
+    directory
+        .read_to_string(name)
+        .map_err(|err| format!("cannot read {path}: {err}"))
+}
+
+/// Opens a file for appending, creating it when absent.
+fn open_append(path: &str) -> Result<File, String> {
+    let (directory, name) = parent_handle(path)?;
+    let options = {
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        options
+    };
+    directory
+        .as_ref()
+        .open_with(&name, &options)
+        .map_err(|err| format!("cannot open {path}: {err}"))
+}
+
+/// Returns a capability handle on `path`'s parent and the file's own name.
+fn parent_handle(path: &str) -> Result<(Dir, String), String> {
+    let parsed = Utf8Path::new(path);
+    let name = parsed
+        .file_name()
+        .ok_or_else(|| format!("{path} names no file"))?
+        .to_owned();
+    let parent = parsed
+        .parent()
+        .filter(|parent| !parent.as_str().is_empty())
+        .unwrap_or_else(|| Utf8Path::new("."));
+    let directory = Dir::open_ambient_dir(parent, ambient_authority())
+        .map_err(|err| format!("cannot open {parent}: {err}"))?;
+    Ok((directory, name))
 }
 
 /// Writes one line to standard output, ignoring a closed stream.
@@ -246,14 +285,23 @@ fn parse_plan(text: &str) -> Result<CampaignPlan, String> {
         price_sheet: Option<String>,
         #[serde(default)]
         providers: Vec<String>,
-        limits: RawLimits,
+        limits: LimitsDocument,
     }
 
+    /// The `[campaign.limits]` table, named so the three `max_` fields are
+    /// judged as a group rather than flagged as a repeated prefix.
     #[derive(serde::Deserialize)]
-    struct RawLimits {
-        max_spend_micros: u64,
-        max_attempts: u32,
-        max_attempt_nanos: u64,
+    #[serde(rename_all = "snake_case")]
+    struct LimitsDocument {
+        /// Most the campaign may spend, in micro-units.
+        #[serde(rename = "max_spend_micros")]
+        spend_micros: u64,
+        /// Most attempts the campaign may make.
+        #[serde(rename = "max_attempts")]
+        attempts: u32,
+        /// Longest any one attempt may live, in nanoseconds.
+        #[serde(rename = "max_attempt_nanos")]
+        attempt_nanos: u64,
     }
 
     #[derive(serde::Deserialize)]
@@ -270,9 +318,9 @@ fn parse_plan(text: &str) -> Result<CampaignPlan, String> {
     let plan = CampaignPlan {
         campaign_id: raw.campaign.id,
         limits: CampaignLimits {
-            max_spend_micros: raw.campaign.limits.max_spend_micros,
-            max_attempts: raw.campaign.limits.max_attempts,
-            max_attempt_nanos: raw.campaign.limits.max_attempt_nanos,
+            max_spend_micros: raw.campaign.limits.spend_micros,
+            max_attempts: raw.campaign.limits.attempts,
+            max_attempt_nanos: raw.campaign.limits.attempt_nanos,
         },
         price_sheet: raw.campaign.price_sheet,
         providers: raw.campaign.providers,

@@ -7,21 +7,25 @@
 
 use std::{collections::VecDeque, sync::Mutex};
 
-use super::super::{
-    campaign::{
-        CampaignDriver,
-        CampaignError,
-        CampaignPlan,
-        JsonLinesSink,
-        PlannedAttempt,
-        RecordSink,
-        SweepReport,
-        TeardownReport,
-        require_opt_in,
-        run_campaign,
+use super::{
+    super::{
+        campaign::{
+            AttemptRecords,
+            CampaignDriver,
+            CampaignError,
+            CampaignPlan,
+            JsonLinesSink,
+            PlannedAttempt,
+            RecordSink,
+            SweepReport,
+            TeardownReport,
+            require_opt_in,
+            run_campaign,
+        },
+        record::{CampaignLimits, Record, RecordKind, RunOutcome, RunRecord, SCHEMA_VERSION},
+        validate::validate_str,
     },
-    record::{CampaignLimits, Record, RecordKind, RunOutcome, RunRecord, SCHEMA_VERSION},
-    validate::validate_str,
+    support::run_record,
 };
 
 /// A driver that records every call and returns scripted results.
@@ -81,13 +85,18 @@ impl CampaignDriver for ScriptedDriver {
         &self,
         _campaign_id: &str,
         attempt: &PlannedAttempt,
-    ) -> Result<RunRecord, String> {
+    ) -> Result<AttemptRecords, String> {
         self.note(format!("run:{}", attempt.workload_id));
-        self.runs
+        let run = self
+            .runs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pop_front()
-            .unwrap_or_else(|| Err(String::from("no scripted run left")))
+            .unwrap_or_else(|| Err(String::from("no scripted run left")))?;
+        Ok(AttemptRecords {
+            run,
+            phases: Vec::new(),
+        })
     }
 
     fn verify_teardown(
@@ -127,40 +136,6 @@ impl RecordSink for FailingSink {
     fn append(&mut self, _record: &Record) -> Result<(), String> { Err(String::from("disk full")) }
 }
 
-/// A run record that validates clean under `campaign_id`.
-fn run_record(index: usize) -> RunRecord {
-    match super::super::record::parse_line(
-        super::fixture("valid-campaign.jsonl")
-            .lines()
-            .nth(1)
-            .expect("the fixture has a run line"),
-    )
-    .expect("the fixture's run line parses")
-    .into_run(index)
-    {
-        Ok(run) => run,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Converts a parsed record into a run record, numbering its repetition.
-trait IntoRun {
-    /// Returns the run record, numbering it `index`.
-    fn into_run(self, index: usize) -> Result<RunRecord, String>;
-}
-
-impl IntoRun for Record {
-    fn into_run(self, index: usize) -> Result<RunRecord, String> {
-        match self {
-            Record::Run(mut run) => {
-                run.repetition = u32::try_from(index).unwrap_or(1).saturating_add(1);
-                Ok(*run)
-            }
-            other => Err(format!("expected a run record, got {:?}", other.kind())),
-        }
-    }
-}
-
 /// Builds a plan with `attempts` attempts and generous limits.
 fn plan(attempts: usize) -> CampaignPlan {
     CampaignPlan {
@@ -190,7 +165,7 @@ fn a_disabled_campaign_never_calls_the_driver() {
     let mut sink = MemorySink::default();
     let error = run_campaign(&plan(1), None, &driver, &mut sink).expect_err("paid runs are off");
     assert!(matches!(error, CampaignError::NotEnabled { .. }), "{error}");
-    assert!(driver.calls().is_empty(), "calls: {:?}", driver.calls());
+    assert_eq!(driver.calls(), Vec::<String>::new(), "no attempt may run");
     assert!(sink.records.is_empty(), "no record may be written");
 }
 
@@ -213,7 +188,7 @@ fn a_plan_estimating_more_than_its_budget_is_refused_before_allocation() {
     let mut sink = MemorySink::default();
     let error = run_campaign(&plan, Some("1"), &driver, &mut sink).expect_err("budget is zero");
     assert!(matches!(error, CampaignError::InvalidPlan(_)), "{error}");
-    assert!(driver.calls().is_empty());
+    assert_eq!(driver.calls(), Vec::<String>::new());
 }
 
 #[test]
@@ -224,7 +199,7 @@ fn an_attempt_longer_than_the_declared_maximum_is_refused() {
     let mut sink = MemorySink::default();
     let error = run_campaign(&plan, Some("1"), &driver, &mut sink).expect_err("lifetime too long");
     assert!(matches!(error, CampaignError::InvalidPlan(_)), "{error}");
-    assert!(driver.calls().is_empty());
+    assert_eq!(driver.calls(), Vec::<String>::new());
 }
 
 #[test]
@@ -356,10 +331,10 @@ fn the_written_campaign_validates_clean() {
     let mut sink = MemorySink::default();
     run_campaign(&plan(1), Some("1"), &driver, &mut sink).expect("the campaign should complete");
 
-    // Re-serialise what was written and validate it as an operator would.
+    // Re-serialize what was written and validate it as an operator would.
     let mut text = String::new();
     for record in &sink.records {
-        let line = super::super::record::to_line(record).expect("the record serialises");
+        let line = super::super::record::to_line(record).expect("the record serializes");
         text.push_str(&line);
         text.push('\n');
     }
@@ -398,6 +373,6 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
     assert!(
         sink.records
             .iter()
-            .any(|record| matches!(record, Record::Run(run) if run.schema == SCHEMA_VERSION))
+            .any(|entry| matches!(entry, Record::Run(run) if run.schema == SCHEMA_VERSION))
     );
 }

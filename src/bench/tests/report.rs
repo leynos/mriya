@@ -10,23 +10,13 @@ use rstest::rstest;
 
 use super::{
     super::{
-        billing::{PriceSheet, load_price_sheet},
         record::{CacheState, Record, RunOutcome, RunRecord, WorkloadClass, parse_line},
         report::{ReportError, build_report, render},
         validate::{Campaign, validate_str},
     },
     fixture,
+    support::example_sheet,
 };
-
-/// The example sheet shipped with the repository.
-fn example_sheet() -> PriceSheet {
-    let path = format!(
-        "{}/benchmarks/price-sheet.example.toml",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let text = std::fs::read_to_string(&path).expect("the example price sheet should read");
-    load_price_sheet(&text).expect("the example price sheet should parse")
-}
 
 /// Returns the fixture's header and run lines as a campaign.
 fn example_campaign() -> Campaign {
@@ -44,7 +34,7 @@ fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
     text.push('\n');
     for run in runs {
         let record = Record::Run(Box::new(run));
-        text.push_str(&super::super::record::to_line(&record).expect("the run serialises"));
+        text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
         text.push('\n');
     }
     validate_str(&text).expect("the constructed campaign is valid")

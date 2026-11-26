@@ -14,6 +14,7 @@ use std::{
 };
 
 use camino::Utf8PathBuf;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::{
     Backend,
     InstanceHandle,
@@ -131,7 +132,13 @@ struct Fixture {
 /// reaches the scripted runner rather than a real host.
 fn fixture() -> Fixture {
     let tmp = TempDir::new().expect("a temporary directory");
-    std::fs::write(tmp.path().join("README.md"), "hello\n").expect("a workspace file");
+    let temporary =
+        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("a UTF-8 temporary path");
+    let directory = Dir::open_ambient_dir(&temporary, ambient_authority())
+        .expect("the temporary directory should open");
+    directory
+        .write("README.md", "hello\n")
+        .expect("the workspace file should write");
     let source =
         Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("a UTF-8 temporary path");
     let config = SyncConfig {
@@ -254,7 +261,9 @@ fn a_failed_teardown_is_reported_as_a_failed_phase() {
         .observations()
         .into_iter()
         .filter_map(|observation| match observation {
-            RecordedObservation::Finished { phase, succeeded } => Some((phase, succeeded)),
+            RecordedObservation::Finished {
+                phase, succeeded, ..
+            } => Some((phase, succeeded)),
             _ => None,
         })
         .collect::<Vec<_>>();

@@ -123,7 +123,7 @@ fn a_record_round_trips_through_a_line() {
         providers: vec![String::from("scaleway")],
     };
     let record = Record::Header(Box::new(header.clone()));
-    let line = to_line(&record).expect("the header should serialise");
+    let line = to_line(&record).expect("the header should serialize");
     let parsed = parse_line(&line).expect("the line should parse");
     assert_eq!(parsed, record);
     assert_eq!(parsed.kind(), RecordKind::CampaignHeader);
@@ -263,7 +263,7 @@ fn campaign_with_run(run: &RunRecord) -> String {
         price_sheet: None,
         providers: vec![run.provider.provider.clone()],
     };
-    let header_line = to_line(&Record::Header(Box::new(header))).expect("header serialises");
-    let run_line = to_line(&Record::Run(Box::new(run.clone()))).expect("run serialises");
+    let header_line = to_line(&Record::Header(Box::new(header))).expect("header serializes");
+    let run_line = to_line(&Record::Run(Box::new(run.clone()))).expect("run serializes");
     format!("{header_line}\n{run_line}\n")
 }

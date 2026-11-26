@@ -421,6 +421,54 @@ without changing behaviour, and each publishes only what its parent needs:
   these functions therefore means editing that list too, or its mutants start
   surviving as unrecorded gaps rather than recorded exceptions.
 
+## The cost benchmark
+
+`src/bench/` implements the protocol in
+`docs/backend-cost-benchmark-protocol.md`. It is split so that the parts which
+must be trustworthy are the parts which are easiest to test:
+
+- `record.rs` and `record/pins.rs` define the persisted JSON Lines records.
+  Every quantity is an integer, and there is no field a credential could hide
+  in, so a record cannot leak a secret by construction.
+- `validate.rs` reads a campaign and reports every defect by name. It never
+  stops at the first, because an operator fixing a campaign should see the
+  whole list once.
+- `billing.rs` prices a record with integer ceiling arithmetic. It applies the
+  provider's own granularity and minimum, converts a provider's currency
+  through a declared rate, and never uses a float. A price sheet is a dated,
+  cited observation, not a permanent fact.
+- `report.rs` enforces the comparison rules: equal work only, cache and storage
+  capability differences stated rather than assumed away, and CPU results never
+  ranked against GPU ones.
+- `campaign.rs` is the paid harness. It is gated, fail-closed, and driven
+  entirely through injected collaborators.
+
+Three observation seams connect the harness to the existing pipeline, and all
+three default to doing nothing:
+
+- `observe::RunObserver`, set with `RunOrchestrator::with_observer`, receives
+  each phase's start and finish. `mriya run` passes no observer, so its
+  behaviour, return values and phase order are unchanged.
+- `lifecycle::LifecycleSink`, set with `ScalewayBackend::with_lifecycle_sink`,
+  receives the identifier of every resource the adapter creates and the outcome
+  of every teardown. It is constructor-injected rather than added to the
+  `Backend` port, because only a benchmark needs it and a port returning
+  provider identifiers would force every future adapter to invent them.
+- `RunOrchestrator::with_pre_workload_command` and
+  `with_post_workload_command` run optional probe commands around the workload.
+  When neither is set, no extra remote call is made.
+
+The paid path is `ScalewayDriver` plus `mriya-bench run`. It is absent from
+every aggregate Make goal and every CI job. `make bench-validate` and
+`make bench-report` are offline and safe to run anywhere; only
+`make bench-campaign` allocates, and it refuses without the operator's opt-in
+and declared limits.
+
+A driver added for another provider must satisfy section 11 of the protocol
+before claiming a measured advantage. In particular it must expose provider
+resource identifiers, report whether teardown was verified by a listing, and
+carry a cited price-sheet entry for every rate, granularity, minimum, and cap.
+
 ## The build standard
 
 Development, test, lint, and typecheck builds use the parallel `rustc` frontend

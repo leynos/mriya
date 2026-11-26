@@ -16,7 +16,7 @@ The protocol covers CPU workloads only. Graphics processing unit (GPU) work is
 governed by section 9 and must never be ranked in the same table as a CPU
 result.
 
-The protocol does not authorise spending. Section 10 defines the operator
+The protocol does not authorize spending. Section 10 defines the operator
 opt-in that a paid run requires.
 
 ## 2. Workload set
@@ -25,12 +25,12 @@ A campaign measures the same four workloads on every backend it compares. Each
 workload pins its command, its input data, and the artefacts it is allowed to
 inherit from the cache.
 
-| Identifier | What it measures | Command shape |
-| --- | --- | --- |
-| `cold-build` | Full dependency and workspace compile with an empty build cache | Workspace build with the target directory cleared |
-| `warm-incremental` | Recompile after one source file changes | The same build with one touched source |
-| `link-heavy` | Linking and final artefact production | A build whose output is dominated by linking |
-| `test-execution` | Representative test run over an already warm build | The repository's own test command |
+| Identifier         | What it measures                                                | Command shape                                     |
+| ------------------ | --------------------------------------------------------------- | ------------------------------------------------- |
+| `cold-build`       | Full dependency and workspace compile with an empty build cache | Workspace build with the target directory cleared |
+| `warm-incremental` | Recompile after one source file changes                         | The same build with one touched source            |
+| `link-heavy`       | Linking and final artefact production                           | A build whose output is dominated by linking      |
+| `test-execution`   | Representative test run over an already warm build              | The repository's own test command                 |
 
 Every workload record names the exact command vector it ran. A campaign that
 changes a command must start a new campaign identifier, because two different
@@ -39,7 +39,7 @@ commands are not the same completed work.
 ### 2.1 Input data
 
 The input is the workload repository at a pinned commit. The record carries the
-commit identifier, the repository remote, and a digest of the synchronised
+commit identifier, the repository remote, and a digest of the synchronized
 tree. A dirty working tree is recorded as `dirty: true` and must not be
 compared against a clean tree.
 
@@ -66,7 +66,7 @@ invalid, and the validator reports each missing pin by name.
   manager identifier and version.
 - Command: the exact argument vector, including any environment assignments
   that affect the build.
-- Input data: the synchronised tree size in bytes and the file count.
+- Input data: the synchronized tree size in bytes and the file count.
 - Target architecture: the architecture string the provider was asked for and
   the architecture the guest reported.
 - Concurrency: the intended worker count and the effective parallelism the
@@ -79,20 +79,20 @@ invalid, and the validator reports each missing pin by name.
 
 ## 4. Phase boundaries
 
-Each attempt records these phases separately. A phase starts when its initiating
-call is entered and ends when that call returns, so the phases are sequential
-and do not overlap. Time spent waiting outside a phase belongs to the phase that
-caused the wait.
+Each attempt records these phases separately. A phase starts when its
+initiating call is entered and ends when that call returns, so the phases are
+sequential and do not overlap. Time spent waiting outside a phase belongs to
+the phase that caused the wait.
 
-| Phase | Starts | Ends |
-| --- | --- | --- |
-| `allocate` | The create request is issued | The provider returns a resource identity |
-| `bootstrap` | The create call returns | The guest reports ready for remote execution |
-| `cache-restore` | The cache preparation begins | The cache is mounted or confirmed absent |
-| `sync` | The workspace transfer begins | The transfer completes |
-| `remote-execution` | The remote command starts | The remote command returns |
-| `cache-save` | Cache persistence begins | Persistence completes or is declined |
-| `teardown` | The delete request is issued | The provider confirms no resource remains |
+| Phase              | Starts                        | Ends                                         |
+| ------------------ | ----------------------------- | -------------------------------------------- |
+| `allocate`         | The create request is issued  | The provider returns a resource identity     |
+| `bootstrap`        | The create call returns       | The guest reports ready for remote execution |
+| `cache-restore`    | The cache preparation begins  | The cache is mounted or confirmed absent     |
+| `sync`             | The workspace transfer begins | The transfer completes                       |
+| `remote-execution` | The remote command starts     | The remote command returns                   |
+| `cache-save`       | Cache persistence begins      | Persistence completes or is declined         |
+| `teardown`         | The delete request is issued  | The provider confirms no resource remains    |
 
 `teardown` is only `verified` when the provider listing no longer contains the
 resource. A delete call that returns without a confirmation produces an
@@ -102,8 +102,8 @@ resource. A delete call that returns without a confirmation produces an
 
 Each workload repeats at least five times on each backend. The record set for
 one workload and backend carries every repetition, including failures. The
-report prints the minimum, median, and maximum, and refuses to rank on a
-single repetition.
+report prints the minimum, median, and maximum, and refuses to rank on a single
+repetition.
 
 Warm-up runs that exist only to populate a cache are recorded, because they
 cost money, and are excluded from the timing summary by their declared role.

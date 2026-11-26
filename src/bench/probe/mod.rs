@@ -13,6 +13,12 @@
 
 use std::fmt;
 
+mod cargo;
+mod report;
+
+pub use cargo::{BuildMessageCounts, count_build_messages};
+pub use report::{PROBE_COMMAND, ProbeReport, parse_probe_report};
+
 use super::record::{Allocation, CacheObservation, CacheState, Concurrency, GuestArchitecture};
 
 /// Prints the machine architecture, as `uname -m` does.
@@ -269,7 +275,7 @@ pub fn cache_from(mount_output: &str, size_output: &str) -> Result<CacheObservat
 ///
 /// A cache that is not mounted is absent; a mounted empty one is `Empty` rather
 /// than `Warm`, so a cold build cannot be mistaken for a warm one.
-fn cache_state(mounted: bool, size_bytes: u64) -> CacheState {
+pub(super) const fn cache_state(mounted: bool, size_bytes: u64) -> CacheState {
     match (mounted, size_bytes) {
         (false, _) => CacheState::Absent,
         (true, 0) => CacheState::Empty,
@@ -310,131 +316,6 @@ pub fn concurrency_from(
     })
 }
 
-/// What one `cargo` JSON message stream reported about cache reuse.
-///
-/// The two counts are what makes a cache claim checkable. Cargo emits
-/// `compiler-artifact` for every unit it produces, marking the ones it reused
-/// with `"fresh": true`; counting the marked and unmarked messages gives the
-/// rebuilt and reused totals without reading Cargo's human summary, which
-/// changes between versions.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct BuildMessageCounts {
-    /// Artefacts Cargo reused without recompiling.
-    pub fresh: u32,
-    /// Artefacts Cargo rebuilt.
-    pub rebuilt: u32,
-}
-
-impl BuildMessageCounts {
-    /// Returns whether any artefact was reused at all.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mriya::bench::probe::BuildMessageCounts;
-    ///
-    /// let counts = BuildMessageCounts {
-    ///     fresh: 1,
-    ///     rebuilt: 0,
-    /// };
-    /// assert!(counts.reused_anything());
-    /// ```
-    #[must_use]
-    pub const fn reused_anything(&self) -> bool { self.fresh > 0 }
-
-    /// Returns the total number of artefacts Cargo produced or reused.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mriya::bench::probe::BuildMessageCounts;
-    ///
-    /// assert_eq!(
-    ///     BuildMessageCounts {
-    ///         fresh: 2,
-    ///         rebuilt: 3
-    ///     }
-    ///     .total(),
-    ///     5
-    /// );
-    /// ```
-    #[must_use]
-    pub const fn total(&self) -> u32 { self.fresh.saturating_add(self.rebuilt) }
-}
-
-/// Counts fresh and rebuilt artefacts in a `cargo` JSON message stream.
-///
-/// Lines that are not JSON objects, such as the human diagnostics Cargo writes
-/// to the same stream, are skipped: the count is about artefacts, and one
-/// unparseable diagnostic must not fail a whole build's measurement.
-///
-/// # Errors
-///
-/// Returns [`ProbeError::MalformedMessage`] when a line that begins as JSON
-/// cannot be read as an object, which would mean the stream is truncated or
-/// interleaved rather than merely chatty.
-///
-/// # Examples
-///
-/// ```
-/// use mriya::bench::probe::count_build_messages;
-///
-/// let stream = concat!(
-///     r#"{"reason":"compiler-artifact","fresh":true}"#,
-///     "\n",
-///     r#"{"reason":"compiler-artifact"}"#,
-///     "\n",
-/// );
-/// let counts = count_build_messages(stream)?;
-/// assert_eq!(counts.fresh, 1);
-/// assert_eq!(counts.rebuilt, 1);
-/// # Ok::<(), mriya::bench::probe::ProbeError>(())
-/// ```
-pub fn count_build_messages(stream: &str) -> Result<BuildMessageCounts, ProbeError> {
-    let mut counts = BuildMessageCounts::default();
-    for line in stream
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        let Some(reason) = compiler_artifact_reason(line)? else {
-            continue;
-        };
-        if reason {
-            counts.fresh = counts.fresh.saturating_add(1);
-        } else {
-            counts.rebuilt = counts.rebuilt.saturating_add(1);
-        }
-    }
-    Ok(counts)
-}
-
-/// Returns whether `line` is a `compiler-artifact` message, and whether it is
-/// marked fresh, or `None` when the line is not such a message.
-///
-/// # Errors
-///
-/// Returns [`ProbeError::MalformedMessage`] when a line starting with `{`
-/// cannot be parsed as a JSON object.
-fn compiler_artifact_reason(line: &str) -> Result<Option<bool>, ProbeError> {
-    if !line.starts_with('{') {
-        return Ok(None);
-    }
-    let value: serde_json::Value =
-        serde_json::from_str(line).map_err(|_| ProbeError::MalformedMessage {
-            found: truncate(line),
-        })?;
-    if value.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
-        return Ok(None);
-    }
-    Ok(Some(
-        value
-            .get("fresh")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-    ))
-}
-
 /// Returns a single version banner from a tool's output.
 ///
 /// The banner is kept verbatim because it names both the tool and its version,
@@ -463,145 +344,6 @@ pub fn parse_version_banner(output: &str) -> Result<String, ProbeError> {
         .ok_or(ProbeError::Empty {
             probe: COMPILER_VERSION_COMMAND,
         })
-}
-
-/// One shell command that prints every guest fact a record needs.
-///
-/// A single command keeps the probe cost to one remote round trip, and printing
-/// `key=value` lines rather than a fixed column order means a probe that fails
-/// on a particular host cannot silently shift every later value into the wrong
-/// field. The cache probes tolerate a missing mount path: a backend without a
-/// cache still has to produce a record.
-pub const PROBE_COMMAND: &str = concat!(
-    "printf 'arch=%s\\n' \"$(uname -m)\"; ",
-    "printf 'cpu=%s\\n' \"$(getconf _NPROCESSORS_ONLN)\"; ",
-    "printf 'mem=%s\\n' \"$(awk '/^MemTotal:/ {print $2 * 1024}' /proc/meminfo)\"; ",
-    "printf 'disk=%s\\n' \"$(df -B1 --output=size \\\"$PWD\\\" | tail -n 1)\"; ",
-    "if mountpoint -q \\\"${MRIYA_SYNC_VOLUME_MOUNT_PATH:-/mriya}\\\" 2>/dev/null; then ",
-    "printf 'cache_mounted=1\\n'; ",
-    "printf 'cache_bytes=%s\\n' \"$(df -B1 --output=used ",
-    "\\\"${MRIYA_SYNC_VOLUME_MOUNT_PATH:-/mriya}\\\" | tail -n 1)\"; ",
-    "else printf 'cache_mounted=0\\ncache_bytes=0\\n'; fi; ",
-    "printf 'rustc=%s\\n' \"$(rustc --version 2>/dev/null || echo unknown)\"; ",
-    "printf 'cargo=%s\\n' \"$(cargo --version 2>/dev/null || echo unknown)\""
-);
-
-/// The guest facts one probe round trip reported.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProbeReport {
-    /// Architecture the guest reported.
-    pub architecture: GuestArchitecture,
-    /// Logical CPUs the guest reported.
-    pub cpu_count: u32,
-    /// RAM available to the guest, in bytes.
-    pub memory_bytes: u64,
-    /// Disk available to the workspace, in bytes.
-    pub disk_bytes: u64,
-    /// Whether the cache path was a mount point.
-    pub cache_mounted: bool,
-    /// Bytes the cache held.
-    pub cache_bytes: u64,
-    /// The compiler's version banner, or `unknown`.
-    pub rustc: String,
-    /// The package manager's version banner, or `unknown`.
-    pub cargo: String,
-}
-
-impl ProbeReport {
-    /// Builds the allocation this probe reported.
-    #[must_use]
-    pub fn allocation(&self) -> Allocation {
-        Allocation {
-            cpu_count: self.cpu_count,
-            memory_bytes: self.memory_bytes,
-            disk_bytes: self.disk_bytes,
-            guest_architecture: self.architecture,
-        }
-    }
-
-    /// Builds the cache observation this probe reported.
-    #[must_use]
-    pub fn cache(&self) -> CacheObservation {
-        CacheObservation {
-            state: cache_state(self.cache_mounted, self.cache_bytes),
-            size_bytes: if self.cache_mounted {
-                self.cache_bytes
-            } else {
-                0
-            },
-            mounted: self.cache_mounted,
-            saved_bytes: 0,
-        }
-    }
-}
-
-/// Parses the `key=value` lines [`PROBE_COMMAND`] prints.
-///
-/// # Errors
-///
-/// Returns [`ProbeError::MissingKey`] naming the first absent fact, so a probe
-/// that did not run cannot be mistaken for a guest with no memory.
-///
-/// # Examples
-///
-/// ```
-/// use mriya::bench::probe::parse_probe_report;
-///
-/// let report = parse_probe_report(
-///     "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\ncache_mounted=0\ncache_bytes=0\n\
-///      rustc=rustc 1.93.0\ncargo=cargo 1.93.0\n",
-/// )?;
-/// assert_eq!(report.cpu_count, 2);
-/// assert_eq!(report.rustc, "rustc 1.93.0");
-/// # Ok::<(), mriya::bench::probe::ProbeError>(())
-/// ```
-pub fn parse_probe_report(output: &str) -> Result<ProbeReport, ProbeError> {
-    let facts = ProbeFacts::read(output);
-    Ok(ProbeReport {
-        architecture: GuestArchitecture::from_report(facts.required("arch")?),
-        cpu_count: parse_u32("cpu", facts.required("cpu")?)?,
-        memory_bytes: parse_unsigned("mem", facts.required("mem")?)?,
-        disk_bytes: parse_unsigned("disk", facts.required("disk")?)?,
-        cache_mounted: facts.required("cache_mounted")?.trim() == "1",
-        cache_bytes: parse_unsigned("cache_bytes", facts.required("cache_bytes")?)?,
-        rustc: facts.required("rustc")?.to_owned(),
-        cargo: facts.required("cargo")?.to_owned(),
-    })
-}
-
-/// The `key=value` facts a probe report carried.
-struct ProbeFacts<'a> {
-    /// Pairs in the order they appeared.
-    pairs: Vec<(&'a str, &'a str)>,
-}
-
-impl<'a> ProbeFacts<'a> {
-    /// Reads the report's pairs, ignoring lines without a key.
-    fn read(output: &'a str) -> Self {
-        let pairs = output
-            .lines()
-            .filter_map(|line| line.split_once('='))
-            .map(|(key, value)| (key.trim(), value.trim()))
-            .collect();
-        Self { pairs }
-    }
-
-    /// Returns the value for `key`, or names the missing fact.
-    fn required(&self, key: &'static str) -> Result<&'a str, ProbeError> {
-        self.pairs
-            .iter()
-            .find(|(name, _)| *name == key)
-            .map(|(_, value)| *value)
-            .ok_or(ProbeError::MissingKey { key })
-    }
-}
-
-/// Reads a `u32` from a probe value, naming the probe and what it printed.
-fn parse_u32(probe: &'static str, value: &str) -> Result<u32, ProbeError> {
-    value.parse::<u32>().map_err(|_| ProbeError::NotANumber {
-        probe,
-        found: truncate(value),
-    })
 }
 
 /// Splits a version banner into the tool name and its version.
@@ -637,7 +379,7 @@ pub fn split_banner(banner: &str) -> Result<(String, String), ProbeError> {
 }
 
 /// Shortens `text` for an error message so a whole JSON line cannot flood it.
-fn truncate(text: &str) -> String {
+pub(super) fn truncate(text: &str) -> String {
     const LIMIT: usize = 120;
     let trimmed = text.trim();
     if trimmed.chars().count() <= LIMIT {

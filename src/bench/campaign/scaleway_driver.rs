@@ -12,37 +12,33 @@
 //! make a record honest — a probe that cannot be read fails the attempt rather
 //! than producing a record with a guessed CPU count.
 
-use std::sync::Arc;
-
-use camino::Utf8PathBuf;
-
-use super::{CampaignDriver, PlannedAttempt, SweepReport, TeardownReport};
+use super::{
+    AttemptRecords,
+    CampaignDriver,
+    PlannedAttempt,
+    SweepReport,
+    TeardownReport,
+    scaleway_measure::{intended_workers, outcome_of, phase_records, toolchain_pin, tree_pin},
+};
 use crate::{
-    RunOrchestrator,
     ScalewayConfig,
     backend::InstanceRequest,
     bench::{
-        lifecycle::{LifecycleEvent, RecordingSink},
-        observe::{Observation, RecordedObservation, RecordingObserver, RunObserver},
-        probe::{PROBE_COMMAND, ProbeReport, parse_probe_report},
+        probe::parse_probe_report,
         record::{
-            CacheObservation,
             Concurrency,
-            GuestArchitecture,
             Lifetime,
             ProviderProduct,
             RecordKind,
-            RunOutcome,
             RunRecord,
             RunRole,
             SCHEMA_VERSION,
-            TreePin,
             WorkloadClass,
         },
     },
     janitor::{DEFAULT_SCW_BIN, Janitor, JanitorConfig},
     scaleway::ScalewayBackend,
-    sync::{StreamingCommandRunner, SyncConfig, Syncer},
+    sync::SyncConfig,
 };
 
 /// An error the driver reports as a message, because the campaign stops anyway.
@@ -51,9 +47,9 @@ pub type DriverResult<T> = Result<T, String>;
 /// The production driver.
 pub struct ScalewayDriver {
     /// Configuration for the provider.
-    config: ScalewayConfig,
+    pub(super) config: ScalewayConfig,
     /// Configuration for transport.
-    sync_config: SyncConfig,
+    pub(super) sync_config: SyncConfig,
     /// Path to the `scw` CLI used by the pre-sweep.
     scw_bin: String,
 }
@@ -118,79 +114,52 @@ impl ScalewayDriver {
 impl CampaignDriver for ScalewayDriver {
     fn pre_sweep(&self, campaign_id: &str) -> DriverResult<SweepReport> { self.sweep(campaign_id) }
 
-    fn run_attempt(&self, campaign_id: &str, attempt: &PlannedAttempt) -> DriverResult<RunRecord> {
+    fn run_attempt(
+        &self,
+        campaign_id: &str,
+        attempt: &PlannedAttempt,
+    ) -> DriverResult<AttemptRecords> {
         let request = self.request(attempt)?;
-        let backend = ScalewayBackend::new(self.config.clone())
-            .map_err(|err| format!("backend: {err}"))?
-            .with_lifecycle_sink(Arc::new(RecordingSink::default()));
-        let syncer = Syncer::new(self.sync_config.clone(), StreamingCommandRunner)
-            .map_err(|err| format!("syncer: {err}"))?;
-        let observer = Arc::new(RecordingObserver::default());
-        let orchestrator = RunOrchestrator::new(backend, syncer)
-            .with_observer(Box::new(SharedObserver(observer.clone())))
-            .with_pre_workload_command(PROBE_COMMAND)
-            .with_post_workload_command(PROBE_COMMAND);
-
-        let source = std::env::current_dir()
-            .map_err(|err| format!("working directory: {err}"))
-            .and_then(|path| {
-                Utf8PathBuf::from_path_buf(path)
-                    .map_err(|path| format!("working directory is not UTF-8: {}", path.display()))
-            })?;
-
-        let command = workload_command(&attempt.workload_id)?;
-        let runtime =
-            tokio::runtime::Runtime::new().map_err(|err| format!("async runtime: {err}"))?;
-        let started = std::time::Instant::now();
-        let observed = runtime
-            .block_on(async {
-                orchestrator
-                    .execute_observed(&request, &source, &command)
-                    .await
-            })
-            .map_err(|err| format!("run failed: {err}"))?;
-        let total_nanos = elapsed_nanos(started.elapsed());
-
-        let probe_stdout = observed
-            .pre_stdout
-            .as_deref()
-            .ok_or_else(|| String::from("the pre-workload probe produced no output"))?;
-        let probe = parse_probe_report(probe_stdout)
+        let measured = self.measure(attempt, &request)?;
+        let probe = parse_probe_report(&measured.probe_stdout)
             .map_err(|err| format!("the pre-workload probe could not be read: {err}"))?;
-
-        let cache = probe.cache();
-        let outcome = outcome_of(&observed.output);
-        let toolchain = toolchain_pin(&probe);
-        Ok(RunRecord {
-            schema: SCHEMA_VERSION,
-            kind: RecordKind::Run,
-            campaign_id: campaign_id.to_owned(),
-            workload_id: attempt.workload_id.clone(),
-            command: command.split_whitespace().map(str::to_owned).collect(),
-            role: RunRole::Timed,
-            class: WorkloadClass::Cpu,
-            tree: tree_pin(&source)?,
-            toolchain,
-            provider: ProviderProduct {
-                provider: String::from("scaleway"),
-                product: attempt.product.clone(),
-                location: self.config.default_zone.clone(),
+        Ok(AttemptRecords {
+            run: RunRecord {
+                schema: SCHEMA_VERSION,
+                kind: RecordKind::Run,
+                campaign_id: campaign_id.to_owned(),
+                workload_id: attempt.workload_id.clone(),
+                command: measured
+                    .command
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                role: RunRole::Timed,
+                class: WorkloadClass::Cpu,
+                tree: tree_pin(&measured.source)?,
+                toolchain: toolchain_pin(&probe),
+                provider: ProviderProduct {
+                    provider: String::from("scaleway"),
+                    product: attempt.product.clone(),
+                    location: self.config.default_zone.clone(),
+                },
+                allocation: probe.allocation(),
+                concurrency: Concurrency {
+                    intended_workers: intended_workers(&probe),
+                    effective_workers: probe.cpu_count,
+                },
+                cache: probe.cache(),
+                lifetime: Lifetime {
+                    total_nanos: measured.total_nanos,
+                    // The provider's granularity is applied when the record is
+                    // priced, from the price sheet rather than from a guess here.
+                    chargeable_nanos: measured.total_nanos,
+                },
+                outcome: outcome_of(&measured.output),
+                gpu: None,
+                repetition: 1,
             },
-            allocation: probe.allocation(),
-            concurrency: Concurrency {
-                intended_workers: intended_workers(&probe),
-                effective_workers: probe.cpu_count,
-            },
-            cache,
-            lifetime: Lifetime {
-                total_nanos,
-                // The provider's granularity is applied when the record is
-                // priced, from the price sheet rather than from a guess here.
-                chargeable_nanos: total_nanos,
-            },
-            outcome,
-            gpu: None,
-            repetition: 1,
+            phases: phase_records(campaign_id, attempt, &measured.observations),
         })
     }
 
@@ -207,150 +176,4 @@ impl CampaignDriver for ScalewayDriver {
         self.sweep(campaign_id)?;
         Ok(TeardownReport::verified())
     }
-}
-
-/// Adapts an `Arc<RecordingObserver>` to the orchestrator's boxed observer.
-struct SharedObserver(Arc<RecordingObserver>);
-
-impl RunObserver for SharedObserver {
-    fn observe(&self, observation: Observation<'_>) { self.0.observe(observation); }
-}
-
-/// Returns the workload command the protocol pins for `workload_id`.
-fn workload_command(workload_id: &str) -> DriverResult<String> {
-    match workload_id {
-        "cold-build" | "warm-incremental" => Ok(String::from(
-            "cargo build --workspace --all-targets --all-features",
-        )),
-        "link-heavy" => Ok(String::from(
-            "cargo test --workspace --all-features --no-run",
-        )),
-        "test-execution" => Ok(String::from("cargo nextest run --workspace --all-targets")),
-        other => Err(format!(
-            "unknown workload {other:?}; the protocol defines cold-build, warm-incremental, \
-             link-heavy and test-execution"
-        )),
-    }
-}
-
-/// Maps the remote command's output onto a protocol outcome.
-fn outcome_of(output: &crate::sync::RemoteCommandOutput) -> RunOutcome {
-    match output.exit_code {
-        Some(0) => RunOutcome::Completed {
-            exit_code: 0,
-            correctness_passed: true,
-        },
-        Some(code) => RunOutcome::Failed {
-            exit_code: code,
-            summary: String::from("the workload exited non-zero"),
-        },
-        None => RunOutcome::Aborted {
-            phase: crate::bench::record::PhaseKind::RemoteExecution,
-            summary: String::from("the workload terminated without an exit status"),
-        },
-    }
-}
-
-/// Builds the toolchain pin from the probe's version banners.
-fn toolchain_pin(probe: &ProbeReport) -> crate::bench::record::ToolchainPin {
-    let (compiler, compiler_version) = banner_parts(&probe.rustc);
-    let (package_manager, package_manager_version) = banner_parts(&probe.cargo);
-    crate::bench::record::ToolchainPin {
-        compiler,
-        compiler_version,
-        package_manager,
-        package_manager_version,
-    }
-}
-
-/// Splits a banner into name and version, keeping the whole banner as the
-/// version when it does not split cleanly.
-fn banner_parts(banner: &str) -> (String, String) {
-    match banner.split_once(char::is_whitespace) {
-        Some((tool, version)) if !tool.is_empty() => (tool.to_owned(), version.trim().to_owned()),
-        _ => (String::from("unknown"), banner.trim().to_owned()),
-    }
-}
-
-/// Returns the worker count the workload was asked to use.
-///
-/// The protocol pins an intended worker count, and the Cargo workloads here all
-/// honour `CARGO_BUILD_JOBS` through the environment the orchestration sets.
-fn intended_workers(probe: &ProbeReport) -> u32 { probe.cpu_count }
-
-/// Builds the tree pin from the repository the campaign runs in.
-///
-/// # Errors
-///
-/// Returns a message when the repository state cannot be read, because a record
-/// that guessed its revision would be evidence of nothing.
-fn tree_pin(source: &Utf8PathBuf) -> DriverResult<TreePin> {
-    let commit = git_output(source, &["rev-parse", "HEAD"])?;
-    let remote = git_output(source, &["config", "--get", "remote.origin.url"]).unwrap_or_default();
-    let status = git_output(source, &["status", "--porcelain"]).unwrap_or_default();
-    let files = git_output(source, &["ls-files"])?;
-    Ok(TreePin {
-        remote,
-        commit,
-        tree_digest: status_signature(&status),
-        dirty: !status.trim().is_empty(),
-        size_bytes: 0,
-        file_count: u64::try_from(files.lines().count()).unwrap_or(0),
-    })
-}
-
-/// Returns one `git` invocation's trimmed standard output.
-fn git_output(source: &Utf8PathBuf, args: &[&str]) -> DriverResult<String> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(source.as_std_path())
-        .output()
-        .map_err(|err| format!("git {}: {err}", args.join(" ")))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-/// Returns a short digest of the working-tree status.
-///
-/// A status listing is not a content hash, and the record says so by carrying
-/// the status text's digest rather than pretending to a tree hash: two dirty
-/// trees with the same file names but different content would collide, which is
-/// why the `dirty` flag is also recorded and a dirty comparison is refused.
-fn status_signature(status: &str) -> String {
-    let mut hash = 0_u64;
-    for byte in status.bytes() {
-        hash = hash.wrapping_mul(31).wrapping_add(u64::from(byte));
-    }
-    format!("status-fnv64:{hash:016x}")
-}
-
-/// Converts a `Duration` into nanoseconds without a lossy cast.
-fn elapsed_nanos(elapsed: std::time::Duration) -> u64 {
-    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-}
-
-/// Keeps the lifecycle event type reachable for documentation purposes.
-#[allow(dead_code)]
-fn _lifecycle_event_is_public(event: &LifecycleEvent) -> String { format!("{event:?}") }
-
-/// Keeps the recorded-observation type reachable for documentation purposes.
-#[allow(dead_code)]
-fn _observation_is_public(observation: &RecordedObservation) -> String {
-    format!("{observation:?}")
-}
-
-/// Keeps the cache observation type reachable for documentation purposes.
-#[allow(dead_code)]
-fn _cache_is_public(cache: &CacheObservation) -> String { format!("{cache:?}") }
-
-/// Keeps the architecture type reachable for documentation purposes.
-#[allow(dead_code)]
-fn _architecture_is_public(architecture: GuestArchitecture) -> String {
-    format!("{architecture:?}")
 }

@@ -127,8 +127,11 @@ pub struct RecordingObserver {
     observations: std::sync::Mutex<Vec<RecordedObservation>>,
 }
 
-/// One observation as [`RecordingObserver`] stored it, with the duration
-/// flattened so a test can compare observations without timing them.
+/// One observation as [`RecordingObserver`] stored it.
+///
+/// The duration is kept because a campaign persists it: an observer that threw
+/// the measurement away would leave the harness with a phase name and no
+/// number, which is not a measurement.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecordedObservation {
     /// A phase began.
@@ -137,6 +140,8 @@ pub enum RecordedObservation {
     Finished {
         /// Which phase ended.
         phase: PhaseKind,
+        /// How long it took, in nanoseconds.
+        duration_nanos: u64,
         /// Whether the phase reached its own success condition.
         succeeded: bool,
     },
@@ -144,7 +149,59 @@ pub enum RecordedObservation {
     Unverified {
         /// Which phase could not be confirmed.
         phase: PhaseKind,
+        /// How long it took, in nanoseconds.
+        duration_nanos: u64,
     },
+}
+
+impl RecordedObservation {
+    /// Returns the phase the observation concerns, or `None` for a start.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mriya::bench::{observe::RecordedObservation, record::PhaseKind};
+    ///
+    /// let finished = RecordedObservation::Finished {
+    ///     phase: PhaseKind::Sync,
+    ///     duration_nanos: 1,
+    ///     succeeded: true,
+    /// };
+    /// assert_eq!(finished.phase(), Some(PhaseKind::Sync));
+    /// assert_eq!(finished.duration_nanos(), Some(1));
+    /// ```
+    #[must_use]
+    pub const fn phase(&self) -> Option<PhaseKind> {
+        match self {
+            Self::Started(_) => None,
+            Self::Finished { phase, .. } | Self::Unverified { phase, .. } => Some(*phase),
+        }
+    }
+
+    /// Returns the measured duration, or `None` for a start.
+    #[must_use]
+    pub const fn duration_nanos(&self) -> Option<u64> {
+        match self {
+            Self::Started(_) => None,
+            Self::Finished { duration_nanos, .. } | Self::Unverified { duration_nanos, .. } => {
+                Some(*duration_nanos)
+            }
+        }
+    }
+
+    /// Returns whether the observation reports a successful finish.
+    ///
+    /// A start is not a success, and an unverified finish is not one either.
+    #[must_use]
+    pub const fn succeeded(&self) -> bool {
+        matches!(
+            self,
+            Self::Finished {
+                succeeded: true,
+                ..
+            }
+        )
+    }
 }
 
 impl RecordingObserver {
@@ -162,11 +219,7 @@ impl RecordingObserver {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .filter_map(|observation| match observation {
-                RecordedObservation::Started(_) => None,
-                RecordedObservation::Finished { phase, .. }
-                | RecordedObservation::Unverified { phase } => Some(*phase),
-            })
+            .filter_map(RecordedObservation::phase)
             .collect()
     }
 
@@ -190,9 +243,20 @@ impl RunObserver for RecordingObserver {
         let recorded = match observation {
             Observation::PhaseStarted(phase) => RecordedObservation::Started(phase),
             Observation::PhaseFinished {
-                phase, succeeded, ..
-            } => RecordedObservation::Finished { phase, succeeded },
-            Observation::PhaseUnverified { phase, .. } => RecordedObservation::Unverified { phase },
+                phase,
+                duration,
+                succeeded,
+            } => RecordedObservation::Finished {
+                phase,
+                duration_nanos: u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
+                succeeded,
+            },
+            Observation::PhaseUnverified {
+                phase, duration, ..
+            } => RecordedObservation::Unverified {
+                phase,
+                duration_nanos: u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
+            },
         };
         self.observations
             .lock()

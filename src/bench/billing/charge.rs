@@ -16,7 +16,6 @@
 use std::fmt;
 
 use super::{
-    MICROS_PER_UNIT,
     PlanRule,
     PriceSheet,
     PriceSheetError,
@@ -24,12 +23,13 @@ use super::{
     ProviderRules,
     StorageRule,
     chargeable_nanos,
+    money::checked_add,
 };
 
+/// What one gate consumed on one provider.
+///
 /// Provider-currency amounts are converted into the sheet's currency before
 /// they are summed, so a report never adds two different currencies together.
-
-/// What one gate consumed on one provider.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Usage {
     /// Provider name, selecting the rules to price against.
@@ -99,7 +99,7 @@ impl Usage {
         self
     }
 
-    /// Declares this gate's amortised share of the plan's monthly price.
+    /// Declares this gate's amortized share of the plan's monthly price.
     #[must_use]
     pub const fn with_subscription_share(mut self, share_micros: u64) -> Self {
         self.subscription_share_micros = share_micros;
@@ -155,50 +155,6 @@ pub struct CostBreakdown {
     pub total_account_micros: u64,
 }
 
-impl CostBreakdown {
-    /// Adds this breakdown's fields to `totals`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ChargeError::Overflow`] when a running total would exceed a
-    /// 64-bit count, which means the campaign is larger than the sheet's units
-    /// can express rather than that any single gate was mispriced.
-    pub fn accumulate(&self, totals: &mut Totals) -> Result<(), ChargeError> {
-        totals.chargeable_nanos = checked_add(totals.chargeable_nanos, self.chargeable_nanos)?;
-        totals.compute_micros = checked_add(totals.compute_micros, self.compute_micros)?;
-        totals.start_micros = checked_add(totals.start_micros, self.start_micros)?;
-        totals.storage_micros = checked_add(totals.storage_micros, self.storage_micros)?;
-        totals.subscription_micros =
-            checked_add(totals.subscription_micros, self.subscription_micros)?;
-        totals.absorbed_nanos = checked_add(totals.absorbed_nanos, self.absorbed_nanos)?;
-        totals.marginal_micros = checked_add(totals.marginal_micros, self.marginal_micros)?;
-        totals.total_account_micros =
-            checked_add(totals.total_account_micros, self.total_account_micros)?;
-        Ok(())
-    }
-}
-
-/// A running sum of [`CostBreakdown`] fields.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Totals {
-    /// Summed chargeable lifetime.
-    pub chargeable_nanos: u64,
-    /// Summed compute price.
-    pub compute_micros: u64,
-    /// Summed start charges.
-    pub start_micros: u64,
-    /// Summed retained storage.
-    pub storage_micros: u64,
-    /// Summed subscription share.
-    pub subscription_micros: u64,
-    /// Summed absorbed compute time.
-    pub absorbed_nanos: u64,
-    /// Summed marginal cost.
-    pub marginal_micros: u64,
-    /// Summed total-account cost.
-    pub total_account_micros: u64,
-}
-
 /// Why a gate could not be priced.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChargeError {
@@ -231,11 +187,6 @@ impl From<PriceSheetError> for ChargeError {
             other => Self::MissingRule(other),
         }
     }
-}
-
-/// Adds two counts, reporting overflow rather than wrapping.
-fn checked_add(left: u64, right: u64) -> Result<u64, ChargeError> {
-    left.checked_add(right).ok_or(ChargeError::Overflow)
 }
 
 /// Prices one gate against a sheet.
@@ -291,7 +242,7 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
     let billable_nanos = chargeable.saturating_sub(absorbed_nanos);
 
     let compute_micros = convert(price_compute(product, billable_nanos)?, rate)?;
-    let start_micros = convert(start_charge(provider, product, usage)?, rate)?;
+    let start_micros = convert(start_charge(provider, product, usage), rate)?;
     let storage_micros = convert(storage_charge(provider, &usage.retained)?, rate)?;
     let subscription_micros = convert(usage.subscription_share_micros, rate)?;
 
@@ -345,19 +296,15 @@ fn product_for<'a>(
 }
 
 /// Returns the start charge owed once the plan's included starts are used up.
-fn start_charge(
-    provider: &ProviderRules,
-    product: &ProductRule,
-    usage: &Usage,
-) -> Result<u64, ChargeError> {
+fn start_charge(provider: &ProviderRules, product: &ProductRule, usage: &Usage) -> u64 {
     let included = provider
         .plan
         .as_ref()
         .map_or(0, |plan: &PlanRule| plan.included_starts);
     if usage.plan_starts_used < included {
-        return Ok(0);
+        return 0;
     }
-    Ok(product.start_charge_micros)
+    product.start_charge_micros
 }
 
 /// Sums the retained-storage charges, naming any class the sheet lacks.
@@ -392,51 +339,4 @@ fn storage_rule<'a>(
             class: item.class.clone(),
         })
     })
-}
-
-/// Formats a count of micro-units as a currency amount with six decimals.
-///
-/// # Examples
-///
-/// ```
-/// use mriya::bench::billing::format_currency;
-///
-/// assert_eq!(format_currency("USD", 24_000), "USD 0.024000");
-/// ```
-#[must_use]
-pub fn format_currency(currency: &str, micros: u64) -> String {
-    format!("{currency} {}", super::format_micros(micros))
-}
-
-/// Returns whether two figures are the same to the micro-unit.
-///
-/// The report uses this to say "marginal and total-account cost are equal"
-/// rather than printing one number twice under two names.
-///
-/// # Examples
-///
-/// ```
-/// use mriya::bench::billing::figures_agree;
-///
-/// assert!(figures_agree(1_000, 1_000));
-/// assert!(!figures_agree(1_000, 1_001));
-/// ```
-#[must_use]
-pub const fn figures_agree(left: u64, right: u64) -> bool { left == right }
-
-/// Returns `micros` expressed in whole currency units and its remainder.
-///
-/// # Examples
-///
-/// ```
-/// use mriya::bench::billing::split_units;
-///
-/// assert_eq!(split_units(1_500_000), (1, 500_000));
-/// ```
-#[must_use]
-pub fn split_units(micros: u64) -> (u64, u64) {
-    (
-        micros.checked_div(MICROS_PER_UNIT).unwrap_or(0),
-        micros.checked_rem(MICROS_PER_UNIT).unwrap_or(0),
-    )
 }

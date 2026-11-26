@@ -10,6 +10,8 @@
 
 use std::process::{Command, Output};
 
+use camino::Utf8Path;
+use cap_std::{ambient_authority, fs_utf8::Dir};
 use tempfile::TempDir;
 
 /// Path to the built `mriya-bench` binary.
@@ -34,10 +36,30 @@ fn status_code(output: &Output) -> i32 { output.status.code().unwrap_or(1) }
 /// Returns a temporary file containing `text`.
 fn temp_file(name: &str, text: &str) -> (TempDir, String) {
     let dir = TempDir::new().expect("a temporary directory");
-    let path = dir.path().join(name);
-    std::fs::write(&path, text).expect("the fixture file writes");
-    let text_path = path.to_string_lossy().into_owned();
+    let temporary = Utf8Path::from_path(dir.path()).expect("a UTF-8 temporary path");
+    let handle = Dir::open_ambient_dir(temporary, ambient_authority())
+        .expect("the temporary directory should open");
+    handle
+        .write(name, text)
+        .expect("the fixture file should write");
+    let text_path = dir.path().join(name).to_string_lossy().into_owned();
     (dir, text_path)
+}
+
+/// Reads `path` through a capability handle on its parent directory.
+fn read_file(path: &str) -> String {
+    let parsed = Utf8Path::new(path);
+    let parent = parsed
+        .parent()
+        .filter(|parent| !parent.as_str().is_empty())
+        .unwrap_or_else(|| Utf8Path::new("."));
+    let name = parsed
+        .file_name()
+        .expect("the path should name a file")
+        .to_owned();
+    let handle = Dir::open_ambient_dir(parent, ambient_authority())
+        .expect("the parent directory should open");
+    handle.read_to_string(name).expect("the file should read")
 }
 
 /// The path of the repository's example campaign plan.
@@ -176,7 +198,7 @@ fn a_paid_run_refuses_to_start_without_the_opt_in() {
         "the refusal says what to set: {stderr}"
     );
     // Nothing may have been appended, because no allocation could have started.
-    let written = std::fs::read_to_string(&out).expect("the output file reads");
+    let written = read_file(&out);
     assert!(
         written.is_empty(),
         "a refused campaign must not write a record: {written}"

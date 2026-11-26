@@ -21,7 +21,7 @@ fn every_phase_name_is_distinct_and_in_protocol_order() {
     let unique: std::collections::BTreeSet<_> = names.iter().collect();
     assert_eq!(unique.len(), names.len(), "phase names must be distinct");
     assert_eq!(names[0], "allocate");
-    assert_eq!(names[names.len() - 1], "teardown");
+    assert_eq!(names.last().copied(), Some("teardown"));
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn a_phase_record_names_its_phase_with_the_protocol_spelling() {
         duration_nanos: 42,
         status: PhaseStatus::Unverified,
     }));
-    let line = to_line(&record).expect("the phase should serialise");
+    let line = to_line(&record).expect("the phase should serialize");
     assert!(line.contains(r#""phase":"cache-restore""#), "{line}");
     assert!(line.contains(r#""status":"unverified""#), "{line}");
     assert_eq!(parse_line(&line).expect("round trip"), record);
@@ -53,7 +53,7 @@ fn a_residual_record_names_every_identifier_it_carries() {
         resource_ids: vec![String::from("a"), String::from("b")],
         reason: String::from("listing unreadable"),
     }));
-    let line = to_line(&record).expect("the residual should serialise");
+    let line = to_line(&record).expect("the residual should serialize");
     assert!(line.contains(r#""resource_ids":["a","b"]"#), "{line}");
     assert_eq!(record.kind(), RecordKind::ResidualResource);
 }
@@ -68,7 +68,7 @@ fn a_record_carries_no_field_a_credential_could_hide_in() {
         resource_ids: vec![String::from("a")],
         reason: String::from("listing unreadable"),
     })))
-    .expect("serialises");
+    .expect("serializes");
     for forbidden in ["secret", "token", "password", "key", "credential"] {
         assert!(
             !line.to_lowercase().contains(forbidden),
@@ -91,7 +91,7 @@ fn a_cache_observation_round_trips_every_state() {
             mounted: state != CacheState::Absent,
             saved_bytes: 3,
         };
-        let json = serde_json::to_string(&observation).expect("observation serialises");
+        let json = serde_json::to_string(&observation).expect("observation serializes");
         let back: CacheObservation = serde_json::from_str(&json).expect("observation parses");
         assert_eq!(back, observation);
     }

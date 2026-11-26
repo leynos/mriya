@@ -15,7 +15,7 @@ pub struct TreePin {
     pub remote: String,
     /// Commit identifier checked out for the run.
     pub commit: String,
-    /// Digest of the synchronised tree, so two trees can be compared.
+    /// Digest of the synchronized tree, so two trees can be compared.
     pub tree_digest: String,
     /// Whether the working tree had uncommitted changes.
     pub dirty: bool,

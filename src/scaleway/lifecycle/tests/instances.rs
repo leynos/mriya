@@ -150,8 +150,8 @@ async fn a_successful_creation_reports_the_resource_it_created(
 
     let sink = std::sync::Arc::new(RecordingSink::default());
     let backend = backend_fixture.with_lifecycle_sink(sink.clone());
-    let (result, _) = with_stub(backend, vec![created_instance()], async |backend| {
-        backend
+    let (result, _) = with_stub(backend, vec![created_instance()], async |stubbed| {
+        stubbed
             .create_instance_stopped_observed(&base_request, "img-test")
             .await
     })
@@ -186,8 +186,8 @@ async fn an_unreadable_create_response_reports_an_uncertain_allocation(
 
     let sink = std::sync::Arc::new(RecordingSink::default());
     let backend = backend_fixture.with_lifecycle_sink(sink.clone());
-    let (result, _) = with_stub(backend, vec![created_but_unreadable()], async |backend| {
-        backend
+    let (result, _) = with_stub(backend, vec![created_but_unreadable()], async |stubbed| {
+        stubbed
             .create_instance_stopped_observed(&base_request, "img-test")
             .await
     })
