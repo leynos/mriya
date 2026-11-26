@@ -120,18 +120,20 @@ where
             .await?;
 
         let unmount_note = self.unmount_cache(&networking, instance.volume_id);
-        if let Err(teardown_error) = self
+        if let Err(failure) = self
             .backend
             .teardown(instance.handle, instance.volume_id)
             .await
         {
+            let stage = failure.stage.as_str();
+            let teardown_source = failure.source;
             let message = unmount_note.map_or_else(
-                || teardown_error.to_string(),
-                |note| format!("{teardown_error} ({note})"),
+                || format!("{teardown_source} while {stage}"),
+                |note| format!("{teardown_source} while {stage} ({note})"),
             );
             return Err(RunError::Teardown {
                 message,
-                source: Box::new(teardown_error),
+                source: Box::new(teardown_source),
             });
         }
 

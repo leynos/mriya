@@ -18,7 +18,14 @@ use crate::{
     backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest},
     config::ScalewayConfig,
     janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
-    volume::{VolumeBackend, VolumeHandle, VolumeRequest, VolumeState, VolumeStatus},
+    volume::{
+        TeardownFailure,
+        VolumeBackend,
+        VolumeHandle,
+        VolumeRequest,
+        VolumeState,
+        VolumeStatus,
+    },
 };
 
 /// Port assumed for SSH readiness probes and the returned networking details.
@@ -286,7 +293,7 @@ impl VolumeBackend for ScalewayBackend {
         &'a self,
         handle: &'a InstanceHandle,
         volume_id: Option<&'a str>,
-    ) -> BackendFuture<'a, (), Self::Error> {
+    ) -> BackendFuture<'a, (), TeardownFailure<Self::Error>> {
         Box::pin(async move { Self::teardown_instance(self, handle, volume_id).await })
     }
 }

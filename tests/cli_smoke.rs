@@ -18,23 +18,26 @@ fn cli_displays_help() {
 }
 
 /// Writes `contents` to the discovered configuration file.
-fn write_config(dir: &TempDir, contents: &str) {
-    let dir_path =
-        camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("temp dir is UTF-8");
+///
+/// The helpers return `Result` rather than panicking so `expect_used` stays
+/// strict outside a `#[test]` body, as the repository's lint policy requires.
+fn write_config(dir: &TempDir, contents: &str) -> Result<(), String> {
+    let dir_path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
+        .map_err(|path| format!("temp dir is not UTF-8: {}", path.display()))?;
     cap_std::fs_utf8::Dir::open_ambient_dir(&dir_path, cap_std::ambient_authority())
-        .expect("open temp dir")
+        .map_err(|error| format!("open temp dir: {error}"))?
         .write("mriya.toml", contents)
-        .expect("write config");
+        .map_err(|error| format!("write config: {error}"))
 }
 
 /// Reads the discovered configuration file.
-fn read_config(dir: &TempDir) -> String {
-    let dir_path =
-        camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("temp dir is UTF-8");
+fn read_config(dir: &TempDir) -> Result<String, String> {
+    let dir_path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
+        .map_err(|path| format!("temp dir is not UTF-8: {}", path.display()))?;
     cap_std::fs_utf8::Dir::open_ambient_dir(&dir_path, cap_std::ambient_authority())
-        .expect("open temp dir")
+        .map_err(|error| format!("open temp dir: {error}"))?
         .read_to_string("mriya.toml")
-        .expect("read config")
+        .map_err(|error| format!("read config: {error}"))
 }
 
 /// Builds an `init` command that cannot reach the provider before the guard.
@@ -54,19 +57,19 @@ fn init_command(config_path: &std::path::Path) -> assert_cmd::Command {
 /// volume recorded in the file would be ignored while `mriya run` keeps using
 /// the environment ID.
 #[test]
-fn init_refuses_an_environment_volume_id_without_force() {
-    let dir = TempDir::new().expect("tempdir");
+fn init_refuses_an_environment_volume_id_without_force() -> Result<(), String> {
+    let dir = TempDir::new().map_err(|error| format!("tempdir: {error}"))?;
     let config = dir.path().join("mriya.toml");
-    write_config(&dir, "");
+    write_config(&dir, "")?;
     let mut cmd = init_command(&config);
     cmd.env("SCW_DEFAULT_VOLUME_ID", ENV_VOLUME_ID)
         .assert()
         .failure()
         .stderr(contains(format!("SCW_DEFAULT_VOLUME_ID={ENV_VOLUME_ID}")));
-    assert!(
-        read_config(&dir).is_empty(),
-        "the guard must not write the config"
-    );
+    if !read_config(&dir)?.is_empty() {
+        return Err(String::from("the guard must not write the config"));
+    }
+    Ok(())
 }
 
 /// Scenario: the file and the environment both configure a volume.
@@ -74,13 +77,13 @@ fn init_refuses_an_environment_volume_id_without_force() {
 /// Invariant: the refusal names the file value, which must be replaced first,
 /// and does not touch the provider.
 #[test]
-fn init_refuses_a_file_volume_id_without_force() {
-    let dir = TempDir::new().expect("tempdir");
+fn init_refuses_a_file_volume_id_without_force() -> Result<(), String> {
+    let dir = TempDir::new().map_err(|error| format!("tempdir: {error}"))?;
     let config = dir.path().join("mriya.toml");
     write_config(
         &dir,
         &format!("[scaleway]\ndefault_volume_id = \"{FILE_VOLUME_ID}\"\n"),
-    );
+    )?;
 
     let mut cmd = init_command(&config);
     cmd.env("SCW_DEFAULT_VOLUME_ID", ENV_VOLUME_ID)
@@ -89,4 +92,5 @@ fn init_refuses_a_file_volume_id_without_force() {
         .stderr(contains(format!(
             "default volume ID already configured as {FILE_VOLUME_ID}"
         )));
+    Ok(())
 }

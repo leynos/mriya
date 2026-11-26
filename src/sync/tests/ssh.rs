@@ -111,6 +111,22 @@ fn common_ssh_options_toggles_strict_host_key_checking(
     );
 }
 
+/// Bounds an unresponsive peer with connect and keepalive options.
+#[rstest]
+fn common_ssh_options_bound_an_unresponsive_peer(base_config: SyncConfig) {
+    let args = ssh_option_strings(base_config).expect("config should validate");
+    for expected in [
+        "ConnectTimeout=15",
+        "ServerAliveInterval=15",
+        "ServerAliveCountMax=3",
+    ] {
+        assert!(
+            args.contains(&String::from(expected)),
+            "expected {expected} in {args:?}"
+        );
+    }
+}
+
 /// Preserves a configured known-hosts path in the generated SSH options.
 #[rstest]
 fn common_ssh_options_includes_known_hosts_file_when_set(base_config: SyncConfig) {

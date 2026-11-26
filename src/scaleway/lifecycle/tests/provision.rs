@@ -92,6 +92,14 @@ pub(super) fn detach_rejected() -> Reply {
 }
 
 /// A stopped server, as seen while tear down powers it off.
+/// The single-server instance fixture with root and cache volumes attached.
+pub(super) fn attached_instance() -> Reply {
+    Reply {
+        status: 200,
+        body: include_str!("fixtures/detach-instance.json").to_owned(),
+    }
+}
+
 pub(super) fn stopped_server() -> Reply {
     Reply {
         status: 200,

@@ -175,23 +175,54 @@ fn verify_cache_entry(returned: &ServerVolumeMap, volume_id: &str) -> Result<(),
     }
 }
 
-/// Verifies that a detachment removed the cache and kept the root volume.
+/// Verifies that a detachment removed the cache and kept the rest of the map.
 ///
 /// # Errors
 ///
-/// Returns a human-readable description when the cache is still present or the
-/// root entry is missing.
+/// Returns a human-readable description when the cache is still present, when
+/// the root is missing, or when an unrelated entry changed or disappeared.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// verify_detached(&response.server.volumes, "vol-cache")?;
+/// let expected = expected_map(&instance.volumes.volumes);
+/// verify_detached(&response.server.volumes, "vol-cache", &expected)?;
 /// ```
-pub(crate) fn verify_detached(returned: &ServerVolumeMap, volume_id: &str) -> Result<(), String> {
+pub(crate) fn verify_detached(
+    returned: &ServerVolumeMap,
+    volume_id: &str,
+    expected: &ExpectedVolumeMap,
+) -> Result<(), String> {
     if returned.values().any(|entry| entry.id == volume_id) {
         return Err(format!(
             "cache volume {volume_id} is still present after detachment"
         ));
+    }
+
+    for (index, before) in expected {
+        if before.id == volume_id {
+            continue;
+        }
+        match returned.get(index) {
+            Some(after) if after.id == before.id => {}
+            Some(after) => {
+                return Err(format!(
+                    "volume index {index} changed from {} to {} during detachment",
+                    before.id, after.id
+                ));
+            }
+            None if index.as_str() == "0" => {
+                return Err(String::from(
+                    "root volume is missing from the map after detachment",
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "volume index {index} ({}) disappeared after detachment",
+                    before.id
+                ));
+            }
+        }
     }
 
     match returned.get("0") {

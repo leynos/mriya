@@ -11,32 +11,29 @@
 //! gone. This is the only test that exercises the real provider for the
 //! detach-before-delete contract.
 
-use std::{sync::LazyLock, time::Duration};
+#[path = "scaleway_cache_volume_support/harness.rs"]
+mod harness;
+
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use mockable::{DefaultEnv, Env};
+use harness::{CacheHarness, block_on, cache_harness};
 use mriya::{
     Backend,
     InstanceHandle,
     InstanceNetworking,
-    ScalewayBackend,
     ScalewayBackendError,
-    ScalewayConfig,
-    SyncConfig,
     Syncer,
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,
     VolumeStatus,
     cache_device::{self, CacheDeviceStatus},
-    janitor::TEST_RUN_ID_ENV,
     sync::ProcessCommandRunner,
 };
-use rstest::fixture;
 use rstest_bdd::skip;
 use rstest_bdd_macros::{given, scenario, then, when};
 use shell_escape::unix::escape;
-use tokio::runtime::Runtime;
 
 /// Volume size used by the live check: the provider minimum.
 const VOLUME_SIZE_BYTES: u64 = 5_000_000_000;
@@ -44,52 +41,6 @@ const VOLUME_SIZE_BYTES: u64 = 5_000_000_000;
 const DELETE_WAIT: Duration = Duration::from_secs(120);
 /// Delay between deletion checks.
 const DELETE_POLL: Duration = Duration::from_secs(2);
-
-static RUNTIME: LazyLock<Result<Runtime, std::io::Error>> = LazyLock::new(Runtime::new);
-
-/// Reports whether the live suite was opted into.
-fn integration_enabled() -> bool {
-    let enabled = DefaultEnv
-        .raw("MRIYA_RUN_SCALEWAY_TESTS")
-        .unwrap_or_default();
-    let opted_in = matches!(
-        enabled.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes"
-    );
-    let has_run_id = DefaultEnv
-        .raw(TEST_RUN_ID_ENV)
-        .is_ok_and(|value| !value.trim().is_empty());
-    opted_in && has_run_id
-}
-
-/// Live configuration and the SSH settings used to drive the guest.
-#[derive(Clone)]
-struct CacheHarness {
-    backend: ScalewayBackend,
-    config: ScalewayConfig,
-    sync_config: SyncConfig,
-}
-
-#[fixture]
-fn cache_harness() -> Option<CacheHarness> {
-    if !integration_enabled() {
-        return None;
-    }
-    let secret = DefaultEnv.raw("SCW_SECRET_KEY").ok()?;
-    let project = DefaultEnv.raw("SCW_DEFAULT_PROJECT_ID").ok()?;
-    if secret.trim().is_empty() || project.trim().is_empty() {
-        return None;
-    }
-
-    let config = ScalewayConfig::load_from_sources().ok()?;
-    let backend = ScalewayBackend::new(config.clone()).ok()?;
-    let sync_config = SyncConfig::load_without_cli_args().ok()?;
-    Some(CacheHarness {
-        backend,
-        config,
-        sync_config,
-    })
-}
 
 /// Evidence gathered by the three-VM flow.
 #[derive(Clone, Debug)]
@@ -112,27 +63,27 @@ enum StepError {
 }
 
 #[given("live Scaleway credentials and a test run id")]
-fn live_credentials(cache_harness: Option<CacheHarness>) {
-    if cache_harness.is_none() {
-        skip!("live Scaleway cache suite not enabled");
-    }
-}
-
-/// Runs one async block on the shared Tokio runtime.
-fn block_on<T, F>(future: F) -> Result<T>
-where
-    F: std::future::Future<Output = Result<T>>,
-{
-    match RUNTIME.as_ref() {
-        Ok(runtime) => runtime.block_on(future),
-        Err(error) => Err(anyhow::anyhow!("tokio runtime should start: {error}")),
+fn live_credentials(cache_harness: Result<Option<CacheHarness>, String>) -> Result<(), String> {
+    match cache_harness {
+        Err(error) => Err(error),
+        Ok(None) => skip!("live Scaleway cache suite not enabled"),
+        Ok(Some(_)) => Ok(()),
     }
 }
 
 #[when("I run the three-VM cache persistence check")]
-fn run_persistence(cache_harness: Option<CacheHarness>) -> Result<CacheEvidence, StepError> {
-    let harness = cache_harness
-        .ok_or_else(|| StepError::Message(String::from("live cache harness unavailable")))?;
+fn run_persistence(
+    cache_harness: Result<Option<CacheHarness>, String>,
+) -> Result<CacheEvidence, StepError> {
+    let harness = match cache_harness {
+        Ok(Some(harness)) => harness,
+        Ok(None) => {
+            return Err(StepError::Message(String::from(
+                "live cache harness unavailable",
+            )));
+        }
+        Err(error) => return Err(StepError::Message(error)),
+    };
     block_on(run_flow(&harness)).map_err(|error| StepError::Message(format!("{error:#}")))
 }
 
@@ -176,7 +127,9 @@ fn volume_gone(evidence: &CacheEvidence) {
     path = "tests/features/scaleway_cache_volume.feature",
     name = "A cache volume survives three successive VMs"
 )]
-fn scenario_cache_persistence(cache_harness: Option<CacheHarness>) { drop(cache_harness); }
+fn scenario_cache_persistence(cache_harness: Result<Option<CacheHarness>, String>) {
+    drop(cache_harness);
+}
 
 /// Creates a server with the cache attached and waits for SSH.
 async fn provision(
@@ -232,9 +185,10 @@ fn mount(
 fn unmount(
     syncer: &Syncer<ProcessCommandRunner>,
     networking: &InstanceNetworking,
+    volume: &VolumeHandle,
     mount_path: &str,
 ) -> Result<()> {
-    let script = cache_device::unmount_script(mount_path);
+    let script = cache_device::unmount_script(&volume.id, mount_path);
     let output = syncer
         .run_remote_raw(networking, &script)
         .context("run unmount script")?;
@@ -357,7 +311,12 @@ async fn first_lifetime(
     format_volume(syncer, &networking, volume)?;
     mount(harness, syncer, &networking, volume)?;
     write_file(syncer, &networking, sentinel.path, sentinel.value)?;
-    unmount(syncer, &networking, &harness.sync_config.volume_mount_path)?;
+    unmount(
+        syncer,
+        &networking,
+        volume,
+        &harness.sync_config.volume_mount_path,
+    )?;
     teardown_and_check(harness, handle, volume).await
 }
 
@@ -371,7 +330,12 @@ async fn one_lifetime(
     let (handle, networking) = provision(harness, volume).await?;
     mount(harness, syncer, &networking, volume)?;
     action(&networking)?;
-    unmount(syncer, &networking, &harness.sync_config.volume_mount_path)?;
+    unmount(
+        syncer,
+        &networking,
+        volume,
+        &harness.sync_config.volume_mount_path,
+    )?;
     teardown_and_check(harness, handle, volume).await
 }
 

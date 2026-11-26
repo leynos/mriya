@@ -242,7 +242,7 @@ where
     ) -> Option<String> {
         let id = volume_id?;
         let mount_path = &self.syncer.config().volume_mount_path;
-        let script = cache_device::unmount_script(mount_path);
+        let script = cache_device::unmount_script(id, mount_path);
 
         match self.syncer.run_remote_raw(networking, &script) {
             Ok(output) => match cache_device::parse_report(&output.stdout) {

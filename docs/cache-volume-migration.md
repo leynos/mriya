@@ -12,8 +12,11 @@ old volume is left untouched, and Mriya never reformats it.
 
 ## Before you start
 
-- The legacy volume must not be attached to a running instance. Stop or delete
-  the instance that uses it, or detach the volume first.
+- The legacy volume must not be attached to any instance. Stop the instance
+  that uses it, unmount the filesystem, and detach the volume. Do not delete
+  the instance while the volume is still attached: a default
+  `scw instance server delete` deletes attached volumes too, which would
+  destroy the source before it is snapshotted.
 - You need an Object Storage bucket in the same region as the volume. The
   bucket key will hold a temporary QCOW2 image.
 - Record the legacy volume ID from `mriya.toml` (or `SCW_DEFAULT_VOLUME_ID`)
@@ -39,7 +42,7 @@ Record the snapshot ID that the command prints.
 scw instance snapshot export-to-object-storage \
   22222222-2222-2222-2222-222222222222 \
   bucket=mriya-migration \
-  key=mriya-legacy-cache.qcow2 \
+  object-key=mriya-legacy-cache.qcow2 \
   zone=fr-par-1
 ```
 
@@ -116,6 +119,14 @@ successfully at least once.
 scw block snapshot delete 44444444-4444-4444-4444-444444444444 zone=fr-par-1
 scw instance snapshot delete 22222222-2222-2222-2222-222222222222 zone=fr-par-1
 scw instance volume delete 11111111-1111-1111-1111-111111111111 zone=fr-par-1
+```
+
+The exported QCOW2 object is not covered by those commands. Remove it from
+the bucket once the new volume is verified, for example with an S3 client:
+
+```bash
+aws --endpoint-url https://s3.fr-par.scw.cloud s3 rm \
+  s3://mriya-migration/mriya-legacy-cache.qcow2
 ```
 
 ## What Mriya does with a legacy ID

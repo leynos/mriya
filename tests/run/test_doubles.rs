@@ -17,6 +17,8 @@ use mriya::{
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    TeardownFailure,
+    TeardownStage,
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,
@@ -180,7 +182,7 @@ impl VolumeBackend for ScriptedBackend {
         &'a self,
         _handle: &'a InstanceHandle,
         volume_id: Option<&'a str>,
-    ) -> BackendFuture<'a, (), Self::Error> {
+    ) -> BackendFuture<'a, (), TeardownFailure<Self::Error>> {
         Box::pin(async move {
             let mut state = self
                 .state
@@ -189,7 +191,10 @@ impl VolumeBackend for ScriptedBackend {
             state.destroy_calls += 1;
             state.teardown_volume_id = volume_id.map(str::to_owned);
             if state.fail_on_destroy {
-                return Err(ScriptedBackendError::Destroy);
+                return Err(TeardownFailure {
+                    stage: TeardownStage::Destroying,
+                    source: ScriptedBackendError::Destroy,
+                });
             }
             Ok(())
         })

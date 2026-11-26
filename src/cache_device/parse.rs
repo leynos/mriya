@@ -25,8 +25,10 @@ pub enum CacheDeviceStatus {
     RootDisk,
     /// The root mount source could not be resolved to a device.
     RootUnknown,
-    /// The device already carries a filesystem signature.
+    /// The device already carries a filesystem or partition-table signature.
     SignaturePresent,
+    /// A signature probe failed or returned an ambiguous result.
+    ProbeFailed,
     /// The device does not carry an ext4 signature.
     NotExt4,
     /// A different source already occupies the mount path.
@@ -69,6 +71,7 @@ impl CacheDeviceStatus {
             "root-disk" => Self::RootDisk,
             "root-unknown" => Self::RootUnknown,
             "signature-present" => Self::SignaturePresent,
+            "probe-failed" => Self::ProbeFailed,
             "not-ext4" => Self::NotExt4,
             "mount-occupied" => Self::MountOccupied,
             "mount-failed" => Self::MountFailed,
@@ -92,6 +95,7 @@ impl CacheDeviceStatus {
             Self::RootDisk => "root-disk",
             Self::RootUnknown => "root-unknown",
             Self::SignaturePresent => "signature-present",
+            Self::ProbeFailed => "probe-failed",
             Self::NotExt4 => "not-ext4",
             Self::MountOccupied => "mount-occupied",
             Self::MountFailed => "mount-failed",

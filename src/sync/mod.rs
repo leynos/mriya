@@ -302,6 +302,18 @@ impl<R: CommandRunner> Syncer<R> {
             args.push(OsString::from("BatchMode=yes"));
         }
 
+        // Bound an unresponsive peer: a dead session is noticed within three
+        // keepalive intervals instead of hanging the readiness or cloud-init
+        // probe past its deadline.
+        for option in [
+            String::from("ConnectTimeout=15"),
+            String::from("ServerAliveInterval=15"),
+            String::from("ServerAliveCountMax=3"),
+        ] {
+            args.push(OsString::from("-o"));
+            args.push(OsString::from(option));
+        }
+
         if !self.config.ssh_strict_host_key_checking {
             args.push(OsString::from("-o"));
             args.push(OsString::from("StrictHostKeyChecking=no"));

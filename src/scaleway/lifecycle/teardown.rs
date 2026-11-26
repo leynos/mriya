@@ -7,16 +7,21 @@
 //! is safer than silently deleting the cache.
 
 use super::super::{ScalewayBackend, ScalewayBackendError};
-use crate::backend::{Backend, InstanceHandle};
+use crate::{
+    backend::{Backend, InstanceHandle},
+    volume::{TeardownFailure, TeardownStage},
+};
 
 impl ScalewayBackend {
     /// Stops the instance when needed, detaches the cache, and destroys it.
     ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::VolumeDetachRetainsServer`] when the
-    /// cache cannot be detached, and any power-off, detach-wait or delete
-    /// error. A server is never destroyed while the cache is still attached.
+    /// Returns a [`TeardownFailure`] tagged with the stage that failed. A
+    /// detach failure carries [`ScalewayBackendError::VolumeDetachRetainsServer`]
+    /// and leaves the server intact; a destroy failure means the cache was
+    /// already detached. A server is never destroyed while the cache is still
+    /// attached.
     ///
     /// # Examples
     ///
@@ -31,19 +36,33 @@ impl ScalewayBackend {
         &self,
         handle: &InstanceHandle,
         volume_id: Option<&str>,
-    ) -> Result<(), ScalewayBackendError> {
+    ) -> Result<(), TeardownFailure<ScalewayBackendError>> {
         if let Some(id) = volume_id {
-            self.power_off_if_needed(handle).await?;
+            self.power_off_if_needed(handle)
+                .await
+                .map_err(|source| TeardownFailure {
+                    stage: TeardownStage::Stopping,
+                    source,
+                })?;
             if let Err(error) = self.detach_volume(handle, id).await {
-                return Err(ScalewayBackendError::VolumeDetachRetainsServer {
+                let source = ScalewayBackendError::VolumeDetachRetainsServer {
                     volume_id: id.to_owned(),
                     instance_id: handle.id.clone(),
                     zone: handle.zone.clone(),
                     message: error.to_string(),
+                };
+                return Err(TeardownFailure {
+                    stage: TeardownStage::Detaching,
+                    source,
                 });
             }
         }
 
-        Backend::destroy(self, handle.clone()).await
+        Backend::destroy(self, handle.clone())
+            .await
+            .map_err(|source| TeardownFailure {
+                stage: TeardownStage::Destroying,
+                source,
+            })
     }
 }

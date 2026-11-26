@@ -151,9 +151,30 @@ where
         #[source]
         source: Box<BackendError>,
     },
-    /// Raised when teardown fails after formatting succeeds.
-    #[error("failed to destroy formatter instance: {0}")]
-    Teardown(#[source] Box<BackendError>),
+    /// Raised when the formatter cannot be stopped or detached.
+    #[error("failed to tear down formatter instance: {message}")]
+    FormatterTeardown {
+        /// Human-readable description of the failure.
+        message: String,
+        /// Provider-specific error.
+        #[source]
+        source: Box<BackendError>,
+    },
+    /// Raised when the formatter server cannot be destroyed after detachment.
+    #[error(
+        "failed to destroy formatter instance: {message}; volume {volume_id} was detached in zone {zone}; delete it with `scw block volume delete {volume_id} zone={zone}`"
+    )]
+    TeardownAfterDetach {
+        /// New volume that was detached but not recorded.
+        volume_id: String,
+        /// Zone that holds the volume.
+        zone: String,
+        /// Human-readable description of the failure.
+        message: String,
+        /// Provider-specific error.
+        #[source]
+        source: Box<BackendError>,
+    },
     /// Raised when cleanup after a failed init could not remove everything.
     #[error("{original} (rollback also failed: {cleanup})")]
     Rollback {

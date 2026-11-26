@@ -42,9 +42,11 @@ impl InstanceRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`BackendError::Validation`] when any required string field is
-    /// empty, when `cloud_init_user_data` is not valid, or when `volume_id` is
-    /// present but is not a canonical UUID.
+    /// Returns [`BackendError::Validation`] when a required string field is
+    /// empty or `cloud_init_user_data` is not valid, and
+    /// [`BackendError::VolumeIdNotUuid`] when `volume_id` is present but is not
+    /// a canonical hyphenated UUID. Match the UUID variant when the distinction
+    /// matters to the caller; both are rejected before any provider request.
     ///
     /// # Examples
     ///

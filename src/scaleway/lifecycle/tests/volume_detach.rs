@@ -11,14 +11,8 @@ use super::{
     backend_fixture,
     handle,
     http_stub::{request_body, request_url, with_stub},
-    volume_attach::{
-        CACHE_ID,
-        available_volume,
-        detached_server,
-        expected_map,
-        rejected,
-        server_with,
-    },
+    provision::attached_instance,
+    volume_attach::{CACHE_ID, available_volume, detached_server, rejected, server_with},
 };
 use crate::{
     backend::InstanceHandle,
@@ -37,13 +31,13 @@ async fn detach_volume_posts_the_id_and_waits_for_available(
 ) -> Result<()> {
     let (result, requests) = with_stub(
         backend_fixture,
-        vec![detached_server(), available_volume()],
+        vec![attached_instance(), detached_server(), available_volume()],
         async |backend| backend.detach_volume(&handle, CACHE_ID).await,
     )
     .await?;
     result?;
 
-    let detach = requests.first().expect("detach request missing");
+    let detach = requests.get(1).expect("detach request missing");
     assert!(detach.starts_with("POST "), "{detach}");
     assert_eq!(
         request_url(detach)?.path(),
@@ -54,7 +48,7 @@ async fn detach_volume_posts_the_id_and_waits_for_available(
         serde_json::json!({"volume_id": CACHE_ID})
     );
 
-    let status_read = requests.get(1).expect("status read missing");
+    let status_read = requests.get(2).expect("status read missing");
     assert_eq!(
         request_url(status_read)?.path(),
         format!("/block/v1/zones/zone/volumes/{CACHE_ID}")
@@ -76,9 +70,11 @@ async fn detach_volume_rejects_a_map_that_still_holds_the_cache(
         "0": {"id": "root-id", "volume_type": "sbs_volume"},
         "1": {"id": CACHE_ID, "volume_type": "sbs_volume"},
     }));
-    let (result, requests) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend.detach_volume(&handle, CACHE_ID).await
-    })
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![attached_instance(), reply],
+        async |backend| backend.detach_volume(&handle, CACHE_ID).await,
+    )
     .await?;
 
     let error = result.expect_err("a surviving cache entry must fail");
@@ -91,7 +87,7 @@ async fn detach_volume_rejects_a_map_that_still_holds_the_cache(
         ),
         "{rendered}"
     );
-    assert_eq!(requests.len(), 1);
+    assert_eq!(requests.len(), 2);
     Ok(())
 }
 
@@ -104,9 +100,11 @@ async fn detach_volume_reports_a_provider_rejection(
     backend_fixture: ScalewayBackend,
     handle: InstanceHandle,
 ) -> Result<()> {
-    let (result, _) = with_stub(backend_fixture, vec![rejected()], async |backend| {
-        backend.detach_volume(&handle, CACHE_ID).await
-    })
+    let (result, _) = with_stub(
+        backend_fixture,
+        vec![attached_instance(), rejected()],
+        async |backend| backend.detach_volume(&handle, CACHE_ID).await,
+    )
     .await?;
 
     assert_eq!(
@@ -131,9 +129,11 @@ async fn detach_volume_rejects_a_missing_root_entry(
     handle: InstanceHandle,
 ) -> Result<()> {
     let reply = server_with(&serde_json::json!({}));
-    let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend.detach_volume(&handle, CACHE_ID).await
-    })
+    let (result, _) = with_stub(
+        backend_fixture,
+        vec![attached_instance(), reply],
+        async |backend| backend.detach_volume(&handle, CACHE_ID).await,
+    )
     .await?;
 
     let error = result.expect_err("a missing root must fail");
@@ -143,39 +143,6 @@ async fn detach_volume_rejects_a_missing_root_entry(
             error,
             ScalewayBackendError::VolumeDetachFailed { ref message, .. }
                 if message.contains("root volume")
-        ),
-        "{rendered}"
-    );
-    Ok(())
-}
-
-/// Scenario: the cache entry is present but typed as another volume type.
-///
-/// Invariant: attach refuses a response that did not declare `sbs_volume`.
-#[rstest]
-#[tokio::test]
-async fn attach_volume_requires_the_sbs_volume_type(
-    backend_fixture: ScalewayBackend,
-    handle: InstanceHandle,
-) -> Result<()> {
-    let reply = server_with(&serde_json::json!({
-        "0": {"id": "root-id", "volume_type": "sbs_volume"},
-        "1": {"id": CACHE_ID, "volume_type": "l_ssd"},
-    }));
-    let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
-        backend
-            .attach_volume(&handle, CACHE_ID, &expected_map())
-            .await
-    })
-    .await?;
-
-    let error = result.expect_err("a non-SBS entry must fail");
-    let rendered = format!("{error:?}");
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::VolumeAttachmentFailed { ref message, .. }
-                if message.contains("l_ssd")
         ),
         "{rendered}"
     );

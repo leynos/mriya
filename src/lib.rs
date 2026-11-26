@@ -53,6 +53,8 @@ pub use sync::{
     Syncer,
 };
 pub use volume::{
+    TeardownFailure,
+    TeardownStage,
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,

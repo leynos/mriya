@@ -4,8 +4,9 @@
 //! `SCW`, whose model is `sbs`, and whose serial is `volume-<uuid>`. The
 //! scripts resolve that serial rather than assuming `/dev/vdb`, refuse to touch
 //! the root disk or any of its ancestors, refuse to format a device that
-//! already carries a filesystem signature, and verify the mount source before
-//! reporting success. Every interpolated value is shell-escaped.
+//! already carries a filesystem or partition-table signature, and verify the
+//! mount source before reporting success. Every interpolated value is
+//! shell-escaped.
 //!
 //! Each script prints exactly one machine-readable line:
 //!
@@ -28,14 +29,13 @@ const RESOLVE_ATTEMPTS: u32 = 20;
 /// Escapes one value for safe interpolation into a single-quoted shell word.
 fn quoted(value: &str) -> String { escape(value.into()).into_owned() }
 
-/// Builds the resolver and root guard shared by the format and mount scripts.
+/// Builds the serial resolver shared by every script.
 ///
 /// The resolver reads `lsblk --scsi -P`, which quotes each value, and keeps a
-/// disk only when vendor, model and serial all match. The guard resolves the
-/// root mount source to its parent disk and refuses the candidate when it is
-/// that disk, the root device itself, or an ancestor of either.
-fn shared_prelude(volume_id: &str) -> String {
-    let serial_name = format!("volume-{}", volume_id.trim());
+/// disk only when vendor, model and serial all match. It sets `mriya_device`,
+/// or reports `not-found`/`ambiguous` and exits.
+fn resolver_prelude(volume_id: &str) -> String {
+    let serial_name = format!("volume-{}", volume_id.trim().to_ascii_lowercase());
     let serial = quoted(&serial_name);
     format!(
         concat!(
@@ -73,6 +73,23 @@ fn shared_prelude(volume_id: &str) -> String {
             "  exit 0\n",
             "fi\n",
             "mriya_device=\"/dev/$mriya_matches\"\n",
+        ),
+        serial = serial,
+        attempts = RESOLVE_ATTEMPTS,
+        prefix = STATUS_PREFIX,
+    )
+}
+
+/// Builds the root-disk guard shared by the format and mount scripts.
+///
+/// The guard resolves the root mount source to its parent disk. It passes the
+/// full source path to `lsblk`, so a device-mapper source is resolved through
+/// its parents; a source that cannot be resolved is refused rather than
+/// guessed. The candidate is refused when it is that disk, the root device, or
+/// an ancestor of either.
+fn root_guard() -> String {
+    format!(
+        concat!(
             "mriya_root_source=$(findmnt -no SOURCE / 2>/dev/null || true)\n",
             "case \"$mriya_root_source\" in\n",
             "  /dev/*) ;;\n",
@@ -81,10 +98,18 @@ fn shared_prelude(volume_id: &str) -> String {
             "    exit 0\n",
             "    ;;\n",
             "esac\n",
-            "mriya_root_name=${{mriya_root_source##*/}}\n",
-            "mriya_root_disk=$(lsblk -no PKNAME \"/dev/$mriya_root_name\" 2>/dev/null)\n",
+            "mriya_root_disk=$(lsblk -no PKNAME \"$mriya_root_source\" 2>/dev/null)\n",
             "mriya_root_disk=${{mriya_root_disk%% *}}\n",
-            "if [ -z \"$mriya_root_disk\" ]; then mriya_root_disk=\"$mriya_root_name\"; fi\n",
+            "mriya_root_name=${{mriya_root_source##*/}}\n",
+            "if [ -z \"$mriya_root_disk\" ]; then\n",
+            "  case \"$mriya_root_source\" in\n",
+            "    /dev/sd*|/dev/vd*|/dev/xvd*|/dev/nvme*n*) mriya_root_disk=\"$mriya_root_name\" ;;\n",
+            "    *)\n",
+            "      echo \"{prefix}root-unknown DEVICE=$mriya_device\"\n",
+            "      exit 0\n",
+            "      ;;\n",
+            "  esac\n",
+            "fi\n",
             "mriya_candidate=${{mriya_device##*/}}\n",
             "mriya_walk=\"$mriya_root_disk\"\n",
             "mriya_depth=0\n",
@@ -98,17 +123,51 @@ fn shared_prelude(volume_id: &str) -> String {
             "  mriya_depth=$((mriya_depth + 1))\n",
             "done\n",
         ),
-        serial = serial,
-        attempts = RESOLVE_ATTEMPTS,
         prefix = STATUS_PREFIX,
+    )
+}
+
+/// Builds the resolver and root guard shared by the format and mount scripts.
+fn shared_prelude(volume_id: &str) -> String {
+    format!("{}{}", resolver_prelude(volume_id), root_guard())
+}
+
+/// Builds the `blkid` probe function used by the format and mount scripts.
+///
+/// `mriya_probe <tag>` leaves the value in `mriya_probe_value` and the exit
+/// status in `mriya_probe_code`. Callers distinguish "nothing found" (2) from
+/// operational failures and ambiguity (4 and 8), which must never be read as
+/// an empty disk.
+fn probe_function() -> String {
+    format!(
+        concat!(
+            "mriya_probe() {{\n",
+            "  mriya_probe_value=$(sudo blkid -p -o value -s \"$1\" \"$mriya_device\" 2>/dev/null)\n",
+            "  mriya_probe_code=$?\n",
+            "}}\n",
+            "mriya_probe_refused() {{\n",
+            "  case \"$1\" in\n",
+            "    0|2) return 1 ;;\n",
+            "  esac\n",
+            "  return 0\n",
+            "}}\n",
+            "mriya_probe_failure() {{\n",
+            "  if mriya_probe_refused \"$mriya_type_code\" || mriya_probe_refused \"$mriya_pttype_code\"; then\n",
+            "    echo \"{prefix}probe-failed DEVICE=$mriya_device TYPE_CODE=$mriya_type_code PTTYPE_CODE=$mriya_pttype_code\"\n",
+            "    return 0\n",
+            "  fi\n",
+            "  return 1\n",
+            "}}\n",
+        ),
+        prefix = STATUS_PREFIX
     )
 }
 
 /// Builds the script that formats the new cache volume.
 ///
 /// The script resolves the serial, guards the root disk, refuses a device with
-/// an existing signature, formats ext4 with the `mriya-cache` label, flushes
-/// with `sync`, and reports `formatted`.
+/// an existing filesystem or partition-table signature, formats ext4 with the
+/// `mriya-cache` label, flushes with `sync`, and reports `formatted`.
 ///
 /// # Examples
 ///
@@ -118,15 +177,25 @@ fn shared_prelude(volume_id: &str) -> String {
 /// let script = format_script("11111111-1111-1111-1111-111111111111");
 /// assert!(script.contains("volume-11111111-1111-1111-1111-111111111111"));
 /// assert!(script.contains("mkfs.ext4 -F -L mriya-cache"));
+/// assert!(script.contains("PTTYPE"));
 /// ```
 #[must_use]
 pub fn format_script(volume_id: &str) -> String {
     format!(
         concat!(
             "{prelude}",
-            "mriya_signature=$(sudo blkid -p -o value -s TYPE \"$mriya_device\" 2>/dev/null || true)\n",
-            "if [ -n \"$mriya_signature\" ]; then\n",
-            "  echo \"{prefix}signature-present DEVICE=$mriya_device FSTYPE=$mriya_signature\"\n",
+            "{probe}",
+            "mriya_probe TYPE\n",
+            "mriya_type=$mriya_probe_value\n",
+            "mriya_type_code=$mriya_probe_code\n",
+            "mriya_probe PTTYPE\n",
+            "mriya_pttype=$mriya_probe_value\n",
+            "mriya_pttype_code=$mriya_probe_code\n",
+            "if mriya_probe_failure; then\n",
+            "  exit 0\n",
+            "fi\n",
+            "if [ \"$mriya_type_code\" -ne 2 ] || [ \"$mriya_pttype_code\" -ne 2 ]; then\n",
+            "  echo \"{prefix}signature-present DEVICE=$mriya_device FSTYPE=$mriya_type PTTYPE=$mriya_pttype\"\n",
             "  exit 0\n",
             "fi\n",
             "if ! sudo mkfs.ext4 -F -L {label} \"$mriya_device\" >/dev/null 2>&1; then\n",
@@ -137,6 +206,7 @@ pub fn format_script(volume_id: &str) -> String {
             "echo \"{prefix}formatted DEVICE=$mriya_device\"\n",
         ),
         prelude = shared_prelude(volume_id),
+        probe = probe_function(),
         prefix = STATUS_PREFIX,
         label = CACHE_LABEL,
     )
@@ -144,10 +214,10 @@ pub fn format_script(volume_id: &str) -> String {
 
 /// Builds the script that mounts the cache volume at `mount_path`.
 ///
-/// The script requires an ext4 signature, refuses a different source already
-/// mounted at the path, mounts the resolved device, verifies with `findmnt`
-/// that the path's source is that device, and gives the mount point to
-/// `owner`.
+/// The script requires an ext4 signature on a device with no partition table,
+/// refuses a different source already mounted at the path, mounts the resolved
+/// device, verifies with `findmnt` that the path's source is that device, and
+/// gives the mount point to `owner`.
 ///
 /// # Examples
 ///
@@ -163,11 +233,20 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
     format!(
         concat!(
             "{prelude}",
+            "{probe}",
             "mriya_path={path}\n",
             "mriya_owner={owner}\n",
-            "mriya_signature=$(sudo blkid -p -o value -s TYPE \"$mriya_device\" 2>/dev/null || true)\n",
-            "if [ \"$mriya_signature\" != \"ext4\" ]; then\n",
-            "  echo \"{prefix}not-ext4 DEVICE=$mriya_device FSTYPE=$mriya_signature\"\n",
+            "mriya_probe TYPE\n",
+            "mriya_type=$mriya_probe_value\n",
+            "mriya_type_code=$mriya_probe_code\n",
+            "mriya_probe PTTYPE\n",
+            "mriya_pttype=$mriya_probe_value\n",
+            "mriya_pttype_code=$mriya_probe_code\n",
+            "if mriya_probe_failure; then\n",
+            "  exit 0\n",
+            "fi\n",
+            "if [ \"$mriya_type_code\" -ne 0 ] || [ \"$mriya_type\" != \"ext4\" ] || [ \"$mriya_pttype_code\" -eq 0 ]; then\n",
+            "  echo \"{prefix}not-ext4 DEVICE=$mriya_device FSTYPE=$mriya_type PTTYPE=$mriya_pttype\"\n",
             "  exit 0\n",
             "fi\n",
             "mriya_source=$(findmnt -no SOURCE --mountpoint \"$mriya_path\" 2>/dev/null || true)\n",
@@ -197,6 +276,7 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
             "echo \"{prefix}verified DEVICE=$mriya_device PATH=$mriya_path\"\n",
         ),
         prelude = shared_prelude(volume_id),
+        probe = probe_function(),
         path = quoted(mount_path),
         owner = quoted(owner),
         prefix = STATUS_PREFIX,
@@ -205,22 +285,32 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
 
 /// Builds the script that flushes and unmounts the cache path.
 ///
+/// The script refuses to unmount a path occupied by any source other than the
+/// configured cache device, so a mount refusal reported by the mount script is
+/// not followed by unmounting a foreign filesystem.
+///
 /// # Examples
 ///
 /// ```
 /// use mriya::cache_device::unmount_script;
 ///
-/// let script = unmount_script("/mriya");
+/// let script = unmount_script("11111111-1111-1111-1111-111111111111", "/mriya");
 /// assert!(script.contains("umount"));
+/// assert!(script.contains("EXPECTED=$mriya_device"));
 /// ```
 #[must_use]
-pub fn unmount_script(mount_path: &str) -> String {
+pub fn unmount_script(volume_id: &str, mount_path: &str) -> String {
     format!(
         concat!(
             "mriya_path={path}\n",
             "mriya_source=$(findmnt -no SOURCE --mountpoint \"$mriya_path\" 2>/dev/null || true)\n",
             "if [ -z \"$mriya_source\" ]; then\n",
             "  echo \"{prefix}unmounted PATH=$mriya_path\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "{resolver}",
+            "if [ \"$mriya_source\" != \"$mriya_device\" ]; then\n",
+            "  echo \"{prefix}wrong-source PATH=$mriya_path EXPECTED=$mriya_device ACTUAL=$mriya_source\"\n",
             "  exit 0\n",
             "fi\n",
             "sync\n",
@@ -231,6 +321,7 @@ pub fn unmount_script(mount_path: &str) -> String {
             "fi\n",
         ),
         path = quoted(mount_path),
+        resolver = resolver_prelude(volume_id),
         prefix = STATUS_PREFIX,
     )
 }

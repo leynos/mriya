@@ -10,6 +10,8 @@ use mriya::{
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    TeardownFailure,
+    TeardownStage,
     VolumeBackend,
     VolumeHandle,
     VolumeRequest,
@@ -143,18 +145,25 @@ impl ScriptedVolumeBackend {
     }
 
     /// Records one ordered-teardown attempt and reports its scripted failure.
-    fn run_teardown(&self) -> Result<(), ScriptedVolumeBackendError> {
-        let mut state = self.state.lock().map_err(|err| {
-            ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}"))
+    fn run_teardown(&self) -> Result<(), TeardownFailure<ScriptedVolumeBackendError>> {
+        let mut state = self.state.lock().map_err(|err| TeardownFailure {
+            stage: TeardownStage::Stopping,
+            source: ScriptedVolumeBackendError::Lock(format!("lock poisoned in teardown: {err}")),
         })?;
         state.teardown_calls += 1;
         state.destroy_calls += 1;
 
         if state.failures.contains(FailureMode::Detach) {
-            return Err(ScriptedVolumeBackendError::Detach);
+            return Err(TeardownFailure {
+                stage: TeardownStage::Detaching,
+                source: ScriptedVolumeBackendError::Detach,
+            });
         }
         if state.failures.contains(FailureMode::Destroy) {
-            return Err(ScriptedVolumeBackendError::Destroy);
+            return Err(TeardownFailure {
+                stage: TeardownStage::Destroying,
+                source: ScriptedVolumeBackendError::Destroy,
+            });
         }
         Ok(())
     }
@@ -379,7 +388,7 @@ impl VolumeBackend for ScriptedVolumeBackend {
         &'a self,
         _handle: &'a InstanceHandle,
         _volume_id: Option<&'a str>,
-    ) -> BackendFuture<'a, (), Self::Error> {
+    ) -> BackendFuture<'a, (), TeardownFailure<Self::Error>> {
         Box::pin(async move { self.run_teardown() })
     }
 }

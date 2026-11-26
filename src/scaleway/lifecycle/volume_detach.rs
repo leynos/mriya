@@ -9,7 +9,7 @@
 use super::super::{
     ScalewayBackend,
     ScalewayBackendError,
-    volume::{DetachServerVolumeRequest, ServerVolumesResponse, verify_detached},
+    volume::{DetachServerVolumeRequest, ServerVolumesResponse, expected_map, verify_detached},
 };
 use crate::{backend::InstanceHandle, volume::VolumeStatus};
 
@@ -36,6 +36,10 @@ impl ScalewayBackend {
         handle: &InstanceHandle,
         volume_id: &str,
     ) -> Result<(), ScalewayBackendError> {
+        let instance = self.get_instance(handle).await?;
+        let mut expected = expected_map(&instance.volumes.volumes);
+        expected.retain(|_, entry| entry.id != volume_id);
+
         let url = format!(
             "{}/zones/{}/servers/{}/detach-volume",
             self.instance_api_base, handle.zone, handle.id
@@ -70,7 +74,7 @@ impl ScalewayBackend {
             serde_json::from_str(&body).map_err(|err| ScalewayBackendError::Provider {
                 message: format!("detach-volume response was not a server object: {err}"),
             })?;
-        verify_detached(&parsed.server.volumes, volume_id).map_err(|message| {
+        verify_detached(&parsed.server.volumes, volume_id, &expected).map_err(|message| {
             ScalewayBackendError::VolumeDetachFailed {
                 volume_id: volume_id.to_owned(),
                 instance_id: handle.id.clone(),

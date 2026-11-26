@@ -70,12 +70,15 @@ impl ScalewayBackend {
             });
         }
 
-        let parsed: ServerVolumesResponse =
-            serde_json::from_str(&body).map_err(|err| ScalewayBackendError::Provider {
+        let parsed: ServerVolumesResponse = serde_json::from_str(&body).map_err(|err| {
+            ScalewayBackendError::VolumeAttachmentUnverified {
+                volume_id: volume_id.to_owned(),
+                instance_id: handle.id.clone(),
                 message: format!("attach-volume response was not a server object: {err}"),
-            })?;
+            }
+        })?;
         verify_attached(&parsed.server.volumes, volume_id, expected).map_err(|message| {
-            ScalewayBackendError::VolumeAttachmentFailed {
+            ScalewayBackendError::VolumeAttachmentUnverified {
                 volume_id: volume_id.to_owned(),
                 instance_id: handle.id.clone(),
                 message,

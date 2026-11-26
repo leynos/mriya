@@ -88,9 +88,7 @@ where
             return Err(self.rollback(&volume, Some(&handle), error).await);
         }
 
-        if let Err(source) = self.backend.teardown(&handle, Some(&volume.id)).await {
-            return Err(InitError::Teardown(Box::new(source)));
-        }
+        self.teardown_formatter(&handle, &volume).await?;
 
         let config_path = match self
             .config_writer
@@ -118,6 +116,33 @@ where
             config_path,
             warning,
         })
+    }
+
+    /// Tears the formatter down, naming the detached volume if destruction fails.
+    ///
+    /// Only a destroy failure proves the cache was detached; a stop or detach
+    /// failure leaves the server and volume in an unknown state, so the error
+    /// is reported without a delete instruction.
+    async fn teardown_formatter(
+        &self,
+        handle: &InstanceHandle,
+        volume: &VolumeHandle,
+    ) -> Result<(), InitError<B::Error>> {
+        match self.backend.teardown(handle, Some(&volume.id)).await {
+            Ok(()) => Ok(()),
+            Err(failure) if failure.stage == crate::volume::TeardownStage::Destroying => {
+                Err(InitError::TeardownAfterDetach {
+                    volume_id: volume.id.clone(),
+                    zone: volume.zone.clone(),
+                    message: failure.source.to_string(),
+                    source: Box::new(failure.source),
+                })
+            }
+            Err(failure) => Err(InitError::FormatterTeardown {
+                message: failure.to_string(),
+                source: Box::new(failure.source),
+            }),
+        }
     }
 
     /// Creates the cache volume and waits for its documented ready state.

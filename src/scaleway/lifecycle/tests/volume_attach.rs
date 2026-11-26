@@ -183,7 +183,7 @@ async fn attach_volume_rejects_a_changed_root_entry(
     assert!(
         matches!(
             error,
-            ScalewayBackendError::VolumeAttachmentFailed { ref message, .. }
+            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
                 if message.contains("changed")
         ),
         "{error:?}"
@@ -219,7 +219,7 @@ async fn attach_volume_rejects_the_root_index(backend_fixture: ScalewayBackend) 
 
     assert!(matches!(
         result.expect_err("the root index must be refused"),
-        ScalewayBackendError::VolumeAttachmentFailed { .. }
+        ScalewayBackendError::VolumeAttachmentUnverified { .. }
     ));
     Ok(())
 }
@@ -248,8 +248,41 @@ async fn attach_volume_rejects_a_missing_cache_entry(
     assert!(
         matches!(
             error,
-            ScalewayBackendError::VolumeAttachmentFailed { ref message, .. }
+            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
                 if message.contains("absent")
+        ),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+/// Scenario: the cache entry is present but typed as another volume type.
+///
+/// Invariant: attach refuses a response that did not declare `sbs_volume`.
+#[rstest]
+#[tokio::test]
+async fn attach_volume_requires_the_sbs_volume_type(
+    backend_fixture: ScalewayBackend,
+    handle: InstanceHandle,
+) -> Result<()> {
+    let reply = server_with(&serde_json::json!({
+        "0": {"id": "root-id", "volume_type": "sbs_volume"},
+        "1": {"id": CACHE_ID, "volume_type": "l_ssd"},
+    }));
+    let (result, _) = with_stub(backend_fixture, vec![reply], async |backend| {
+        backend
+            .attach_volume(&handle, CACHE_ID, &expected_map())
+            .await
+    })
+    .await?;
+
+    let error = result.expect_err("a non-SBS entry must fail");
+    let rendered = format!("{error:?}");
+    assert!(
+        matches!(
+            error,
+            ScalewayBackendError::VolumeAttachmentUnverified { ref message, .. }
+                if message.contains("l_ssd")
         ),
         "{rendered}"
     );

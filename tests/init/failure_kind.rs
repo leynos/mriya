@@ -19,7 +19,9 @@ pub(super) fn map_failure_kind(
         | InitError::FormatSignaturePresent { .. }
         | InitError::FormatFailed { .. } => InitFailureKind::Format,
         InitError::Detach { .. } => InitFailureKind::Detach,
-        InitError::Teardown(_) => InitFailureKind::Teardown,
+        InitError::FormatterTeardown { .. } | InitError::TeardownAfterDetach { .. } => {
+            InitFailureKind::Teardown
+        }
         InitError::Rollback { original, .. } => original
             .downcast_ref::<InitError<super::test_doubles::ScriptedVolumeBackendError>>()
             .map_or(InitFailureKind::Format, map_failure_kind),

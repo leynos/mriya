@@ -188,6 +188,18 @@ pub enum ScalewayBackendError {
         /// Error message from the provider.
         message: String,
     },
+    /// Raised when an accepted attachment returned an unverifiable map.
+    #[error(
+        "volume {volume_id} may be attached to instance {instance_id}, but the returned volume map could not be verified: {message}"
+    )]
+    VolumeAttachmentUnverified {
+        /// Volume whose attachment could not be verified.
+        volume_id: String,
+        /// Instance that may hold the volume.
+        instance_id: String,
+        /// Description of the map violation.
+        message: String,
+    },
     /// Raised when a volume cannot be detached, so the server is retained.
     #[error(
         "failed to detach volume {volume_id} from instance {instance_id}: {message}; the server was retained to protect the cache. Recover with: scw instance server detach-volume server-id={instance_id} volume-id={volume_id} zone={zone}"

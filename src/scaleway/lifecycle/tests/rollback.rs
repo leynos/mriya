@@ -15,6 +15,7 @@ use super::{
         action_rejected,
         at,
         attach_rejected,
+        attached_instance,
         attached_server,
         available_volume,
         created_server,
@@ -91,6 +92,7 @@ async fn rollback_detaches_before_destroying_after_a_power_on_failure(
             action_rejected(),
             stopped_server(),
             gone(),
+            attached_instance(),
             detached_server(),
             available_volume(),
             deleted(),
@@ -105,12 +107,12 @@ async fn rollback_detaches_before_destroying_after_a_power_on_failure(
         matches!(error, ScalewayBackendError::Provider { ref message } if message.contains("poweron rejected")),
         "{error:?}"
     );
-    assert_eq!(requests.len(), 11);
+    assert_eq!(requests.len(), 12);
     assert_eq!(
-        request_url(at(&requests, 7))?.path(),
+        request_url(at(&requests, 8))?.path(),
         "/instance/v1/zones/zone/servers/id/detach-volume"
     );
-    assert!(at(&requests, 9).starts_with("DELETE /instance/v1/zones/zone/servers/id "));
+    assert!(at(&requests, 10).starts_with("DELETE /instance/v1/zones/zone/servers/id "));
     Ok(())
 }
 
@@ -136,6 +138,7 @@ async fn rollback_retains_the_server_when_detachment_fails(
             action_rejected(),
             stopped_server(),
             gone(),
+            attached_instance(),
             detach_rejected(),
         ],
         async |backend| backend.create_with_image_id(&request, "img-test").await,
@@ -151,12 +154,62 @@ async fn rollback_retains_the_server_when_detachment_fails(
         "{original:?}"
     );
     assert!(cleanup.contains("retained"), "{cleanup}");
-    assert_eq!(requests.len(), 8);
+    assert_eq!(requests.len(), 9);
     assert!(
         requests
             .iter()
             .all(|captured| !captured.starts_with("DELETE /instance/")),
         "a retained server must not be deleted: {requests:?}"
     );
+    Ok(())
+}
+
+/// Scenario: a 2xx attachment returns a map that cannot be verified.
+///
+/// Invariant: the volume may be attached, so rollback detaches it before the
+/// server is destroyed and reports the unverified attachment.
+#[rstest]
+#[tokio::test]
+async fn rollback_detaches_after_an_unverified_attachment(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let request = request_with_volume(&base_request);
+    let unverified = super::volume_attach::server_with(&serde_json::json!({
+        "0": {"id": "different-root", "volume_type": "sbs_volume"},
+        "1": {"id": CACHE_ID, "volume_type": "sbs_volume"},
+    }));
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![
+            available_volume(),
+            created_server(),
+            unverified,
+            stopped_server(),
+            gone(),
+            attached_instance(),
+            detached_server(),
+            available_volume(),
+            deleted(),
+            gone(),
+        ],
+        async |backend| backend.create_with_image_id(&request, "img-test").await,
+    )
+    .await?;
+
+    let error = result.expect_err("an unverified attachment must fail");
+    assert!(
+        matches!(
+            error,
+            ScalewayBackendError::VolumeAttachmentUnverified { .. }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(requests.len(), 10);
+    assert_eq!(
+        request_url(at(&requests, 6))?.path(),
+        "/instance/v1/zones/zone/servers/id/detach-volume"
+    );
+    assert!(at(&requests, 8).starts_with("DELETE /instance/v1/zones/zone/servers/id "));
     Ok(())
 }
