@@ -162,8 +162,9 @@ project:
   Cranelift is a recorded exception pending maintainer approval; see
   `docs/developers-guide.md`.
 - Clippy warnings MUST be disallowed. Every workspace member inherits the
-  workspace lint tables with `[lints] workspace = true`; never add a local
-  `[lints]` table to a member.
+  workspace lint tables with `[lints] workspace = true`; that inheritance table
+  is the only permitted `[lints]` content, so never add member-level lint
+  settings beside it.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.
 - Where a function is too long, extract meaningfully named helper functions

@@ -390,8 +390,10 @@ copy their inventory.
 
 - `Cargo.toml` holds the `[workspace.lints.clippy]`, `[workspace.lints.rust]`
   and `[workspace.lints.rustdoc]` tables. Every member opts in with
-  `[lints] workspace = true`, and a new crate must do the same; do not add a
-  local `[lints]` table, which Cargo rejects alongside `workspace = true`.
+  `[lints] workspace = true`, and a new crate must do the same. That
+  inheritance table is the only permitted `[lints]` content: member-level lint
+  settings beside it are rejected by Cargo and duplicated by the workspace
+  tables anyway.
 - `clippy.toml` holds the thresholds (at most 4 arguments, 70 lines per
   function, nesting depth 4), `allow-expect-in-tests` and the
   `disallowed-methods` list.
