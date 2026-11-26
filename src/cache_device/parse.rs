@@ -41,7 +41,7 @@ pub enum CacheDeviceStatus {
     FormatFailed,
     /// The unmount command failed.
     UnmountFailed,
-    /// A status this client does not recognise.
+    /// A status this client does not recognize.
     Unknown(String),
 }
 

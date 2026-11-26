@@ -87,7 +87,7 @@ pub enum VolumeStatus {
     Locked,
     /// The volume is being updated.
     Updating,
-    /// A status this client does not recognise.
+    /// A status this client does not recognize.
     Unknown(String),
 }
 

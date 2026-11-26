@@ -238,7 +238,7 @@ async fn delete_volume_reports_a_rejection(backend_fixture: ScalewayBackend) -> 
 /// Scenario: classifying a legacy volume fixture.
 ///
 /// Invariant: the Block Storage `b_ssd` type and `bssd` class are both
-/// recognised, so preflight can refuse the volume before any server exists.
+/// recognized, so preflight can refuse the volume before any server exists.
 #[rstest]
 fn legacy_fixture_is_classified_as_legacy() -> Result<()> {
     let state = fixture_state(include_str!("fixtures/block-volume-legacy.json"))?;

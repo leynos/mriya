@@ -1,7 +1,7 @@
 //! Newtypes and serde models for Scaleway lifecycle values.
 //!
 //! The newtypes keep provider identifiers and states from being mixed up as
-//! bare strings. The deserialisable models mirror the Block Storage v1 `Volume`
+//! bare strings. The deserializable models mirror the Block Storage v1 `Volume`
 //! object and its volume-types list; they are local rather than SDK types
 //! because `scaleway-rs` does not model the Block Storage API.
 

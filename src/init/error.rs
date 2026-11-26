@@ -20,7 +20,7 @@ pub enum InitConfigError {
         "volume size must be at least 5 decimal GB (5,000,000,000 bytes); set MRIYA_INIT_VOLUME_SIZE_GB to a larger value"
     )]
     InvalidVolumeSize,
-    /// Raised when the performance tier is not recognised.
+    /// Raised when the performance tier is not recognized.
     #[error("unsupported volume tier '{value}'; set MRIYA_INIT_VOLUME_TIER to sbs_5k or sbs_15k")]
     InvalidVolumeTier {
         /// Tier value that was rejected.
