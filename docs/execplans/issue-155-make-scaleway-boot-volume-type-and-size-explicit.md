@@ -220,6 +220,9 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   wires a stderr reporter. Committed as `64c132a`.
 - [x] EP-M5: documentation and live check. Users guide, technical design, the
   opt-in `tests/scaleway_boot_volume.rs`, and the `scaleway-boot-test` target.
+- [x] Keep every touched code file under the 400-line budget by splitting the
+  domain model, the capture follow-up, the run error, and the larger test
+  modules. Committed as `3825bb4` and `406fcef`.
 - [ ] Commit gates and CodeRabbit review, then push and open the draft PR.
 
 ## Surprises & Discoveries
@@ -239,9 +242,10 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   read, and the readiness list all decode through the local minimal model. The
   SBS fixture keeps `size: null` so the regression is caught locally.
 - Observation: the repository's pinned en-GB-oxendict dictionary uses Oxford
-  `-ize`/`-able` forms, so `unrecognised` and `unparseable` are rejected in
-  favour of `unrecognized` and `unparsable`. Evidence: `make spelling` reported
-  both as corrections. Consequence: prose uses the Oxford forms throughout.
+  `-ize` and `-able` forms, and two British-looking variants I first wrote were
+  corrected to `unrecognized` and `unparsable`. Evidence: `make spelling`
+  reported both as corrections. Consequence: prose uses the Oxford forms
+  throughout.
 
 - Observation: this branch is based on `200563a`, which predates the `#153`
   Block Storage migration. The cache volume here is still created through the
