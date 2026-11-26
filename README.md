@@ -59,9 +59,11 @@ code.
 - **Attempted teardown with reported failures** – Whenever provisioning has
   returned a server handle, Mriya asks the provider to delete that server after
   the run, successful or not, and surfaces a teardown failure instead of
-  discarding it. A provisioning failure that never yields a handle is the
-  exception, and can leave a server behind. What this establishes is narrower
-  than "guaranteed cleanup"; see
+  discarding it. Two cases escape that: a provisioning failure that never
+  yields a handle, and an interrupted run, because Mriya handles neither
+  `SIGINT` nor `SIGTERM` and Ctrl+C therefore exits without sending the delete.
+  Both can leave a server behind. What this establishes is narrower than
+  "guaranteed cleanup"; see
   [Cleanup: what is and is not verified](docs/users-guide.md#cleanup-what-is-and-is-not-verified)
   and the
   [cost and resource lifetime](docs/users-guide.md#cost-and-resource-lifetime)

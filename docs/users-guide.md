@@ -234,9 +234,11 @@ An existing, formatted volume can be configured without running `mriya init`.
 The steps are:
 
 1. Create a Block Storage volume in the Scaleway console or through the Block
-   Storage API, in the same availability zone as the instances. To format it,
-   attach it to a temporary instance and run `sudo mkfs.ext4 -F` on its device
-   from that instance; Scaleway's
+   Storage API, in the same availability zone as the instances, and check that
+   its type is one the attachment payload supports; the warning above explains
+   why an `sbs_volume` is expected to be rejected. To format it, attach it to a
+   temporary instance and run `sudo mkfs.ext4 -F` on its device from that
+   instance; Scaleway's
    [mount-a-volume guide](https://www.scaleway.com/en/docs/block-storage/how-to/mount-a-volume/)
    covers identifying the device. Formatting erases the volume, so confirm the
    device name before running the command. `mriya init` would run the same
@@ -559,9 +561,14 @@ this guide hard-coding a price:
 `M`, `g`, `s`, `c`, and `t` are all in minutes, so the billed duration must be
 divided by 60 before an hourly rate is applied. Per-run billed compute, in
 minutes, is `max(M, ceil((s + c + t) / g) * g)`; total compute cost is
-`N * (per-run billed compute) / 60 * R_vm`. Root storage, cache storage, and IP
-charges are separate terms, and all of them use the same `billed_hours`, which
-is `max(M, ceil(retained_minutes / g) * g) / 60`:
+`N * (per-run billed compute) / 60 * R_vm`. That form assumes the creation-time
+billing event, so it charges the whole of `s`, including the interval before
+power-on. It is the conservative estimate. Under the power-on event, exclude
+the pre-power-on part of `s` from the sum before applying the formula, and the
+remaining interval is what the minimum and granularity act on.
+
+Root storage, cache storage, and IP charges use a separate `billed_hours`,
+which is `max(M, ceil(retained_minutes / g) * g) / 60`:
 
 - Per-run root storage is `capacity_GiB * billed_hours * R_storage` over that
   run's own root volume.
