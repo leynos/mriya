@@ -233,12 +233,11 @@ on this volume to persist compiled dependencies across runs.
 An existing, formatted volume can be configured without running `mriya init`.
 The steps are:
 
-1. Create a Block Storage volume in the Scaleway console or through the Block
-   Storage API, in the same availability zone as the instances, and check that
-   its type is one the attachment payload supports; the warning above explains
-   why an `sbs_volume` is expected to be rejected. To format it, attach it to a
-   temporary instance and run `sudo mkfs.ext4 -F` on its device from that
-   instance; Scaleway's
+1. Start from a Block Storage volume in the same availability zone as the
+   instances, of a type the attachment payload supports; the warning above
+   explains why an `sbs_volume` is expected to be rejected. If the volume has
+   no filesystem yet, attach it to a temporary instance and run
+   `sudo mkfs.ext4 -F` on its device from that instance; Scaleway's
    [mount-a-volume guide](https://www.scaleway.com/en/docs/block-storage/how-to/mount-a-volume/)
    covers identifying the device. Formatting erases the volume, so confirm the
    device name before running the command. `mriya init` would run the same

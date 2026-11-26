@@ -220,9 +220,11 @@ provisioning) that will guide subsequent optimizations.
 
 - Keep the system `ssh` client for MVP and stream stdout/stderr via a
   streaming command runner so local output mirrors the remote console.
-- Preserve remote exit codes verbatim in `mriya run`; when SSH reports no
-  status (for example, a signal terminates the process), exit with code 1 and
-  surface the missing status to the user.
+- Preserve remote exit codes verbatim in `mriya run`; when the local `ssh`
+  process ends without a status (for example, because a signal terminates it),
+  exit with code 1 and surface the missing status to the user. A remote command
+  killed by a signal is reported by OpenSSH as status 255 and is returned
+  unchanged.
 - Load Scaleway and sync configuration via `ortho-config` defaults, config
   files, and environment variables without consuming unrelated CLI flags from
   `mriya run` itself.
@@ -247,9 +249,11 @@ provisioning) that will guide subsequent optimizations.
   a 5-minute polling deadline, and requires a `running` state with a parseable
   public IP.
 - **Teardown verification:** Destruction calls the Instances API delete
-  endpoint then polls until the server disappears, failing the integration test
-  if any residual resource remains. Integration coverage provisions the
-  smallest shape (`DEV1-S`) to keep cost and blast radius low.
+  endpoint then polls until the server stops being listed, failing the
+  integration test if the server is still listed at the deadline. Volumes and
+  IP addresses are not inventoried; see the status notes below. Integration
+  coverage provisions the smallest shape (`DEV1-S`) to keep cost and blast
+  radius low.
 - **Environment boundary:** Process-environment reads go through
   `mockable::Env`, injected at each boundary and defaulting to `DefaultEnv` at
   the entry points. The decision is recorded in
@@ -535,9 +539,12 @@ differences:
   Scaleway and AWS allocate elastic IPs or volumes that might need cleaning up
   if not automatically removed with the VM. The MVP simply deletes the VM and
   assumes the provider cleans attached resources (Scaleway by default deletes
-  the attached root volume with the instance). In the future, our trait might
-  need to handle explicit cleanup of things like volumes or floating IPs if
-  they were allocated separately.
+  the attached root volume with the instance). That assumption did not hold in
+  a later live inspection, which found an SBS root volume surviving server
+  deletion; see the status notes and
+  [issue #154](https://github.com/leynos/mriya/issues/154). In the future, our
+  trait might need to handle explicit cleanup of things like volumes or
+  floating IPs if they were allocated separately.
 
 **Evolving the Trait:** We anticipate adding more capabilities to the Backend
 trait as Mriya gains features (volumes, snapshots, etc.). Initially, we keep it
@@ -1173,12 +1180,13 @@ the connection which should terminate the remote shell).
 - For `wait_for_ssh`, we’ll cap how long we wait (maybe 2 minutes), after which
   we consider the VM initialization failed and destroy it.
 
-**Ctrl+C Handling:** We intercept SIGINT/SIGTERM on the Mriya process. If the
-user cancels, we want to **terminate the remote job and destroy the VM**. With
-the SSH library, if we drop the session, the remote process will terminate (as
-its controlling session ended). We then proceed to call `destroy_vm`. We should
-do this carefully to avoid leaving the VM if the process is killed forcibly.
-(We might not catch SIGKILL of course, but for Ctrl+C we can handle.)
+**Ctrl+C Handling (planned for v1.0, not implemented in the MVP):** We
+intercept SIGINT/SIGTERM on the Mriya process. If the user cancels, we want to
+**terminate the remote job and destroy the VM**. With the SSH library, if we
+drop the session, the remote process will terminate (as its controlling session
+ended). We then proceed to call `destroy_vm`. We should do this carefully to
+avoid leaving the VM if the process is killed forcibly. (We might not catch
+SIGKILL of course, but for Ctrl+C we can handle.)
 
 We will likely use the `ctrlc` crate to register a handler that triggers a
 graceful shutdown sequence.
@@ -1531,8 +1539,9 @@ pair. We give flexibility:
   keep the private part temporarily. This might be a future security
   enhancement.
 
-**Cloud Resource Cleanup on Failure:** Failures can happen at any step – we
-ensure that we don’t leak resources:
+**Cloud Resource Cleanup on Failure:** Failures can happen at any step – the
+design aims not to leak resources, subject to the limits recorded in the status
+notes:
 
 - If VM creation is **known** not to have happened (an API error that names the
   cause, or no quota before the request was accepted), we propagate that error
