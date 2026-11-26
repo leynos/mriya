@@ -219,16 +219,18 @@ An existing, formatted volume can be configured without running `mriya init`:
 1. Create a Block Storage volume in the Scaleway console or through the Block
    Storage API, in the same availability zone as the instances. To format it,
    attach it to a temporary instance and run `sudo mkfs.ext4 -F` on its device
-   from that instance, then detach it; Scaleway's
+   from that instance; Scaleway's
    [mount-a-volume guide](https://www.scaleway.com/en/docs/block-storage/how-to/mount-a-volume/)
    covers identifying the device. Formatting erases the volume, so confirm the
    device name before running the command. `mriya init` would run the same
    `mkfs.ext4 -F` invocation, but its creation step does not currently succeed.
    Detach the volume from any other server before recording its ID, because a
-   volume can be attached to only one instance at a time. Mriya does not check
-   the filesystem or the attachment state: an unformatted volume fails to mount
-   silently (the mount discards its error), and cache routing is then skipped,
-   so builds write to the root disk instead.
+   volume can be attached to only one instance at a time. Then delete the
+   temporary instance, and check that its boot volume and any public IP it held
+   are gone too; a leftover instance, volume, or address stays billable. Mriya
+   does not check the filesystem or the attachment state: an unformatted volume
+   fails to mount silently (the mount discards its error), and cache routing is
+   then skipped, so builds write to the root disk instead.
 2. Record its ID in configuration, either by exporting
    `SCW_DEFAULT_VOLUME_ID` with the volume's UUID as its value, or by setting
    `default_volume_id` under `[scaleway]` in `mriya.toml`.
@@ -264,31 +266,35 @@ going when it fails. If the mount fails — for example, because the volume has
 no filesystem — the run continues without the cache, which allows graceful
 degradation for first-time setups.
 
-Cache routing happens only when the configured path **is** a mount point at run
-time; the remote command tests it with `mountpoint -q` before exporting
-anything. An earlier mount can satisfy that test, and a path that is not a
-mount point exports nothing. When routing is active, Mriya:
+The mount is followed by two independent steps, each with its own setting:
 
-1. Creates cache subdirectories under the mount point (`cargo`, `rustup`,
-   `target`, `go/pkg/mod`, `go/build-cache`, `pip/cache`, `npm/cache`,
+1. When `MRIYA_SYNC_CREATE_CACHE_DIRECTORIES` is enabled (the default), Mriya
+   attempts to create cache subdirectories under the mount point (`cargo`,
+   `rustup`, `target`, `go/pkg/mod`, `go/build-cache`, `pip/cache`, `npm/cache`,
    `yarn/cache`, `pnpm/store`). Creation is attempted only: it runs under the
    same mount-point guard, discards errors, and tolerates a read-only or full
    filesystem, so a toolchain must still cope with a missing directory. The
    directories are created with `sudo mkdir -p`, and Mriya never changes their
    ownership, so they belong to `root`.
-2. Exports environment variables in the remote session to route common language
-   caches to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
+2. When `MRIYA_SYNC_ROUTE_BUILD_CACHES` is enabled (the default), Mriya exports
+   environment variables in the remote session to route common language caches
+   to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
    `CARGO_TARGET_DIR` (Rust/Cargo); `GOMODCACHE` and `GOCACHE` (Go);
    `PIP_CACHE_DIR` (Python/pip); `npm_config_cache`, `YARN_CACHE_FOLDER`, and
-   `PNPM_STORE_PATH` (Node tooling).
+   `PNPM_STORE_PATH` (Node tooling). The exports happen only when the
+   configured path **is** a mount point at run time: the remote command tests
+   it with `mountpoint -q` before exporting anything. An earlier mount can
+   satisfy that test, and a path that is not a mount point exports nothing.
 
-Because the directories and the mount point are root-owned, a non-root
+Because the mount point and the cache subdirectories are root-owned, a non-root
 `ssh_user` cannot necessarily write to them. The default `ssh_user` is `root`,
 where this does not arise, but the example configuration above sets `ubuntu`;
 with that setting a cache-routed build can fail with a permission error. Either
-keep the SSH user as `root`, arrange for the mount point to be writable by the
-chosen user, or set `MRIYA_SYNC_ROUTE_BUILD_CACHES=false` and place caches
-manually.
+keep the SSH user as `root`, give the chosen user write access to the mount
+point **and** to each cache subdirectory, or set
+`MRIYA_SYNC_ROUTE_BUILD_CACHES=false` and place caches manually. Making only
+the mount point writable is not enough, because the subdirectories are created
+separately and keep root ownership.
 
 ### Volume size units
 
@@ -428,8 +434,12 @@ command runtimes as a lower bound that is usually far too low.
 
 From the moment the create-server request is accepted, a run can involve:
 
-- A compute instance, from creation through deletion, including the stopped
-  interval before power-on and the sync and cloud-init wait after it.
+- A compute instance, from creation through deletion. Whether the stopped
+  interval before power-on is billed depends on the provider and on which
+  billing event applies; see
+  [Billing minima and granularity](#billing-minima-and-granularity). The sync
+  and cloud-init waits that follow power-on are always inside the billed
+  interval.
 - A root (boot) volume whose type and size Mriya does not choose. See
   [Root storage is implicit](#root-storage-is-implicit).
 - A public IP address. Mriya requests a dynamic, routed address, but it does
