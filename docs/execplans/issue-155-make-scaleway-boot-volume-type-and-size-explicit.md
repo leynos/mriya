@@ -223,6 +223,11 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 - [x] Keep every touched code file under the 400-line budget by splitting the
   domain model, the capture follow-up, the run error, and the larger test
   modules. Committed as `3825bb4` and `406fcef`.
+- [x] Keep Whitaker's macro-aware cognitive complexity at or below 9 by
+  extracting `report_created` in the run orchestrator and splitting the live
+  check's case execution. Committed as `3fcb528`.
+- [x] Decode only the requested catalogue entry, so one unfamiliar sibling
+  entry cannot fail a valid lookup. Committed as `433f5fd`.
 - [ ] Commit gates and CodeRabbit review, then push and open the draft PR.
 
 ## Surprises & Discoveries
@@ -286,6 +291,12 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   had not already shown. Rationale: the catalogue is a map rather than a list,
   so counting pages alone cannot detect the end; an endpoint that ignored the
   page parameter would otherwise loop forever.
+- Decision: keep catalogue entries undecoded and decode only the requested
+  type. Rationale: the page describes every type in the zone, including shapes
+  this backend does not model, so decoding all of them would let one unfamiliar
+  entry fail a perfectly ordinary lookup. A decoding failure is reported
+  against the requested type by name, which distinguishes a changed payload
+  from an absent type.
 - Decision: drop images whose root type this backend does not model, even when
   the profile named no storage type. Rationale: such an image cannot back any
   plan, so selecting it and failing would lose to an older usable image.
