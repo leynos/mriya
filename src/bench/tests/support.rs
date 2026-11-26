@@ -158,3 +158,17 @@ impl IntoRun for Record {
         }
     }
 }
+
+/// Returns the repository's example campaign plan.
+///
+/// # Panics
+///
+/// Panics when the plan is missing, for the reason [`fixture`] gives.
+pub fn example_campaign() -> String {
+    let manifest = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
+    let directory = Dir::open_ambient_dir(manifest, ambient_authority())
+        .expect("the manifest directory should open");
+    directory
+        .read_to_string("benchmarks/campaign.example.toml")
+        .expect("the example campaign should read")
+}

@@ -34,3 +34,5 @@ pub use ports::{
 };
 pub use runner::run_campaign;
 pub use scaleway_driver::ScalewayDriver;
+#[cfg(test)]
+pub(crate) use scaleway_measure::{redact_remote, shell_escape, tree_size};

@@ -28,6 +28,7 @@ pub use sheet::{
     ProviderRules,
     StorageRule,
     chargeable_nanos,
+    convert_micros,
     format_micros,
     load_price_sheet,
 };

@@ -37,8 +37,14 @@ impl TeardownReport {
     }
 
     /// Returns whether this teardown is verified.
+    ///
+    /// A driver that could not confirm the teardown must set `reason` even when
+    /// it can name no identifier, so a report with no residual IDs but a reason
+    /// is still a doubt.
     #[must_use]
-    pub const fn is_verified(&self) -> bool { self.residual_ids.is_empty() }
+    pub fn is_verified(&self) -> bool {
+        self.residual_ids.is_empty() && self.reason.trim().is_empty()
+    }
 }
 
 /// The records one attempt produced.
@@ -48,6 +54,13 @@ pub struct AttemptRecords {
     pub run: RunRecord,
     /// Every phase the attempt reported, in the order it finished.
     pub phases: Vec<PhaseRecord>,
+    /// Provider identifiers the attempt created.
+    ///
+    /// A campaign needs them to write an actionable residual record when an
+    /// attempt fails after allocating. An empty list means the attempt created
+    /// nothing it knows of, which is different from "the provider was never
+    /// asked".
+    pub resource_ids: Vec<String>,
 }
 
 /// Runs one attempt and reports the resources it used.
@@ -96,6 +109,16 @@ pub trait RecordSink {
     /// stops, because a record that cannot be written is evidence that cannot
     /// be recovered later.
     fn append(&mut self, record: &Record) -> Result<(), String>;
+
+    /// Pushes any buffered records to their destination.
+    ///
+    /// The default is a no-op, for a sink that writes through immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the destination rejects the data, so a caller
+    /// never reports success for records that were lost in a buffer.
+    fn flush(&mut self) -> Result<(), String> { Ok(()) }
 }
 
 /// Writes records as JSON Lines to any [`std::io::Write`].
@@ -119,6 +142,8 @@ impl<W: std::io::Write> RecordSink for JsonLinesSink<W> {
         let line = to_line(record).map_err(|err| err.to_string())?;
         writeln!(self.writer, "{line}").map_err(|err| err.to_string())
     }
+
+    fn flush(&mut self) -> Result<(), String> { self.writer.flush().map_err(|err| err.to_string()) }
 }
 
 /// Why a campaign stopped.

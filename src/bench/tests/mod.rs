@@ -8,6 +8,9 @@
 
 mod billing;
 mod campaign;
+mod campaign_doubles;
+mod driver;
+mod plan;
 mod probe;
 mod record;
 mod report;

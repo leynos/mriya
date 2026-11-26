@@ -234,6 +234,8 @@ from `make test` or CI.
   and paid `run`; the fail-closed campaign harness; the offline equal-work
   report; the Makefile routes; and the user, developer, design and roadmap
   updates. 113 unit tests, 10 CLI tests and 4 observer tests pass.
+- [x] 2026-11-26: Independent review of the whole diff; its findings are
+  recorded under `Surprises & Discoveries` and were all remediated.
 - [ ] Deterministic gates pass (`make check-fmt`, `make lint`, `make test`,
   `make markdownlint`, `make spelling`).
 - [ ] CodeRabbit review cleared and draft pull request opened.
@@ -272,6 +274,24 @@ from `make test` or CI.
 - The paid driver's `run_attempt` must return phase records as well as the run
   record. An observer that captured durations and then discarded them would
   leave the harness with phase names and no measurements.
+- The Scaleway adapter tags resources from `MRIYA_TEST_RUN_ID`, while the
+  campaign swept `mriya-test-run-<campaign_id>`. Unless the two agree, the
+  fail-closed pre-sweep can never find the campaign's own leftovers. The driver
+  now constructs the backend with the campaign id as its test run id, so the
+  tag it creates and the tag it sweeps are the same string.
+- A failed attempt is a cleanup doubt, not merely a failed measurement: it may
+  have allocated before it failed. The harness now writes a residual record
+  naming the attempt's provider and any identifiers the lifecycle sink saw,
+  then stops.
+- A provider's `month_seconds` must actually be used; a sheet that declared a
+  shorter month was silently priced against 30 days.
+- A record's chargeable lifetime is the figure the provider bills, so the report
+  prices from it rather than from the wall-clock lifetime. Re-rounding an
+  already-rounded figure is idempotent, so nothing is lost.
+- A plan's monthly price is charged once per campaign, but a reader still needs
+  to see each workload's share. The report divides the subscription across the
+  groups in proportion to their timed attempts and gives the remainder to the
+  first group, so the shares always add back to the total.
 
 ## Decision log
 

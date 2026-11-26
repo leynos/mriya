@@ -5,13 +5,7 @@
 //! a loader, a file, or a network.
 
 use super::PriceSheetError;
-use crate::bench::billing::{
-    BYTES_PER_GB,
-    DEFAULT_MONTH_SECONDS,
-    MICROS_PER_UNIT,
-    NANOS_PER_HOUR,
-    NANOS_PER_SECOND,
-};
+use crate::bench::billing::{BYTES_PER_GB, MICROS_PER_UNIT, NANOS_PER_HOUR, NANOS_PER_SECOND};
 
 /// The rate a provider charges for one compute product.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,17 +108,25 @@ impl StorageRule {
     ///     granularity_seconds: 1,
     ///     minimum_seconds: 0,
     /// };
-    /// // One gigabyte for a tenth of the sheet's month is a tenth of the price.
+    /// // One gigabyte for a tenth of a 30-day month is a tenth of the price.
     /// let tenth = NANOS_PER_SECOND * 259_200;
-    /// assert_eq!(rule.price_micros(BYTES_PER_GB, tenth), Some(10_000));
+    /// assert_eq!(
+    ///     rule.price_micros(BYTES_PER_GB, tenth, 2_592_000),
+    ///     Some(10_000)
+    /// );
     /// ```
     #[must_use]
-    pub fn price_micros(&self, bytes: u64, chargeable_nanos: u64) -> Option<u64> {
+    pub fn price_micros(
+        &self,
+        bytes: u64,
+        chargeable_nanos: u64,
+        month_seconds: u64,
+    ) -> Option<u64> {
         let numerator = u128::from(bytes)
             .checked_mul(u128::from(chargeable_nanos))?
             .checked_mul(u128::from(self.price_per_gb_month_micros))?;
         let denominator = u128::from(BYTES_PER_GB)
-            .checked_mul(u128::from(DEFAULT_MONTH_SECONDS))?
+            .checked_mul(u128::from(month_seconds))?
             .checked_mul(u128::from(NANOS_PER_SECOND))?;
         let price = numerator
             .checked_add(denominator.checked_sub(1)?)?

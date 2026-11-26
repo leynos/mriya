@@ -6,6 +6,8 @@
 //! [`crate::bench::validate`] name a missing pin precisely — `allocation.cpu_count`
 //! rather than "the run record is incomplete".
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 /// The source tree a workload ran against.
@@ -42,7 +44,7 @@ pub struct Allocation {
 }
 
 /// The architecture a guest reported for itself.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GuestArchitecture {
     /// 64-bit x86.
@@ -97,6 +99,10 @@ pub struct Concurrency {
 }
 
 /// The cache state an attempt started from.
+///
+/// The names are the protocol's, so a report prints `empty` rather than
+/// `Empty`: the reader is an operator comparing bills, not a Rust programmer.
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CacheState {
@@ -108,6 +114,17 @@ pub enum CacheState {
     Seed,
     /// The backend cannot persist a cache at all.
     Absent,
+}
+
+impl fmt::Display for CacheState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Empty => "empty",
+            Self::Warm => "warm",
+            Self::Seed => "seed",
+            Self::Absent => "absent",
+        })
+    }
 }
 
 /// What the attempt observed about its cache.

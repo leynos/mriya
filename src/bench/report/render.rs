@@ -86,8 +86,8 @@ fn render_result(report: &BenchmarkReport, result: &WorkloadResult) -> Vec<Strin
         result.workload_id, result.provider, result.product, result.completed, result.failed
     )];
     lines.push(format!(
-        "    cache {:?}, {} bytes; absorbed by plan {}; chargeable {}",
-        result.cache_state,
+        "    cache {}, {} bytes; absorbed by plan {}; chargeable {}",
+        describe_cache_states(result),
         result.cache_bytes,
         format_duration(result.absorbed_nanos),
         format_duration(result.chargeable_nanos)
@@ -106,6 +106,12 @@ fn render_result(report: &BenchmarkReport, result: &WorkloadResult) -> Vec<Strin
         lines.push(format!(
             "    failed-attempt cost {}",
             format_currency(&report.currency, result.failed_marginal_micros)
+        ));
+    }
+    if result.warm_up_marginal_micros > 0 {
+        lines.push(format!(
+            "    warm-up cost {}, excluded from the per-gate figure",
+            format_currency(&report.currency, result.warm_up_marginal_micros)
         ));
     }
     if let (Some(minimum), Some(median), Some(maximum)) = (
@@ -152,4 +158,14 @@ pub fn format_duration(nanos: u64) -> String {
         .checked_div(1_000_000)
         .unwrap_or(0);
     format!("{seconds}.{millis:03}s")
+}
+
+/// Renders every cache class the group's attempts declared.
+fn describe_cache_states(result: &WorkloadResult) -> String {
+    result
+        .cache_states
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

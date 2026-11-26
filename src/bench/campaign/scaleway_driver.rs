@@ -31,7 +31,6 @@ use crate::{
             ProviderProduct,
             RecordKind,
             RunRecord,
-            RunRole,
             SCHEMA_VERSION,
             WorkloadClass,
         },
@@ -83,10 +82,35 @@ impl ScalewayDriver {
         })
     }
 
+    /// Builds a backend whose resources carry the campaign's own tag.
+    ///
+    /// The tag is what the janitor sweeps: a backend that tagged resources with
+    /// the process environment's test-run id would create resources the
+    /// campaign's own sweep could never find, so the campaign id is passed
+    /// explicitly and used for both.
+    pub(super) fn backend(
+        &self,
+        campaign_id: &str,
+        sink: Option<crate::bench::lifecycle::SharedLifecycleSink>,
+    ) -> DriverResult<ScalewayBackend> {
+        let backend = ScalewayBackend::new_with_test_run_id(
+            self.config.clone(),
+            Some(campaign_id.to_owned()),
+        )
+        .map_err(|err| format!("backend: {err}"))?;
+        Ok(match sink {
+            Some(configured) => backend.with_lifecycle_sink(configured),
+            None => backend,
+        })
+    }
+
     /// Builds the request one attempt uses.
-    fn request(&self, attempt: &PlannedAttempt) -> DriverResult<InstanceRequest> {
-        let backend =
-            ScalewayBackend::new(self.config.clone()).map_err(|err| format!("backend: {err}"))?;
+    fn request(
+        &self,
+        campaign_id: &str,
+        attempt: &PlannedAttempt,
+    ) -> DriverResult<InstanceRequest> {
+        let backend = self.backend(campaign_id, None)?;
         let mut request = backend
             .default_request()
             .map_err(|err| format!("default request: {err}"))?;
@@ -119,8 +143,8 @@ impl CampaignDriver for ScalewayDriver {
         campaign_id: &str,
         attempt: &PlannedAttempt,
     ) -> DriverResult<AttemptRecords> {
-        let request = self.request(attempt)?;
-        let measured = self.measure(attempt, &request)?;
+        let request = self.request(campaign_id, attempt)?;
+        let measured = self.measure(campaign_id, attempt, &request)?;
         let probe = parse_probe_report(&measured.probe_stdout)
             .map_err(|err| format!("the pre-workload probe could not be read: {err}"))?;
         Ok(AttemptRecords {
@@ -129,12 +153,8 @@ impl CampaignDriver for ScalewayDriver {
                 kind: RecordKind::Run,
                 campaign_id: campaign_id.to_owned(),
                 workload_id: attempt.workload_id.clone(),
-                command: measured
-                    .command
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect(),
-                role: RunRole::Timed,
+                command: measured.command.clone(),
+                role: attempt.role,
                 class: WorkloadClass::Cpu,
                 tree: tree_pin(&measured.source)?,
                 toolchain: toolchain_pin(&probe),
@@ -145,7 +165,7 @@ impl CampaignDriver for ScalewayDriver {
                 },
                 allocation: probe.allocation(),
                 concurrency: Concurrency {
-                    intended_workers: intended_workers(&probe),
+                    intended_workers: intended_workers(),
                     effective_workers: probe.cpu_count,
                 },
                 cache: probe.cache(),
@@ -157,23 +177,24 @@ impl CampaignDriver for ScalewayDriver {
                 },
                 outcome: outcome_of(&measured.output),
                 gpu: None,
-                repetition: 1,
+                repetition: attempt.repetition,
             },
             phases: phase_records(campaign_id, attempt, &measured.observations),
+            resource_ids: measured.resource_ids,
         })
     }
 
     fn verify_teardown(
         &self,
-        campaign_id: &str,
+        _campaign_id: &str,
         _attempt: &PlannedAttempt,
         _run: &RunRecord,
     ) -> DriverResult<TeardownReport> {
-        // The orchestrator's teardown phase resolves only after the backend has
-        // listed the instance and found it gone, so a completed run is a
-        // verified teardown. A sweep that still finds anything is the
-        // authoritative check, and it is the one this returns.
-        self.sweep(campaign_id)?;
+        // `run_attempt` returns `Ok` only after the orchestrator's teardown
+        // phase has resolved, and that phase resolves only when the backend has
+        // listed the instance and found it gone. A run that exists therefore
+        // has a verified teardown; a run that failed never reaches here and is
+        // recorded as a residual by the harness instead.
         Ok(TeardownReport::verified())
     }
 }

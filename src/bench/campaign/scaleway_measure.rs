@@ -19,7 +19,6 @@ use crate::{
         probe::{PROBE_COMMAND, ProbeReport},
         record::{PhaseRecord, PhaseStatus, RecordKind, RunOutcome, SCHEMA_VERSION, TreePin},
     },
-    scaleway::ScalewayBackend,
     sync::{StreamingCommandRunner, Syncer},
 };
 
@@ -27,8 +26,8 @@ use crate::{
 pub(super) struct Measurement {
     /// The workspace the attempt ran in.
     pub(super) source: Utf8PathBuf,
-    /// The command the workload ran.
-    pub(super) command: String,
+    /// The command vector the workload ran.
+    pub(super) command: Vec<String>,
     /// The attempt's wall-clock lifetime.
     pub(super) total_nanos: u64,
     /// Standard output of the pre-workload probe.
@@ -37,6 +36,8 @@ pub(super) struct Measurement {
     pub(super) output: crate::sync::RemoteCommandOutput,
     /// Every phase observation, in order.
     pub(super) observations: Vec<RecordedObservation>,
+    /// Provider identifiers the attempt created.
+    pub(super) resource_ids: Vec<String>,
 }
 
 /// Returns the current working directory as a UTF-8 path.
@@ -89,7 +90,7 @@ pub(super) fn phase_records(
                 kind: RecordKind::Phase,
                 campaign_id: campaign_id.to_owned(),
                 workload_id: attempt.workload_id.clone(),
-                repetition: 1,
+                repetition: attempt.repetition,
                 phase,
                 segment: *segment,
                 duration_nanos,
@@ -106,21 +107,57 @@ impl RunObserver for SharedObserver {
     fn observe(&self, observation: Observation<'_>) { self.0.observe(observation); }
 }
 
-/// Returns the workload command the protocol pins for `workload_id`.
-pub(super) fn workload_command(workload_id: &str) -> DriverResult<String> {
-    match workload_id {
-        "cold-build" | "warm-incremental" => Ok(String::from(
-            "cargo build --workspace --all-targets --all-features",
-        )),
-        "link-heavy" => Ok(String::from(
-            "cargo test --workspace --all-features --no-run",
-        )),
-        "test-execution" => Ok(String::from("cargo nextest run --workspace --all-targets")),
-        other => Err(format!(
-            "unknown workload {other:?}; the protocol defines cold-build, warm-incremental, \
-             link-heavy and test-execution"
-        )),
-    }
+/// The worker count every workload is asked to use.
+///
+/// Exported into each workload's environment so the intended concurrency is a
+/// real setting rather than a copy of what the guest happened to provide. A
+/// guest with fewer CPUs then shows up as a difference between intended and
+/// effective, which is the point of recording both.
+pub(super) const INTENDED_WORKERS: u32 = 8;
+
+/// Returns the workload command the protocol pins for `workload_id`, as the
+/// exact argument vector the record carries.
+///
+/// Each workload does what its identifier claims:
+///
+/// - `cold-build` clears the routed target directory before building, so it cannot silently reuse a
+///   cache.
+/// - `warm-incremental` touches one source file before building, so it measures a real recompile
+///   rather than a no-op.
+/// - `link-heavy` links every test binary without running it.
+/// - `test-execution` runs the repository's test command over the warm build.
+///
+/// # Errors
+///
+/// Returns a message naming the workload when the identifier is not one the
+/// protocol defines, rather than running a command that does not match the
+/// record.
+pub(super) fn workload_command(workload_id: &str) -> DriverResult<Vec<String>> {
+    let mut cargo = String::from("cargo");
+    let script = match workload_id {
+        "cold-build" => concat!(
+            "if [ -n \"$CARGO_TARGET_DIR\" ]; then rm -rf \"$CARGO_TARGET_DIR\"; ",
+            "else rm -rf target; fi; cargo build --workspace --all-targets --all-features"
+        ),
+        "warm-incremental" => concat!(
+            "touch src/lib.rs; ",
+            "cargo build --workspace --all-targets --all-features"
+        ),
+        "link-heavy" => "cargo test --workspace --all-features --no-run",
+        "test-execution" => "cargo nextest run --workspace --all-targets --all-features",
+        other => {
+            return Err(format!(
+                "unknown workload {other:?}; the protocol defines cold-build, warm-incremental, \
+                 link-heavy and test-execution"
+            ));
+        }
+    };
+    // The script is one argument of `sh -c`, and the exported worker count is
+    // part of the pinned command vector so a reader can see it.
+    let workers = INTENDED_WORKERS;
+    let exported = format!("export CARGO_BUILD_JOBS={workers}; {script}");
+    cargo.clear();
+    Ok(vec![String::from("sh"), String::from("-c"), exported])
 }
 
 /// Maps the remote command's output onto a protocol outcome.
@@ -162,11 +199,8 @@ pub(super) fn banner_parts(banner: &str) -> (String, String) {
     }
 }
 
-/// Returns the worker count the workload was asked to use.
-///
-/// The protocol pins an intended worker count, and the Cargo workloads here all
-/// honour `CARGO_BUILD_JOBS` through the environment the orchestration sets.
-pub(super) const fn intended_workers(probe: &ProbeReport) -> u32 { probe.cpu_count }
+/// Returns the worker count every workload was asked to use.
+pub(super) const fn intended_workers() -> u32 { INTENDED_WORKERS }
 
 /// Builds the tree pin from the repository the campaign runs in.
 ///
@@ -178,15 +212,59 @@ pub(super) fn tree_pin(source: &Utf8PathBuf) -> DriverResult<TreePin> {
     let commit = git_output(source, &["rev-parse", "HEAD"])?;
     let remote = git_output(source, &["config", "--get", "remote.origin.url"]).unwrap_or_default();
     let status = git_output(source, &["status", "--porcelain"]).unwrap_or_default();
-    let files = git_output(source, &["ls-files"])?;
+    let files = git_output(source, &["ls-tree", "-r", "-l", "HEAD"])?;
+    let (file_count, size_bytes) = tree_size(&files);
     Ok(TreePin {
-        remote,
+        remote: redact_remote(&remote),
         commit,
         tree_digest: status_signature(&status),
         dirty: !status.trim().is_empty(),
-        size_bytes: 0,
-        file_count: u64::try_from(files.lines().count()).unwrap_or(0),
+        size_bytes,
+        file_count,
     })
+}
+
+/// Returns the file count and total byte size of a `git ls-tree -r -l` listing.
+///
+/// The listing's size column is the fourth whitespace-separated field, so a
+/// path containing spaces does not disturb the sum: only the leading fields are
+/// read.
+pub(crate) fn tree_size(listing: &str) -> (u64, u64) {
+    let mut count = 0_u64;
+    let mut bytes = 0_u64;
+    for line in listing.lines().filter(|line| !line.trim().is_empty()) {
+        count = count.saturating_add(1);
+        if let Some(size) = line
+            .split_whitespace()
+            .nth(3)
+            .and_then(|size| size.parse::<u64>().ok())
+        {
+            bytes = bytes.saturating_add(size);
+        }
+    }
+    (count, bytes)
+}
+
+/// Removes any userinfo from a repository URL before it is persisted.
+///
+/// A remote configured as `https://user:token@host/path` would otherwise write
+/// the token into every record. The host and path are kept, because they are
+/// what identifies the repository; everything before the `@` is dropped.
+pub(crate) fn redact_remote(remote: &str) -> String {
+    let trimmed = remote.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return trimmed.to_owned();
+    };
+    // In an HTTP(S) URL the userinfo is a credential. In an SSH URL it is the
+    // login name, which identifies the repository's owner rather than
+    // authenticating the caller, so it is kept.
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return trimmed.to_owned();
+    }
+    match rest.split_once('@') {
+        Some((_credentials, host_and_path)) => format!("{scheme}://{host_and_path}"),
+        None => trimmed.to_owned(),
+    }
 }
 
 /// Returns one `git` invocation's trimmed standard output.
@@ -233,12 +311,12 @@ impl ScalewayDriver {
     /// record.
     pub(super) fn measure(
         &self,
+        campaign_id: &str,
         attempt: &PlannedAttempt,
         request: &InstanceRequest,
     ) -> DriverResult<Measurement> {
-        let backend = ScalewayBackend::new(self.config.clone())
-            .map_err(|err| format!("backend: {err}"))?
-            .with_lifecycle_sink(Arc::new(RecordingSink::default()));
+        let lifecycle = Arc::new(RecordingSink::default());
+        let backend = self.backend(campaign_id, Some(lifecycle.clone()))?;
         let syncer = Syncer::new(self.sync_config.clone(), StreamingCommandRunner)
             .map_err(|err| format!("syncer: {err}"))?;
         let observer = Arc::new(RecordingObserver::default());
@@ -249,13 +327,14 @@ impl ScalewayDriver {
 
         let source = current_directory()?;
         let command = workload_command(&attempt.workload_id)?;
+        let rendered = shell_escape(&command);
         let runtime =
             tokio::runtime::Runtime::new().map_err(|err| format!("async runtime: {err}"))?;
         let started = std::time::Instant::now();
         let attempt_output = runtime
             .block_on(async {
                 orchestrator
-                    .execute_observed(request, &source, &command)
+                    .execute_observed(request, &source, &rendered)
                     .await
             })
             .map_err(|err| format!("run failed: {err}"))?;
@@ -270,6 +349,19 @@ impl ScalewayDriver {
             probe_stdout,
             output: attempt_output.output,
             observations: observer.observations(),
+            resource_ids: lifecycle.created_ids(),
         })
     }
+}
+
+/// Renders a command vector as one shell command line.
+///
+/// The orchestrator takes a string, and each argument is escaped so the remote
+/// shell sees the same words the record pins.
+pub(crate) fn shell_escape(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|argument| shell_escape::unix::escape(argument.as_str().into()).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

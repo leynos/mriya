@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use super::WorkloadResult;
 use crate::bench::{
-    billing::{MICROS_PER_UNIT, PriceSheet},
-    record::{CacheState, WorkloadClass},
+    billing::{PriceSheet, convert_micros},
+    record::{CacheState, GuestArchitecture, RunRecord, WorkloadClass},
     validate::Campaign,
 };
 
@@ -29,50 +29,85 @@ pub(super) fn note_differences(
     campaign: &Campaign,
     notes: &mut DifferenceNotes<'_>,
 ) {
-    let capability_notes = &mut *notes.capability;
-    let comparability_problems = &mut *notes.comparability;
-    let cache_classes: BTreeSet<CacheState> = results.iter().map(|r| r.cache_state).collect();
+    note_cache_differences(workload_id, results, notes.capability);
+    note_comparability(campaign, workload_id, notes.comparability);
+}
+
+/// States every cache class the group's attempts used, when they differ.
+fn note_cache_differences(
+    workload_id: &str,
+    results: &[WorkloadResult],
+    capability_notes: &mut Vec<String>,
+) {
+    let mut cache_classes = BTreeSet::new();
+    for result in results {
+        cache_classes.extend(result.cache_states.iter().copied());
+    }
     if cache_classes.len() > 1 {
         capability_notes.push(format!(
-            "{workload_id}: providers used different cache classes ({}); a cost difference \
+            "{workload_id}: attempts used different cache classes ({}); a cost difference \
              between them is partly a cache-capability difference, not only a throughput one",
             describe_cache_classes(&cache_classes)
         ));
     }
-    let gpu_workloads: BTreeSet<bool> = campaign
+}
+
+/// Reports every way the group's attempts are not equal work.
+fn note_comparability(campaign: &Campaign, workload_id: &str, problems: &mut Vec<String>) {
+    let attempts: Vec<&RunRecord> = campaign
         .runs
         .iter()
-        .filter(|(_, run)| run.workload_id == workload_id)
-        .map(|(_, run)| run.class == WorkloadClass::Gpu)
+        .map(|(_, run)| run)
+        .filter(|run| run.workload_id == workload_id)
         .collect();
-    if gpu_workloads.len() > 1 {
-        comparability_problems.push(format!(
+    let classes: BTreeSet<bool> = attempts
+        .iter()
+        .map(|run| run.class == WorkloadClass::Gpu)
+        .collect();
+    if classes.len() > 1 {
+        problems.push(format!(
             "{workload_id}: mixes CPU and GPU experiments, which are never ranked together"
         ));
     }
-    let mut commands = BTreeSet::new();
-    let mut revisions = BTreeSet::new();
-    let mut architectures = BTreeSet::new();
-    for (_, run) in &campaign.runs {
-        if run.workload_id != workload_id {
-            continue;
-        }
-        commands.insert(run.command.join(" "));
-        revisions.insert(run.tree.commit.clone());
-        architectures.insert(format!("{:?}", run.allocation.guest_architecture));
-    }
+    // The argument vectors are compared whole, not joined: `["cargo",
+    // "build x"]` and `["cargo build", "x"]` are different commands that a
+    // join would make identical.
+    let commands: BTreeSet<&Vec<String>> = attempts.iter().map(|run| &run.command).collect();
     if commands.len() > 1 {
-        comparability_problems.push(format!(
+        problems.push(format!(
             "{workload_id}: attempts ran different commands, so they are not equal work"
         ));
     }
+    let revisions: BTreeSet<&str> = attempts
+        .iter()
+        .map(|run| run.tree.commit.as_str())
+        .collect();
     if revisions.len() > 1 {
-        comparability_problems.push(format!(
+        problems.push(format!(
             "{workload_id}: attempts ran different revisions, so they are not equal work"
         ));
     }
+    let digests: BTreeSet<&str> = attempts
+        .iter()
+        .map(|run| run.tree.tree_digest.as_str())
+        .collect();
+    if digests.len() > 1 {
+        problems.push(format!(
+            "{workload_id}: attempts ran different tree digests, so they are not equal work"
+        ));
+    }
+    let cleanliness: BTreeSet<bool> = attempts.iter().map(|run| run.tree.dirty).collect();
+    if cleanliness.len() > 1 {
+        problems.push(format!(
+            "{workload_id}: attempts mixed dirty and clean trees, which are not comparable"
+        ));
+    }
+    let architectures: BTreeSet<GuestArchitecture> = attempts
+        .iter()
+        .map(|run| run.allocation.guest_architecture)
+        .collect();
     if architectures.len() > 1 {
-        comparability_problems.push(format!(
+        problems.push(format!(
             "{workload_id}: attempts ran on different architectures, so they are not equal work"
         ));
     }
@@ -82,7 +117,7 @@ pub(super) fn note_differences(
 fn describe_cache_classes(classes: &BTreeSet<CacheState>) -> String {
     classes
         .iter()
-        .map(|state| format!("{state:?}"))
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -90,20 +125,85 @@ fn describe_cache_classes(classes: &BTreeSet<CacheState>) -> String {
 /// Returns the campaign's subscription total in the sheet's currency.
 ///
 /// The plan price is charged once per campaign rather than once per attempt, so
-/// this is computed from the sheet and the providers the campaign actually used.
+/// this is computed from the sheet and the providers the campaign actually
+/// used. The conversion uses the same rounding as every other money figure, so
+/// a subscription cannot be understated by truncation.
+///
+/// # Errors
+///
+/// Returns a message when a provider quotes in a currency the sheet cannot
+/// convert, rather than silently charging zero.
 ///
 /// # Examples
 ///
-/// A campaign with no plan is charged no subscription:
+/// A campaign whose providers the sheet does not describe is charged no
+/// subscription, because there is no plan to charge:
 ///
 /// ```
-/// use mriya::bench::validate::validate_str;
+/// use std::collections::BTreeMap;
 ///
-/// let campaign = validate_str("").unwrap_err();
-/// assert_eq!(campaign.len(), 2);
+/// use mriya::bench::{
+///     billing::PriceSheet,
+///     record::{CampaignHeader, RecordKind, SCHEMA_VERSION},
+///     report::campaign_subscription_micros,
+///     validate::Campaign,
+/// };
+///
+/// let campaign = Campaign {
+///     header: CampaignHeader {
+///         schema: SCHEMA_VERSION,
+///         kind: RecordKind::CampaignHeader,
+///         campaign_id: String::from("c"),
+///         limits: None,
+///         price_sheet: None,
+///         providers: Vec::new(),
+///     },
+///     runs: Vec::new(),
+///     phases: Vec::new(),
+/// };
+/// let sheet = PriceSheet {
+///     currency: String::from("EUR"),
+///     retrieved: String::from("2026-11-26"),
+///     month_seconds: 2_592_000,
+///     providers: BTreeMap::new(),
+///     fx: BTreeMap::new(),
+/// };
+/// assert_eq!(campaign_subscription_micros(&campaign, &sheet), 0);
 /// ```
-#[must_use]
-pub fn campaign_subscription_micros(campaign: &Campaign, sheet: &PriceSheet) -> u64 {
+/// # Examples
+///
+/// ```
+/// # use std::collections::BTreeMap;
+/// # use mriya::bench::billing::PriceSheet;
+/// # use mriya::bench::record::{CampaignHeader, RecordKind, SCHEMA_VERSION};
+/// # use mriya::bench::report::campaign_subscription_micros;
+/// # use mriya::bench::validate::Campaign;
+/// let campaign = Campaign {
+///     header: CampaignHeader {
+///         schema: SCHEMA_VERSION,
+///         kind: RecordKind::CampaignHeader,
+///         campaign_id: String::from("c"),
+///         limits: None,
+///         price_sheet: None,
+///         providers: Vec::new(),
+///     },
+///     runs: Vec::new(),
+///     phases: Vec::new(),
+/// };
+/// let sheet = PriceSheet {
+///     currency: String::from("EUR"),
+///     retrieved: String::from("2026-11-26"),
+///     month_seconds: 2_592_000,
+///     providers: BTreeMap::new(),
+///     fx: BTreeMap::new(),
+/// };
+/// assert_eq!(campaign_subscription_micros(&campaign, &sheet)?, 0);
+/// # Ok::<(), String>(())
+/// ```
+pub fn campaign_subscription_micros(
+    campaign: &Campaign,
+    sheet: &PriceSheet,
+) -> Result<u64, String> {
     let providers: BTreeSet<&str> = campaign
         .runs
         .iter()
@@ -117,12 +217,10 @@ pub fn campaign_subscription_micros(campaign: &Campaign, sheet: &PriceSheet) -> 
         let Some(plan) = rules.plan.as_ref() else {
             continue;
         };
-        let rate = sheet.rate(&rules.currency).unwrap_or(0);
-        let converted = u128::from(plan.monthly_price_micros)
-            .saturating_mul(u128::from(rate))
-            .checked_div(u128::from(MICROS_PER_UNIT))
-            .unwrap_or(0);
-        total = total.saturating_add(u64::try_from(converted).unwrap_or(u64::MAX));
+        let rate = sheet.rate(&rules.currency).map_err(|err| err.to_string())?;
+        let converted =
+            convert_micros(plan.monthly_price_micros, rate).map_err(|err| err.to_string())?;
+        total = total.saturating_add(converted);
     }
-    total
+    Ok(total)
 }

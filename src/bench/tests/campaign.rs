@@ -10,154 +10,20 @@ use std::{collections::VecDeque, sync::Mutex};
 use super::{
     super::{
         campaign::{
-            AttemptRecords,
-            CampaignDriver,
             CampaignError,
-            CampaignPlan,
             JsonLinesSink,
-            PlannedAttempt,
             RecordSink,
             SweepReport,
             TeardownReport,
             require_opt_in,
             run_campaign,
         },
-        record::{CampaignLimits, Record, RecordKind, RunOutcome, RunRecord, SCHEMA_VERSION},
+        record::{Record, RecordKind, RunOutcome, SCHEMA_VERSION},
         validate::validate_str,
     },
+    campaign_doubles::{FailingSink, MemorySink, ScriptedDriver, plan},
     support::run_record,
 };
-
-/// A driver that records every call and returns scripted results.
-#[derive(Debug)]
-struct ScriptedDriver {
-    /// Calls made, in order, for assertions about whether one happened.
-    calls: Mutex<Vec<String>>,
-    /// What the pre-sweep returns.
-    sweep: Result<SweepReport, String>,
-    /// What each attempt returns.
-    runs: Mutex<VecDeque<Result<RunRecord, String>>>,
-    /// What each teardown check returns.
-    teardowns: Mutex<VecDeque<Result<TeardownReport, String>>>,
-}
-
-impl ScriptedDriver {
-    /// A driver whose sweep is clean and whose attempts all succeed.
-    fn healthy(runs: usize) -> Self {
-        let mut attempts = Vec::new();
-        for index in 0..runs {
-            attempts.push(Ok(run_record(index)));
-        }
-        Self {
-            calls: Mutex::new(Vec::new()),
-            sweep: Ok(SweepReport::default()),
-            runs: Mutex::new(attempts.into()),
-            teardowns: Mutex::new((0..runs).map(|_| Ok(TeardownReport::verified())).collect()),
-        }
-    }
-
-    /// Records a call and returns the count so far.
-    fn note(&self, call: String) -> usize {
-        let mut calls = self
-            .calls
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        calls.push(call);
-        calls.len()
-    }
-
-    /// Returns the calls made so far.
-    fn calls(&self) -> Vec<String> {
-        self.calls
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-}
-
-impl CampaignDriver for ScriptedDriver {
-    fn pre_sweep(&self, _campaign_id: &str) -> Result<SweepReport, String> {
-        self.note(String::from("sweep"));
-        self.sweep.clone()
-    }
-
-    fn run_attempt(
-        &self,
-        _campaign_id: &str,
-        attempt: &PlannedAttempt,
-    ) -> Result<AttemptRecords, String> {
-        self.note(format!("run:{}", attempt.workload_id));
-        let run = self
-            .runs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pop_front()
-            .unwrap_or_else(|| Err(String::from("no scripted run left")))?;
-        Ok(AttemptRecords {
-            run,
-            phases: Vec::new(),
-        })
-    }
-
-    fn verify_teardown(
-        &self,
-        _campaign_id: &str,
-        _attempt: &PlannedAttempt,
-        _run: &RunRecord,
-    ) -> Result<TeardownReport, String> {
-        self.note(String::from("verify"));
-        self.teardowns
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pop_front()
-            .unwrap_or_else(|| Err(String::from("no scripted teardown left")))
-    }
-}
-
-/// A sink that keeps every record it was asked to write.
-#[derive(Debug, Default)]
-struct MemorySink {
-    /// Records in the order they were appended.
-    records: Vec<Record>,
-}
-
-impl RecordSink for MemorySink {
-    fn append(&mut self, record: &Record) -> Result<(), String> {
-        self.records.push(record.clone());
-        Ok(())
-    }
-}
-
-/// A sink that refuses every write, so the harness's response is observable.
-#[derive(Debug, Default)]
-struct FailingSink;
-
-impl RecordSink for FailingSink {
-    fn append(&mut self, _record: &Record) -> Result<(), String> { Err(String::from("disk full")) }
-}
-
-/// Builds a plan with `attempts` attempts and generous limits.
-fn plan(attempts: usize) -> CampaignPlan {
-    CampaignPlan {
-        campaign_id: String::from("example-2026-11-26"),
-        limits: CampaignLimits {
-            max_spend_micros: 1_000_000,
-            max_attempts: 10,
-            max_attempt_nanos: 10_000_000_000,
-        },
-        price_sheet: None,
-        providers: vec![String::from("scaleway")],
-        attempts: (0..attempts)
-            .map(|index| PlannedAttempt {
-                workload_id: format!("cold-build-{index}"),
-                provider: String::from("scaleway"),
-                product: String::from("DEV1-S"),
-                planned_lifetime_nanos: 1_000,
-                estimated_micros: 1,
-            })
-            .collect(),
-    }
-}
 
 #[test]
 fn a_disabled_campaign_never_calls_the_driver() {
@@ -374,5 +240,36 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
         sink.records
             .iter()
             .any(|entry| matches!(entry, Record::Run(run) if run.schema == SCHEMA_VERSION))
+    );
+}
+
+#[test]
+fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
+    let mut driver = ScriptedDriver::healthy(1);
+    driver.runs = Mutex::new(VecDeque::from(vec![Err(String::from(
+        "the teardown did not confirm the instance is gone",
+    ))]));
+    let mut sink = MemorySink::default();
+    let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
+        .expect_err("a failed attempt stops the campaign");
+    assert!(matches!(error, CampaignError::AttemptFailed(_)), "{error}");
+    let residual = sink
+        .records
+        .iter()
+        .find_map(|record| match record {
+            Record::Residual(residual) => Some(residual.clone()),
+            _ => None,
+        })
+        .expect("a residual record must name the doubt");
+    assert_eq!(residual.provider, "scaleway");
+    assert!(residual.reason.contains("could not be verified gone"));
+    assert_eq!(
+        driver
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("run:"))
+            .count(),
+        1,
+        "no second attempt may start"
     );
 }

@@ -26,8 +26,8 @@ use cap_std::{
 use clap::Parser;
 use mriya::bench::{
     billing::load_price_sheet,
-    campaign::{CampaignPlan, JsonLinesSink, PlannedAttempt, ScalewayDriver, run_campaign},
-    record::{CampaignLimits, OPT_IN_ENV},
+    campaign::{CampaignPlan, JsonLinesSink, ScalewayDriver, run_campaign},
+    record::OPT_IN_ENV,
     report::{build_report, render},
     validate::{format_complaints, validate_str},
 };
@@ -171,7 +171,7 @@ fn exec_run(args: &RunArgs) -> i32 {
             return 1;
         }
     };
-    let plan = match parse_plan(&plan_text) {
+    let plan = match CampaignPlan::from_toml(&plan_text) {
         Ok(plan) => plan,
         Err(message) => {
             report(&message);
@@ -222,7 +222,8 @@ fn exec_run(args: &RunArgs) -> i32 {
 /// reach the rest of the filesystem through the ambient working directory, so
 /// the handle is rooted at the file's own parent.
 fn read_text(path: &str) -> Result<String, String> {
-    let (directory, name) = parent_handle(path)?;
+    let (directory, name) =
+        parent_handle(path).map_err(|err| format!("cannot read {path}: {err}"))?;
     directory
         .read_to_string(name)
         .map_err(|err| format!("cannot read {path}: {err}"))
@@ -263,79 +264,3 @@ fn say(message: &str) { writeln!(io::stdout(), "{message}").ok(); }
 
 /// Writes one line to standard error, ignoring a closed stream.
 fn report(message: &str) { writeln!(io::stderr(), "{message}").ok(); }
-
-/// Parses a campaign plan from TOML.
-///
-/// # Errors
-///
-/// Returns a message naming the path-independent problem, so a plan that omits
-/// a limit is refused before any allocation rather than defaulting.
-fn parse_plan(text: &str) -> Result<CampaignPlan, String> {
-    #[derive(serde::Deserialize)]
-    struct RawPlan {
-        campaign: RawCampaign,
-        #[serde(default)]
-        attempts: Vec<RawAttempt>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawCampaign {
-        id: String,
-        #[serde(default)]
-        price_sheet: Option<String>,
-        #[serde(default)]
-        providers: Vec<String>,
-        limits: LimitsDocument,
-    }
-
-    /// The `[campaign.limits]` table, named so the three `max_` fields are
-    /// judged as a group rather than flagged as a repeated prefix.
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    struct LimitsDocument {
-        /// Most the campaign may spend, in micro-units.
-        #[serde(rename = "max_spend_micros")]
-        spend_micros: u64,
-        /// Most attempts the campaign may make.
-        #[serde(rename = "max_attempts")]
-        attempts: u32,
-        /// Longest any one attempt may live, in nanoseconds.
-        #[serde(rename = "max_attempt_nanos")]
-        attempt_nanos: u64,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct RawAttempt {
-        workload_id: String,
-        provider: String,
-        product: String,
-        planned_lifetime_nanos: u64,
-        estimated_micros: u64,
-    }
-
-    let raw: RawPlan =
-        toml::from_str(text).map_err(|err| format!("campaign is not readable: {err}"))?;
-    let plan = CampaignPlan {
-        campaign_id: raw.campaign.id,
-        limits: CampaignLimits {
-            max_spend_micros: raw.campaign.limits.spend_micros,
-            max_attempts: raw.campaign.limits.attempts,
-            max_attempt_nanos: raw.campaign.limits.attempt_nanos,
-        },
-        price_sheet: raw.campaign.price_sheet,
-        providers: raw.campaign.providers,
-        attempts: raw
-            .attempts
-            .into_iter()
-            .map(|attempt| PlannedAttempt {
-                workload_id: attempt.workload_id,
-                provider: attempt.provider,
-                product: attempt.product,
-                planned_lifetime_nanos: attempt.planned_lifetime_nanos,
-                estimated_micros: attempt.estimated_micros,
-            })
-            .collect(),
-    };
-    plan.validate().map_err(|err| err.to_string())?;
-    Ok(plan)
-}

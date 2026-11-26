@@ -6,7 +6,7 @@
 //! module decides whether what it contains is evidence.
 
 use crate::bench::{
-    record::{CacheState, GuestArchitecture, RunOutcome, RunRecord, WorkloadClass},
+    record::{CacheState, GpuSpec, GuestArchitecture, RunOutcome, RunRecord, WorkloadClass},
     validate::Complaint,
 };
 
@@ -23,7 +23,7 @@ pub(super) fn check_runs(runs: &[(usize, RunRecord)], complaints: &mut Vec<Compl
 
 /// Names each pin the record leaves empty.
 fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Complaint>) {
-    let pins: [(&'static str, bool); 16] = [
+    let pins: [(&'static str, bool); 21] = [
         ("campaign_id", run.campaign_id.trim().is_empty()),
         ("workload_id", run.workload_id.trim().is_empty()),
         ("command", run.command.is_empty()),
@@ -54,10 +54,18 @@ fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Compla
             run.allocation.guest_architecture == GuestArchitecture::Other,
         ),
         ("allocation.cpu_count", run.allocation.cpu_count == 0),
+        ("allocation.memory_bytes", run.allocation.memory_bytes == 0),
+        ("allocation.disk_bytes", run.allocation.disk_bytes == 0),
         (
             "concurrency.intended_workers",
             run.concurrency.intended_workers == 0,
         ),
+        (
+            "concurrency.effective_workers",
+            run.concurrency.effective_workers == 0,
+        ),
+        ("tree.size_bytes", run.tree.size_bytes == 0),
+        ("tree.file_count", run.tree.file_count == 0),
     ];
     for (field, missing) in pins {
         if missing {
@@ -107,17 +115,21 @@ fn report_incoherence(line: usize, run: &RunRecord, complaints: &mut Vec<Complai
             line,
             message: String::from("a CPU experiment must not carry accelerator details"),
         }),
-        (WorkloadClass::Gpu, Some(gpu)) if !gpu.correctness_passed => {
-            complaints.push(Complaint::Incoherent {
-                line,
-                message: String::from(
-                    "a GPU experiment without a passing correctness check is a failure, not a \
-                     ranking candidate",
-                ),
-            });
+        (WorkloadClass::Gpu, Some(gpu)) => {
+            report_gpu_pins(line, gpu, complaints);
+            if !gpu.correctness_passed {
+                complaints.push(Complaint::Incoherent {
+                    line,
+                    message: String::from(
+                        "a GPU experiment without a passing correctness check is a failure, not \
+                         a ranking candidate",
+                    ),
+                });
+            }
         }
-        _ => {}
+        (WorkloadClass::Cpu, None) => {}
     }
+    report_completed_outcome(line, run, complaints);
     if claims_an_unmounted_cache(run) {
         complaints.push(Complaint::Incoherent {
             line,
@@ -139,4 +151,50 @@ fn claims_an_unmounted_cache(run: &RunRecord) -> bool {
     matches!(run.outcome, RunOutcome::Completed { .. })
         && !run.cache.mounted
         && run.cache.state != CacheState::Absent
+}
+
+/// Names each accelerator pin a GPU record leaves empty.
+///
+/// Each pin is checked independently rather than through one match, so a record
+/// missing four facts reports four defects instead of only the first.
+fn report_gpu_pins(line: usize, gpu: &GpuSpec, complaints: &mut Vec<Complaint>) {
+    let pins: [(&'static str, bool); 5] = [
+        ("gpu.model", gpu.model.trim().is_empty()),
+        ("gpu.driver_version", gpu.driver_version.trim().is_empty()),
+        ("gpu.runtime_version", gpu.runtime_version.trim().is_empty()),
+        ("gpu.count", gpu.count == 0),
+        (
+            "gpu.memory_bytes_per_device",
+            gpu.memory_bytes_per_device == 0,
+        ),
+    ];
+    for (field, missing) in pins {
+        if missing {
+            complaints.push(Complaint::MissingPin { line, field });
+        }
+    }
+}
+
+/// Returns whether a record calls an attempt completed while reporting failure.
+const fn completed_but_failed(run: &RunRecord) -> bool {
+    matches!(
+        run.outcome,
+        RunOutcome::Completed {
+            exit_code,
+            correctness_passed,
+        } if exit_code != 0 || !correctness_passed
+    )
+}
+
+/// Reports a completed attempt whose own result is a failure.
+fn report_completed_outcome(line: usize, run: &RunRecord, complaints: &mut Vec<Complaint>) {
+    if completed_but_failed(run) {
+        complaints.push(Complaint::Incoherent {
+            line,
+            message: String::from(
+                "a completed attempt must exit zero and pass its correctness check; anything else \
+                 is a failure and must be recorded as one",
+            ),
+        });
+    }
 }

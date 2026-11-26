@@ -243,7 +243,10 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
 
     let compute_micros = convert(price_compute(product, billable_nanos)?, rate)?;
     let start_micros = convert(start_charge(provider, product, usage), rate)?;
-    let storage_micros = convert(storage_charge(provider, &usage.retained)?, rate)?;
+    let storage_micros = convert(
+        storage_charge(provider, &usage.retained, sheet.month_seconds)?,
+        rate,
+    )?;
     let subscription_micros = convert(usage.subscription_share_micros, rate)?;
 
     let marginal_micros = checked_add(checked_add(compute_micros, start_micros)?, storage_micros)?;
@@ -311,6 +314,7 @@ fn start_charge(provider: &ProviderRules, product: &ProductRule, usage: &Usage) 
 fn storage_charge(
     provider: &ProviderRules,
     retained: &[RetainedStorage],
+    month_seconds: u64,
 ) -> Result<u64, ChargeError> {
     let mut total = 0_u64;
     for item in retained {
@@ -321,7 +325,7 @@ fn storage_charge(
             rule.minimum_seconds,
         )?;
         let price = rule
-            .price_micros(item.bytes, chargeable)
+            .price_micros(item.bytes, chargeable, month_seconds)
             .ok_or(ChargeError::Overflow)?;
         total = checked_add(total, price)?;
     }

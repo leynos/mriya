@@ -128,7 +128,9 @@ A price sheet declares, per provider and product:
 Chargeable lifetime is computed with integer ceiling arithmetic: billable units
 are the ceiling of the measured lifetime over the granularity, and the charged
 lifetime is that product floored at the minimum period. No floating-point value
-enters the computation.
+enters the computation. A record may carry the chargeable lifetime its writer
+already computed; the calculator re-rounds it, which is idempotent, so a record
+that applied a minimum cannot be rounded down again.
 
 ### 6.1 Published rules used by the example sheet
 
@@ -208,9 +210,11 @@ Paid execution requires all of the following, and refuses to start otherwise:
 - The provider credentials are present.
 
 A campaign runs one instance at a time. Before it allocates anything it sweeps
-for residual resources carrying the campaign's tag and stops if any remain. It
-appends each record immediately after the attempt it describes, so an
-interrupted campaign leaves a readable prefix.
+for residual resources carrying the campaign's tag and stops if any remain; the
+backend tags the resources it creates with that same campaign tag, so the sweep
+and the resources agree. It appends each record immediately after the attempt
+it describes and flushes before reporting success, so an interrupted campaign
+leaves a readable prefix.
 
 On any cleanup doubt — a failed delete, an unverified teardown, or a resource
 listing that cannot be read — the campaign appends a residual record naming

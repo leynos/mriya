@@ -267,3 +267,60 @@ fn campaign_with_run(run: &RunRecord) -> String {
     let run_line = to_line(&Record::Run(Box::new(run.clone()))).expect("run serializes");
     format!("{header_line}\n{run_line}\n")
 }
+
+#[test]
+fn a_completed_attempt_with_a_non_zero_exit_is_incoherent() {
+    let mut run = valid_run();
+    run.outcome = super::super::record::RunOutcome::Completed {
+        exit_code: 7,
+        correctness_passed: true,
+    };
+    let complaints =
+        validate_str(&campaign_with_run(&run)).expect_err("a completed gate exits zero");
+    assert!(
+        messages(&complaints).contains("must exit zero"),
+        "{}",
+        messages(&complaints)
+    );
+}
+
+#[test]
+fn a_run_that_claims_zero_memory_or_disk_is_missing_a_pin() {
+    let run = run_with_zero_allocation();
+    let complaints = validate_str(&campaign_with_run(&run)).expect_err("zero allocation is absent");
+    let rendered = messages(&complaints);
+    assert!(rendered.contains("allocation.memory_bytes"), "{rendered}");
+    assert!(rendered.contains("allocation.disk_bytes"), "{rendered}");
+    assert!(rendered.contains("tree.size_bytes"), "{rendered}");
+    assert!(rendered.contains("tree.file_count"), "{rendered}");
+}
+
+#[test]
+fn a_gpu_run_with_empty_accelerator_fields_names_each_missing_pin() {
+    let mut run = valid_run();
+    run.class = super::super::record::WorkloadClass::Gpu;
+    run.gpu = Some(super::super::record::GpuSpec {
+        model: String::new(),
+        count: 0,
+        memory_bytes_per_device: 0,
+        driver_version: String::new(),
+        runtime_version: String::new(),
+        correctness_passed: true,
+    });
+    let complaints = validate_str(&campaign_with_run(&run)).expect_err("the GPU pins are absent");
+    let rendered = messages(&complaints);
+    assert!(rendered.contains("gpu.model"), "{rendered}");
+    assert!(rendered.contains("gpu.driver_version"), "{rendered}");
+    assert!(rendered.contains("gpu.count"), "{rendered}");
+}
+
+/// Returns a run record whose allocation and tree pins are all zero.
+fn run_with_zero_allocation() -> RunRecord {
+    let mut run = valid_run();
+    run.tree.size_bytes = 0;
+    run.tree.file_count = 0;
+    run.allocation.memory_bytes = 0;
+    run.allocation.disk_bytes = 0;
+    run.concurrency.effective_workers = 0;
+    run
+}

@@ -26,8 +26,12 @@ max_attempt_nanos = 3600000000000
 # The four workloads the protocol defines. Each is repeated so the report can
 # show a spread rather than a single sample; the `cold-build` repetition is the
 # one that establishes the cache the warm workloads reuse.
+# Workloads are listed in dependency order: `cold-build` establishes the cache
+# the other three reuse. Each attempt declares its repetition so a resumed
+# campaign cannot number two attempts the same.
 [[attempts]]
 workload_id = "cold-build"
+repetition = 1
 provider = "scaleway"
 product = "DEV1-S"
 planned_lifetime_nanos = 1800000000000
@@ -35,6 +39,7 @@ estimated_micros = 8980
 
 [[attempts]]
 workload_id = "warm-incremental"
+repetition = 1
 provider = "scaleway"
 product = "DEV1-S"
 planned_lifetime_nanos = 900000000000
@@ -42,6 +47,7 @@ estimated_micros = 8980
 
 [[attempts]]
 workload_id = "link-heavy"
+repetition = 1
 provider = "scaleway"
 product = "DEV1-S"
 planned_lifetime_nanos = 1200000000000
@@ -49,6 +55,7 @@ estimated_micros = 8980
 
 [[attempts]]
 workload_id = "test-execution"
+repetition = 1
 provider = "scaleway"
 product = "DEV1-S"
 planned_lifetime_nanos = 1800000000000

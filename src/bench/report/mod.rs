@@ -14,7 +14,10 @@
 //!
 //! Nothing here contacts a provider or reads a clock.
 
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 mod build;
 mod render;
@@ -38,8 +41,14 @@ pub struct WorkloadResult {
     pub product: String,
     /// Workload identifier.
     pub workload_id: String,
-    /// Cache class every attempt in the group started from.
+    /// Cache class the group's first attempt started from.
     pub cache_state: CacheState,
+    /// Every cache class the group's attempts declared.
+    ///
+    /// More than one means the repetitions were not comparable with each
+    /// other, which the report states rather than hiding behind the first
+    /// attempt's class.
+    pub cache_states: BTreeSet<CacheState>,
     /// Bytes the cache held when the attempts started.
     pub cache_bytes: u64,
     /// How many attempts completed.
@@ -52,6 +61,8 @@ pub struct WorkloadResult {
     pub completed_marginal_micros: u64,
     /// Marginal cost of the failed attempts.
     pub failed_marginal_micros: u64,
+    /// Marginal cost of the cache warm-up attempts, excluded from timing.
+    pub warm_up_marginal_micros: u64,
     /// Subscription share attributed to the completed attempts.
     pub subscription_micros: u64,
     /// Total-account cost of the completed attempts.
@@ -79,6 +90,7 @@ impl WorkloadResult {
     ///     product: String::from("DEV1-S"),
     ///     workload_id: String::from("cold-build"),
     ///     cache_state: CacheState::Empty,
+    ///     cache_states: std::collections::BTreeSet::from([CacheState::Empty]),
     ///     cache_bytes: 0,
     ///     completed: 2,
     ///     failed: 0,
@@ -115,6 +127,7 @@ impl WorkloadResult {
     ///     product: String::from("x"),
     ///     workload_id: String::from("w"),
     ///     cache_state: CacheState::Empty,
+    ///     cache_states: std::collections::BTreeSet::from([CacheState::Empty]),
     ///     cache_bytes: 0,
     ///     completed: 1,
     ///     failed: 0,

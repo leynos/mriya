@@ -372,10 +372,22 @@ MRIYA_BENCH_ENABLE_PAID_RUNS=1 \
 
 The harness runs one instance at a time. It sweeps for resources left by an
 earlier run of the same campaign before it allocates anything, appends each
-record as soon as it exists, and stops at the first cleanup doubt. On a doubt
-it appends a residual record naming every identifier it could not verify gone,
-so an operator can clean up by hand. A retained cache volume is never deleted
+record as soon as it exists, and stops at the first cleanup doubt. The sweep
+uses the campaign identifier as the resource tag, and the backend tags its
+instances with that same identifier, so the sweep can actually find the
+campaign's own leftovers.
+
+On a doubt — a failed attempt, an unverified teardown, or a sweep that could
+not run — it appends a residual record naming the provider and every identifier
+it could not verify gone, then stops. A retained cache volume is never deleted
 by a campaign teardown.
+
+The limits are checked against the plan before any allocation: an attempt whose
+declared lifetime exceeds `max_attempt_nanos`, or whose declared estimate would
+take the campaign past `max_spend_micros`, is refused. They are declared
+limits, not a hard kill: an attempt that overruns its estimate is stopped by
+the operator, and the campaign's next pre-sweep is what finds and removes what
+it left behind.
 
 The equivalent Make routes are `make bench-validate`, `make bench-report`, and
 `make bench-campaign BENCH_CAMPAIGN=... BENCH_RESULTS=...`. Only the last one

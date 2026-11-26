@@ -55,10 +55,11 @@ pub struct RunRecord {
 }
 
 /// Which part of the protocol a run serves.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunRole {
     /// A measured attempt, included in the timing summary.
+    #[default]
     Timed,
     /// A cache warm-up, recorded for cost but excluded from timing.
     WarmUp,
@@ -92,7 +93,13 @@ pub struct ToolchainPin {
 pub struct Lifetime {
     /// Total wall-clock time from create request to verified teardown.
     pub total_nanos: u64,
-    /// Time the provider will actually bill, after granularity and minimum.
+    /// Billable lifetime the writer recorded for this attempt.
+    ///
+    /// A writer that knows the provider's granularity may already have applied
+    /// it. The report prices from this figure and lets the sheet round again,
+    /// which is idempotent, so a record that applied a minimum is never
+    /// re-rounded downwards. The validator requires it to be at least the
+    /// measured lifetime.
     pub chargeable_nanos: u64,
 }
 

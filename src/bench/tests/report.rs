@@ -87,7 +87,7 @@ fn the_report_renders_the_cost_per_completed_gate() {
         rendered.contains("marginal cost per completed gate EUR 0.008980"),
         "{rendered}"
     );
-    assert!(rendered.contains("cache Empty"), "{rendered}");
+    assert!(rendered.contains("cache empty"), "{rendered}");
 }
 
 #[test]
@@ -277,9 +277,39 @@ fn a_campaign_with_a_plan_reports_both_figures() {
     );
     // The absorbed time is reported, so a reader can see why the two figures
     // differ rather than having to infer it.
-    assert!(rendered.contains("absorbed by plan 900.000s"), "{rendered}");
+    assert!(
+        rendered.contains("absorbed by plan 3600.000s"),
+        "the absorbed time is the chargeable lifetime the record carried: {rendered}"
+    );
     assert!(
         report.totals.total_account_micros > report.totals.marginal_micros,
         "the plan must make the account figure exceed the marginal one"
+    );
+}
+
+#[test]
+fn a_group_whose_repetitions_used_different_caches_is_flagged() {
+    // Two attempts on the same provider and product, one cold and one warm:
+    // the group has a single provider, so a report that keyed the note only on
+    // the first attempt's class would hide the difference.
+    let cold = run_with(|run| {
+        run.cache.state = CacheState::Empty;
+        run.cache.mounted = true;
+        run.repetition = 1;
+    });
+    let warm = run_with(|run| {
+        run.cache.state = CacheState::Warm;
+        run.cache.mounted = true;
+        run.cache.size_bytes = 4096;
+        run.repetition = 2;
+    });
+    let report = build_report(&campaign_with(vec![cold, warm]), &example_sheet()).expect("priced");
+    assert!(
+        report
+            .capability_notes
+            .iter()
+            .any(|note| note.contains("empty") && note.contains("warm")),
+        "the note names both classes in the protocol's spelling: {:?}",
+        report.capability_notes
     );
 }
