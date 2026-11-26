@@ -112,14 +112,20 @@ where
     /// completed and its identifier must reach configuration.
     #[error("{primary} ({note})")]
     AfterVolume {
-        /// The primary failure, rendered.
+        /// The primary failure, rendered for the message.
         ///
-        /// Holding the rendered message rather than the error itself avoids an
-        /// infinitely recursive `Display` implementation, which the trait
-        /// solver rejects.
+        /// A self-referential `#[error("{primary}")]` on the typed error makes
+        /// the derive's `AsDisplay`/`AsDynError` bounds recurse, so the message
+        /// is rendered separately and the typed error is kept in `cause`.
         primary: String,
         /// Kind of the primary failure.
         kind: InitErrorKind,
+        /// The typed primary failure, so a caller can inspect its cause.
+        ///
+        /// The wrapper's `Display` already renders `primary`, so the boxed
+        /// error is a source rather than part of the message.
+        #[source]
+        cause: Option<Box<dyn std::error::Error + Send + Sync>>,
         /// Identifier of the volume created for this run.
         volume_id: String,
         /// Zone that holds the volume.

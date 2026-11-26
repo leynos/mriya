@@ -81,10 +81,16 @@ impl ScalewayBackend {
     /// Returns a provider error when the action is rejected, and
     /// [`ScalewayBackendError::Timeout`] when the server never reports
     /// `stopped`.
+    ///
+    /// `project_id` must be the project the server was recorded in: the wait
+    /// confirms an eventual 404 by listing that project, so using the
+    /// backend's default would confirm absence from the wrong project and let
+    /// cleanup detach volumes from a server that is still running.
     pub(in crate::scaleway) async fn power_off_if_needed(
         &self,
         zone: &str,
         snapshot: &InstanceSnapshot,
+        project_id: &str,
     ) -> Result<(), ScalewayBackendError> {
         if snapshot.state.as_str() == "stopped" {
             return Ok(());
@@ -92,7 +98,7 @@ impl ScalewayBackend {
 
         self.server_action(zone, snapshot.id.as_str(), "poweroff")
             .await?;
-        self.wait_until_stopped(zone, snapshot.id.as_str(), &self.config.default_project_id)
+        self.wait_until_stopped(zone, snapshot.id.as_str(), project_id)
             .await
     }
 

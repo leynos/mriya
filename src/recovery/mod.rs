@@ -113,6 +113,15 @@ impl JournalRecord {
 
     /// Builds a ledger that persists through `journal`, preloaded with this
     /// record's entries.
+    ///
+    /// # Parameters
+    ///
+    /// - `journal`: durable sink that every later ledger change is written to.
+    ///
+    /// # Returns
+    ///
+    /// A ledger carrying this record's tag, scope, entries, and unknown-outcome
+    /// flag, so replaying cleanup acts on exactly what the journal recorded.
     #[must_use]
     pub fn into_ledger(self, journal: Arc<dyn LedgerSink>) -> ResourceLedger {
         let unknown = self.outcome_unknown;
@@ -125,11 +134,14 @@ impl JournalRecord {
     }
 }
 
+/// Exclusive claims that serialize replay.
+mod claim;
 /// Process that owns a journal.
 mod identity;
 /// Reading, writing, and removing journal files.
 mod store;
 
+pub use claim::JournalClaim;
 pub use identity::ProcessIdentity;
 pub use store::{JournalStore, RecoveryJournal};
 

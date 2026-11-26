@@ -62,6 +62,7 @@ struct TagCase {
     base_tag: &'static str,
     test_run_id: Option<&'static str>,
     allocation: Option<&'static str>,
+    expected_allocation: Option<&'static str>,
     expected_test_tag: Option<&'static str>,
 }
 
@@ -117,43 +118,58 @@ fn validate_cache_volume_id_rejects_only_the_root_volume(#[case] case: CacheVolu
 #[rstest]
 #[case::instance_absent(TagCase {
     builder: ScalewayBackend::instance_tags, base_tag: "ephemeral",
-    test_run_id: None, allocation: None, expected_test_tag: None,
+    test_run_id: None, allocation: None, expected_allocation: None, expected_test_tag: None,
 })]
 #[case::volume_absent(TagCase {
     builder: ScalewayBackend::volume_tags, base_tag: "cache",
-    test_run_id: None, allocation: None, expected_test_tag: None,
+    test_run_id: None, allocation: None, expected_allocation: None, expected_test_tag: None,
 })]
 #[case::instance_blank(TagCase {
     builder: ScalewayBackend::instance_tags, base_tag: "ephemeral",
-    test_run_id: Some("   "), allocation: Some("  "), expected_test_tag: None,
+    test_run_id: Some("   "), allocation: Some("  "), expected_allocation: None, expected_test_tag: None,
 })]
 #[case::volume_blank(TagCase {
     builder: ScalewayBackend::volume_tags, base_tag: "cache",
-    test_run_id: Some("\t\n"), allocation: None, expected_test_tag: None,
+    test_run_id: Some("\t\n"), allocation: None, expected_allocation: None, expected_test_tag: None,
 })]
 #[case::instance_nonblank(TagCase {
     builder: ScalewayBackend::instance_tags, base_tag: "ephemeral",
     test_run_id: Some("run-123"), allocation: Some("mriya-alloc-abc"),
+    expected_allocation: Some("mriya-alloc-abc"),
     expected_test_tag: Some("mriya-test-run-run-123"),
 })]
 #[case::volume_nonblank(TagCase {
     builder: ScalewayBackend::volume_tags, base_tag: "cache",
     test_run_id: Some("run-123"), allocation: Some("mriya-alloc-abc"),
+    expected_allocation: Some("mriya-alloc-abc"),
     expected_test_tag: Some("mriya-test-run-run-123"),
 })]
 #[case::instance_padded(TagCase {
     builder: ScalewayBackend::instance_tags, base_tag: "ephemeral",
     test_run_id: Some("  run-123  "), allocation: Some(" mriya-alloc-abc "),
+    expected_allocation: Some("mriya-alloc-abc"),
     expected_test_tag: Some("mriya-test-run-run-123"),
 })]
 #[case::volume_padded(TagCase {
     builder: ScalewayBackend::volume_tags, base_tag: "cache",
     test_run_id: Some("\t run-123\n"), allocation: None,
-    expected_test_tag: Some("mriya-test-run-run-123"),
+    expected_allocation: None, expected_test_tag: Some("mriya-test-run-run-123"),
+})]
+#[case::instance_allocation_without_test_run(TagCase {
+    builder: ScalewayBackend::instance_tags, base_tag: "ephemeral",
+    test_run_id: None, allocation: Some("mriya-alloc-abc"),
+    expected_allocation: Some("mriya-alloc-abc"),
+    expected_test_tag: None,
+})]
+#[case::volume_allocation_without_test_run(TagCase {
+    builder: ScalewayBackend::volume_tags, base_tag: "cache",
+    test_run_id: None, allocation: Some(" mriya-alloc-abc "),
+    expected_allocation: Some("mriya-alloc-abc"),
+    expected_test_tag: None,
 })]
 fn tags_include_allocation_and_test_run_tags(#[case] case: TagCase) {
     let mut expected_tags = vec![String::from("mriya"), String::from(case.base_tag)];
-    if let Some(allocation) = case.allocation.map(str::trim).filter(|tag| !tag.is_empty()) {
+    if let Some(allocation) = case.expected_allocation {
         expected_tags.push(String::from(allocation));
     }
     if let Some(test_tag) = case.expected_test_tag {

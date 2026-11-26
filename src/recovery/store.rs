@@ -12,7 +12,7 @@ use std::{
 
 use camino::{Utf8Path, Utf8PathBuf};
 #[cfg(unix)]
-use cap_std::fs_utf8::PermissionsExt;
+use cap_std::fs_utf8::OpenOptionsExt as _;
 use cap_std::{
     ambient_authority,
     fs_utf8::{Dir, OpenOptions},
@@ -150,6 +150,19 @@ impl JournalStore {
 
     /// Reads `path` and returns the record together with its journal handle.
     ///
+    /// Unlike [`JournalStore::handle`], opening a journal reads an existing
+    /// file; it does not claim the journal, so two processes can still race to
+    /// replay it.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: journal file to read.
+    ///
+    /// # Returns
+    ///
+    /// The parsed record and a sink that writes later snapshots back to the
+    /// same file.
+    ///
     /// # Errors
     ///
     /// Returns the same failures as [`JournalStore::load`].
@@ -167,12 +180,21 @@ impl JournalStore {
 
     /// Removes `path`, treating an already-absent journal as success.
     ///
+    /// A missing parent directory means the journal is already gone, so it is
+    /// success too; permission and other I/O failures are still reported.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: journal file to remove.
+    ///
     /// # Errors
     ///
     /// Returns [`JournalError::Io`] when the file exists but cannot be
     /// removed.
     pub fn remove(&self, path: &Utf8Path) -> Result<(), JournalError> {
-        let dir = open_parent(path)?;
+        let Some(dir) = open_parent_if_present(path)? else {
+            return Ok(());
+        };
         match dir.remove_file(file_name(path)?) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -195,7 +217,7 @@ fn open_parent(path: &Utf8Path) -> Result<Dir, JournalError> {
 ///
 /// A removal against a directory that does not exist has already reached its
 /// postcondition: the journal is not there.
-fn open_parent_if_present(path: &Utf8Path) -> Result<Option<Dir>, JournalError> {
+pub(super) fn open_parent_if_present(path: &Utf8Path) -> Result<Option<Dir>, JournalError> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_str().is_empty())
@@ -222,6 +244,10 @@ impl RecoveryJournal {
     pub fn path(&self) -> &Utf8Path { self.path.as_path() }
 
     /// Removes the journal file, treating absence as success.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the file is gone, including when it never existed.
     ///
     /// # Errors
     ///
@@ -250,7 +276,12 @@ impl RecoveryJournal {
 
 impl LedgerSink for RecoveryJournal {
     fn persist(&self, snapshot: &LedgerSnapshot) -> Result<(), LedgerPersistError> {
-        self.write(&JournalRecord::from_snapshot(snapshot))
+        // The owner is what lets a later `mriya recover` tell a live run from
+        // an abandoned journal; omitting it would make every journal look
+        // abandoned.
+        let mut record = JournalRecord::from_snapshot(snapshot);
+        record.owner = self.owner;
+        self.write(&record)
             .map_err(|err| LedgerPersistError::new(err.to_string()))
     }
 
@@ -279,7 +310,7 @@ fn first_non_blank(env: &impl mockable::Env, names: &[&str]) -> Option<String> {
 }
 
 /// Returns the file name of `path`.
-fn file_name(path: &Utf8Path) -> Result<&str, JournalError> {
+pub(super) fn file_name(path: &Utf8Path) -> Result<&str, JournalError> {
     path.file_name().ok_or_else(|| JournalError::Io {
         path: path.to_path_buf(),
         message: String::from("journal path has no file name"),
@@ -303,14 +334,14 @@ fn write_atomic(path: &Utf8Path, contents: &str) -> Result<(), JournalError> {
     let dir = Dir::open_ambient_dir(parent, ambient_authority())
         .map_err(|err| JournalError::io(parent, &err))?;
 
-    let temporary = format!(".{name}.tmp");
+    // A fresh staging name per write: a stale file from an interrupted write
+    // may be group- or world-readable, and reopening it would keep that mode
+    // while the journal contents are written.
+    let temporary = format!(".{name}.{staging}.tmp", staging = uuid::Uuid::new_v4());
     let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
-    {
-        use cap_std::fs_utf8::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
+    options.mode(0o600);
 
     let mut file = dir
         .open_with(&temporary, &options)
@@ -321,12 +352,6 @@ fn write_atomic(path: &Utf8Path, contents: &str) -> Result<(), JournalError> {
         .map_err(|err| JournalError::io(path, &err))?;
     drop(file);
 
-    // A stale temporary file from an earlier interrupted write may carry
-    // different permissions; the mode is set again so the rename cannot
-    // promote a readable file.
-    #[cfg(unix)]
-    dir.set_permissions(&temporary, PermissionsExt::from_mode(0o600))
-        .map_err(|err| JournalError::io(path, &err))?;
     dir.rename(&temporary, &dir, name)
         .map_err(|err| JournalError::io(path, &err))
 }

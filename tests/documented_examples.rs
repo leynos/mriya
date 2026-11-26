@@ -15,8 +15,11 @@ const GUIDE: &str = "docs/users-guide.md";
 const MARKER_PREFIX: &str = "<!-- tested-example: ";
 /// Suffix that closes a marker comment.
 const MARKER_SUFFIX: &str = " -->";
-/// Prefix that opens or closes a fenced code block.
-const FENCE_PREFIX: &str = "```";
+/// Fence prefixes Markdown accepts for a code block.
+///
+/// A tilde fence is as much a contract as a backtick fence; recognizing only
+/// one form would let an unmarked `~~~bash` example bypass the test.
+const FENCE_PREFIXES: [&str; 2] = ["```", "~~~"];
 
 /// One fenced example with its parsed lines.
 #[derive(Debug, Eq, PartialEq)]
@@ -34,6 +37,8 @@ struct Example {
 struct OpenExample {
     /// Identifier from the marker comment.
     identifier: String,
+    /// Delimiter that opened the block.
+    fence: String,
     /// Fence language, such as `bash`.
     language: String,
     /// Lines read so far.
@@ -71,8 +76,8 @@ impl ExampleParser {
         if trimmed.starts_with(MARKER_PREFIX) {
             return self.open_marker(line, trimmed);
         }
-        if let Some(rest) = trimmed.strip_prefix(FENCE_PREFIX) {
-            return self.toggle_fence(line, rest.trim());
+        if let Some((fence, rest)) = split_fence(trimmed) {
+            return self.toggle_fence(line, fence, rest.trim());
         }
         if let Some(current) = self.current.as_mut() {
             current.lines.push(line.to_owned());
@@ -101,7 +106,7 @@ impl ExampleParser {
     }
 
     /// Opens an example or completes the one currently open.
-    fn toggle_fence(&mut self, line: &str, language: &str) -> Result<(), String> {
+    fn toggle_fence(&mut self, line: &str, fence: &str, language: &str) -> Result<(), String> {
         // A fence ends its example; a marker belongs to exactly one fence, so
         // an unmarked fence is a contract gap, not prose.
         match self.current.take() {
@@ -112,11 +117,22 @@ impl ExampleParser {
                     .ok_or_else(|| format!("unmarked fenced example at: {line}"))?;
                 self.current = Some(OpenExample {
                     identifier,
+                    fence: fence.to_owned(),
                     language: language.to_owned(),
                     lines: Vec::new(),
                 });
             }
-            Some(open) => self.examples.push(open.finish()),
+            Some(open) => {
+                // A closing fence must use the delimiter that opened it; the
+                // other form is ordinary content inside the block.
+                if open.fence != fence {
+                    return Err(format!(
+                        "closing fence {fence} does not match opening fence {}: {line}",
+                        open.fence
+                    ));
+                }
+                self.examples.push(open.finish());
+            }
         }
         Ok(())
     }
@@ -134,6 +150,13 @@ impl ExampleParser {
         }
         Ok(self.examples)
     }
+}
+
+/// Splits a fence line into its delimiter and remainder.
+fn split_fence(line: &str) -> Option<(&'static str, &str)> {
+    FENCE_PREFIXES
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix).map(|rest| (*prefix, rest)))
 }
 
 /// Extracts every marked example from `document`, rejecting a bad structure.
@@ -194,6 +217,24 @@ fn the_recover_example_is_the_documented_command() -> Result<(), String> {
             "the recover example must be `mriya recover`, not {:?}",
             recover.lines
         ),
+    )?;
+    // The documented command must be one the shipped binary accepts. An
+    // isolated state directory keeps this from touching real journals.
+    let state = tempfile::TempDir::new()
+        .map_err(|error| format!("the isolated state directory must be created: {error}"))?;
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_mriya"))
+        .arg("recover")
+        .env("MRIYA_STATE_DIR", state.path())
+        .env("SCW_SECRET_KEY", "test-secret")
+        .env("SCW_DEFAULT_PROJECT_ID", "test-project")
+        .output()
+        .map_err(|error| format!("`mriya recover` must start: {error}"))?;
+    ensure(
+        output.status.success(),
+        format!(
+            "`mriya recover` must accept the documented command: {stderr}",
+            stderr = String::from_utf8_lossy(&output.stderr)
+        ),
     )
 }
 
@@ -217,5 +258,45 @@ fn the_cache_setting_example_matches_the_configuration_key() -> Result<(), Strin
     ensure(
         !volume_id.trim().is_empty(),
         "the documented volume ID must be a real value",
+    )?;
+    // The application's own loader must accept the documented shape. The
+    // snippet is written to be added to an existing configuration, so the
+    // required credentials are supplied here to reach the loader with the
+    // documented key intact.
+    let mut merged: toml::Table =
+        toml::from_str(&rendered).map_err(|error| format!("invalid TOML: {error}"))?;
+    let scaleway = merged
+        .get_mut("scaleway")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| String::from("the example must set [scaleway]"))?;
+    scaleway.insert(
+        String::from("secret_key"),
+        toml::Value::String(String::from("test-secret")),
+    );
+    scaleway.insert(
+        String::from("default_project_id"),
+        toml::Value::String(String::from("test-project")),
+    );
+    // The loader requires the same fields a real configuration file carries.
+    for (key, value) in [
+        ("default_zone", "fr-par-1"),
+        ("default_instance_type", "DEV1-S"),
+        ("default_image", "ubuntu-22-04"),
+        ("default_architecture", "x86_64"),
+    ] {
+        scaleway.insert(String::from(key), toml::Value::String(String::from(value)));
+    }
+    // The application's loader reads this section's fields, so the section is
+    // extracted and handed to the same `ScalewayConfig` deserializer the
+    // configuration file uses.
+    let section = merged
+        .remove("scaleway")
+        .ok_or_else(|| String::from("the example must set [scaleway]"))?;
+    let config: mriya::ScalewayConfig = section
+        .try_into()
+        .map_err(|error| format!("the documented setting must load: {error}"))?;
+    ensure(
+        config.default_volume_id.as_deref() == Some(volume_id),
+        "the loader must read the documented volume ID",
     )
 }

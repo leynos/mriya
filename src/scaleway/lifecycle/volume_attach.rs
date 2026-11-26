@@ -138,6 +138,15 @@ pub(super) async fn patch_instance_volumes(
             message: body,
         });
     }
+    // A denial is not a failed attachment or detachment: the request was never
+    // evaluated, and cleanup must report it as an authorization failure.
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(ScalewayBackendError::AccessDenied {
+            operation: String::from("patch instance volumes"),
+            status: status.as_u16(),
+            message: body,
+        });
+    }
     Err(context.action.into_error(
         context.volume_id.to_owned(),
         handle.id.clone(),

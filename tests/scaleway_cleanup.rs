@@ -238,7 +238,7 @@ fn create_cache(
 ) -> Result<(VolumeHandle, ResourceLedger), String> {
     let scope = AllocationScope::new(request.zone.clone(), request.project_id.clone());
     let ledger = ResourceLedger::in_memory(scope);
-    let volume = block_on(backend.create_volume(
+    match block_on(backend.create_volume(
         &VolumeRequest::new(
             name,
             10 * 1024 * 1024 * 1024,
@@ -246,9 +246,21 @@ fn create_cache(
             &request.project_id,
         ),
         &ledger,
-    ))
-    .map_err(|error| format!("could not create the cache volume: {error}"))?;
-    Ok((volume, ledger))
+    )) {
+        Ok(volume) => Ok((volume, ledger)),
+        Err(error) => {
+            // The backend contract records allocations on the error path, so
+            // the in-memory ledger must be cleaned here or a created volume is
+            // left billable with no journal to recover it.
+            let cleanup = block_on(backend.cleanup(&ledger));
+            match cleanup {
+                Ok(_) => Err(format!("could not create the cache volume: {error}")),
+                Err(failure) => Err(format!(
+                    "could not create the cache volume: {error}; cleanup also failed: {failure}"
+                )),
+            }
+        }
+    }
 }
 
 #[test]
@@ -410,7 +422,24 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
     if let Some(outcome) = run_permission_reason(&first) {
         let removal = always_remove_cache(&backend, &cache, &cache_ledger);
         outcome.enforce(&format!("marker write (cache removal: {removal:?})"));
+        return;
     }
+
+    // Both runs are captured before anything panics: an assertion failure must
+    // not strand the cache this test created.
+    let (second, second_cleanup) = match first.as_ref() {
+        Ok(written) if written.output.exit_code == Some(0) => {
+            run_with_cache(&backend, &syncer, &request_with_cache, &read_command)
+        }
+        _ => (
+            Err(mriya::RunError::Provision(ScalewayBackendError::Provider {
+                message: String::from("the first run did not complete"),
+            })),
+            None,
+        ),
+    };
+    let removal = always_remove_cache(&backend, &cache, &cache_ledger);
+
     let written = first.expect("the first run must write the marker");
     assert_eq!(
         written.output.exit_code,
@@ -420,8 +449,6 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
     );
     assert!(first_cleanup.is_none(), "{first_cleanup:?}");
 
-    let (second, second_cleanup) =
-        run_with_cache(&backend, &syncer, &request_with_cache, &read_command);
     let read = second.expect("the second run must read the marker");
     assert_eq!(read.output.exit_code, Some(0), "{}", read.output.stderr);
     assert!(
@@ -431,7 +458,7 @@ fn a_retained_cache_keeps_its_marker_across_runs() {
     );
     assert!(second_cleanup.is_none(), "{second_cleanup:?}");
 
-    if let Err(reason) = always_remove_cache(&backend, &cache, &cache_ledger) {
+    if let Err(reason) = removal {
         LiveOutcome::Failed(reason).enforce("marker cache removal");
     }
 }

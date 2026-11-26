@@ -144,6 +144,19 @@ impl ResourceLedger {
     }
 
     /// Creates a ledger that persists every mutation through `sink`.
+    ///
+    /// No initial write is performed: call [`ResourceLedger::persist_initial`]
+    /// before the first provider request so a create that is interrupted
+    /// mid-flight still has a journal naming its tag.
+    ///
+    /// # Parameters
+    ///
+    /// - `scope`: the zone and project every recorded resource belongs to.
+    /// - `sink`: durable destination written on every mutation.
+    ///
+    /// # Returns
+    ///
+    /// An empty ledger with a freshly generated allocation tag.
     #[must_use]
     pub fn with_sink(scope: AllocationScope, sink: Arc<dyn LedgerSink>) -> Self {
         Self::with_tag(scope, AllocationTag::generate(), Some(sink))
@@ -295,6 +308,11 @@ impl ResourceLedger {
     }
 
     /// Returns the non-fatal persistence failures collected so far.
+    ///
+    /// These are warnings rather than errors: [`ResourceLedger::record`] has
+    /// already updated memory, so cleanup in this process still sees the
+    /// resource. [`ResourceLedger::promote`] reports the same condition as an
+    /// error instead, because a caller that must not continue relies on it.
     #[must_use]
     pub fn warnings(&self) -> Vec<String> { self.lock().warnings.clone() }
 

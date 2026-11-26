@@ -73,13 +73,30 @@ where
             Disposition::Retained,
         ) {
             Ok(()) => {}
-            Err(error @ LedgerError::Persist { .. }) => {
+            Err(LedgerError::Persist { ref message }) => {
+                // The journal still records the volume as owned, and a later
+                // `mriya recover` would delete the formatted cache. The
+                // in-memory disposition is rolled back so this process and the
+                // durable record agree, and the report says what the journal
+                // says rather than claiming a retention that was not recorded.
+                let journal = ledger.journal_path();
+                // The rollback fails for the same reason the promotion did, but
+                // its in-memory half always lands; the result is deliberately
+                // ignored so the accurate message is what the operator sees.
+                drop(ledger.promote(ResourceKind::InstanceVolume, &volume.id, Disposition::Owned));
                 return Err(after_volume(
-                    &InitError::Ledger(error.to_string()),
+                    InitError::Ledger(format!(
+                        "the ledger could not record the retention: {message}"
+                    )),
                     volume,
                     format!(
-                        "{retained}; the ledger could not record the retention ({error})",
-                        retained = retained_note(&volume.id)
+                        "the formatted volume {id} is retained, but the journal {journal} still \
+                         records it as owned, so `mriya recover` would delete it; remove or edit \
+                         that journal before running recover",
+                        id = volume.id,
+                        journal = journal
+                            .as_ref()
+                            .map_or_else(|| String::from("(unknown path)"), ToString::to_string)
                     ),
                     None,
                 ));
@@ -97,7 +114,7 @@ where
             // journal must not be trusted to preserve a volume it still marks
             // for deletion.
             return Err(after_volume(
-                &InitError::Cleanup(CleanupFailure::new()),
+                InitError::Cleanup(CleanupFailure::new()),
                 volume,
                 format!(
                     "{retained}; the ledger still records the volume as owned",
@@ -124,7 +141,7 @@ where
                     retained = retained_note(&volume.id)
                 );
                 return Err(after_volume(
-                    &InitError::Cleanup(failure.clone()),
+                    InitError::Cleanup(failure.clone()),
                     volume,
                     note,
                     Some(failure),
@@ -132,7 +149,7 @@ where
             }
             CleanupOutcome::Interrupted => {
                 return Err(after_volume(
-                    &InitError::Cleanup(CleanupFailure::new()),
+                    InitError::Cleanup(CleanupFailure::new()),
                     volume,
                     interrupted_note(context.ledger),
                     None,
@@ -211,7 +228,7 @@ where
                 })
             }
             Err(error) => Err(after_volume(
-                &InitError::Config(error),
+                InitError::Config(error),
                 volume,
                 retained_note(&volume.id),
                 None,
@@ -237,7 +254,7 @@ where
                 // the journal has nothing left to replay.
                 ledger.clear_journal().ok();
                 after_volume(
-                    &primary,
+                    primary,
                     volume,
                     format!(
                         "the new volume {volume_id} in zone {zone} was deleted",
@@ -254,10 +271,10 @@ where
                     volume_id = volume.id,
                     zone = volume.zone
                 );
-                after_volume(&primary, volume, note, Some(failure))
+                after_volume(primary, volume, note, Some(failure))
             }
             CleanupOutcome::Interrupted => {
-                after_volume(&primary, volume, interrupted_note(ledger), None)
+                after_volume(primary, volume, interrupted_note(ledger), None)
             }
         }
     }
@@ -284,6 +301,7 @@ where
                 InitError::AfterVolume {
                     primary: InitError::<B::Error>::Volume(primary).to_string(),
                     kind,
+                    cause: None,
                     volume_id: String::from("unknown"),
                     zone: ledger.scope().zone,
                     note: format!("cleanup failed and the allocation may remain: {failure}"),
@@ -295,6 +313,7 @@ where
                 InitError::AfterVolume {
                     primary: InitError::<B::Error>::Volume(primary).to_string(),
                     kind,
+                    cause: None,
                     volume_id: String::from("unknown"),
                     zone: ledger.scope().zone,
                     note: interrupted_note(ledger),

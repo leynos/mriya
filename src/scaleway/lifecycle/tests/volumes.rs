@@ -17,8 +17,8 @@ use super::{
 };
 use crate::{
     backend::InstanceHandle,
-    ownership::ResourceLedger,
-    scaleway::{ScalewayBackend, ScalewayBackendError},
+    ownership::{ResourceLedger, StorageFamily},
+    scaleway::{ScalewayBackend, ScalewayBackendError, lifecycle::volumes::CacheAttachment},
     volume::{VolumeHandle, VolumeRequest},
 };
 
@@ -98,7 +98,14 @@ async fn attach_volume_patches_root_and_cache_indices(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![patched()], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("vol-root"))
+            .attach_volume(
+                &handle,
+                CacheAttachment {
+                    volume_id: "vol-cache",
+                    root_volume_id: "vol-root",
+                    family: StorageFamily::Instance,
+                },
+            )
             .await
     })
     .await?;
@@ -133,7 +140,14 @@ async fn attach_volume_rejects_a_missing_root_volume(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("   "))
+            .attach_volume(
+                &handle,
+                CacheAttachment {
+                    volume_id: "vol-cache",
+                    root_volume_id: "   ",
+                    family: StorageFamily::Instance,
+                },
+            )
             .await
     })
     .await?;
@@ -303,6 +317,11 @@ async fn create_volume_posts_the_request_and_records_ownership(
     assert_eq!(
         ledger.entries().first().map(|entry| entry.resource.id()),
         Some("vol-created")
+    );
+    assert_eq!(
+        ledger.entries().first().map(|entry| entry.disposition),
+        Some(crate::ownership::Disposition::Owned),
+        "a created volume must be recorded as owned so cleanup deletes it"
     );
     let request = only_request(&requests)?;
     assert!(request.starts_with("POST "), "{request}");

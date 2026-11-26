@@ -54,24 +54,30 @@ where
                 }
                 Ok(RunOutcome { output, warnings })
             }
-            CleanupOutcome::Failed(error) => Err(RunError::Cleanup(Box::new(RunCleanupFailure {
-                primary: None,
-                output: Some(output),
-                cleanup: Some(error),
-                journal: ledger.journal_path(),
-                interrupted: false,
-                signal: cancellation.signal(),
-                warnings,
-            }))),
-            CleanupOutcome::Interrupted => Err(RunError::Cleanup(Box::new(RunCleanupFailure {
-                primary: None,
-                output: Some(output),
-                cleanup: None,
-                journal: ledger.journal_path(),
-                interrupted: true,
-                signal: cancellation.signal(),
-                warnings,
-            }))),
+            CleanupOutcome::Failed(error) => Err(RunError::Cleanup {
+                failure: Box::new(RunCleanupFailure {
+                    primary: None,
+                    output: Some(output),
+                    cleanup: Some(error),
+                    cleanup_verified: false,
+                    journal: ledger.journal_path(),
+                    interrupted: false,
+                    signal: cancellation.signal(),
+                    warnings,
+                }),
+            }),
+            CleanupOutcome::Interrupted => Err(RunError::Cleanup {
+                failure: Box::new(RunCleanupFailure {
+                    primary: None,
+                    output: Some(output),
+                    cleanup: None,
+                    cleanup_verified: false,
+                    journal: ledger.journal_path(),
+                    interrupted: true,
+                    signal: cancellation.signal(),
+                    warnings,
+                }),
+            }),
         }
     }
 
@@ -79,50 +85,66 @@ where
     pub(super) async fn finish_failure(
         &self,
         ledger: &ResourceLedger,
-        primary: RunError<B::Error>,
+        failure: RunFailureInputs<B::Error>,
         cancellation: &Cancellation,
     ) -> RunError<B::Error> {
-        let mut warnings = Vec::new();
+        let RunFailureInputs {
+            primary,
+            mut warnings,
+        } = failure;
         match self.cleanup(ledger, cancellation).await {
             CleanupOutcome::Completed(report) => {
                 // Cleanup verified every postcondition, so the journal has
                 // nothing left to recover; leaving it would make every later
                 // `mriya recover` replay a settled allocation.
-                warnings.extend(report.warnings);
+                collect_report_notes(&report, &mut warnings);
                 let kept = clear_journal(ledger, &mut warnings);
-                if cancellation.signal().is_some() || kept.is_some() {
-                    // The primary failure remains the reported error, but the
-                    // notes gathered here must not be lost with it.
-                    return RunError::Cleanup(Box::new(RunCleanupFailure {
+                // The primary failure is still the reason the run failed, but
+                // preserved volumes, a kept journal, or a signal during cleanup
+                // must reach the operator rather than be dropped with it.
+                let signal = cancellation.signal();
+                let no_signal_or_journal = signal.is_none() && kept.is_none();
+                let nothing_to_report = no_signal_or_journal && warnings.is_empty();
+                if nothing_to_report {
+                    return primary;
+                }
+                RunError::Cleanup {
+                    failure: Box::new(RunCleanupFailure {
                         primary: Some(Box::new(primary)),
                         output: None,
                         cleanup: None,
+                        cleanup_verified: true,
                         journal: kept,
                         interrupted: false,
-                        signal: cancellation.signal(),
+                        signal,
                         warnings,
-                    }));
+                    }),
                 }
-                primary
             }
-            CleanupOutcome::Failed(error) => RunError::Cleanup(Box::new(RunCleanupFailure {
-                primary: Some(Box::new(primary)),
-                output: None,
-                cleanup: Some(error),
-                journal: ledger.journal_path(),
-                interrupted: false,
-                signal: cancellation.signal(),
-                warnings,
-            })),
-            CleanupOutcome::Interrupted => RunError::Cleanup(Box::new(RunCleanupFailure {
-                primary: Some(Box::new(primary)),
-                output: None,
-                cleanup: None,
-                journal: ledger.journal_path(),
-                interrupted: true,
-                signal: cancellation.signal(),
-                warnings,
-            })),
+            CleanupOutcome::Failed(error) => RunError::Cleanup {
+                failure: Box::new(RunCleanupFailure {
+                    primary: Some(Box::new(primary)),
+                    output: None,
+                    cleanup: Some(error),
+                    cleanup_verified: false,
+                    journal: ledger.journal_path(),
+                    interrupted: false,
+                    signal: cancellation.signal(),
+                    warnings,
+                }),
+            },
+            CleanupOutcome::Interrupted => RunError::Cleanup {
+                failure: Box::new(RunCleanupFailure {
+                    primary: Some(Box::new(primary)),
+                    output: None,
+                    cleanup: None,
+                    cleanup_verified: false,
+                    journal: ledger.journal_path(),
+                    interrupted: true,
+                    signal: cancellation.signal(),
+                    warnings,
+                }),
+            },
         }
     }
 
@@ -130,13 +152,13 @@ where
     pub(super) async fn finish_cancelled(
         &self,
         ledger: &ResourceLedger,
+        mut warnings: Vec<String>,
         cancellation: &Cancellation,
     ) -> RunError<B::Error> {
         let signal = cancellation.signal().unwrap_or(Signal::Interrupt);
-        let mut warnings = Vec::new();
         match self.cleanup(ledger, cancellation).await {
             CleanupOutcome::Completed(report) => {
-                warnings.extend(report.warnings);
+                collect_report_notes(&report, &mut warnings);
                 let kept = clear_journal(ledger, &mut warnings);
                 RunError::Cancelled(Box::new(RunCancellation {
                     signal,
@@ -151,6 +173,7 @@ where
                     primary: None,
                     output: None,
                     cleanup: Some(error),
+                    cleanup_verified: false,
                     journal: ledger.journal_path(),
                     interrupted: false,
                     signal: Some(signal),
@@ -165,6 +188,7 @@ where
                     primary: None,
                     output: None,
                     cleanup: None,
+                    cleanup_verified: false,
                     journal: ledger.journal_path(),
                     interrupted: true,
                     signal: Some(signal),
@@ -215,6 +239,18 @@ fn clear_journal(ledger: &ResourceLedger, warnings: &mut Vec<String>) -> Option<
         return ledger.journal_path();
     }
     None
+}
+
+/// A failed step and the notes gathered before cleanup.
+#[derive(Debug)]
+pub struct RunFailureInputs<BackendError>
+where
+    BackendError: std::error::Error + 'static,
+{
+    /// The failure that triggered cleanup.
+    pub primary: RunError<BackendError>,
+    /// Notes gathered before cleanup ran, such as a failed cache release.
+    pub warnings: Vec<String>,
 }
 
 /// A completed remote command and the notes gathered before cleanup.

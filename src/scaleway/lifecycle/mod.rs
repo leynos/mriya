@@ -14,7 +14,7 @@ mod reconcile;
 pub(in crate::scaleway) mod records;
 mod volume_attach;
 mod volume_create;
-mod volumes;
+pub(in crate::scaleway) mod volumes;
 mod wait;
 
 use crate::scaleway::types::{Action, InstanceId, InstanceState};

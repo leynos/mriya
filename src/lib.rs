@@ -29,7 +29,7 @@ pub use backend::{
     InstanceRequest,
     InstanceRequestBuilder,
 };
-pub use cancel::{CancelHandle, Cancellation, Signal};
+pub use cancel::{CancelHandle, Cancellation, Signal, until_cancelled};
 pub use cleanup::{CleanupFailure, CleanupReport, ResidualResource};
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};

@@ -10,6 +10,7 @@ use mockable::{DefaultEnv, Env};
 use crate::backend::InstanceNetworking;
 
 mod config;
+mod registry;
 mod remote_command;
 mod types;
 mod util;
@@ -22,6 +23,7 @@ pub use config::{
     SyncConfigLoadError,
     SyncError,
 };
+pub use registry::kill_active_children;
 pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command};
 pub use types::{
     CommandOutput,
@@ -30,7 +32,6 @@ pub use types::{
     RemoteCommandOutput,
     StreamingCommandRunner,
     SyncDestination,
-    kill_active_children,
 };
 pub use util::{
     HomeUnavailable,

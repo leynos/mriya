@@ -221,6 +221,21 @@ pub trait Backend {
     /// For example, a valid request yields a handle whose identifier and zone
     /// are then passed to every later call, while an unavailable instance type
     /// returns the backend's error instead of a handle.
+    ///
+    /// # Parameters
+    ///
+    /// - `request`: what to provision, already validated by the caller.
+    /// - `ledger`: journal-backed record of every allocation this run owns.
+    ///
+    /// # Returns
+    ///
+    /// A handle naming the created instance, used by
+    /// [`Backend::wait_for_ready`] and by the run's remote steps.
+    ///
+    /// # Errors
+    ///
+    /// Returns the backend's own error. Resources recorded before the failure
+    /// stay in `ledger`, so the caller must still run [`Backend::cleanup`].
     fn create<'a>(
         &'a self,
         request: &'a InstanceRequest,
@@ -253,6 +268,21 @@ pub trait Backend {
     /// For example, a ledger holding one server and its root volume resolves
     /// once both are gone, while a ledger whose volume cannot be detached
     /// returns [`CleanupFailure`] naming the server and volume that remain.
+    ///
+    /// # Parameters
+    ///
+    /// - `ledger`: every resource the run recorded, with its disposition.
+    ///
+    /// # Returns
+    ///
+    /// A [`CleanupReport`] listing what was removed, what was preserved, and
+    /// any non-fatal warnings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CleanupFailure`] with the resource identifiers that may remain
+    /// and the causes that prevented verification. A confirmed absence is never
+    /// an error; a permission denial always is.
     fn cleanup<'a>(
         &'a self,
         ledger: &'a ResourceLedger,

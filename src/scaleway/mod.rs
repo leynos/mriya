@@ -8,6 +8,7 @@
 
 mod cleanup;
 mod cleanup_support;
+mod cleanup_volumes;
 mod error;
 mod inventory;
 mod lifecycle;
@@ -24,8 +25,8 @@ use crate::{
     cleanup::{CleanupFailure, CleanupReport},
     config::ScalewayConfig,
     janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
-    ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef},
-    scaleway::lifecycle::records::record_server_creation,
+    ownership::{Disposition, ResourceLedger, ResourceRef},
+    scaleway::lifecycle::{records::record_server_creation, volumes::CacheAttachment},
     volume::{VolumeBackend, VolumeHandle, VolumeRequest},
 };
 
@@ -254,52 +255,6 @@ impl ScalewayBackend {
             allocation,
         )
     }
-
-    /// Records a configured cache volume as retained before it is attached.
-    ///
-    /// A volume the ledger already knows keeps its disposition: `mriya init`
-    /// records its new volume as owned so a failure before formatting still
-    /// deletes it. A volume the caller only borrowed from configuration is
-    /// looked up so the recorded reference names the API family that must
-    /// later detach and preserve it.
-    async fn record_configured_cache(
-        &self,
-        volume_id: &str,
-        zone: &str,
-        ledger: &ResourceLedger,
-    ) -> Result<(), ScalewayBackendError> {
-        if ledger
-            .find(ResourceKind::InstanceVolume, volume_id)
-            .is_some()
-            || ledger.find(ResourceKind::BlockVolume, volume_id).is_some()
-        {
-            return Ok(());
-        }
-
-        match self.get_instance_volume(zone, volume_id).await {
-            Ok(_) => ledger.record(
-                ResourceRef::instance_volume(volume_id, zone),
-                Disposition::Retained,
-            ),
-            Err(ScalewayBackendError::NotFound { .. }) => {
-                match self.get_block_volume(zone, volume_id).await {
-                    Ok(_) => ledger.record(
-                        ResourceRef::block_volume(volume_id, zone),
-                        Disposition::Retained,
-                    ),
-                    Err(ScalewayBackendError::NotFound { .. }) => {
-                        return Err(ScalewayBackendError::VolumeNotFound {
-                            volume_id: volume_id.to_owned(),
-                            zone: zone.to_owned(),
-                        });
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(error) => return Err(error),
-        }
-        Ok(())
-    }
 }
 
 impl Backend for ScalewayBackend {
@@ -351,10 +306,18 @@ impl Backend for ScalewayBackend {
                         zone: request.zone.clone(),
                     })?;
                 Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
-                self.record_configured_cache(volume_id, &request.zone, ledger)
+                let family = self
+                    .record_configured_cache(volume_id, &request.zone, ledger)
                     .await?;
-                self.attach_volume(&handle, volume_id, root_volume_id)
-                    .await?;
+                self.attach_volume(
+                    &handle,
+                    CacheAttachment {
+                        volume_id,
+                        root_volume_id: &root_volume_id,
+                        family,
+                    },
+                )
+                .await?;
             }
 
             let snapshot = server.snapshot();

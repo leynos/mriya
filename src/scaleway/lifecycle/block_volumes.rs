@@ -189,6 +189,8 @@ impl ScalewayBackend {
             }
 
             let now = Instant::now();
+            // The check precedes the sleep and the loop re-checks it before the
+            // next GET: a request must not start after the polling window.
             if now > deadline {
                 return Err(ScalewayBackendError::VolumeTimeout {
                     action: String::from("wait for the volume to leave in_use"),

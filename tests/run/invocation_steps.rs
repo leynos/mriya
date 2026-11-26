@@ -81,10 +81,13 @@ fn classify_invocation(
     };
     if payload.contains("mount /dev/vdb") {
         InvocationRole::Mount
+    } else if is_cache_release(payload.as_str()) {
+        // The generated release also contains its remote command words, and a
+        // scenario whose command is `sync` would otherwise classify the release
+        // as the requested run.
+        InvocationRole::Release
     } else if payload.contains(command) {
         InvocationRole::RemoteCommand
-    } else if is_cache_release(payload.as_str()) {
-        InvocationRole::Release
     } else {
         InvocationRole::OtherSsh
     }
@@ -209,5 +212,55 @@ fn cloud_init_checked_before_remote_command(
         None => Err(StepError::Assertion(String::from(
             "missing cloud-init readiness check invocation",
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the invocation classification the ordering steps use.
+
+    use mriya::test_support::CommandInvocation;
+    use rstest::rstest;
+
+    use super::*;
+
+    /// Builds an SSH invocation carrying `payload` as its remote command.
+    fn ssh(payload: &str) -> CommandInvocation {
+        CommandInvocation {
+            program: String::from("ssh"),
+            args: vec![std::ffi::OsString::from(payload)],
+        }
+    }
+
+    #[rstest]
+    #[case("cargo test", InvocationRole::RemoteCommand)]
+    #[case(
+        "sudo mkdir -p /mnt && (sudo mount /dev/vdb /mnt || true)",
+        InvocationRole::Mount
+    )]
+    #[case(
+        "sync; if mountpoint -q /mnt; then sudo umount /mnt; fi",
+        InvocationRole::Release
+    )]
+    #[case(
+        "sudo test -f /var/lib/cloud/instance/boot-finished",
+        InvocationRole::OtherSsh
+    )]
+    fn classification_names_the_role(#[case] payload: &str, #[case] expected: InvocationRole) {
+        assert_eq!(
+            classify_invocation(&ssh(payload), "ssh", "cargo test"),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_release_for_a_sync_command_is_not_the_remote_command() {
+        // The generated release payload contains `sync`, so a run whose command
+        // is `sync` must still classify the release as a release.
+        let payload = "sync; if mountpoint -q /mnt; then sudo umount /mnt; fi";
+        assert_eq!(
+            classify_invocation(&ssh(payload), "ssh", "sync"),
+            InvocationRole::Release
+        );
     }
 }

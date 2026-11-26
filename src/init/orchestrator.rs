@@ -94,7 +94,14 @@ where
         )
         .await
         {
-            None => return Err(self.finish_cancelled(&context).await),
+            None => {
+                // The POST may have reached the provider before the future was
+                // dropped, and a volume it created has no recorded identifier.
+                // The flag keeps the journal so `mriya recover` reconciles it
+                // by tag instead of clearing a record of an unknown outcome.
+                ledger.mark_outcome_unknown();
+                return Err(self.finish_cancelled(&context).await);
+            }
             Some(Err(error)) => {
                 return Err(self.finish_failure_without_volume(&context, error).await);
             }

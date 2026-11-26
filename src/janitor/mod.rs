@@ -198,13 +198,26 @@ impl<R: CommandRunner> Janitor<R> {
         // the retry below is the only thing that can find it again.
         let servers = self.list_tagged_servers(&tag)?;
         let boot_volumes = Self::boot_volume_refs(&servers);
+
+        let mut first_error: Option<JanitorError> = None;
         for server in &servers {
-            self.delete_server(server)?;
+            // A failed delete must not strand the root identifiers already
+            // recorded: the sweep still tries every root below, and reports
+            // what remains.
+            if let Err(error) = self.delete_server(server) {
+                first_error.get_or_insert(error);
+            }
         }
-        self.delete_boot_volumes(&boot_volumes)?;
+        if let Err(error) = self.delete_boot_volumes(&boot_volumes, &mut first_error) {
+            first_error.get_or_insert(error);
+        }
 
         let deleted_volumes = self.delete_tagged_volumes(&tag)?;
         self.ensure_no_remaining(&tag, &boot_volumes)?;
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
 
         Ok(SweepSummary {
             deleted_servers: servers.len(),
@@ -234,7 +247,11 @@ impl<R: CommandRunner> Janitor<R> {
     /// checked against the project's Instance volumes first; only a volume that
     /// still exists is deleted. A failure here is reported, because the
     /// untagged volume has no other path back into a later sweep.
-    fn delete_boot_volumes(&self, boot_volumes: &[(String, String)]) -> Result<(), JanitorError> {
+    fn delete_boot_volumes(
+        &self,
+        boot_volumes: &[(String, String)],
+        first_error: &mut Option<JanitorError>,
+    ) -> Result<(), JanitorError> {
         // The recorded zone is only used for the residual message; deletion
         // sends the zone the provider reports for the volume.
         if boot_volumes.is_empty() {
@@ -245,7 +262,11 @@ impl<R: CommandRunner> Janitor<R> {
             let Some(volume) = existing.iter().find(|volume| &volume.id == id) else {
                 continue;
             };
-            self.delete_instance_volume(volume)?;
+            // One failed root must not hide the others: the remaining roots are
+            // still attempted and their identifiers reported below.
+            if let Err(error) = self.delete_instance_volume(volume) {
+                first_error.get_or_insert(error);
+            }
         }
         let remaining = self.list_instance_volumes()?;
         let leftovers = boot_volumes

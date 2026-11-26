@@ -10,13 +10,30 @@ use super::{
 };
 use crate::{
     backend::InstanceHandle,
-    ownership::ResourceRef,
+    ownership::{ResourceRef, StorageFamily},
     scaleway::{
         ScalewayBackend,
         ScalewayBackendError,
         volume::{UpdateInstanceVolumesRequest, VolumeAttachment},
     },
 };
+
+/// The cache volume and root volume to attach, with the cache's API family.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct CacheAttachment<'a> {
+    /// Identifier of the cache volume to attach.
+    pub(in crate::scaleway) volume_id: &'a str,
+    /// Identifier of the server's root volume, which must be kept.
+    pub(in crate::scaleway) root_volume_id: &'a str,
+    /// API family that owns the cache volume.
+    pub(in crate::scaleway) family: StorageFamily,
+}
+
+/// Volume types the Instances API can record for this backend.
+///
+/// A listing must name them explicitly: the provider defaults the
+/// `volume_type` filter to `l_ssd`, which would hide a `b_ssd` volume.
+const INSTANCE_VOLUME_TYPES: &[&str] = &["l_ssd", "b_ssd"];
 
 impl ScalewayBackend {
     /// Reads one Instances API volume.
@@ -55,15 +72,50 @@ impl ScalewayBackend {
             project_id,
             tag,
         };
-        let page_items = collect_pages("list volumes", |page| {
-            self.fetch_instance_volume_page(query, page)
-        })
-        .await?;
-        Ok(page_items
-            .into_iter()
-            .filter(|volume| volume.zone.trim().is_empty() || volume.zone == zone)
-            .filter(|volume| tag.is_none_or(|wanted| volume.tags.iter().any(|t| t == wanted)))
-            .collect())
+        let mut volumes = self
+            .list_instance_volumes_for_types(query, INSTANCE_VOLUME_TYPES)
+            .await?;
+        volumes.retain(|volume| {
+            volume.zone.trim().is_empty()
+                || volume.zone == zone
+                    && tag.is_none_or(|wanted| volume.tags.iter().any(|t| t == wanted))
+        });
+        Ok(volumes)
+    }
+
+    /// Lists volumes of each requested provider type and merges the results.
+    ///
+    /// Scaleway defaults the `volume_type` filter to `l_ssd` when it is absent,
+    /// so a single unfiltered listing silently omits every `b_ssd` volume. A
+    /// fallback presence check that missed a surviving `b_ssd` volume would
+    /// report it absent and let cleanup clear its record.
+    async fn list_instance_volumes_for_types(
+        &self,
+        query: ListQuery<'_>,
+        volume_types: &[&str],
+    ) -> Result<Vec<VolumeModel>, ScalewayBackendError> {
+        let mut volumes: Vec<VolumeModel> = Vec::new();
+        for volume_type in volume_types {
+            let page_items = collect_pages("list volumes", |page| {
+                self.fetch_instance_volume_page(query, page, volume_type)
+            })
+            .await?;
+            Self::merge_volumes(&mut volumes, page_items);
+        }
+        Ok(volumes)
+    }
+
+    /// Adds `page_items` to `volumes`, ignoring identifiers already present.
+    ///
+    /// Each provider volume type is listed separately; a volume the provider
+    /// reports under more than one type must not be recorded twice.
+    fn merge_volumes(volumes: &mut Vec<VolumeModel>, page_items: Vec<VolumeModel>) {
+        for volume in page_items {
+            let known = volumes.iter().any(|existing| existing.id == volume.id);
+            if !known {
+                volumes.push(volume);
+            }
+        }
     }
 
     /// Fetches one page of [`ScalewayBackend::list_instance_volumes`].
@@ -71,6 +123,7 @@ impl ScalewayBackend {
         &self,
         query: ListQuery<'_>,
         page: u32,
+        volume_type: &str,
     ) -> Result<Vec<VolumeModel>, ScalewayBackendError> {
         let url = self.instance_url(query.zone, "volumes");
         let page_text = page.to_string();
@@ -78,6 +131,7 @@ impl ScalewayBackend {
             ("project", query.project_id),
             ("per_page", &LIST_PAGE_SIZE.to_string()),
             ("page", &page_text),
+            ("volume_type", volume_type),
         ]);
         if let Some(filter) = query.tag {
             request = request.query(&[("tags", filter)]);
@@ -155,10 +209,8 @@ impl ScalewayBackend {
             project_id,
             tag: None,
         };
-        collect_pages("list volumes", |page| {
-            self.fetch_instance_volume_page(query, page)
-        })
-        .await
+        self.list_instance_volumes_for_types(query, INSTANCE_VOLUME_TYPES)
+            .await
     }
 
     /// Attaches a volume to a stopped instance, preserving its root volume.
@@ -168,12 +220,20 @@ impl ScalewayBackend {
     /// Returns [`ScalewayBackendError::VolumeNotFound`] when `root_volume_id`
     /// is blank, and [`ScalewayBackendError::VolumeAttachmentFailed`] when the
     /// provider rejects the update.
+    ///
+    /// `family` names the API that owns the cache volume: an SBS volume must be
+    /// attached with `"volume_type": "sbs_volume"`, while a local volume is
+    /// attached by identifier alone.
     pub(in crate::scaleway) async fn attach_volume(
         &self,
         handle: &InstanceHandle,
-        volume_id: &str,
-        root_volume_id: String,
+        volume: CacheAttachment<'_>,
     ) -> Result<(), ScalewayBackendError> {
+        let CacheAttachment {
+            volume_id,
+            root_volume_id,
+            family,
+        } = volume;
         if root_volume_id.trim().is_empty() {
             return Err(ScalewayBackendError::VolumeNotFound {
                 volume_id: String::from("0"),
@@ -184,17 +244,11 @@ impl ScalewayBackend {
         let mut volumes = HashMap::new();
         volumes.insert(
             String::from("0"),
-            VolumeAttachment {
-                id: root_volume_id,
-                boot: true,
-            },
+            VolumeAttachment::new(root_volume_id.to_owned(), true, StorageFamily::Instance),
         );
         volumes.insert(
             String::from("1"),
-            VolumeAttachment {
-                id: volume_id.to_owned(),
-                boot: false,
-            },
+            VolumeAttachment::new(volume_id.to_owned(), false, family),
         );
 
         let request = UpdateInstanceVolumesRequest { volumes };
@@ -228,6 +282,16 @@ impl ScalewayBackend {
         }
 
         let server = self.get_server(&handle.zone, &handle.id).await?;
+        let already_detached = !server
+            .volumes
+            .values()
+            .any(|volume| volume_ids.iter().any(|id| id == &volume.id));
+        // A retry after a PATCH that took effect but whose verification failed
+        // finds nothing left to remove. The server is already in the requested
+        // state, so no second write can improve it.
+        if already_detached {
+            return Ok(());
+        }
         let mut volumes = HashMap::new();
         for (index, volume) in &server.volumes {
             if volume_ids.iter().any(|id| id == &volume.id) {
@@ -235,10 +299,7 @@ impl ScalewayBackend {
             }
             volumes.insert(
                 index.clone(),
-                VolumeAttachment {
-                    id: volume.id.clone(),
-                    boot: index == "0",
-                },
+                VolumeAttachment::new(volume.id.clone(), index == "0", volume.storage_family()),
             );
         }
 

@@ -11,13 +11,13 @@ use std::{fmt::Display, time::Duration};
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
-use tokio::time::{Instant, sleep};
 
+mod cloud_init_wait;
 mod error;
 mod finish;
 
 pub use error::{RunCancellation, RunCleanupFailure, RunError, RunOutcome};
-use finish::RunCompletion;
+use finish::{RunCompletion, RunFailureInputs};
 
 use crate::{
     backend::{Backend, InstanceNetworking, InstanceRequest},
@@ -93,7 +93,16 @@ where
     B::Error: Display + Send + Sync + std::error::Error + 'static,
     R: CommandRunner,
 {
-    /// Creates a new orchestrator.
+    /// Creates a new orchestrator with the default cloud-init timings.
+    ///
+    /// # Parameters
+    ///
+    /// - `backend`: provisions the instance and performs cleanup.
+    /// - `syncer`: mounts the cache, syncs files, and runs remote commands.
+    ///
+    /// # Returns
+    ///
+    /// An orchestrator that waits the default cloud-init timeout.
     #[must_use]
     pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
         Self {
@@ -107,6 +116,14 @@ where
     /// Overrides the cloud-init polling interval.
     ///
     /// This is primarily used by tests to keep timeout scenarios fast.
+    ///
+    /// # Parameters
+    ///
+    /// - `interval`: pause between readiness probes.
+    ///
+    /// # Returns
+    ///
+    /// The orchestrator with the new interval.
     #[must_use]
     pub const fn with_cloud_init_poll_interval(mut self, interval: Duration) -> Self {
         self.cloud_init_poll_interval = interval;
@@ -115,7 +132,16 @@ where
 
     /// Overrides the cloud-init wait timeout.
     ///
-    /// This is primarily used by tests to keep timeout scenarios fast.
+    /// The timeout bounds the whole wait: no probe starts after it elapses, and
+    /// a probe that is still running is cut off by the remote `timeout`.
+    ///
+    /// # Parameters
+    ///
+    /// - `timeout`: total budget for cloud-init to report `boot-finished`.
+    ///
+    /// # Returns
+    ///
+    /// The orchestrator with the new timeout.
     #[must_use]
     pub const fn with_cloud_init_wait_timeout(mut self, timeout: Duration) -> Self {
         self.cloud_init_wait_timeout = timeout;
@@ -128,11 +154,21 @@ where
     /// cleanup always runs; a cleanup failure is reported with the primary
     /// error, the remote status, and the residual resource identifiers.
     ///
+    /// # Parameters
+    ///
+    /// - `inputs`: the request, ledger, source tree, remote command, and cancellation view for this
+    ///   run.
+    ///
+    /// # Returns
+    ///
+    /// A [`RunOutcome`] carrying the remote output and any non-fatal notes. A
+    /// non-zero remote status is part of the output, not an error.
+    ///
     /// # Errors
     ///
     /// Returns [`RunError`] when provisioning, readiness checks,
     /// synchronization, remote execution, cleanup, or cancellation must be
-    /// reported.
+    /// reported. A non-zero remote status is never a [`RunError`].
     pub async fn execute(&self, inputs: RunInputs<'_>) -> Result<RunOutcome, RunError<B::Error>> {
         let mut networking: Option<InstanceNetworking> = None;
         let step = self.run_steps(inputs, &mut networking).await;
@@ -148,10 +184,17 @@ where
                 .await
             }
             Err(StepFailure::Cancelled) => Err(self
-                .finish_cancelled(inputs.ledger, inputs.cancellation)
+                .finish_cancelled(inputs.ledger, warnings, inputs.cancellation)
                 .await),
             Err(StepFailure::Error(error)) => Err(self
-                .finish_failure(inputs.ledger, error, inputs.cancellation)
+                .finish_failure(
+                    inputs.ledger,
+                    RunFailureInputs {
+                        primary: error,
+                        warnings,
+                    },
+                    inputs.cancellation,
+                )
                 .await),
         }
     }
@@ -171,7 +214,12 @@ where
         } = inputs;
         let handle = match until_cancelled(self.backend.create(request, ledger), cancellation).await
         {
-            None => return Err(StepFailure::Cancelled),
+            None => {
+                // The create may have succeeded after the future was dropped;
+                // the flag keeps the journal so recovery reconciles the tag.
+                ledger.mark_outcome_unknown();
+                return Err(StepFailure::Cancelled);
+            }
             Some(Err(error)) => return Err(StepFailure::Error(RunError::Provision(error))),
             Some(Ok(handle)) => handle,
         };
@@ -313,54 +361,6 @@ where
                 stderr: output.stderr,
             },
         })
-    }
-
-    /// Polls for cloud-init's `boot-finished` marker until it appears or the
-    /// timeout elapses.
-    async fn wait_for_cloud_init(
-        &self,
-        networking: &InstanceNetworking,
-        cancellation: &Cancellation,
-    ) -> Result<(), StepFailure<B::Error>> {
-        let deadline = Instant::now() + self.cloud_init_wait_timeout;
-        let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
-        let command = format!("sudo test -f {cloud_init_finished_marker}");
-
-        while Instant::now() <= deadline {
-            check_cancelled(cancellation)?;
-            let finished = match self.syncer.run_remote(networking, &command) {
-                Ok(output) => matches!(output.exit_code, Some(0)),
-                Err(error) => {
-                    return Err(StepFailure::Error(RunError::Provisioning {
-                        message: error.to_string(),
-                        source: error,
-                    }));
-                }
-            };
-            if finished {
-                return Ok(());
-            }
-
-            let now = Instant::now();
-            if now > deadline {
-                break;
-            }
-            // Never sleep past the deadline: a two-second interval with a
-            // one-second budget must not extend the wait to two seconds.
-            tokio::select! {
-                () = sleep(self.cloud_init_poll_interval.min(deadline - now)) => {}
-                _signal = cancellation.cancelled() => {
-                    return Err(StepFailure::Cancelled);
-                }
-            }
-        }
-
-        Err(StepFailure::Error(RunError::ProvisioningTimeout {
-            message: format!(
-                "cloud-init did not finish within {} seconds",
-                self.cloud_init_wait_timeout.as_secs()
-            ),
-        }))
     }
 }
 

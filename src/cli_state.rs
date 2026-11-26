@@ -22,6 +22,8 @@ use mriya::{
     ResourceLedger,
     ScalewayBackend,
     ScalewayConfig,
+    Signal,
+    until_cancelled,
 };
 
 use crate::CliError;
@@ -92,6 +94,11 @@ pub(crate) async fn recover_command(cancellation: &Cancellation) -> Result<i32, 
     let backend = ScalewayBackend::new(config.clone())
         .map_err(|error| CliError::Backend(error.to_string()))?;
     let configured = configured_volume_id(&config);
+    let recovery = Recovery {
+        store: &store,
+        backend: &backend,
+        configured: configured.as_deref(),
+    };
 
     let mut failed = false;
     for path in paths {
@@ -104,30 +111,75 @@ pub(crate) async fn recover_command(cancellation: &Cancellation) -> Result<i32, 
             .ok();
             return Ok(signal.exit_code());
         }
-        match store.load(&path) {
-            Ok(record) if record.owner.is_some_and(|owner| owner.is_alive()) => {
-                writeln!(stdout, "skipping {path}: its owning run is still alive").ok();
-            }
-            Ok(_) => {
-                let recovery = Recovery {
-                    store: &store,
-                    backend: &backend,
-                    configured: configured.as_deref(),
-                };
-                let outcome = recovery.replay(&path, &mut stdout).await;
-                if let Some(failed_recovery) = outcome {
-                    failed = true;
-                    writeln!(stdout, "journal kept at {path}: {failed_recovery}").ok();
-                }
-            }
-            Err(error) => {
+        match recovery.replay_path(&path, cancellation, &mut stdout).await {
+            ReplayStep::Settled | ReplayStep::Skipped => {}
+            ReplayStep::Kept(reason) => {
                 failed = true;
-                writeln!(stdout, "could not read {path}: {error}").ok();
+                writeln!(stdout, "journal kept at {path}: {reason}").ok();
+            }
+            ReplayStep::Interrupted(signal) => {
+                writeln!(
+                    stdout,
+                    "{} received while replaying {path}; the journal is kept",
+                    signal.as_str()
+                )
+                .ok();
+                return Ok(signal.exit_code());
             }
         }
     }
 
     if failed { Ok(1) } else { Ok(0) }
+}
+
+/// Outcome of one journal's claim, owner check, and replay.
+enum ReplayStep {
+    /// The journal was replayed and removed.
+    Settled,
+    /// The journal was skipped because another process owns it.
+    Skipped,
+    /// The journal remains, with the reason it must stay.
+    Kept(String),
+    /// A signal stopped the replay.
+    Interrupted(Signal),
+}
+
+impl Recovery<'_> {
+    /// Claims, checks, and replays one journal.
+    async fn replay_path(
+        &self,
+        path: &camino::Utf8Path,
+        cancellation: &Cancellation,
+        stdout: &mut impl Write,
+    ) -> ReplayStep {
+        // The claim is acquired before the owner check: it excludes a second
+        // recover process for the whole check-and-replay window, which a plain
+        // re-read cannot do.
+        let claim = match self.store.claim(path) {
+            Ok(Some(claim)) => claim,
+            Ok(None) => {
+                writeln!(stdout, "skipping {path}: another recovery holds its claim").ok();
+                return ReplayStep::Skipped;
+            }
+            Err(error) => {
+                return ReplayStep::Kept(format!("the claim could not be taken: {error}"));
+            }
+        };
+        let step = match self.store.load(path) {
+            Ok(record) if record.owner.is_some_and(|owner| owner.is_alive()) => {
+                writeln!(stdout, "skipping {path}: its owning run is still alive").ok();
+                ReplayStep::Skipped
+            }
+            Ok(_) => match self.replay(path, cancellation, stdout).await {
+                ReplayOutcome::Settled => ReplayStep::Settled,
+                ReplayOutcome::Kept(reason) => ReplayStep::Kept(reason),
+                ReplayOutcome::Interrupted(signal) => ReplayStep::Interrupted(signal),
+            },
+            Err(error) => ReplayStep::Kept(format!("could not read {path}: {error}")),
+        };
+        drop(claim);
+        step
+    }
 }
 
 /// The state shared by every journal replay in one command.
@@ -140,19 +192,45 @@ struct Recovery<'a> {
     configured: Option<&'a str>,
 }
 
+/// Result of replaying one journal.
+enum ReplayOutcome {
+    /// Cleanup verified every postcondition and the journal is removed.
+    Settled,
+    /// The journal remains, with the reason it must stay.
+    Kept(String),
+    /// A signal stopped the replay; the journal remains and the process exits
+    /// with the signal's status.
+    Interrupted(Signal),
+}
+
 impl Recovery<'_> {
-    /// Replays one journal, returning the reason it must be kept on failure.
-    async fn replay(&self, path: &camino::Utf8Path, stdout: &mut impl Write) -> Option<String> {
+    /// Replays one journal, keeping it when cleanup cannot be verified.
+    ///
+    /// A second signal stops the replay: cleanup is dropped mid-flight and the
+    /// journal is kept, so the run that is being interrupted can be finished
+    /// later by `mriya recover` rather than half-cleaned now.
+    async fn replay(
+        &self,
+        path: &camino::Utf8Path,
+        cancellation: &Cancellation,
+        stdout: &mut impl Write,
+    ) -> ReplayOutcome {
         let Ok((record, sink)) = self.store.open(path) else {
-            return Some(String::from("the journal could not be opened"));
+            return ReplayOutcome::Kept(String::from("the journal could not be opened"));
         };
         let tag = record.allocation.clone();
         let ledger = record.into_ledger(sink);
-        let report = match self.backend.cleanup(&ledger).await {
+        let Some(cleanup) = until_cancelled(self.backend.cleanup(&ledger), cancellation).await
+        else {
+            return ReplayOutcome::Interrupted(cancellation.signal().unwrap_or(Signal::Interrupt));
+        };
+        let report = match cleanup {
             Ok(report) => report,
             Err(failure) => {
                 writeln!(stdout, "recovery of {tag} failed: {failure}").ok();
-                return Some(String::from("cleanup could not verify every resource"));
+                return ReplayOutcome::Kept(String::from(
+                    "cleanup could not verify every resource",
+                ));
             }
         };
         report_recovered(stdout, &tag, &report, self.configured);
@@ -161,23 +239,23 @@ impl Recovery<'_> {
             .iter()
             .any(|resource| self.configured != Some(resource.id()));
         if unrecorded {
-            return Some(String::from(
+            return ReplayOutcome::Kept(String::from(
                 "a retained volume is not recorded in configuration yet",
             ));
         }
         if let Err(error) = ledger.resolve_outcome() {
-            return Some(format!(
+            return ReplayOutcome::Kept(format!(
                 "the resolved outcome could not be written: {message}",
                 message = error.message
             ));
         }
         if let Err(error) = ledger.clear_journal() {
-            return Some(format!(
+            return ReplayOutcome::Kept(format!(
                 "the journal could not be removed: {message}",
                 message = error.message
             ));
         }
-        None
+        ReplayOutcome::Settled
     }
 }
 

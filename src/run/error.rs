@@ -69,12 +69,15 @@ where
     },
     /// Raised when ownership-aware cleanup cannot verify its postconditions.
     ///
-    /// The wrapper is not marked `#[source]`: its `Display` already renders the
-    /// primary error, so exposing it again through the source chain would make
-    /// a chain walker print the same text twice. The chain continues at the
-    /// typed cleanup failure instead.
-    #[error("{0}")]
-    Cleanup(Box<RunCleanupFailure<BackendError>>),
+    /// The wrapper is its own source, so a chain walker reaches the typed
+    /// [`CleanupFailure`] rather than stopping at the outer error. `Display`
+    /// is the wrapper's message, which already renders the primary error.
+    #[error("{failure}")]
+    Cleanup {
+        /// Everything known when cleanup could not verify its postconditions.
+        #[source]
+        failure: Box<RunCleanupFailure<BackendError>>,
+    },
     /// Raised when a signal interrupted the run.
     ///
     /// The variant is distinct so the CLI can exit 130 or 143 rather than 1.
@@ -94,6 +97,12 @@ where
     pub output: Option<RemoteCommandOutput>,
     /// Typed cleanup failure, absent when a second signal interrupted cleanup.
     pub cleanup: Option<CleanupFailure>,
+    /// Whether cleanup verified every postcondition.
+    ///
+    /// A failure that merely carries notes — a signal during cleanup, or a
+    /// journal that could not be removed — has verified cleanup, and the
+    /// message must not call it incomplete.
+    pub cleanup_verified: bool,
     /// Journal that `mriya recover` can replay.
     pub journal: Option<Utf8PathBuf>,
     /// Whether a second signal stopped cleanup early.
@@ -115,10 +124,13 @@ where
                 "cleanup was interrupted by a second signal; run `mriya recover` to finish it",
             );
         }
-        self.cleanup.as_ref().map_or_else(
-            || String::from("cleanup did not complete"),
-            |error| format!("cleanup failed: {error}"),
-        )
+        if let Some(error) = self.cleanup.as_ref() {
+            return format!("cleanup failed: {error}");
+        }
+        if self.cleanup_verified {
+            return String::from("cleanup verified every postcondition");
+        }
+        String::from("cleanup did not complete")
     }
 
     /// Describes the remote command's status, when one ran.
@@ -137,9 +149,15 @@ where
     BackendError: std::error::Error + 'static,
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut parts = vec![self.cleanup_message()];
-        if let Some(primary) = self.primary.as_deref() {
-            parts.push(format!("after: {primary}"));
+        let mut parts = Vec::new();
+        if let (true, Some(primary)) = (self.cleanup_verified, self.primary.as_deref()) {
+            parts.push(primary.to_string());
+            parts.push(self.cleanup_message());
+        } else {
+            parts.push(self.cleanup_message());
+            if let Some(primary) = self.primary.as_deref() {
+                parts.push(format!("after: {primary}"));
+            }
         }
         if let Some(output) = self.output_message() {
             parts.push(output);
@@ -260,6 +278,7 @@ mod tests {
             primary: Some(Box::new(RunError::Provision(Backend))),
             output: Some(output(Some(7))),
             cleanup: Some(cleanup),
+            cleanup_verified: false,
             journal: Some(Utf8PathBuf::from("/var/state/mriya/runs/a.json")),
             interrupted: false,
             signal: None,
@@ -290,12 +309,46 @@ mod tests {
             primary: None,
             output: None,
             cleanup: None,
+            cleanup_verified: false,
             journal: Some(Utf8PathBuf::from("/tmp/journal.json")),
             interrupted: true,
             signal: None,
             warnings: Vec::new(),
         };
         assert!(failure.to_string().contains("mriya recover"));
+    }
+
+    #[rstest]
+    fn a_cleanup_error_exposes_the_typed_failure_as_its_source() {
+        use std::error::Error as _;
+
+        let mut typed_cleanup = CleanupFailure::new();
+        typed_cleanup.add_cause("backend said no");
+        let error: RunError<Backend> = RunError::Cleanup {
+            failure: Box::new(RunCleanupFailure {
+                primary: None,
+                output: None,
+                cleanup: Some(typed_cleanup),
+                cleanup_verified: false,
+                journal: None,
+                interrupted: false,
+                signal: None,
+                warnings: Vec::new(),
+            }),
+        };
+        let mut source = error.source();
+        let mut reached_cleanup = false;
+        while let Some(current) = source {
+            if current.downcast_ref::<CleanupFailure>().is_some() {
+                reached_cleanup = true;
+                break;
+            }
+            source = current.source();
+        }
+        assert!(
+            reached_cleanup,
+            "the source chain must reach the typed CleanupFailure"
+        );
     }
 
     #[rstest]

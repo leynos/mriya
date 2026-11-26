@@ -41,19 +41,27 @@ pub(super) fn clear_journal(
 }
 
 /// Wraps `primary` in the volume context `note`.
+///
+/// The typed primary error is kept as the wrapper's source, so a caller that
+/// walks the error chain can still inspect the backend or configuration cause
+/// rather than only the rendered message.
 pub(super) fn after_volume<BackendError>(
-    primary: &InitError<BackendError>,
+    primary: InitError<BackendError>,
     volume: &VolumeHandle,
     note: String,
     cleanup: Option<CleanupFailure>,
 ) -> InitError<BackendError>
 where
-    BackendError: std::error::Error + 'static,
+    BackendError: std::error::Error + Send + Sync + 'static,
 {
     let kind = primary.kind();
+    let cause = Some(Box::new(primary) as Box<dyn std::error::Error + Send + Sync>);
     InitError::AfterVolume {
-        primary: primary.to_string(),
+        primary: cause
+            .as_deref()
+            .map_or_else(String::new, ToString::to_string),
         kind,
+        cause,
         volume_id: volume.id.clone(),
         zone: volume.zone.clone(),
         note,

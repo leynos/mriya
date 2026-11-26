@@ -68,8 +68,12 @@ pub(crate) enum CliError {
     #[error("remote command terminated without an exit status")]
     MissingExitCode,
     /// The run workflow failed after validation, from provisioning to teardown.
+    ///
+    /// The error is boxed because it carries the primary failure, cleanup
+    /// report, remote output, and notes; inlining it would enlarge every
+    /// `Result` in the CLI's error path.
     #[error("remote run failed: {0}")]
-    Run(#[from] RunError<ScalewayBackendError>),
+    Run(Box<RunError<ScalewayBackendError>>),
     /// The remote command contains control characters that cannot be passed
     /// safely to the remote shell.
     #[error("invalid command argument: {0}")]
@@ -87,7 +91,15 @@ pub(crate) enum CliError {
     InvalidCloudInit(String),
     /// The `init` workflow failed.
     #[error("init failed: {0}")]
-    Init(#[from] InitError<ScalewayBackendError>),
+    Init(Box<InitError<ScalewayBackendError>>),
+}
+
+impl From<RunError<ScalewayBackendError>> for CliError {
+    fn from(error: RunError<ScalewayBackendError>) -> Self { Self::Run(Box::new(error)) }
+}
+
+impl From<InitError<ScalewayBackendError>> for CliError {
+    fn from(error: InitError<ScalewayBackendError>) -> Self { Self::Init(Box::new(error)) }
 }
 
 fn main() {
@@ -143,15 +155,31 @@ async fn async_main() -> i32 {
 /// interrupted run from a failed one; every other failure exits 1.
 fn exit_code_for(err: &CliError) -> i32 {
     match err {
-        // A cancellation whose cleanup also failed is a failure: the signal
-        // status would tell a script the interruption was handled when
-        // resources may remain.
-        CliError::Run(RunError::Cancelled(cancelled)) if cancelled.cleanup.is_none() => {
+        CliError::Run(error) => run_exit_code(error.as_ref()),
+        CliError::Init(error) => init_exit_code(error.as_ref()),
+        _ => 1,
+    }
+}
+
+/// Returns the signal status of a cancellation whose cleanup completed.
+///
+/// A cancellation whose cleanup also failed is a failure: the signal status
+/// would tell a script the interruption was handled when resources may remain.
+fn run_exit_code(error: &RunError<ScalewayBackendError>) -> i32 {
+    match error {
+        RunError::Cancelled(cancelled) if cancelled.cleanup.is_none() => {
             cancelled.signal.exit_code()
         }
-        CliError::Init(InitError::Cancelled {
+        _ => 1,
+    }
+}
+
+/// Returns the signal status of an interrupted `init` whose cleanup completed.
+const fn init_exit_code(error: &InitError<ScalewayBackendError>) -> i32 {
+    match error {
+        InitError::Cancelled {
             signal, cleanup, ..
-        }) if cleanup.is_none() => signal.exit_code(),
+        } if cleanup.is_none() => signal.exit_code(),
         _ => 1,
     }
 }

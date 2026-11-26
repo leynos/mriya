@@ -1,4 +1,5 @@
-//! Recording provider allocations and classifying unrecorded attachments.
+//! Recording provider allocations, classifying unrecorded attachments, and
+//! resolving the API family of a configured cache volume.
 //!
 //! Creation records everything the provider created with the server as owned.
 //! Cleanup refreshes the server first and marks anything the ledger has never
@@ -6,7 +7,70 @@
 //! preserved rather than deleted.
 
 use super::models::{ServerModel, VolumeModel};
-use crate::ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef, StorageFamily};
+use crate::{
+    ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef, StorageFamily},
+    scaleway::{ScalewayBackend, ScalewayBackendError},
+};
+
+impl ScalewayBackend {
+    /// Records a configured cache volume as retained before it is attached.
+    ///
+    /// A volume the ledger already knows keeps its disposition: `mriya init`
+    /// records its new volume as owned so a failure before formatting still
+    /// deletes it. A volume the caller only borrowed from configuration is
+    /// looked up so the recorded reference names the API family that must
+    /// later detach and preserve it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::VolumeNotFound`] when neither API knows
+    /// the identifier, and the provider failure that prevented the lookup.
+    pub(in crate::scaleway) async fn record_configured_cache(
+        &self,
+        volume_id: &str,
+        zone: &str,
+        ledger: &ResourceLedger,
+    ) -> Result<StorageFamily, ScalewayBackendError> {
+        if let Some(entry) = ledger
+            .find(ResourceKind::InstanceVolume, volume_id)
+            .or_else(|| ledger.find(ResourceKind::BlockVolume, volume_id))
+        {
+            return Ok(match entry.resource.kind() {
+                ResourceKind::BlockVolume => StorageFamily::Block,
+                _ => StorageFamily::Instance,
+            });
+        }
+
+        match self.get_instance_volume(zone, volume_id).await {
+            Ok(volume) => {
+                ledger.record(
+                    ResourceRef::instance_volume(volume_id, zone),
+                    Disposition::Retained,
+                );
+                Ok(volume.storage_family())
+            }
+            Err(ScalewayBackendError::NotFound { .. }) => {
+                match self.get_block_volume(zone, volume_id).await {
+                    Ok(_) => {
+                        ledger.record(
+                            ResourceRef::block_volume(volume_id, zone),
+                            Disposition::Retained,
+                        );
+                        Ok(StorageFamily::Block)
+                    }
+                    Err(ScalewayBackendError::NotFound { .. }) => {
+                        Err(ScalewayBackendError::VolumeNotFound {
+                            volume_id: volume_id.to_owned(),
+                            zone: zone.to_owned(),
+                        })
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
 
 /// Builds the reference recorded for `volume` in `zone`.
 ///
@@ -45,10 +109,13 @@ pub(in crate::scaleway) fn record_server_creation(server: &ServerModel, ledger: 
 /// already recorded keeps its disposition: an owned allocation is never
 /// downgraded, and a retained cache volume stays retained.
 ///
-/// An unrecorded public IP on a run-owned server is recorded as `Owned`, not
-/// borrowed: mriya only ever creates servers with a routed dynamic address,
-/// so such an address was allocated for this run, and it can appear after the
+/// An unrecorded *dynamic* public IP on a run-owned server is recorded as
+/// `Owned`: mriya only ever creates servers with a routed dynamic address, so
+/// such an address was allocated for this run, and it can appear after the
 /// single post-power-on refresh. Recording it as borrowed would leak it.
+/// An unrecorded *static* IP is recorded as `Borrowed`: a pre-existing address
+/// attached after creation is the user's, and requesting a dynamic address at
+/// creation does not establish ownership of every address attached later.
 /// An unrecorded *volume* stays `Borrowed`: it may be a user's, attached after
 /// mriya read the server.
 pub(in crate::scaleway) fn classify_unrecorded(server: &ServerModel, ledger: &ResourceLedger) {
@@ -61,9 +128,14 @@ pub(in crate::scaleway) fn classify_unrecorded(server: &ServerModel, ledger: &Re
     }
     for ip in server.ip_allocations() {
         if ledger.find(ResourceKind::PublicIp, &ip.id).is_none() {
+            let disposition = if ip.dynamic {
+                Disposition::Owned
+            } else {
+                Disposition::Borrowed
+            };
             ledger.record(
                 ResourceRef::public_ip(&ip.id, &zone, ip.dynamic),
-                Disposition::Owned,
+                disposition,
             );
         }
     }

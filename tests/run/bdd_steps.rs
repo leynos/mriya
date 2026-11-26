@@ -295,7 +295,7 @@ fn failure_kind(
         // kind, so a scenario still sees why the run failed even when cleanup
         // also failed. `Cleanup` is reserved for a cleanup failure after a
         // successful remote command, which has no primary error.
-        mriya::RunError::Cleanup(failure) => failure
+        mriya::RunError::Cleanup { failure } => failure
             .primary
             .as_deref()
             .map_or(RunFailureKind::Cleanup, failure_kind),

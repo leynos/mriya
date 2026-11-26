@@ -158,10 +158,13 @@ pub(in crate::scaleway) struct IpResponse {
 }
 
 /// Response wrapper for an IP list page.
+///
+/// The field is required: a 200 without `ips` is not evidence that no IP
+/// exists, and treating it as an empty list would let cleanup confirm absence
+/// from a malformed response. An explicit `{"ips":[]}` stays valid.
 #[derive(Clone, Debug, Deserialize)]
 pub(in crate::scaleway) struct IpList {
     /// IPs on this page.
-    #[serde(default)]
     pub(in crate::scaleway) ips: Vec<PublicIpModel>,
 }
 

@@ -42,6 +42,7 @@ impl ScalewayBackend {
         let mut acc = CleanupAccumulator::new(ledger.scope().project_id);
 
         self.reconcile_missing_server(ledger, &mut acc).await;
+        self.reconcile_missing_volume(ledger, &mut acc).await;
 
         for server in owned_ids(ledger, ResourceKind::Server) {
             self.clean_owned_server(&server, ledger, &mut acc).await;
@@ -81,6 +82,40 @@ impl ScalewayBackend {
         }
     }
 
+    /// Records a volume found by tag when an interrupted create recorded none.
+    ///
+    /// Without this lookup the outcome could be resolved and the journal
+    /// removed while a volume the provider accepted stayed allocated. A lookup
+    /// failure leaves the unknown-outcome flag set, so the journal survives
+    /// until a later recovery can reconcile it.
+    async fn reconcile_missing_volume(
+        &self,
+        ledger: &ResourceLedger,
+        acc: &mut CleanupAccumulator,
+    ) {
+        if !ledger.has_unknown_outcome()
+            || !ledger.entries_of(ResourceKind::InstanceVolume).is_empty()
+        {
+            return;
+        }
+        let scope = ledger.scope();
+        match self.reconcile_volume(&ledger.tag(), &scope).await {
+            Ok(Some(volume)) => {
+                let zone = if volume.zone.trim().is_empty() {
+                    scope.zone.clone()
+                } else {
+                    volume.zone.clone()
+                };
+                ledger.record(
+                    ResourceRef::instance_volume(&volume.id, &zone),
+                    crate::ownership::Disposition::Owned,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => acc.add_cause(format!("volume reconciliation failed: {error}")),
+        }
+    }
+
     /// Cleans one owned server, if the provider still has it.
     async fn clean_owned_server(
         &self,
@@ -88,6 +123,19 @@ impl ScalewayBackend {
         ledger: &ResourceLedger,
         acc: &mut CleanupAccumulator,
     ) {
+        // Every operation below is scoped to the ledger's zone, so a record
+        // from another zone would be read and deleted through the wrong one.
+        if server_ref.zone() != ledger.scope().zone {
+            acc.add(
+                server_ref.clone(),
+                format!(
+                    "recorded in zone {zone}, but the ledger is scoped to {scope}",
+                    zone = server_ref.zone(),
+                    scope = ledger.scope().zone
+                ),
+            );
+            return;
+        }
         match self.server_presence(server_ref, &acc.project_id).await {
             Ok(Presence::ConfirmedAbsent) => acc.removed(server_ref.clone()),
             Ok(Presence::Present(server)) => {
@@ -112,7 +160,10 @@ impl ScalewayBackend {
             zone: zone.clone(),
         };
 
-        if let Err(error) = self.power_off_if_needed(&zone, &server.snapshot()).await {
+        if let Err(error) = self
+            .power_off_if_needed(&zone, &server.snapshot(), &acc.project_id)
+            .await
+        {
             acc.add(server_ref, format!("power off failed: {error}"));
             return;
         }
@@ -201,68 +252,6 @@ impl ScalewayBackend {
         }
     }
 
-    /// Deletes every owned volume, waiting for block volumes to leave use.
-    async fn clean_owned_volumes(&self, ledger: &ResourceLedger, acc: &mut CleanupAccumulator) {
-        let volumes = owned_ids(ledger, ResourceKind::InstanceVolume)
-            .into_iter()
-            .chain(owned_ids(ledger, ResourceKind::BlockVolume));
-        for resource in volumes {
-            self.delete_owned_volume(&resource, acc).await;
-        }
-    }
-
-    /// Deletes one owned volume and verifies its absence.
-    async fn delete_owned_volume(&self, resource: &ResourceRef, acc: &mut CleanupAccumulator) {
-        match self.volume_state(resource, &acc.project_id).await {
-            Ok(VolumeState::Absent) => acc.removed(resource.clone()),
-            Ok(VolumeState::AttachedTo(server)) => {
-                acc.add(
-                    resource.clone(),
-                    format!("still attached to server {server}"),
-                );
-            }
-            Ok(VolumeState::Detached) => {
-                if resource.kind() == ResourceKind::BlockVolume
-                    && let Err(error) = self
-                        .wait_for_block_volume_idle(resource.zone(), resource.id())
-                        .await
-                {
-                    acc.add(resource.clone(), error.to_string());
-                    return;
-                }
-                self.delete_and_verify_volume(resource, acc).await;
-            }
-            Err(error) => acc.add(resource.clone(), error.to_string()),
-        }
-    }
-
-    /// Deletes a detached owned volume and confirms it is gone.
-    async fn delete_and_verify_volume(&self, resource: &ResourceRef, acc: &mut CleanupAccumulator) {
-        let deleted = match resource.kind() {
-            ResourceKind::BlockVolume => {
-                self.delete_block_volume(resource.zone(), resource.id())
-                    .await
-            }
-            _ => {
-                self.delete_instance_volume(resource.zone(), resource.id())
-                    .await
-            }
-        };
-
-        if let Err(error) = deleted
-            && !matches!(error, ScalewayBackendError::NotFound { .. })
-        {
-            acc.add(resource.clone(), format!("delete failed: {error}"));
-            return;
-        }
-
-        match self.volume_state(resource, &acc.project_id).await {
-            Ok(VolumeState::Absent) => acc.removed(resource.clone()),
-            Ok(_) => acc.add(resource.clone(), "volume is still present after deletion"),
-            Err(error) => acc.add(resource.clone(), error.to_string()),
-        }
-    }
-
     /// Releases every owned public IP and verifies its absence.
     async fn clean_owned_ips(&self, ledger: &ResourceLedger, acc: &mut CleanupAccumulator) {
         for resource in owned_ids(ledger, ResourceKind::PublicIp) {
@@ -329,7 +318,7 @@ impl ScalewayBackend {
     }
 
     /// Resolves the state of a recorded volume through its owning API.
-    async fn volume_state(
+    pub(super) async fn volume_state(
         &self,
         resource: &ResourceRef,
         project_id: &str,

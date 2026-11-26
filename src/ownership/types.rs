@@ -272,6 +272,20 @@ impl ResourceRef {
     }
 
     /// Creates a reference of `kind` with no family-specific details.
+    ///
+    /// The storage family and public-IP metadata stay absent. Use
+    /// [`ResourceRef::instance_volume`], [`ResourceRef::block_volume`], or
+    /// [`ResourceRef::public_ip`] when that metadata matters to cleanup.
+    ///
+    /// # Parameters
+    ///
+    /// - `kind`: what sort of resource the reference names.
+    /// - `id`: the provider's identifier.
+    /// - `zone`: the availability zone that holds it.
+    ///
+    /// # Returns
+    ///
+    /// A reference with no storage family and no public-IP metadata.
     #[must_use]
     pub fn new(kind: ResourceKind, id: impl Into<String>, zone: impl Into<String>) -> Self {
         Self {
@@ -312,6 +326,19 @@ impl ResourceRef {
 
     /// Reports whether this reference names the resource identified by `kind`
     /// and `id`, ignoring the zone.
+    ///
+    /// The zone is excluded because a provider response may omit it; the
+    /// identity check that does compare zones is separate, in the Scaleway
+    /// lifecycle.
+    ///
+    /// # Parameters
+    ///
+    /// - `kind`: the kind being looked up.
+    /// - `id`: the identifier being looked up.
+    ///
+    /// # Returns
+    ///
+    /// `true` when this reference names that kind and identifier.
     #[must_use]
     pub fn matches(&self, kind: ResourceKind, id: &str) -> bool {
         self.kind == kind && self.id == id

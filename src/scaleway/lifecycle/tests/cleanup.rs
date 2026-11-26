@@ -143,11 +143,12 @@ async fn partial_create_failures_are_cleaned_up() {
         .create(&request, &ledger)
         .await
         .expect_err("the attachment is rejected");
+    // A 403 is an authorization failure, not a rejected attachment: the
+    // request was never evaluated, and cleanup must report it as a denial.
     assert!(
         matches!(
             error,
-            ScalewayBackendError::VolumeAttachmentFailed { ref volume_id, .. }
-                if volume_id == "vol-cache"
+            ScalewayBackendError::AccessDenied { ref status, .. } if *status == 403
         ),
         "{error:?}"
     );
