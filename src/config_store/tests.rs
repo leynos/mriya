@@ -6,7 +6,10 @@
 //! invalid TOML and missing parent directories. Temporary directories and
 //! fixtures keep each case isolated from repo configuration.
 
+use std::sync::Arc;
+
 use anyhow::{Context as _, bail, ensure};
+use ortho_config::MapEnv;
 use rstest::{fixture, rstest};
 use tempfile::TempDir;
 
@@ -30,15 +33,32 @@ fn config_fixture() -> anyhow::Result<ConfigFixture> {
     })
 }
 
+/// Builds discovery that sees only the fixture directory.
+///
+/// The environment is injected rather than read from the process, so a
+/// developer's `MRIYA_CONFIG_PATH` or platform configuration directory cannot
+/// redirect a `write_volume_id` call onto a real file. Selecting the fixture
+/// path explicitly also keeps project-file discovery from walking upward.
 fn discovery_for_path(path: &Utf8Path) -> anyhow::Result<ConfigDiscovery> {
     let root = path
         .parent()
         .context("temp path should have a parent directory")?;
+    // No explicit-path variable is injected: leaving it unset lets the
+    // fixture's project root be the final candidate, which is where the store
+    // falls back when no file exists yet. HOME and the XDG directories point
+    // at the fixture so a developer's real configuration cannot be read.
+    let env = Arc::new(
+        MapEnv::new()
+            .with_var("HOME", root.as_str())
+            .with_var("XDG_CONFIG_HOME", root.as_str())
+            .with_var("XDG_CONFIG_DIRS", root.as_str()),
+    );
     Ok(ConfigDiscovery::builder(APP_NAME)
         .env_var(CONFIG_ENV_VAR)
         .config_file_name(CONFIG_FILE_NAME)
         .dotfile_name(DOTFILE_NAME)
         .project_file_name(PROJECT_FILE_NAME)
+        .env_source(env)
         .clear_project_roots()
         .add_project_root(root)
         .build())

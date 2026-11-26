@@ -474,18 +474,21 @@ reasoned exception. Never add a bare `#[allow]`.
 ## Compiler floor
 
 `Cargo.toml` declares `rust-version = "1.89.0"`, the highest `rust-version` in
-the locked non-development graph (`ortho_config` 0.10.0, `ortho_config_macros`,
+the locked non-development graph (`ortho_config` 0.11.0, `ortho_config_macros`,
 `ortho_l10n`, and `uuid`). That covers the library, the `mriya` binary, and the
 build script: `RUSTFLAGS="" cargo +1.89.0 check --lib --bins` succeeds against
 the committed `Cargo.lock`.
 
 The full test suite has a higher floor. The exact-pinned
-`typos-cli = "=1.50.2"` dev-dependency requires Rust 1.95, so `cargo test` and
+`typos-cli = "=1.52.2"` dev-dependency requires Rust 1.95, so `cargo test` and
 `make test` need 1.95 or newer. The development build standard additionally
 uses the nightly pinned in `rust-toolchain.toml`, because `.cargo/config.toml`
-passes nightly-only flags (`-Zthreads=8` and `[unstable] embed-metadata`). A
-contributor building only the application with stable Rust must assign an empty
-`RUSTFLAGS` to leave the development flags, as the users' guide describes.
+passes nightly-only flags (`-Zthreads=8` and `[unstable] embed-metadata`). The
+pin moves with the target branch and is not part of this repository's migration
+surface; when last validated it was `nightly-2026-11-26`
+(`rustc 1.102.0-nightly (6c709eb42 2026-11-25)`). A contributor building only
+the application with stable Rust must assign an empty `RUSTFLAGS` to leave the
+development flags, as the users' guide describes.
 
 ## The build standard
 

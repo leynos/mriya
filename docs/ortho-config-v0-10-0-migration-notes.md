@@ -142,11 +142,11 @@ $ RUSTFLAGS="" cargo +1.89.0 check --lib --bins
 
 The full test suite has a higher floor: the exact-pinned
 `typos-cli = "=1.52.2"` dev-dependency requires Rust 1.95. The development
-build standard also uses the nightly pinned in `rust-toolchain.toml`
-(`nightly-2026-11-25`, `rustc 1.102.0-nightly (739adecd4 2026-11-24)`), because
-`.cargo/config.toml` passes nightly-only flags. Both pins are inherited from
-the target branch, which moved them after this branch first documented them;
-they were not changed by this migration.
+build standard also uses the nightly pinned in `rust-toolchain.toml`, because
+`.cargo/config.toml` passes nightly-only flags. The pin belongs to the target
+branch and moves with it; when last validated here it was `nightly-2026-11-26`
+(`rustc 1.102.0-nightly (6c709eb42 2026-11-25)`). Neither pin was changed by
+this migration.
 
 ## Repository defect found and fixed
 
@@ -171,11 +171,26 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The branch adds 25 tests across two new
-binaries, `config_sources` and `config_discovery`: 11 integration tests in
-`tests/config_sources.rs`, 5 integration tests in `tests/config_discovery.rs`,
-4 parser tests in `src/cli/mod.rs`, and 5 store tests in
-`src/config_store/tests.rs`. One existing test,
+tests across 18 binaries, all passing. The branch adds tests in two new
+binaries, `config_sources` and `config_discovery`, and to three existing test
+modules:
+
+- `tests/config_sources.rs`: one `rstest` precedence table with nine rows
+  covering `SyncConfig` and `ScalewayConfig` across default, file,
+  sectioned-file, environment, and command-line tiers, plus the file-shape,
+  explicit-default, and boolean-spelling cases.
+- `tests/config_discovery.rs`: the discovery error cases, the store round
+  trip, the legacy-section read, and one compatibility case for each discovery
+  location (home dotfile, XDG directory, project file, and an absent explicit
+  path) proving the store writes a file the loader reads.
+- `src/cli/mod.rs`: four parser tests for the `--` boundary and `init` flags.
+- `src/config_store/tests.rs`: five store tests, including one table choosing
+  the recorded volume ID across root, legacy, blank, and blank-with-legacy
+  files.
+- `src/main_request_tests.rs`: one test proving a real `mriya run` override
+  equal to its documented default beats a different configured value.
+
+One existing test,
 `src/sync/tests/config.rs::volume_mount_path_uses_default_when_unset`, was
 converted from process-environment loading to injected sources without changing
 its count.
@@ -194,7 +209,7 @@ $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [ 428.056s] 537 tests run: 537 passed (2 slow), 0 skipped
+Summary [ 197.978s] 546 tests run: 546 passed (1 slow), 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 

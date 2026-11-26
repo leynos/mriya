@@ -199,3 +199,22 @@ fn run_request_applies_instance_type_and_image_overrides() {
     assert_eq!(request.instance_type, "DEV1-M");
     assert_eq!(request.image_label, "Debian 12 Bookworm");
 }
+
+#[test]
+fn run_request_override_equal_to_the_default_beats_a_configured_value() {
+    let mut config = default_config();
+    config.default_instance_type = String::from("DEV1-XL");
+
+    // The supplied value is the documented default, not the configured one.
+    // An override that merely restates a default must still replace what the
+    // configuration resolved, which is the v0.10.0 rule at the binary seam.
+    let request = request_from_args(
+        &config,
+        &["mriya", "run", "--instance-type", "DEV1-S", "--", "echo"],
+    );
+
+    assert_eq!(
+        request.instance_type, "DEV1-S",
+        "an explicit override equal to the default must beat the configured value"
+    );
+}
