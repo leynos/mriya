@@ -161,6 +161,19 @@ fn fake_sudo(root: &str) -> String {
     format!("printf 'sudo %s\\n' \"$*\" >> '{root}/tools.log'\nexec \"$@\"")
 }
 
+/// Builds the `chown` fake, whose exit status comes from a state file.
+fn fake_chown(root: &str) -> String {
+    format!(
+        concat!(
+            "printf 'chown %s\n' \"$*\" >> '{root}/tools.log'\n",
+            "code=0\n",
+            "if [ -f '{root}/chown-exit' ]; then read -r code < '{root}/chown-exit'; fi\n",
+            "exit \"${{code:-0}}\""
+        ),
+        root = root
+    )
+}
+
 /// Builds the `mkfs.ext4` fake, whose exit status comes from a state file.
 fn fake_mkfs(root: &str) -> String {
     format!(
@@ -216,7 +229,7 @@ fn fakes(root: &str) -> Vec<(&'static str, String)> {
         ("sleep", fake_logger(root, "sleep")),
         ("sync", fake_logger(root, "sync")),
         ("mkdir", fake_logger(root, "mkdir")),
-        ("chown", fake_logger(root, "chown")),
+        ("chown", fake_chown(root)),
         ("sudo", fake_sudo(root)),
         ("mkfs.ext4", fake_mkfs(root)),
         ("mount", fake_mount(root)),
@@ -350,6 +363,16 @@ fn mount_refuses_a_wrong_source_without_chowning() -> Result<()> {
     guest.set("mount-source-override", "/dev/sdc\n")?;
     ensure!(mount_case(&guest)? == "wrong-source");
     ensure!(!guest.log()?.contains("chown"), "{}", guest.log()?);
+    Ok(())
+}
+
+#[test]
+fn mount_refuses_when_ownership_fails() -> Result<()> {
+    let guest = Guest::new()?;
+    guest.set("signature", "ext4\n")?;
+    guest.set("chown-exit", "1\n")?;
+    ensure!(mount_case(&guest)? == "ownership-failed");
+    ensure!(guest.log()?.contains("chown"), "{}", guest.log()?);
     Ok(())
 }
 

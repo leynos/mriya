@@ -35,6 +35,8 @@ pub enum CacheDeviceStatus {
     MountFailed,
     /// The mount source is not the resolved device.
     WrongSource,
+    /// The mount point could not be given to the SSH user.
+    OwnershipFailed,
     /// The format command failed.
     FormatFailed,
     /// The unmount command failed.
@@ -71,6 +73,7 @@ impl CacheDeviceStatus {
             "mount-occupied" => Self::MountOccupied,
             "mount-failed" => Self::MountFailed,
             "wrong-source" => Self::WrongSource,
+            "ownership-failed" => Self::OwnershipFailed,
             "format-failed" => Self::FormatFailed,
             "unmount-failed" => Self::UnmountFailed,
             other => Self::Unknown(other.to_owned()),
@@ -93,6 +96,7 @@ impl CacheDeviceStatus {
             Self::MountOccupied => "mount-occupied",
             Self::MountFailed => "mount-failed",
             Self::WrongSource => "wrong-source",
+            Self::OwnershipFailed => "ownership-failed",
             Self::FormatFailed => "format-failed",
             Self::UnmountFailed => "unmount-failed",
             Self::Unknown(value) => value.as_str(),
