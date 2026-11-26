@@ -277,8 +277,10 @@ provisioning) that will guide subsequent optimizations.
   and polls until the instance stops being listed. It does not inventory
   attached storage or public IP addresses, and a failure after the create
   request succeeds but before `create` returns a handle — volume validation,
-  attachment, or power-on — leaves a stopped server that nothing tracked. Both
-  gaps are tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
+  attachment, or power-on — leaves a server that nothing tracked. That server
+  is normally still stopped, but a power-on whose response times out can leave
+  it running. Both gaps are tracked in
+  [issue #154](https://github.com/leynos/mriya/issues/154).
 - **Volume size is binary:** `[init].volume_size_gb` is multiplied by 1024³ in
   `src/init/helpers.rs`, so the configured number counts gibibytes (GiB), not
   decimal gigabytes. The `_gb` and `_GB` identifiers keep their current
@@ -1536,8 +1538,9 @@ ensure that we don’t leak resources:
   and nothing needs cleanup. Two cases fall outside that: a request whose
   response timed out, where the client saw a failure but the provider may
   already have created the server, and a request that succeeded but was
-  followed by a volume or power-on failure. Both can leave a stopped server.
-  See the status notes under
+  followed by a volume or power-on failure. Both can leave a server behind,
+  stopped unless a timed-out power-on left it running. See the status notes
+  under
   [Implementation status (October 2026)](#implementation-status-october-2026)
   and [issue #154](https://github.com/leynos/mriya/issues/154).
 

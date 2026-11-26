@@ -21,8 +21,9 @@ rather than implied by the tick.
     for a reachable public IPv4, and destroys it. Teardown is verified only by
     polling until the server disappears from the provider's listing; volumes
     and IP addresses are not inventoried. Partial provisioning can leave a
-    stopped server when attachment or power-on fails before a handle is
-    returned. See [issue #154](https://github.com/leynos/mriya/issues/154).
+    server when attachment or power-on fails before a handle is returned,
+    stopped unless a timed-out power-on left it running. See
+    [issue #154](https://github.com/leynos/mriya/issues/154).
   - The boot-volume type and size are left to provider defaults and are not
     recorded. See [issue #155](https://github.com/leynos/mriya/issues/155).
 - [x] Ship git-aware file sync that uses rsync with `.gitignore` filters and

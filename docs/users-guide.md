@@ -225,24 +225,11 @@ An existing, formatted volume can be configured without running `mriya init`:
    state: an unformatted volume fails to mount silently (the mount discards its
    error), and cache routing is then skipped, so builds write to the root disk
    instead.
-2. Record its ID in configuration, using either the environment:
-
-   ```bash
-   export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
-   ```
-
-   or `mriya.toml`:
-
-   ```toml
-   [scaleway]
-   default_volume_id = "11111111-2222-3333-4444-555555555555"
-   ```
-
-3. Run the build command on the remote host:
-
-   ```bash
-   mriya run -- cargo build
-   ```
+2. Record its ID in configuration, either by exporting
+   `SCW_DEFAULT_VOLUME_ID` with the volume's UUID as its value, or by setting
+   `default_volume_id` under `[scaleway]` in `mriya.toml`.
+3. Run the build command on the remote host, for example
+   `mriya run -- cargo build`.
 
 Attachment uses the Instances API server volume map and sends only the volume
 ID and boot flag. Live attachment of an `sbs_volume` through that API is not
@@ -256,14 +243,15 @@ the pre-handle case described under
 
 `mriya init` creates and formats a volume in the configured zone and writes the
 new volume ID into `mriya.toml`. Use `mriya init --force` to replace an
-existing configured volume ID. If any step after the formatter instance is
-created fails — including the instance read it performs before detaching the
-volume — the command attempts to destroy the formatter instance before
-reporting the error, and adds a note when that teardown also fails. A teardown
-failure therefore still leaves a VM billing, and `mriya init` never deletes the
-volume it created: a failed run can leave an unrecorded volume that only manual
-cleanup removes, because the janitor sweeps only resources carrying a
-`mriya-test-run-<id>` tag.
+existing configured volume ID. Once the formatter instance handle exists, any
+later failure — including the instance read it performs before detaching the
+volume — makes the command attempt to destroy that instance before reporting
+the error, and adds a note when the teardown also fails. A teardown failure
+therefore still leaves a VM billing. A failure during instance creation itself,
+after the server request succeeds but before a handle is returned, has no
+handle to destroy. `mriya init` never deletes the volume it created either: a
+failed run can leave an unrecorded volume that only manual cleanup removes,
+because the janitor sweeps only resources carrying a `mriya-test-run-<id>` tag.
 
 Mriya attempts the mount at the configured path, `/mriya` by default, and keeps
 going when it fails. If the mount fails — for example, because the volume has
@@ -346,8 +334,8 @@ they are part of the configuration surface users already have on disk.
 
 Teardown verification stops at server disappearance. Mriya does not inventory
 attached storage or public IP addresses, and a failure between a successful
-create request and the returned handle leaves a stopped server that it cannot
-destroy. See
+create request and the returned handle leaves a server that it cannot destroy.
+See
 [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
 
 Each API request to read or list instances, create a server or volume, power an
@@ -367,8 +355,13 @@ wait can overrun its budget by up to that timeout.
 
 ## Running the integration check
 
-`make scaleway-test` is opt-in and creates real, billable resources. Without it
-the live scenarios skip themselves, so an unconfigured run provisions nothing.
+The live suite is gated on the `MRIYA_RUN_SCALEWAY_TESTS` environment variable,
+not on the Make target. Unless that variable is `1`, `true`, or `yes`, the two
+live test binaries skip every scenario, so an unconfigured run provisions
+nothing. Setting the variable in a bare `cargo test` also creates real,
+billable resources, but only `make scaleway-test` generates a test-run ID and
+runs the janitor sweep around the tests.
+
 Other tests in the suite do use the network stack, but only against loopback
 servers and local files: the Scaleway request tests point the backend at a stub
 HTTP server on the loopback interface, and the sync tests copy files locally.
@@ -564,7 +557,8 @@ listing it. That is the extent of the guarantee:
   [issue #154](https://github.com/leynos/mriya/issues/154).
 - If provisioning fails after the create request succeeded but before a handle
   was returned — volume validation, attachment, or power-on — no handle exists
-  to delete, and the stopped server is left behind.
+  to delete, and the server is left behind. It is normally still stopped, but a
+  power-on whose response times out can leave it running.
 - A failed `mriya init` leaves its created volume unrecorded; see
   [Cache storage is retained and billed](#cache-storage-is-retained-and-billed).
 - The janitor used by the live test suite is tag-scoped to a single test run
