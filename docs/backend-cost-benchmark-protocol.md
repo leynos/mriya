@@ -36,17 +36,35 @@ Every workload record names the exact command vector it ran. A campaign that
 changes a command must start a new campaign identifier, because two different
 commands are not the same completed work.
 
-The commands the harness runs are:
+The commands the harness runs are below. Line continuations are shell
+continuations; each workload is one command vector of `sh -c` and its script.
 
-- `cold-build`: `sh -c 'export CARGO_BUILD_JOBS=8; if [ -n "$CARGO_TARGET_DIR" ];
-  then rm -rf "$CARGO_TARGET_DIR"; else rm -rf target; fi; cargo build
-  --workspace --all-targets --all-features'`
-- `warm-incremental`: the same export and build, preceded by
-  `touch src/lib.rs`
-- `link-heavy`: `sh -c 'export CARGO_BUILD_JOBS=8; cargo test --workspace
-  --all-features --no-run'`
-- `test-execution`: `sh -c 'export CARGO_BUILD_JOBS=8; cargo nextest run
-  --workspace --all-targets --all-features'`
+```sh
+# cold-build
+export CARGO_BUILD_JOBS=8
+if [ -n "$CARGO_TARGET_DIR" ]; then rm -rf "$CARGO_TARGET_DIR"; \
+  else rm -rf target; fi
+cargo build --workspace --all-targets --all-features
+```
+
+```sh
+# warm-incremental
+export CARGO_BUILD_JOBS=8
+touch src/lib.rs
+cargo build --workspace --all-targets --all-features
+```
+
+```sh
+# link-heavy
+export CARGO_BUILD_JOBS=8
+cargo test --workspace --all-features --no-run
+```
+
+```sh
+# test-execution
+export CARGO_BUILD_JOBS=8
+cargo nextest run --workspace --all-targets --all-features
+```
 
 The warm-incremental workload assumes a Rust library crate with a `src/lib.rs`.
 A different workload repository needs its own workload definitions and a new
