@@ -96,11 +96,14 @@ zone from the provider's response to the create-server request; there is no
 preflight availability check before the request is sent. Image labels are
 resolved for the selected architecture and zone:
 
-1. If the project has any images at all, only those are considered; otherwise
-   the public images are used. The two lists are never merged.
-2. Candidates are filtered by the requested architecture and to images the
-   provider reports as `available`.
-3. The newest candidate by creation date is chosen.
+1. Mriya queries project-scoped images with the requested label and
+   architecture as provider-side filters. Any result from that query is used.
+2. Only when that query returns nothing — whether the project has no images at
+   all or none match the label and architecture — does Mriya query public
+   images the same way. The two result sets are never merged.
+3. Candidates are filtered to images the provider reports as `available`, and
+   the newest by creation date is chosen. If none remain, resolution fails with
+   an image-not-found error.
 
 Unsupported values yield provider-specific errors (for example, unknown
 instance types).
@@ -262,12 +265,14 @@ currently succeed against Scaleway, as described above. Use
 formatter instance handle exists, any later failure — including the instance
 read it performs before detaching the volume — makes the command attempt to
 destroy that instance before reporting the error, and adds a note when the
-teardown also fails. A teardown failure therefore still leaves a VM billing. A
-failure during instance creation itself, after the server request succeeds but
-before a handle is returned, has no handle to destroy. `mriya init` never
-deletes the volume it created either: a failed run can leave an unrecorded
-volume that only manual cleanup removes, because the janitor sweeps only
-resources carrying a `mriya-test-run-<id>` tag.
+teardown also fails. A teardown failure leaves the server's final state
+unknown: the delete may have succeeded before the poll failed, or the server
+may still exist and be billable, so check the provider console. A failure
+during instance creation itself, after the server request succeeds but before a
+handle is returned, has no handle to destroy. `mriya init` never deletes the
+volume it created either: a failed run can leave an unrecorded volume that only
+manual cleanup removes, because the janitor sweeps only resources carrying a
+`mriya-test-run-<id>` tag.
 
 Mriya attempts the mount at the configured path, `/mriya` by default, and keeps
 going when it fails. If the mount fails — for example, because the volume has
@@ -342,10 +347,10 @@ they are part of the configuration surface users already have on disk.
 ## What the Scaleway backend does now
 
 - Resolves an image by label, architecture, and zone using the order described
-  under [Run a command remotely](#run-a-command-remotely): public images are
-  consulted only when the project has no images at all, not when its images
-  fail to match the requested label; among the candidates, the newest available
-  match wins.
+  under [Run a command remotely](#run-a-command-remotely): the project-scoped
+  query applies the label and architecture as provider filters, and the public
+  query runs only when that query returns nothing, whether the project has no
+  images or none match; among the candidates, the newest available match wins.
 - Creates an instance with a routed public IPv4 address and tags `mriya` and
   `ephemeral`. The instance type is validated from the provider's create-server
   response rather than by a preflight check.
@@ -469,10 +474,10 @@ Scaleway's Billing FAQ[^1] states that each resource is billed separately for a
 minimum of 60 minutes, and that each uninterrupted period between a start and a
 stop billing event counts as a separate resource. Two distinct five-minute runs
 are therefore two separately metered resources, not ten minutes of one. That
-minimum applies to every resource class in the table, storage and IP addresses
-included, not only to compute. The Instances FAQ[^2] describes CPU instances as
-billed per hour of uptime and GPU instances per minute, except RENDER-S, which
-is billed per hour.
+minimum applies to every resource class the Billing FAQ lists — compute,
+volumes, snapshots, and both IP classes — not only to compute. The Instances
+FAQ[^2] describes CPU instances as billed per hour of uptime and GPU instances
+per minute, except RENDER-S, which is billed per hour.
 
 The two pages disagree on when instance billing starts: the Billing FAQ says it
 starts at power-on, while the Instance pricing guide[^3] says it starts when
@@ -553,11 +558,14 @@ this guide hard-coding a price:
 divided by 60 before an hourly rate is applied. Per-run billed compute, in
 minutes, is `max(M, ceil((s + c + t) / g) * g)`; total compute cost is
 `N * (per-run billed compute) / 60 * R_vm`. Root storage, cache storage, and IP
-charges are separate terms: per-run root storage is billed for each run's own
-root volume; a cache volume is `capacity_GiB * billed_hours * R_storage`, where
-`billed_hours` is `max(M, ceil(retained_minutes / g) * g) / 60`, so the same
-minimum applies as to compute; and the `mriya init` formatter instance is a run
-of its own for compute purposes.
+charges are separate terms, and all of them use the same `billed_hours`, which
+is `max(M, ceil(retained_minutes / g) * g) / 60`:
+
+- Per-run root storage is `capacity_GiB * billed_hours * R_storage` over that
+  run's own root volume.
+- A cache volume is `capacity_GiB * billed_hours * R_storage` over its whole
+  lifetime, which usually spans many runs.
+- The `mriya init` formatter instance is a run of its own for compute purposes.
 
 Take ten runs of a two-minute command with three minutes of setup and three
 minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
@@ -593,8 +601,12 @@ Whenever provisioning has returned a server handle, Mriya sends a delete
 request for that server after the run and polls until the provider stops
 listing it. That is the extent of the guarantee:
 
-- The delete is **attempted** on every path that holds a server handle, and a
-  teardown failure is reported rather than swallowed.
+- The delete is **attempted** whenever the workflow reaches teardown with a
+  server handle, and a teardown failure is reported rather than swallowed.
+  Mriya does not handle `SIGINT` or `SIGTERM`, so an interrupted process —
+  including Ctrl+C during a run — exits without sending the delete at all. The
+  roadmap lists that handling as unfinished; until it lands, treat an
+  interrupted run as leaving a server behind.
 - Verification covers server disappearance only. Attached storage and public IP
   addresses are not inventoried, so a residual volume or address will not be
   reported by Mriya. See
