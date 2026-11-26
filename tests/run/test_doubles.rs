@@ -11,7 +11,6 @@ use std::{
 use mriya::{
     Backend,
     BootVolumePlan,
-    BootVolumeRequest,
     BootVolumeType,
     CompatibilityDefault,
     InstanceHandle,
@@ -32,6 +31,7 @@ pub struct ScriptedBackend {
 #[derive(Debug, Default)]
 struct State {
     fail_on_destroy: bool,
+    preflight_calls: u32,
     destroy_calls: u32,
 }
 
@@ -47,6 +47,13 @@ impl ScriptedBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .fail_on_destroy = true;
+    }
+
+    pub fn preflight_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .preflight_calls
     }
 
     pub fn destroy_calls(&self) -> u32 {
@@ -76,7 +83,13 @@ impl Backend for ScriptedBackend {
         &'a self,
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
-        Box::pin(async move { Ok(scripted_plan()) })
+        Box::pin(async move {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .preflight_calls += 1;
+            Ok(scripted_plan())
+        })
     }
 
     fn create<'a>(
@@ -127,8 +140,3 @@ pub fn scripted_plan() -> BootVolumePlan {
         CompatibilityDefault::default(),
     )
 }
-
-/// The plan the run double records, exposed so a scenario can assert the
-/// handle carries it unchanged.
-#[allow(dead_code)]
-pub fn scripted_request() -> BootVolumeRequest { BootVolumeRequest::default() }

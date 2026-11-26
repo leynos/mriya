@@ -30,23 +30,11 @@ pub enum ScalewayBackendError {
     },
     /// Raised when an image exists but its root volume cannot back the
     /// requested boot-storage type.
-    #[error(
-        "image '{label}' (arch {arch}) in zone {zone} has root volume type \
-         '{observed}', which cannot back {requested}",
-        requested = requested.map_or_else(|| String::from("any boot volume"), |kind| format!("a {kind} boot volume"))
-    )]
-    ImageStorageIncompatible {
-        /// Image label passed by the caller.
-        label: String,
-        /// Architecture requested by the caller.
-        arch: String,
-        /// Zone used for the lookup.
-        zone: String,
-        /// Distinct root-volume types the candidate images reported.
-        observed: String,
-        /// Storage type the profile asked for, if any.
-        requested: Option<BootVolumeType>,
-    },
+    ///
+    /// Boxed because the details are large and this error travels by value
+    /// through every backend result.
+    #[error(transparent)]
+    ImageStorageIncompatible(Box<ImageStorageIncompatibleDetails>),
     /// Raised when the zone's product catalogue does not list the instance
     /// type, so its storage constraints cannot be checked.
     #[error("instance type '{instance_type}' is not listed in zone {zone}'s product catalogue")]
@@ -132,8 +120,10 @@ pub enum ScalewayBackendError {
         message: String,
     },
     /// Raised when the root volume the provider reported differs from the plan.
+    ///
+    /// Boxed for the same reason as [`Self::ImageStorageIncompatible`].
     #[error(transparent)]
-    BootVolumeMismatch(#[from] BootVolumeMismatch),
+    BootVolumeMismatch(Box<BootVolumeMismatch>),
     /// Raised when reading an attached Block Storage volume fails.
     #[error("failed to read Block Storage volume {volume_id} in zone {zone}: {message}")]
     BlockVolumeReadFailed {
@@ -153,7 +143,7 @@ pub enum ScalewayBackendError {
         message: String,
         /// The original failure, kept so callers can still classify it.
         #[source]
-        source: Box<ScalewayBackendError>,
+        source: Box<Self>,
     },
     /// Raised when the server type is not available in the selected zone.
     #[error("instance type '{instance_type}' not available in zone {zone}")]
@@ -235,6 +225,42 @@ pub enum ScalewayBackendError {
         /// Zone where lookup was attempted.
         zone: String,
     },
+}
+
+/// Details of an image whose root volume cannot back a boot volume.
+///
+/// Kept separate from the error enum so the enum stays small enough to travel
+/// by value; see `ScalewayBackendError::ImageStorageIncompatible`.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error(
+    "image '{label}' (arch {arch}) in zone {zone} has root volume type \
+     '{observed}', which cannot back {requested}",
+    requested = requested.map_or_else(
+        || String::from("any boot volume"),
+        |kind| format!("a {kind} boot volume"),
+    )
+)]
+pub struct ImageStorageIncompatibleDetails {
+    /// Image label passed by the caller.
+    pub label: String,
+    /// Architecture requested by the caller.
+    pub arch: String,
+    /// Zone used for the lookup.
+    pub zone: String,
+    /// Distinct root-volume types the candidate images reported.
+    pub observed: String,
+    /// Storage type the profile asked for, if any.
+    pub requested: Option<BootVolumeType>,
+}
+
+impl From<ImageStorageIncompatibleDetails> for ScalewayBackendError {
+    fn from(value: ImageStorageIncompatibleDetails) -> Self {
+        Self::ImageStorageIncompatible(Box::new(value))
+    }
+}
+
+impl From<BootVolumeMismatch> for ScalewayBackendError {
+    fn from(value: BootVolumeMismatch) -> Self { Self::BootVolumeMismatch(Box::new(value)) }
 }
 
 impl From<ScalewayError> for ScalewayBackendError {

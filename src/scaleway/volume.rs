@@ -43,7 +43,7 @@ impl VolumeAttachment {
     /// existing local attachments keep their current payload.
     ///
     /// For example, the cache volume at index `"1"` renders `{"id": ...}`.
-    pub(crate) fn cache(id: String) -> Self {
+    pub(crate) const fn cache(id: String) -> Self {
         Self {
             id,
             boot: false,

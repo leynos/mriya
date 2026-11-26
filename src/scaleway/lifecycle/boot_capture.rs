@@ -23,7 +23,7 @@ use crate::{
         RootVolume,
     },
     scaleway::lifecycle::{
-        boot_plan::{ImageFacts, resolve_boot_volume},
+        boot_plan::{ImageFacts, Resolution, resolve_boot_volume},
         create::CreatedServer,
     },
     teardown::append_teardown_note,
@@ -60,6 +60,32 @@ pub(in crate::scaleway) struct ResolvedBoot {
     pub(in crate::scaleway) image_id: String,
 }
 
+/// A create that has produced a server but has not finished.
+///
+/// Grouping these keeps the follow-up signature short and makes the inputs a
+/// caller must supply explicit.
+#[derive(Debug)]
+pub(in crate::scaleway) struct CreatedInstance<'a> {
+    /// The request that produced the server.
+    pub(in crate::scaleway) request: &'a InstanceRequest,
+    /// The server the provider reported.
+    pub(in crate::scaleway) server: &'a CreatedServer,
+    /// The plan the create request sent.
+    pub(in crate::scaleway) plan: &'a BootVolumePlan,
+    /// The handle identifying the server, with no boot record yet.
+    pub(in crate::scaleway) handle: InstanceHandle,
+}
+
+/// Why a created instance could not be finished, keeping the handle so the
+/// caller can still destroy the server.
+#[derive(Debug)]
+pub(in crate::scaleway) struct CreateFailure {
+    /// The original failure.
+    pub(in crate::scaleway) error: ScalewayBackendError,
+    /// A handle identifying the server to clean up.
+    pub(in crate::scaleway) handle: InstanceHandle,
+}
+
 impl ScalewayBackend {
     /// Resolves the boot plan and the image identifier in one pass.
     ///
@@ -79,17 +105,17 @@ impl ScalewayBackend {
             .await?;
         let image = self.resolve_image_id(request).await?;
 
-        let plan = resolve_boot_volume(
-            &request.instance_type,
-            &request.boot_volume,
-            &product,
-            ImageFacts {
+        let plan = resolve_boot_volume(Resolution {
+            instance_type: &request.instance_type,
+            request: &request.boot_volume,
+            product: &product,
+            image: ImageFacts {
                 size_bytes: image.size_bytes,
                 storage: image.storage,
                 volume_type: &image.volume_type,
             },
-            &request.architecture,
-        )?;
+            requested_architecture: &request.architecture,
+        })?;
 
         Ok(ResolvedBoot {
             plan,
@@ -121,75 +147,112 @@ impl ScalewayBackend {
     /// powers the instance on.
     ///
     /// On failure it returns the reason together with a handle that still
-    /// identifies the instance, so the caller can destroy it. The cache volume
-    /// is deliberately not detached first: a failed attachment may or may not
-    /// have taken effect, and deleting the server is the guaranteed cleanup
-    /// for an ephemeral instance.
+    /// identifies the instance, so the caller can destroy it.
+    ///
+    /// The steps are ordered so cleanup stays safe: verification runs before
+    /// the cache is attached, so a verification failure can destroy the server
+    /// with nothing but the ephemeral boot disk on it. A power-on failure
+    /// happens with the cache attached, and deleting the server would delete
+    /// that cache, so the cache is detached first; a failed detach leaves the
+    /// server running instead.
     ///
     /// # Errors
     ///
     /// Returns the first failing step's error paired with the handle.
     pub(in crate::scaleway) async fn finish_created_server(
         &self,
-        request: &InstanceRequest,
-        server: &CreatedServer,
-        plan: &BootVolumePlan,
-        mut handle: InstanceHandle,
-    ) -> Result<InstanceHandle, (ScalewayBackendError, InstanceHandle)> {
+        created: CreatedInstance<'_>,
+    ) -> Result<InstanceHandle, Box<CreateFailure>> {
+        let CreatedInstance {
+            request,
+            server,
+            plan,
+            mut handle,
+        } = created;
+
+        let fail = |error: ScalewayBackendError, failed_handle: &InstanceHandle| {
+            Box::new(CreateFailure {
+                error,
+                handle: failed_handle.clone(),
+            })
+        };
+
         let allocation = self
-            .verify_root_volume(&server.id, &request.zone, server, plan)
+            .verify_root_volume(server, &request.zone, plan)
             .await
-            .map_err(|error| (error, handle.clone()))?;
+            .map_err(|error| fail(error, &handle))?;
         handle.boot_volume = Some(allocation);
 
         if let Some(cache_volume_id) = request.volume_id.as_deref() {
             let root = handle
                 .boot_volume
                 .as_ref()
-                .map(|allocation| allocation.root.clone())
+                .map(|record| record.root.clone())
                 .ok_or_else(|| {
-                    (
+                    fail(
                         ScalewayBackendError::VolumeNotFound {
                             volume_id: String::from("0"),
                             zone: request.zone.clone(),
                         },
-                        handle.clone(),
+                        &handle,
                     )
                 })?;
             Self::validate_cache_volume_id(cache_volume_id, &root.id, &handle)
-                .map_err(|error| (error, handle.clone()))?;
+                .map_err(|error| fail(error, &handle))?;
             self.attach_volume(&handle, cache_volume_id, &root)
                 .await
-                .map_err(|error| (error, handle.clone()))?;
+                .map_err(|error| fail(error, &handle))?;
         }
 
         let zone = crate::scaleway::types::Zone::from(request.zone.as_str());
-        self.power_on_if_needed(&zone, &server.snapshot_ref())
-            .await
-            .map_err(|error| (error, handle.clone()))?;
+        if let Err(power_error) = self.power_on_if_needed(&zone, &server.snapshot_ref()).await {
+            // Deleting a server through the API also deletes its attached
+            // volumes. With a cache volume attached, destroying the server
+            // would destroy the user's cache, so the cache is detached first.
+            // A failed detach leaves the server running rather than trading a
+            // billing instance for someone's data.
+            if let Some(cache_volume_id) = request.volume_id.as_deref()
+                && let Err(detach_error) = self.detach_volume(&handle, cache_volume_id).await
+            {
+                let message = format!(
+                    "{power_error} (the cache volume {cache_volume_id} could not be \
+                     detached: {detach_error}; the server was left running rather \
+                     than risk deleting the cache)"
+                );
+                return Err(Box::new(CreateFailure {
+                    error: ScalewayBackendError::CreateCleanupFailed {
+                        message,
+                        source: Box::new(power_error),
+                    },
+                    handle,
+                }));
+            }
+            return Err(fail(power_error, &handle));
+        }
 
         Ok(handle)
     }
 
     /// Destroys the instance after a failed create and returns the original
-    /// error, with the teardown outcome appended when that also failed.
+    /// error, with the teardown outcome appended only when that also failed.
     ///
-    /// The original error is preserved as the source, so a caller can still
-    /// classify it while the message carries both outcomes.
+    /// The original error is preserved as the source of the combined error, so
+    /// a caller can still classify it while the message carries both outcomes.
     ///
     /// For example, a root-volume mismatch whose cleanup succeeded returns the
     /// mismatch unchanged, while one whose cleanup failed appends
     /// `(teardown also failed: ...)`.
     pub(in crate::scaleway) async fn clean_up_after_failed_create(
         &self,
-        handle: &InstanceHandle,
-        error: ScalewayBackendError,
+        failure: Box<CreateFailure>,
     ) -> ScalewayBackendError {
-        let teardown_error = self.destroy_for_cleanup(handle).await.err();
-        let message = append_teardown_note(error.to_string(), teardown_error.as_ref());
-        ScalewayBackendError::CreateCleanupFailed {
-            message,
-            source: Box::new(error),
+        let CreateFailure { error, handle } = *failure;
+        match self.destroy_for_cleanup(&handle).await {
+            Ok(()) => error,
+            Err(teardown_error) => ScalewayBackendError::CreateCleanupFailed {
+                message: append_teardown_note(error.to_string(), Some(&teardown_error)),
+                source: Box::new(error),
+            },
         }
     }
 
@@ -222,17 +285,17 @@ impl ScalewayBackend {
     /// read fails.
     ///
     /// For example, a local 10 GB root yields that identifier, `l_ssd`, and
-    /// 10_000_000_000 bytes.
+    /// `10_000_000_000` bytes.
     pub(in crate::scaleway) async fn capture_root_volume(
         &self,
-        instance_id: &str,
         zone: &str,
         server: &CreatedServer,
     ) -> Result<RootVolume, ScalewayBackendError> {
+        let instance_id = server.id.as_str();
         let (_, volume) = server.boot_volume().ok_or_else(|| {
-            ScalewayBackendError::BootVolumeMismatch(BootVolumeMismatch::Missing {
+            ScalewayBackendError::BootVolumeMismatch(Box::new(BootVolumeMismatch::Missing {
                 instance_id: instance_id.to_owned(),
-            })
+            }))
         })?;
 
         let volume_type = super::create::reported_volume_type(volume).ok_or_else(|| {
@@ -333,13 +396,11 @@ impl ScalewayBackend {
     /// fails naming both sizes.
     pub(in crate::scaleway) async fn verify_root_volume(
         &self,
-        instance_id: &str,
-        zone: &str,
         server: &CreatedServer,
+        zone: &str,
         plan: &BootVolumePlan,
     ) -> Result<BootVolumeAllocation, ScalewayBackendError> {
-        let root = self.capture_root_volume(instance_id, zone, server).await?;
-        BootVolumeAllocation::verify(instance_id, plan, root)
-            .map_err(ScalewayBackendError::BootVolumeMismatch)
+        let root = self.capture_root_volume(zone, server).await?;
+        BootVolumeAllocation::verify(&server.id, plan, root).map_err(ScalewayBackendError::from)
     }
 }

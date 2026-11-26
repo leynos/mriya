@@ -452,8 +452,10 @@ fn attached_sbs_instance() -> Reply {
     let mut instance: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/detach-instance.json"))
             .expect("detach fixture is JSON");
-    instance["server"]["volumes"]["0"]["volume_type"] =
-        serde_json::Value::String(String::from("sbs_volume"));
+    let entry = instance
+        .pointer_mut("/server/volumes/0")
+        .expect("detach fixture has a root volume");
+    entry["volume_type"] = serde_json::Value::String(String::from("sbs_volume"));
     Reply {
         status: 200,
         body: serde_json::to_string(&instance).expect("serialize fixture"),

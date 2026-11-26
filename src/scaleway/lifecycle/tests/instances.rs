@@ -133,10 +133,10 @@ async fn create_instance_stopped_sends_an_sbs_boot_volume(
         })
         .await?;
     result?;
-    let request = only_request(&requests)?;
+    let body = request_body(only_request(&requests)?)?;
     assert_eq!(
-        request_body(request)?["volumes"]["0"],
-        serde_json::json!({
+        body.pointer("/volumes/0").context("boot entry missing")?,
+        &serde_json::json!({
             "volume_type": "sbs_volume",
             "size": 30_000_000_000u64,
             "boot": true,
@@ -167,7 +167,9 @@ async fn create_instance_stopped_keeps_the_cache_volume_out_of_the_boot_entry(
         .await?;
     result?;
     let body = request_body(only_request(&requests)?)?;
-    let boot_entry = body["volumes"]["0"]
+    let boot_entry = body
+        .pointer("/volumes/0")
+        .context("boot entry missing")?
         .as_object()
         .context("boot entry is not an object")?;
     assert!(
@@ -213,5 +215,45 @@ async fn create_instance_stopped_preserves_a_provider_rejection(
         "{error:?}"
     );
     assert_eq!(requests.len(), 1);
+    Ok(())
+}
+
+/// Scenario: the provider answers a create with a Block Storage root volume.
+///
+/// Invariant: the response decodes even though the volume reports
+/// `"size": null`, and the boot entry is found by its flag. The SDK's instance
+/// type requires a size on every volume, which is why creation uses a local
+/// minimal model.
+#[rstest]
+#[tokio::test]
+async fn create_instance_stopped_decodes_an_sbs_create_response(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let sbs_response = Reply {
+        status: 201,
+        body: include_str!("fixtures/create-server-sbs.json").to_owned(),
+    };
+    let plan = BootVolumePlan::new(
+        BootVolumeType::Sbs,
+        20_000_000_000,
+        CompatibilityDefault::default(),
+    );
+
+    let (result, _) = with_stub(backend_fixture, vec![sbs_response], async |backend| {
+        backend
+            .create_instance_stopped(&base_request, "img-test", &plan)
+            .await
+    })
+    .await?;
+
+    let server = result?;
+    let (index, volume) = server
+        .boot_volume()
+        .context("the create response should carry a boot volume")?;
+    assert_eq!(index, "0");
+    assert_eq!(volume.id, "vol-root");
+    assert_eq!(volume.volume_type.as_deref(), Some("sbs_volume"));
+    assert_eq!(volume.size, None, "an SBS entry reports no size here");
     Ok(())
 }

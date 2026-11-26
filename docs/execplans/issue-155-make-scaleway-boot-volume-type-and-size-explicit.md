@@ -72,7 +72,7 @@ Observable success:
   `GET /block/v1/zones/{zone}/volumes/{id}`, and treats a failure there as a
   post-POST failure that destroys the server.
 - The `sbs_snapshot`/`sbs_volume`/`unified` image-root vocabulary is only
-  partly documented. Anything unrecognised is refused by name rather than
+  partly documented. Anything unrecognized is refused by name rather than
   guessed at.
 - Attachment PATCHes for cache volumes must carry `volume_type: "sbs_volume"`
   only for SBS volumes; sending it for a local volume would be wrong.
@@ -224,6 +224,28 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 
 ## Surprises & Discoveries
 
+- Observation: `clippy::result_large_err` is denied, and the new error variants
+  pushed `ScalewayBackendError` past the 128-byte threshold, which then made
+  `CliError` too large through `RunError`/`InitError`.
+  Evidence: the first full lint run reported "the `Err`-variant returned from
+  this function is very large" at `src/cli_args.rs` and `src/test_backdoors.rs`.
+  Consequence: `ImageStorageIncompatible` and `BootVolumeMismatch` carry boxed
+  payloads, and `ScalewayBackendError` is back to 80 bytes.
+- Observation: the SDK's `ScalewayInstance` requires a non-optional `size` on
+  every volume entry, but the provider reports `"size": null` for an attached
+  Block Storage volume.
+  Evidence: `scaleway-rs-0.1.9/src/data/image.rs` declares `size: u64` on
+  `ScalewayImageExtraVolume`, while the Instances API schema types the same
+  field as nullable.
+  Consequence: creation, the single-instance read, and the readiness list all
+  decode through the local minimal model. The SBS fixture keeps `size: null` so
+  the regression is caught locally.
+- Observation: the repository's pinned en-GB-oxendict dictionary uses Oxford
+  `-ize`/`-able` forms, so `unrecognised` and `unparseable` are rejected in
+  favour of `unrecognized` and `unparsable`.
+  Evidence: `make spelling` reported both as corrections.
+  Consequence: prose uses the Oxford forms throughout.
+
 - Observation: this branch is based on `200563a`, which predates the `#153`
   Block Storage migration. The cache volume here is still created through the
   Instances API with `b_ssd`, and the SBS migration lands separately. Evidence:
@@ -240,6 +262,32 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   rather than in `src/scaleway/`. Rationale: the `Backend` port must be able to
   name a boot plan without importing Scaleway types, and a future backend
   should reuse it.
+- Decision: replace the SDK's `ScalewayInstance` with a local minimal model for
+  the create response, the single-instance read, and the list readiness polling
+  uses. Rationale: the SDK type drops the `boot` flag that identifies the root
+  volume, and it requires a non-optional `size` on every volume entry while the
+  provider reports `null` for an attached Block Storage volume. Both make it
+  unusable for a boot-volume feature. One model serves all three reads so they
+  cannot disagree.
+- Decision: on a power-on failure after the cache volume is attached, detach
+  the cache before destroying the server, and leave the server running if the
+  detach fails. Rationale: deleting a server through the API deletes attached
+  volumes, so destroying with a cache attached would destroy the user's cache.
+  The plan says to destroy best-effort and not to delete volumes; this keeps
+  that intent. The trade-off — a billing server left behind, named in the error
+  — is the safer one, and ownership-aware cleanup remains #154's scope.
+- Decision: `clean_up_after_failed_create` returns the original error unchanged
+  when the delete succeeds, and wraps it in `CreateCleanupFailed` only when the
+  delete also failed, preserving the original as the source. Rationale: matches
+  `src/run.rs`'s `destroy_with_note`, so callers can still classify the failure
+  in the common case.
+- Decision: stop catalogue pagination when a page adds no key an earlier page
+  had not already shown. Rationale: the catalogue is a map rather than a list,
+  so counting pages alone cannot detect the end; an endpoint that ignored the
+  page parameter would otherwise loop forever.
+- Decision: drop images whose root type this backend does not model, even when
+  the profile named no storage type. Rationale: such an image cannot back any
+  plan, so selecting it and failing would lose to an older usable image.
 
 ## Outcomes & Retrospective
 

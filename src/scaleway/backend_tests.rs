@@ -35,7 +35,7 @@ fn request_with_type(instance_type: &str) -> InstanceRequest {
         organisation_id: None,
         architecture: String::from("x86_64"),
         volume_id: None,
-        boot_volume: Default::default(),
+        boot_volume: crate::boot_volume::BootVolumeRequest::default(),
         cloud_init_user_data: None,
     }
 }

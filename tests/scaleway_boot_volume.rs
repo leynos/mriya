@@ -61,7 +61,7 @@ struct Case {
 
 /// Reports whether the suite was opted into.
 fn enabled() -> bool {
-    DefaultEnv.raw(ENABLE_VARIABLE).ok().is_some_and(|value| {
+    DefaultEnv.raw(ENABLE_VARIABLE).is_ok_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes"
@@ -74,7 +74,7 @@ fn enabled() -> bool {
 /// # Errors
 ///
 /// Returns a description naming the variable when the list is absent, empty,
-/// or contains an unparseable case.
+/// or contains an unparsable case.
 fn cases_from_env() -> Result<Vec<Case>, String> {
     let raw = DefaultEnv
         .raw(CASES_VARIABLE)
@@ -97,7 +97,7 @@ fn missing_cases() -> String {
 ///
 /// # Errors
 ///
-/// Returns the offending entry when a field is missing or unparseable.
+/// Returns the offending entry when a field is missing or unparsable.
 fn parse_cases(raw: &str) -> Result<Vec<Case>, String> {
     raw.split(';')
         .map(str::trim)
@@ -466,7 +466,7 @@ async fn read_block_volume(
     zone: &str,
     volume_id: &str,
 ) -> Result<(u64, String), String> {
-    let url = format!("{}/zones/{zone}/volumes/{volume_id}", BLOCK_API);
+    let url = format!("{BLOCK_API}/zones/{zone}/volumes/{volume_id}");
     let body = get_json(client, &url, &config.secret_key)
         .await?
         .ok_or_else(|| format!("Block Storage has no volume {volume_id}"))?;

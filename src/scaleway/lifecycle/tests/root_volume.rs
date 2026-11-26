@@ -20,8 +20,22 @@ use crate::{
         CompatibilityDefault,
         RootVolume,
     },
-    scaleway::{ScalewayBackend, ScalewayBackendError, lifecycle::create::CreatedServer},
+    scaleway::{
+        ScalewayBackend,
+        ScalewayBackendError,
+        lifecycle::{CreatedInstance, create::CreatedServer},
+    },
 };
+
+/// Reports whether `error` is a root-volume mismatch of the `Differs` kind.
+fn is_differing_mismatch(error: &ScalewayBackendError) -> bool {
+    match error {
+        ScalewayBackendError::BootVolumeMismatch(mismatch) => {
+            matches!(**mismatch, BootVolumeMismatch::Differs { .. })
+        }
+        _ => false,
+    }
+}
 
 /// A 20 GB local plan, matching `local_server`.
 fn local_plan() -> BootVolumePlan {
@@ -64,20 +78,20 @@ fn local_server() -> Result<CreatedServer> {
 
 /// A server whose root volume is a Block Storage disk.
 ///
-/// The create response omits the size on purpose: that is exactly why the
-/// Block Storage read exists.
+/// The fixture reports `"size": null` on purpose: that is exactly why the
+/// Block Storage read exists, and it is why the create response is decoded
+/// with a local model rather than the SDK's instance type.
 fn sbs_server() -> Result<CreatedServer> {
-    server(serde_json::json!({
-        "id": "srv-1",
-        "state": "stopped",
-        "volumes": {
-            "0": {
-                "id": "vol-root",
-                "volume_type": "sbs_volume",
-                "boot": true,
-            }
-        }
-    }))
+    // The fixture is a complete provider response, so it is unwrapped the way
+    // creation unwraps it. Keeping it wrapped lets the same file serve the
+    // create-payload test, which posts it as a raw body.
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        server: CreatedServer,
+    }
+    let wrapped: Wrapper = serde_json::from_str(include_str!("fixtures/create-server-sbs.json"))
+        .context("SBS create fixture should decode")?;
+    Ok(wrapped.server)
 }
 
 /// A Block Storage read reporting a 20 GB volume.
@@ -100,7 +114,7 @@ async fn local_root_is_captured_from_the_create_response(
     let server = local_server()?;
     let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .verify_root_volume("srv-1", "zone", &server, &local_plan())
+            .verify_root_volume(&server, "zone", &local_plan())
             .await
     })
     .await?;
@@ -129,7 +143,7 @@ async fn sbs_root_is_read_from_the_block_api(backend_fixture: ScalewayBackend) -
         vec![block_volume_reply()],
         async |backend| {
             backend
-                .verify_root_volume("srv-1", "zone", &server, &sbs_plan())
+                .verify_root_volume(&server, "zone", &sbs_plan())
                 .await
         },
     )
@@ -173,19 +187,13 @@ async fn a_differing_local_size_is_rejected(backend_fixture: ScalewayBackend) ->
     }))?;
     let (result, _) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .verify_root_volume("srv-1", "zone", &server, &local_plan())
+            .verify_root_volume(&server, "zone", &local_plan())
             .await
     })
     .await?;
 
     let error = result.expect_err("a smaller root than planned must fail");
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::BootVolumeMismatch(BootVolumeMismatch::Differs { .. })
-        ),
-        "{error:?}"
-    );
+    assert!(is_differing_mismatch(&error), "{error:?}");
     let message = error.to_string();
     assert!(message.contains("20 GB"), "{message}");
     assert!(message.contains("10 GB"), "{message}");
@@ -205,7 +213,7 @@ async fn a_differing_type_is_rejected(backend_fixture: ScalewayBackend) -> Resul
         vec![block_volume_reply()],
         async |backend| {
             backend
-                .verify_root_volume("srv-1", "zone", &server, &local_plan())
+                .verify_root_volume(&server, "zone", &local_plan())
                 .await
         },
     )
@@ -228,7 +236,7 @@ async fn a_missing_root_is_reported(backend_fixture: ScalewayBackend) -> Result<
     let server = server(serde_json::json!({"id": "srv-1", "state": "stopped"}))?;
     let (result, _) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .verify_root_volume("srv-1", "zone", &server, &local_plan())
+            .verify_root_volume(&server, "zone", &local_plan())
             .await
     })
     .await?;
@@ -237,9 +245,8 @@ async fn a_missing_root_is_reported(backend_fixture: ScalewayBackend) -> Result<
     assert!(
         matches!(
             error,
-            ScalewayBackendError::BootVolumeMismatch(BootVolumeMismatch::Missing {
-                ref instance_id,
-            }) if instance_id == "srv-1"
+            ScalewayBackendError::BootVolumeMismatch(ref mismatch)
+                if matches!(**mismatch, BootVolumeMismatch::Missing { ref instance_id } if instance_id == "srv-1")
         ),
         "{error:?}"
     );
@@ -260,7 +267,7 @@ async fn a_rejected_block_read_is_reported(backend_fixture: ScalewayBackend) -> 
     };
     let (result, _) = with_stub(backend_fixture, vec![rejection], async |backend| {
         backend
-            .verify_root_volume("srv-1", "zone", &server, &sbs_plan())
+            .verify_root_volume(&server, "zone", &sbs_plan())
             .await
     })
     .await?;
@@ -305,7 +312,7 @@ async fn the_boot_flag_selects_the_root_entry(backend_fixture: ScalewayBackend) 
     }))?;
     let (result, _) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .verify_root_volume("srv-1", "zone", &server, &local_plan())
+            .verify_root_volume(&server, "zone", &local_plan())
             .await
     })
     .await?;
@@ -326,4 +333,126 @@ fn root_volume_carries_the_identifier_type_and_size() {
     assert_eq!(root.id, "vol-root");
     assert_eq!(root.volume_type.provider_id(), "sbs_volume");
     assert_eq!(root.size_bytes, 20_000_000_000);
+}
+
+/// A minimal request, used by the cleanup cases.
+fn request() -> crate::backend::InstanceRequest {
+    crate::backend::InstanceRequest::builder()
+        .image_label("image")
+        .instance_type("type")
+        .zone("zone")
+        .project_id("proj")
+        .architecture("x86_64")
+        .build()
+        .expect("a complete request should build")
+}
+
+/// A handle for the server the cleanup cases destroy.
+fn handle() -> crate::backend::InstanceHandle {
+    crate::backend::InstanceHandle {
+        id: String::from("srv-1"),
+        zone: String::from("zone"),
+        boot_volume: None,
+    }
+}
+
+/// A successful delete response.
+fn deleted() -> Reply {
+    Reply {
+        status: 204,
+        body: String::new(),
+    }
+}
+
+/// Scenario: a post-POST failure destroys the server it created.
+///
+/// Invariant: the original mismatch is returned unchanged, and the DELETE the
+/// cleanup issued reaches the substitutable API base, so a failed create does
+/// not leave a billing instance behind.
+#[rstest]
+#[tokio::test]
+async fn a_failed_create_destroys_the_server(backend_fixture: ScalewayBackend) -> Result<()> {
+    let server = local_server()?;
+    // A 10 GB plan against a 20 GB root fails verification.
+    let plan = BootVolumePlan::new(
+        BootVolumeType::Local,
+        10_000_000_000,
+        CompatibilityDefault::default(),
+    );
+
+    let (result, requests) = with_stub(backend_fixture, vec![deleted()], async |backend| {
+        let request = request();
+        let failure = backend
+            .finish_created_server(CreatedInstance {
+                request: &request,
+                server: &server,
+                plan: &plan,
+                handle: handle(),
+            })
+            .await
+            .expect_err("a mismatched root must fail the create");
+        Ok::<_, ScalewayBackendError>(backend.clean_up_after_failed_create(failure).await)
+    })
+    .await?;
+
+    // The cleanup reports the original failure as its success value, because
+    // the work under test is "what does cleanup return", not "did it fail".
+    let error = result.expect("the cleanup outcome should be reported");
+    assert!(
+        is_differing_mismatch(&error),
+        "a successful cleanup must not change the error: {error:?}"
+    );
+    let request = super::http_stub::only_request(&requests)?;
+    assert!(request.starts_with("DELETE "), "{request}");
+    assert_eq!(
+        request_url(request)?.path(),
+        "/instance/v1/zones/zone/servers/srv-1"
+    );
+    Ok(())
+}
+
+/// Scenario: the cleanup delete is itself rejected.
+///
+/// Invariant: the original error survives as the source while the message
+/// carries the teardown outcome, so an operator can see both that the create
+/// failed and that the server may still exist.
+#[rstest]
+#[tokio::test]
+async fn a_failed_cleanup_reports_both_outcomes(backend_fixture: ScalewayBackend) -> Result<()> {
+    let server = local_server()?;
+    let plan = BootVolumePlan::new(
+        BootVolumeType::Local,
+        10_000_000_000,
+        CompatibilityDefault::default(),
+    );
+    let rejection = Reply {
+        status: 500,
+        body: String::from(r#"{"message":"boom"}"#),
+    };
+
+    let (result, _) = with_stub(backend_fixture, vec![rejection], async |backend| {
+        let request = request();
+        let failure = backend
+            .finish_created_server(CreatedInstance {
+                request: &request,
+                server: &server,
+                plan: &plan,
+                handle: handle(),
+            })
+            .await
+            .expect_err("a mismatched root must fail the create");
+        Ok::<_, ScalewayBackendError>(backend.clean_up_after_failed_create(failure).await)
+    })
+    .await?;
+
+    let error = result.expect("the cleanup outcome should be reported");
+    let ScalewayBackendError::CreateCleanupFailed { message, source } = &error else {
+        panic!("expected a combined cleanup failure, got {error:?}");
+    };
+    assert!(message.contains("teardown also failed"), "{message}");
+    assert!(
+        is_differing_mismatch(source),
+        "the original failure must be preserved as the source: {source:?}"
+    );
+    Ok(())
 }

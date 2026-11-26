@@ -49,13 +49,12 @@ impl ScalewayBackend {
 
         let root = instance
             .volumes
-            .volumes
             .get("0")
             .map(|volume| {
                 let volume_type = volume
                     .volume_type
-                    .parse::<crate::boot_volume::BootVolumeType>()
-                    .ok();
+                    .as_deref()
+                    .and_then(|value| value.parse::<crate::boot_volume::BootVolumeType>().ok());
                 (volume.id.clone(), volume_type)
             })
             .ok_or_else(|| ScalewayBackendError::VolumeNotFound {

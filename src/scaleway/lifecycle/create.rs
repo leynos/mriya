@@ -105,7 +105,7 @@ struct CreateBootVolume {
 impl CreateBootVolume {
     /// Builds the boot entry from a resolved plan.
     ///
-    /// For example, a 20 GB local plan yields `l_ssd`, 20_000_000_000, and
+    /// For example, a 20 GB local plan yields `l_ssd`, `20_000_000_000`, and
     /// `boot: true`.
     fn from_plan(plan: &BootVolumePlan) -> Self {
         Self {
@@ -116,7 +116,7 @@ impl CreateBootVolume {
     }
 
     /// The single index the boot entry occupies.
-    fn index() -> &'static str { BOOT_VOLUME_INDEX }
+    const fn index() -> &'static str { BOOT_VOLUME_INDEX }
 }
 
 /// Wrapper for the server object returned by a successful create call.

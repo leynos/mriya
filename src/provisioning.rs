@@ -83,16 +83,18 @@ pub fn render_plan_line(plan: &BootVolumePlan) -> String {
 /// `cache volume: none`.
 #[must_use]
 pub fn render_allocation_lines(handle: &InstanceHandle, cache_volume_id: Option<&str>) -> String {
-    let boot = match &handle.boot_volume {
-        Some(allocation) => format!(
-            "boot volume: {} {} {} [{}]",
-            allocation.root.id,
-            allocation.root.volume_type.provider_id(),
-            format_size(allocation.root.size_bytes),
-            source_label(&allocation.plan)
-        ),
-        None => String::from("boot volume: unknown"),
-    };
+    let boot = handle.boot_volume.as_ref().map_or_else(
+        || String::from("boot volume: unknown"),
+        |record| {
+            format!(
+                "boot volume: {} {} {} [{}]",
+                record.root.id,
+                record.root.volume_type.provider_id(),
+                format_size(record.root.size_bytes),
+                source_label(&record.plan)
+            )
+        },
+    );
     let cache = cache_volume_id.map_or_else(
         || String::from("cache volume: none"),
         |id| format!("cache volume: {id}"),

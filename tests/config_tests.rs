@@ -307,6 +307,20 @@ fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConf
     );
 }
 
+/// One boot-setting case: what the profile says and what the request should
+/// carry.
+#[derive(Clone, Copy, Debug)]
+struct BootSettingCase {
+    /// Configured `boot_volume_type`.
+    configured_type: Option<&'static str>,
+    /// Configured `boot_volume_size_gb`.
+    configured_size: Option<u32>,
+    /// Type the request should carry.
+    expected_type: Option<BootVolumeType>,
+    /// Size the request should carry.
+    expected_size: Option<u32>,
+}
+
 /// Boot-volume settings reach the request unchanged, keeping the cache volume
 /// separate.
 ///
@@ -314,21 +328,38 @@ fn config_expands_tilde_for_cloud_init_user_data_file(valid_config: ScalewayConf
 /// fields: a request that sets both must show both, and a request that sets
 /// only one must leave the other at its default.
 #[rstest]
-#[case::both_explicit(Some("l_ssd"), Some(20), Some(BootVolumeType::Local), Some(20))]
-#[case::type_only(Some("sbs_volume"), None, Some(BootVolumeType::Sbs), None)]
-#[case::size_only(None, Some(30), None, Some(30))]
-#[case::neither(None, None, None, None)]
+#[case::both_explicit(BootSettingCase {
+    configured_type: Some("l_ssd"),
+    configured_size: Some(20),
+    expected_type: Some(BootVolumeType::Local),
+    expected_size: Some(20),
+})]
+#[case::type_only(BootSettingCase {
+    configured_type: Some("sbs_volume"),
+    configured_size: None,
+    expected_type: Some(BootVolumeType::Sbs),
+    expected_size: None,
+})]
+#[case::size_only(BootSettingCase {
+    configured_type: None,
+    configured_size: Some(30),
+    expected_type: None,
+    expected_size: Some(30),
+})]
+#[case::neither(BootSettingCase {
+    configured_type: None,
+    configured_size: None,
+    expected_type: None,
+    expected_size: None,
+})]
 fn boot_volume_settings_reach_the_request(
     valid_config: ScalewayConfig,
-    #[case] configured_type: Option<&str>,
-    #[case] configured_size: Option<u32>,
-    #[case] expected_type: Option<BootVolumeType>,
-    #[case] expected_size: Option<u32>,
+    #[case] case: BootSettingCase,
 ) {
     let cfg = ScalewayConfig {
         default_volume_id: Some(String::from("vol-cache")),
-        boot_volume_type: configured_type.map(str::to_owned),
-        boot_volume_size_gb: configured_size,
+        boot_volume_type: case.configured_type.map(str::to_owned),
+        boot_volume_size_gb: case.configured_size,
         ..valid_config
     };
 
@@ -336,8 +367,8 @@ fn boot_volume_settings_reach_the_request(
         .as_request_with_env(&env_with_home(Err(std::env::VarError::NotPresent)))
         .expect("boot-volume settings should produce a request");
 
-    assert_eq!(request.boot_volume.volume_type, expected_type);
-    assert_eq!(request.boot_volume.size_gb, expected_size);
+    assert_eq!(request.boot_volume.volume_type, case.expected_type);
+    assert_eq!(request.boot_volume.size_gb, case.expected_size);
     assert_eq!(
         request.volume_id.as_deref(),
         Some("vol-cache"),

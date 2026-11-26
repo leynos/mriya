@@ -168,7 +168,11 @@ fn compatibility_default_describes_settings(
 #[case::exact(20_000_000_000, 20)]
 #[case::rounded_up(20_000_000_001, 21)]
 fn plan_reports_rounded_up_capacity(#[case] size_bytes: u64, #[case] expected_gb: u32) {
-    let plan = BootVolumePlan::new(BootVolumeType::Local, size_bytes, Default::default());
+    let plan = BootVolumePlan::new(
+        BootVolumeType::Local,
+        size_bytes,
+        CompatibilityDefault::default(),
+    );
     assert_eq!(plan.size_gb(), expected_gb);
 }
 

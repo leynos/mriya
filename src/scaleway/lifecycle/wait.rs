@@ -15,10 +15,7 @@ use super::{
     super::{ScalewayBackend, ScalewayBackendError},
     InstanceSnapshot,
 };
-use crate::{
-    backend::{InstanceHandle, InstanceNetworking},
-    scaleway::types::Action,
-};
+use crate::backend::{InstanceHandle, InstanceNetworking};
 
 /// Limit for a single TCP connection attempt when probing SSH readiness.
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -34,16 +31,7 @@ impl ScalewayBackend {
     ) -> Result<Option<InstanceSnapshot>, ScalewayBackendError> {
         let instance = self.list_instance(handle).await?;
 
-        Ok(instance.map(|server| InstanceSnapshot {
-            id: server.id.into(),
-            state: server.state.into(),
-            allowed_actions: server
-                .allowed_actions
-                .into_iter()
-                .map(Action::from)
-                .collect(),
-            public_ip: server.public_ip.map(|ip| ip.address),
-        }))
+        Ok(instance.map(|server| server.snapshot_ref()))
     }
 
     /// Polls the provider until the instance is running with a public IP.

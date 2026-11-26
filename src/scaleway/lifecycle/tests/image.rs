@@ -157,7 +157,7 @@ fn image_with_root(
 /// The resolver reports the chosen image's root size and storage kinds, which
 /// is what the plan is resolved against.
 #[tokio::test]
-async fn resolve_image_id_reports_the_root_facts() -> anyhow::Result<()> {
+async fn resolve_image_id_reports_the_root_facts() {
     let request = super::base_request();
     let backend = super::backend_fixture();
 
@@ -174,14 +174,14 @@ async fn resolve_image_id_reports_the_root_facts() -> anyhow::Result<()> {
                 )])
             },
         )
-        .await?;
+        .await
+        .expect("the image should resolve");
 
     assert_eq!(root.id, "public-img");
     assert_eq!(root.size_bytes, 10_000_000_000);
     assert_eq!(root.volume_type, "sbs_snapshot");
     assert!(root.storage.sbs);
     assert!(!root.storage.local);
-    Ok(())
 }
 
 /// An image-label vocabulary the backend does not model is refused by name
@@ -210,10 +210,8 @@ async fn resolve_image_id_refuses_an_unmodelled_root_type() {
     assert!(
         matches!(
             error,
-            ScalewayBackendError::ImageStorageIncompatible {
-                ref observed,
-                ..
-            } if observed == "scratch"
+            ScalewayBackendError::ImageStorageIncompatible(ref details)
+                if details.observed == "scratch"
         ),
         "{error:?}"
     );
@@ -222,7 +220,7 @@ async fn resolve_image_id_refuses_an_unmodelled_root_type() {
 /// Requesting local storage keeps only images whose root can back it, so the
 /// newest compatible image wins rather than the newest image overall.
 #[tokio::test]
-async fn local_request_selects_the_newest_compatible_image() -> anyhow::Result<()> {
+async fn local_request_selects_the_newest_compatible_image() {
     let mut request = super::base_request();
     request.boot_volume = crate::boot_volume::BootVolumeRequest {
         volume_type: Some(crate::boot_volume::BootVolumeType::Local),
@@ -246,13 +244,13 @@ async fn local_request_selects_the_newest_compatible_image() -> anyhow::Result<(
                 ])
             },
         )
-        .await?;
+        .await
+        .expect("the image should resolve");
 
     assert_eq!(
         root.id, "local-old",
         "the SBS-only image is newer but cannot back a local boot volume"
     );
-    Ok(())
 }
 
 /// When every candidate exists but none can back the requested storage, the
@@ -281,23 +279,21 @@ async fn incompatible_candidates_report_the_observed_types() {
         .await
         .expect_err("no candidate can back a local boot volume");
 
-    let ScalewayBackendError::ImageStorageIncompatible {
-        ref observed,
-        requested,
-        ..
-    } = error
-    else {
+    let ScalewayBackendError::ImageStorageIncompatible(ref details) = error else {
         panic!("expected a storage-incompatible error, got {error:?}");
     };
-    assert_eq!(requested, Some(crate::boot_volume::BootVolumeType::Local));
-    assert!(observed.contains("sbs_snapshot"), "{observed}");
-    assert!(observed.contains("sbs_volume"), "{observed}");
+    assert_eq!(
+        details.requested,
+        Some(crate::boot_volume::BootVolumeType::Local)
+    );
+    assert!(details.observed.contains("sbs_snapshot"), "{details:?}");
+    assert!(details.observed.contains("sbs_volume"), "{details:?}");
 }
 
 /// An unset storage type keeps every candidate, so the newest image wins even
 /// when the candidates differ in root type.
 #[tokio::test]
-async fn unset_type_keeps_every_candidate() -> anyhow::Result<()> {
+async fn unset_type_keeps_every_candidate() {
     let request = super::base_request();
     let backend = super::backend_fixture();
 
@@ -312,8 +308,8 @@ async fn unset_type_keeps_every_candidate() -> anyhow::Result<()> {
                 ])
             },
         )
-        .await?;
+        .await
+        .expect("the image should resolve");
 
     assert_eq!(root.id, "sbs-new");
-    Ok(())
 }

@@ -37,6 +37,7 @@ Feature: mriya init prepares a cache volume
     And the boot-volume preflight fails
     When I prepare the cache volume
     Then the init error kind is "provision"
+    And the boot-volume preflight ran before the cache allocation
     And the volume is not created
 
   Scenario: Surface volume creation failures

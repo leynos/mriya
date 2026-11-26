@@ -68,6 +68,24 @@ pub(in crate::scaleway) struct ImageFacts<'a> {
     pub(in crate::scaleway) volume_type: &'a str,
 }
 
+/// Everything one resolution needs.
+///
+/// Grouping the inputs keeps each rule's signature short and lets the rules
+/// read as methods on one subject rather than a chain of free functions.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct Resolution<'a> {
+    /// Commercial type being requested, used only in error messages.
+    pub(in crate::scaleway) instance_type: &'a str,
+    /// What the profile asked for.
+    pub(in crate::scaleway) request: &'a BootVolumeRequest,
+    /// The zone catalogue entry for the instance type.
+    pub(in crate::scaleway) product: &'a ProductServerType,
+    /// What the selected image can do.
+    pub(in crate::scaleway) image: ImageFacts<'a>,
+    /// CPU architecture the request asks for.
+    pub(in crate::scaleway) requested_architecture: &'a str,
+}
+
 /// The size range that applies to one storage type on one instance type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SizeBounds {
@@ -84,14 +102,7 @@ impl SizeBounds {
     }
 }
 
-/// The facts resolution needs about the instance type being requested.
-#[derive(Clone, Copy, Debug)]
-struct TypeFacts<'a> {
-    /// The catalogue entry for the type.
-    product: &'a ProductServerType,
-}
-
-impl TypeFacts<'_> {
+impl Resolution<'_> {
     /// Reports whether the type offers local storage at all.
     const fn offers_local(&self) -> bool { self.product.local_constraint().is_some() }
 
@@ -132,12 +143,136 @@ impl TypeFacts<'_> {
             }),
         }
     }
+
+    /// Refuses a type whose published architecture is not the one requested.
+    ///
+    /// A catalogue entry that omits `arch` is accepted: absence means the
+    /// provider did not say, not that it disagrees.
+    fn ensure_architecture(&self) -> Result<(), ScalewayBackendError> {
+        let offered = &self.product.arch;
+        if offered.is_empty() || offered == self.requested_architecture {
+            return Ok(());
+        }
+        Err(ScalewayBackendError::BootVolumeArchitectureMismatch {
+            instance_type: self.instance_type.to_owned(),
+            requested_arch: self.requested_architecture.to_owned(),
+            offered_arch: offered.clone(),
+        })
+    }
+
+    /// Picks the storage type, refusing an unavailable one and applying the
+    /// documented default when the profile named none.
+    ///
+    /// Returns the chosen type and whether it came from the default.
+    fn choose_type(&self) -> Result<(BootVolumeType, bool), ScalewayBackendError> {
+        if let Some(wanted) = self.request.volume_type {
+            self.ensure_type_usable(wanted)?;
+            return Ok((wanted, false));
+        }
+
+        // Documented default: local when the type offers local storage and the
+        // image can be booted from it, which is what the provider does for a
+        // marketplace image ID; Block Storage otherwise.
+        let chosen = if self.offers_local() && self.image.storage.local {
+            BootVolumeType::Local
+        } else {
+            BootVolumeType::Sbs
+        };
+        self.ensure_type_usable(chosen)?;
+        Ok((chosen, true))
+    }
+
+    /// Refuses a storage type the instance type or the image cannot provide.
+    fn ensure_type_usable(&self, wanted: BootVolumeType) -> Result<(), ScalewayBackendError> {
+        if !self.offers(wanted) {
+            return Err(ScalewayBackendError::BootVolumeTypeUnavailable {
+                instance_type: self.instance_type.to_owned(),
+                volume_type: wanted,
+                reason: String::from("the instance type does not offer this storage"),
+            });
+        }
+        if !self.image.storage.supports(wanted) {
+            return Err(ScalewayBackendError::BootVolumeTypeUnavailable {
+                instance_type: self.instance_type.to_owned(),
+                volume_type: wanted,
+                reason: format!(
+                    "image root type '{}' supports {}",
+                    self.image.volume_type,
+                    self.image.storage.describe()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Picks the capacity, refusing one that cannot hold the image or that
+    /// falls outside the instance type's range.
+    fn choose_size(&self, volume_type: BootVolumeType) -> Result<u64, ScalewayBackendError> {
+        let size_bytes = match self.request.size_gb {
+            Some(size_gb) => {
+                decimal_gb_to_bytes(size_gb).map_err(|error| boot_volume_error(&error))?
+            }
+            None => self.default_size(volume_type)?,
+        };
+
+        if size_bytes < self.image.size_bytes {
+            return Err(ScalewayBackendError::BootVolumeBelowImageSize {
+                instance_type: self.instance_type.to_owned(),
+                volume_type,
+                size_bytes,
+                image_size_bytes: self.image.size_bytes,
+            });
+        }
+
+        let bounds = self.bounds_or_unavailable(volume_type)?;
+        if !bounds.contains(size_bytes) {
+            return Err(ScalewayBackendError::BootVolumeSizeOutOfBounds {
+                instance_type: self.instance_type.to_owned(),
+                volume_type,
+                size_bytes,
+                min_size: bounds.min_size,
+                max_size: bounds.max_size,
+            });
+        }
+
+        Ok(size_bytes)
+    }
+
+    /// Chooses the capacity used when the profile named none.
+    ///
+    /// Local defaults to the type's maximum, which is what the provider does
+    /// for a marketplace image ID on a local-storage type. Block Storage
+    /// defaults to the larger of the image's root volume and
+    /// [`SBS_DEFAULT_FLOOR_BYTES`], rounded up to a whole decimal gigabyte and
+    /// clamped into the accepted range.
+    fn default_size(&self, volume_type: BootVolumeType) -> Result<u64, ScalewayBackendError> {
+        let bounds = self.bounds_or_unavailable(volume_type)?;
+
+        Ok(match volume_type {
+            BootVolumeType::Local => bounds.max_size,
+            BootVolumeType::Sbs => {
+                let floor = self.image.size_bytes.max(SBS_DEFAULT_FLOOR_BYTES);
+                round_up_to_decimal_gb(floor).clamp(bounds.min_size, bounds.max_size)
+            }
+        })
+    }
+
+    /// Returns the type's bounds, or the error that says it publishes none.
+    fn bounds_or_unavailable(
+        &self,
+        volume_type: BootVolumeType,
+    ) -> Result<SizeBounds, ScalewayBackendError> {
+        self.bounds(volume_type)
+            .ok_or_else(|| ScalewayBackendError::BootVolumeTypeUnavailable {
+                instance_type: self.instance_type.to_owned(),
+                volume_type,
+                reason: String::from("the instance type publishes no size range for it"),
+            })
+    }
 }
 
 /// Resolves a boot-volume plan from a profile request, a catalogue entry, and
 /// the image's root facts.
-///
-/// `instance_type` is used only to name the type in errors.
 ///
 /// # Errors
 ///
@@ -149,30 +284,23 @@ impl TypeFacts<'_> {
 /// ```ignore
 /// // A fully explicit local plan inside every bound is accepted unchanged and
 /// // records no compatibility default.
-/// let plan = resolve_boot_volume(
-///     "DEV1-S",
-///     &request,
-///     &product,
-///     ImageFacts { size_bytes: 10_000_000_000, ..image },
-///     "x86_64",
-/// )?;
+/// let plan = resolve_boot_volume(Resolution {
+///     instance_type: "DEV1-S",
+///     request: &request,
+///     product: &product,
+///     image: ImageFacts { size_bytes: 10_000_000_000, ..image },
+///     requested_architecture: "x86_64",
+/// })?;
 /// assert_eq!(plan.volume_type, BootVolumeType::Local);
 /// assert!(!plan.compatibility_default.has_default());
 /// ```
 pub(in crate::scaleway) fn resolve_boot_volume(
-    instance_type: &str,
-    request: &BootVolumeRequest,
-    product: &ProductServerType,
-    image: ImageFacts<'_>,
-    requested_architecture: &str,
+    resolution: Resolution<'_>,
 ) -> Result<BootVolumePlan, ScalewayBackendError> {
-    let facts = TypeFacts { product };
+    resolution.ensure_architecture()?;
 
-    ensure_architecture(instance_type, product, requested_architecture)?;
-
-    let (volume_type, type_was_defaulted) = choose_type(instance_type, request, &facts, &image)?;
-    let size_bytes = choose_size(instance_type, request, &facts, &image, volume_type)?;
-
+    let (volume_type, type_was_defaulted) = resolution.choose_type()?;
+    let size_bytes = resolution.choose_size(volume_type)?;
     ensure_aligned(size_bytes)?;
 
     Ok(BootVolumePlan::new(
@@ -180,161 +308,14 @@ pub(in crate::scaleway) fn resolve_boot_volume(
         size_bytes,
         CompatibilityDefault {
             volume_type: type_was_defaulted,
-            size: request.size_gb.is_none(),
+            size: resolution.request.size_gb.is_none(),
         },
     ))
 }
 
-/// Refuses a type whose published architecture is not the one requested.
-///
-/// A catalogue entry that omits `arch` is accepted: absence means the provider
-/// did not say, not that it disagrees.
-fn ensure_architecture(
-    instance_type: &str,
-    product: &ProductServerType,
-    requested_architecture: &str,
-) -> Result<(), ScalewayBackendError> {
-    if product.arch.is_empty() || product.arch == requested_architecture {
-        return Ok(());
-    }
-    Err(ScalewayBackendError::BootVolumeArchitectureMismatch {
-        instance_type: instance_type.to_owned(),
-        requested_arch: requested_architecture.to_owned(),
-        offered_arch: product.arch.clone(),
-    })
-}
-
-/// Picks the storage type, refusing an unavailable one and applying the
-/// documented default when the profile named none.
-///
-/// Returns the chosen type and whether that type came from the default.
-fn choose_type(
-    instance_type: &str,
-    request: &BootVolumeRequest,
-    facts: &TypeFacts<'_>,
-    image: &ImageFacts<'_>,
-) -> Result<(BootVolumeType, bool), ScalewayBackendError> {
-    if let Some(wanted) = request.volume_type {
-        ensure_type_usable(instance_type, wanted, facts, image)?;
-        return Ok((wanted, false));
-    }
-
-    // Documented default: local when the type offers local storage and the
-    // image can be booted from it, which is what the provider does for a
-    // marketplace image ID; Block Storage otherwise.
-    let local_usable = facts.offers_local() && image.storage.local;
-    let chosen = if local_usable {
-        BootVolumeType::Local
-    } else {
-        BootVolumeType::Sbs
-    };
-    ensure_type_usable(instance_type, chosen, facts, image)?;
-    Ok((chosen, true))
-}
-
-/// Refuses a storage type the instance type or the image cannot provide.
-fn ensure_type_usable(
-    instance_type: &str,
-    wanted: BootVolumeType,
-    facts: &TypeFacts<'_>,
-    image: &ImageFacts<'_>,
-) -> Result<(), ScalewayBackendError> {
-    if !facts.offers(wanted) {
-        return Err(ScalewayBackendError::BootVolumeTypeUnavailable {
-            instance_type: instance_type.to_owned(),
-            volume_type: wanted,
-            reason: String::from("the instance type does not offer this storage"),
-        });
-    }
-    if !image.storage.supports(wanted) {
-        return Err(ScalewayBackendError::BootVolumeTypeUnavailable {
-            instance_type: instance_type.to_owned(),
-            volume_type: wanted,
-            reason: format!(
-                "image root type '{}' supports {}",
-                image.volume_type,
-                image.storage.describe()
-            ),
-        });
-    }
-    Ok(())
-}
-
-/// Picks the capacity, refusing one that cannot hold the image or that falls
-/// outside the instance type's range.
-fn choose_size(
-    instance_type: &str,
-    request: &BootVolumeRequest,
-    facts: &TypeFacts<'_>,
-    image: &ImageFacts<'_>,
-    volume_type: BootVolumeType,
-) -> Result<u64, ScalewayBackendError> {
-    let size_bytes = match request.size_gb {
-        Some(size_gb) => decimal_gb_to_bytes(size_gb).map_err(boot_volume_error)?,
-        None => default_size(instance_type, facts, image, volume_type)?,
-    };
-
-    if size_bytes < image.size_bytes {
-        return Err(ScalewayBackendError::BootVolumeBelowImageSize {
-            instance_type: instance_type.to_owned(),
-            volume_type,
-            size_bytes,
-            image_size_bytes: image.size_bytes,
-        });
-    }
-
-    let bounds = facts.bounds(volume_type).ok_or_else(|| {
-        ScalewayBackendError::BootVolumeTypeUnavailable {
-            instance_type: instance_type.to_owned(),
-            volume_type,
-            reason: String::from("the instance type publishes no size range for it"),
-        }
-    })?;
-    if !bounds.contains(size_bytes) {
-        return Err(ScalewayBackendError::BootVolumeSizeOutOfBounds {
-            instance_type: instance_type.to_owned(),
-            volume_type,
-            size_bytes,
-            min_size: bounds.min_size,
-            max_size: bounds.max_size,
-        });
-    }
-
-    Ok(size_bytes)
-}
-
-/// Chooses the capacity used when the profile named none.
-///
-/// Local defaults to the type's maximum, which is what the provider does for a
-/// marketplace image ID on a local-storage type. Block Storage defaults to the
-/// larger of the image's root volume and [`SBS_DEFAULT_FLOOR_BYTES`], rounded
-/// up to a whole decimal gigabyte and clamped into the accepted range.
-fn default_size(
-    instance_type: &str,
-    facts: &TypeFacts<'_>,
-    image: &ImageFacts<'_>,
-    volume_type: BootVolumeType,
-) -> Result<u64, ScalewayBackendError> {
-    let bounds = facts.bounds(volume_type).ok_or_else(|| {
-        ScalewayBackendError::BootVolumeTypeUnavailable {
-            instance_type: instance_type.to_owned(),
-            volume_type,
-            reason: String::from("the instance type publishes no size range for it"),
-        }
-    })?;
-
-    Ok(match volume_type {
-        BootVolumeType::Local => bounds.max_size,
-        BootVolumeType::Sbs => {
-            let floor = image.size_bytes.max(SBS_DEFAULT_FLOOR_BYTES);
-            round_up_to_decimal_gb(floor).clamp(bounds.min_size, bounds.max_size)
-        }
-    })
-}
-
 /// Rounds a byte size up to the next whole decimal gigabyte.
 ///
-/// For example, 20_000_000_001 becomes 21_000_000_000 and an exact multiple is
+/// For example, `20_000_000_001` becomes `21_000_000_000`, and an exact multiple is
 /// unchanged.
 const fn round_up_to_decimal_gb(size_bytes: u64) -> u64 {
     size_bytes.div_ceil(BYTES_PER_DECIMAL_GB) * BYTES_PER_DECIMAL_GB
@@ -342,12 +323,12 @@ const fn round_up_to_decimal_gb(size_bytes: u64) -> u64 {
 
 /// Refuses a size the provider would reject as misaligned.
 ///
-/// A whole decimal gigabyte is 10^9 bytes, which is 512 * 1_953_125, so every
+/// A whole decimal gigabyte is 10^9 bytes, which is `512 * 1_953_125`, so every
 /// size this backend constructs from whole gigabytes is already aligned. This
 /// check exists for sizes that come from the catalogue instead, such as a
 /// local default taken from a type's published maximum.
-fn ensure_aligned(size_bytes: u64) -> Result<(), ScalewayBackendError> {
-    if size_bytes % SIZE_ALIGNMENT_BYTES == 0 {
+const fn ensure_aligned(size_bytes: u64) -> Result<(), ScalewayBackendError> {
+    if size_bytes.is_multiple_of(SIZE_ALIGNMENT_BYTES) {
         return Ok(());
     }
     Err(ScalewayBackendError::BootVolumeSizeUnaligned {
@@ -357,7 +338,7 @@ fn ensure_aligned(size_bytes: u64) -> Result<(), ScalewayBackendError> {
 }
 
 /// Maps a domain conversion failure onto the backend's error type.
-fn boot_volume_error(error: BootVolumeError) -> ScalewayBackendError {
+fn boot_volume_error(error: &BootVolumeError) -> ScalewayBackendError {
     ScalewayBackendError::BootVolumeInvalid {
         message: error.to_string(),
     }

@@ -344,17 +344,14 @@ impl BootVolumePlan {
 
     /// The capacity in whole decimal gigabytes, rounded up.
     ///
-    /// For example, 20_000_000_000 bytes yields 20 and a size one byte over
+    /// For example, `20_000_000_000` bytes yields 20 and a size one byte over
     /// that yields 21.
     #[must_use]
-    pub const fn size_gb(self) -> u32 {
-        // Round up so a report never understates the purchase.
+    pub fn size_gb(self) -> u32 {
+        // Round up so a report never understates the purchase, and saturate
+        // rather than wrap: a size this large is already an error elsewhere.
         let gb = self.size_bytes.div_ceil(BYTES_PER_DECIMAL_GB);
-        if gb > u32::MAX as u64 {
-            u32::MAX
-        } else {
-            gb as u32
-        }
+        u32::try_from(gb).unwrap_or(u32::MAX)
     }
 }
 
@@ -389,7 +386,7 @@ pub const fn align_up_to_size_increment(size_bytes: u64) -> u64 {
 
 /// Renders a byte size as both decimal gigabytes and raw bytes.
 ///
-/// For example, 20_000_000_000 bytes renders as
+/// For example, `20_000_000_000` bytes renders as
 /// `20 GB (20000000000 bytes)`, so a reader never has to guess the unit.
 #[must_use]
 pub fn format_size(size_bytes: u64) -> String {

@@ -18,7 +18,7 @@ use crate::{
     scaleway::{
         ScalewayBackendError,
         lifecycle::{
-            boot_plan::{ImageFacts, SBS_DEFAULT_FLOOR_BYTES, resolve_boot_volume},
+            boot_plan::{ImageFacts, Resolution, SBS_DEFAULT_FLOOR_BYTES, resolve_boot_volume},
             products::{
                 ConstraintSizes,
                 ConstraintsByType,
@@ -100,7 +100,13 @@ fn resolve(
     product: &ProductServerType,
     image: ImageFacts<'_>,
 ) -> Result<BootVolumePlan, ScalewayBackendError> {
-    resolve_boot_volume("DEV1-S", &request, product, image, "x86_64")
+    resolve_boot_volume(Resolution {
+        instance_type: "DEV1-S",
+        request: &request,
+        product,
+        image,
+        requested_architecture: "x86_64",
+    })
 }
 
 /// A fully explicit plan inside every bound is accepted with no defaults.
@@ -383,13 +389,14 @@ fn unset_local_size_defaults_to_the_local_maximum() {
 fn architecture_mismatch_is_refused() {
     let catalogue = product("arm64", general_range(), Some(local_range()), Some(true));
 
-    let error = resolve_boot_volume(
-        "DEV1-S",
-        &BootVolumeRequest::default(),
-        &catalogue,
-        local_image(),
-        "x86_64",
-    )
+    let request = BootVolumeRequest::default();
+    let error = resolve_boot_volume(Resolution {
+        instance_type: "DEV1-S",
+        request: &request,
+        product: &catalogue,
+        image: local_image(),
+        requested_architecture: "x86_64",
+    })
     .expect_err("an architecture mismatch must be refused");
 
     assert!(
@@ -442,5 +449,8 @@ fn unaligned_default_is_refused() {
 #[case::max_gb(u32::MAX)]
 fn decimal_gb_sizes_are_aligned(#[case] size_gb: u32) {
     let bytes = crate::boot_volume::decimal_gb_to_bytes(size_gb).expect("convert");
-    assert_eq!(bytes % 512, 0, "{size_gb} GB should be 512-byte aligned");
+    assert!(
+        bytes.is_multiple_of(512),
+        "{size_gb} GB should be 512-byte aligned"
+    );
 }

@@ -198,6 +198,12 @@ impl ScalewayConfig {
     /// For example, `boot_volume_type = "l_ssd"` with a size of 20 yields a
     /// fully explicit request, while `"b_ssd"` is refused by name because the
     /// provider no longer accepts it for new volumes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Parse`] when the type is not one this backend can
+    /// request, or when the size is zero. Both messages name the environment
+    /// variable and the TOML key a user can change.
     pub fn resolve_boot_volume(&self) -> Result<BootVolumeRequest, ConfigError> {
         let volume_type = self
             .boot_volume_type

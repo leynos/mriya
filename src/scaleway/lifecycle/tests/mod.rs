@@ -98,7 +98,7 @@ fn base_request() -> InstanceRequest {
         organisation_id: None,
         architecture: "x86_64".to_owned(),
         volume_id: None,
-        boot_volume: Default::default(),
+        boot_volume: crate::boot_volume::BootVolumeRequest::default(),
         cloud_init_user_data: None,
     }
 }

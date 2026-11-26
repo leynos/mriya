@@ -13,6 +13,8 @@ mod volume_create;
 mod volume_detach;
 mod wait;
 
+pub(super) use boot_capture::CreatedInstance;
+
 use crate::scaleway::types::{Action, InstanceId, InstanceState};
 
 /// Per-request timeout for direct HTTP calls to the Instances API.

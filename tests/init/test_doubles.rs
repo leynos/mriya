@@ -42,12 +42,12 @@ enum FailureMode {
 impl FailureMode {
     const fn flag(self) -> u16 {
         match self {
-            Self::Preflight => 0b000001,
-            Self::CreateVolume => 0b000010,
-            Self::Provision => 0b000100,
-            Self::Wait => 0b001000,
-            Self::Detach => 0b010000,
-            Self::Destroy => 0b100000,
+            Self::Preflight => 0b00_0001,
+            Self::CreateVolume => 0b00_0010,
+            Self::Provision => 0b00_0100,
+            Self::Wait => 0b00_1000,
+            Self::Detach => 0b01_0000,
+            Self::Destroy => 0b10_0000,
         }
     }
 }
@@ -64,6 +64,7 @@ impl Failures {
 #[derive(Debug, Default)]
 struct State {
     failures: Failures,
+    preflight_calls: u32,
     create_volume_calls: u32,
     destroy_calls: u32,
 }
@@ -128,6 +129,13 @@ impl ScriptedVolumeBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Destroy);
+    }
+
+    pub fn preflight_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .preflight_calls
     }
 
     pub fn create_volume_calls(&self) -> u32 {
@@ -215,7 +223,9 @@ impl Backend for ScriptedVolumeBackend {
                 failure_mode: FailureMode::Preflight,
                 error: ScriptedVolumeBackendError::Preflight,
             },
-            |_| {},
+            |state| {
+                state.preflight_calls += 1;
+            },
             || {
                 BootVolumePlan::new(
                     BootVolumeType::Local,

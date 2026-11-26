@@ -250,6 +250,16 @@ fn instance_destroyed(init_context_result: &InitContextResult) -> Result<(), Ste
     )
 }
 
+#[then("the boot-volume preflight ran before the cache allocation")]
+fn preflight_ran_first(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.backend.preflight_calls(),
+        |count| count == 1,
+        "preflight should run exactly once",
+    )
+}
+
 #[then("the volume is not created")]
 fn volume_not_created(init_context_result: &InitContextResult) -> Result<(), StepError> {
     assert_counter_condition(

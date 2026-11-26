@@ -4,7 +4,7 @@ use std::future::Future;
 
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 
-use super::super::{ScalewayBackend, ScalewayBackendError};
+use super::super::{ImageStorageIncompatibleDetails, ScalewayBackend, ScalewayBackendError};
 use crate::{
     backend::InstanceRequest,
     boot_volume::{BootVolumeType, ImageStorage},
@@ -22,7 +22,7 @@ use crate::{
 /// # Errors
 ///
 /// Returns the observed identifier in the error for `b_ssd`, `scratch`, and
-/// any unrecognised value.
+/// any unrecognized value.
 pub(in crate::scaleway) fn image_storage_from_type(
     volume_type: &str,
 ) -> Result<ImageStorage, String> {
@@ -231,13 +231,14 @@ impl ScalewayBackend {
                 storage,
                 volume_type,
             }),
-            Err(observed) => Err(ScalewayBackendError::ImageStorageIncompatible {
+            Err(observed) => Err(ImageStorageIncompatibleDetails {
                 label: request.image_label.clone(),
                 arch: request.architecture.clone(),
                 zone: request.zone.clone(),
                 observed,
                 requested: request.boot_volume.volume_type,
-            }),
+            }
+            .into()),
         }
     }
 
@@ -281,13 +282,14 @@ impl ScalewayBackend {
         let compatible = Self::filter_by_storage(usable, request.boot_volume.volume_type);
 
         if compatible.is_empty() && !observed.is_empty() {
-            return Err(ScalewayBackendError::ImageStorageIncompatible {
+            return Err(ImageStorageIncompatibleDetails {
                 label: request.image_label.clone(),
                 arch: request.architecture.clone(),
                 zone: request.zone.clone(),
                 observed,
                 requested: request.boot_volume.volume_type,
-            });
+            }
+            .into());
         }
 
         Self::select_image_id(compatible, request)
@@ -320,10 +322,12 @@ impl ScalewayBackend {
             .collect()
     }
 
-    /// Keeps images whose own root volume can back `requested`.
+    /// Keeps images whose own root volume can back `requested`, or any
+    /// modelled storage kind when `requested` is unset.
     ///
-    /// An unset `requested` keeps every image, because the type is then
-    /// whatever the compatibility default resolves to.
+    /// An image whose root type is not modelled is dropped either way: the
+    /// resolver cannot choose a storage kind it cannot name, so selecting such
+    /// an image would fail after losing to a usable one.
     ///
     /// For example, asking for a local boot volume drops an SBS-only image
     /// even when that image is the newest.
@@ -331,14 +335,11 @@ impl ScalewayBackend {
         images: Vec<ScalewayImage>,
         requested: Option<BootVolumeType>,
     ) -> Vec<ScalewayImage> {
-        let Some(wanted) = requested else {
-            return images;
-        };
         images
             .into_iter()
             .filter(|image| {
                 image_storage_from_type(&image.root_volume.volume_type)
-                    .is_ok_and(|storage| storage.supports(wanted))
+                    .is_ok_and(|storage| requested.is_none_or(|wanted| storage.supports(wanted)))
             })
             .collect()
     }

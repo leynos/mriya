@@ -24,7 +24,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Overall budget for each readiness or teardown wait (five minutes).
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
-pub use error::ScalewayBackendError;
+pub use error::{ImageStorageIncompatibleDetails, ScalewayBackendError};
 
 /// Backend that provisions instances through the Scaleway Instances API.
 #[derive(Clone)]
@@ -282,14 +282,15 @@ impl Backend for ScalewayBackend {
             // Everything after the POST can fail, and a failure here would
             // otherwise leave a billing server behind. Each step destroys it
             // best-effort before returning the original reason.
-            match self
-                .finish_created_server(request, &server, &plan, handle)
-                .await
-            {
-                Ok(handle) => Ok(handle),
-                Err((error, handle_for_cleanup)) => Err(self
-                    .clean_up_after_failed_create(&handle_for_cleanup, error)
-                    .await),
+            let created = lifecycle::CreatedInstance {
+                request,
+                server: &server,
+                plan: &plan,
+                handle,
+            };
+            match self.finish_created_server(created).await {
+                Ok(finished) => Ok(finished),
+                Err(failure) => Err(self.clean_up_after_failed_create(failure).await),
             }
         })
     }

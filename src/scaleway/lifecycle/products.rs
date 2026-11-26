@@ -10,7 +10,7 @@
 //! large and mostly pricing and network metadata, so a minimal model keeps the
 //! contract visible and tolerates fields the provider adds later.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 
@@ -127,6 +127,39 @@ pub(in crate::scaleway) struct ProductServersResponse {
     pub(crate) servers: HashMap<String, ProductServerType>,
 }
 
+/// What one catalogue page contributed.
+enum PageOutcome {
+    /// The requested type was on this page.
+    Found(ProductServerType),
+    /// The page added nothing new, so pagination is finished.
+    Exhausted,
+    /// The page added types; another page may hold more.
+    More,
+}
+
+/// Records one page's keys and reports whether the requested type was on it.
+///
+/// `seen` accumulates every key returned so far, which is how a map-shaped
+/// response detects the end of pagination.
+fn take_page(
+    servers: HashMap<String, ProductServerType>,
+    instance_type: &str,
+    seen: &mut HashSet<String>,
+) -> PageOutcome {
+    let mut added_any = false;
+    for (name, product) in servers {
+        if name == instance_type {
+            return PageOutcome::Found(product);
+        }
+        added_any |= seen.insert(name);
+    }
+    if added_any {
+        PageOutcome::More
+    } else {
+        PageOutcome::Exhausted
+    }
+}
+
 impl ScalewayBackend {
     /// Reads the zone's instance-type catalogue, following pagination.
     ///
@@ -148,6 +181,7 @@ impl ScalewayBackend {
         instance_type: &str,
     ) -> Result<ProductServerType, ScalewayBackendError> {
         let url = format!("{}/zones/{zone}/products/servers", self.instance_api_base);
+        let mut seen: HashSet<String> = HashSet::new();
         let mut page = 1_u64;
         loop {
             let response = super::http::checked_response(
@@ -162,13 +196,15 @@ impl ScalewayBackend {
                 .await
                 .map_err(|error| super::http::request_error(&error))?;
 
-            if decoded.servers.is_empty() {
-                break;
+            // The catalogue is a map rather than a list, so progress is
+            // measured by keys the page had not already shown. A page that
+            // adds nothing means the endpoint either finished or ignored the
+            // page parameter; either way, continuing would loop forever.
+            match take_page(decoded.servers, instance_type, &mut seen) {
+                PageOutcome::Found(product) => return Ok(product),
+                PageOutcome::Exhausted => break,
+                PageOutcome::More => page += 1,
             }
-            if let Some(product) = decoded.servers.get(instance_type) {
-                return Ok(product.clone());
-            }
-            page += 1;
         }
 
         Err(ScalewayBackendError::ProductCatalogueUnavailable {
