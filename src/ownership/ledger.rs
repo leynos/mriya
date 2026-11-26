@@ -134,8 +134,10 @@ impl ResourceLedger {
     /// Returns [`LedgerPersistError`] when the initial snapshot cannot be
     /// written; the caller must not contact the provider in that case.
     pub fn persist_initial(&self) -> Result<(), LedgerPersistError> {
-        let snapshot = self.lock().snapshot();
-        self.persist(&snapshot)
+        // The lock is held across the write so a concurrent mutation cannot
+        // publish a newer snapshot that this initial write then overwrites.
+        let state = self.lock();
+        self.persist(&state.snapshot())
     }
 
     /// Records `resource` with `disposition`, replacing an earlier entry for

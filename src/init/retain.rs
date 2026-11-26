@@ -124,16 +124,33 @@ where
                 }
                 after_volume(error, volume, note, None)
             }
-            Err(cleanup) => after_volume(
-                error,
-                volume,
-                format!(
-                    "{retained}; cleanup also failed, so the journal remains and may still \
-                     record the volume as owned: {cleanup}",
-                    retained = retained_note(&volume.id)
-                ),
-                None,
-            ),
+            Err(cleanup) => {
+                // The journal still says `Owned`. Try the persistence once more
+                // now that cleanup has run; a success means recovery preserves
+                // the volume instead of deleting it.
+                let persisted = context
+                    .ledger
+                    .promote(
+                        ResourceKind::InstanceVolume,
+                        &volume.id,
+                        Disposition::Retained,
+                    )
+                    .is_ok();
+                let journal_state = if persisted {
+                    "the journal now records the volume as retained"
+                } else {
+                    "the journal may still record the volume as owned"
+                };
+                after_volume(
+                    error,
+                    volume,
+                    format!(
+                        "{retained}; cleanup also failed: {cleanup}; {journal_state}",
+                        retained = retained_note(&volume.id)
+                    ),
+                    None,
+                )
+            }
         }
     }
 

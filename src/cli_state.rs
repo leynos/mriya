@@ -240,11 +240,21 @@ impl Recovery<'_> {
             }
         };
         report_recovered(stdout, &tag, &report, self.configured);
-        let unrecorded = report
-            .preserved
+        // Only a *retained* volume must be configured before the journal can
+        // go: a borrowed volume is someone else's, and its identifier will
+        // never appear in this machine's configuration.
+        let retained = ledger.entries_with(mriya::Disposition::Retained);
+        // Configuration may have been updated while the replay ran, so the
+        // value is re-read rather than trusted from command start.
+        let configured = mriya::ConfigStore::new()
+            .current_volume_id()
+            .ok()
+            .flatten()
+            .or_else(|| self.configured.map(str::to_owned));
+        if retained
             .iter()
-            .any(|resource| self.configured != Some(resource.id()));
-        if unrecorded {
+            .any(|entry| configured.as_deref() != Some(entry.resource.id()))
+        {
             return ReplayOutcome::Kept(String::from(
                 "a retained volume is not recorded in configuration yet",
             ));
