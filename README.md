@@ -40,7 +40,8 @@ code.
 - **Live output streaming** – stdout and stderr stream back to your terminal in
   real time.
 - **Exit code preservation** – If `cargo test` fails remotely with status 101,
-  you get 101 locally.
+  you get 101 locally, provided teardown succeeds; a teardown failure reports
+  its own error instead.
 - **Configurable instances and images** – Set a default instance type and image
   in configuration, or override either for one run with `--instance-type` and
   `--image`.
@@ -65,19 +66,25 @@ code.
 
 Mriya is an **MVP with a single backend: Scaleway**.
 
-Implemented and usable today:
+Implemented in code:
 
 - Provisioning a Scaleway instance with a configurable type and image, from
   configuration defaults or per-run `--instance-type` / `--image` overrides.
 - Inline and file-based cloud-init user-data, with Mriya waiting for cloud-init
   to finish before the remote command runs.
-- A persistent Block Storage cache volume: `mriya init` creates and formats one
-  and records its ID, and `mriya run` attaches, mounts, and routes language
-  caches onto it. Live compatibility of volume creation with Scaleway's current
-  Block Storage API is still open; see
-  [issue #153](https://github.com/leynos/mriya/issues/153).
+- Attaching, mounting, and routing language caches onto a configured Block
+  Storage volume, with scripted coverage only.
 - Git-aware rsync sync, streamed output, exit-code preservation, and attempted
   teardown.
+
+Implemented but **not yet verified against the live provider**:
+
+- `mriya init`, which formats a new cache volume and records its ID. Volume
+  creation still posts to the Instances API volume endpoint with the `b_ssd`
+  type, which Scaleway retired for new volumes on 30 April 2025. Treat the
+  documented setup as unverified until the migration in
+  [issue #153](https://github.com/leynos/mriya/issues/153) lands; the user
+  guide carries the same limitation.
 
 Planned, not implemented:
 

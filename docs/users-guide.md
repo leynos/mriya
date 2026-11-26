@@ -67,19 +67,22 @@ pre-existing build outputs available for incremental runs. The `.git` directory
 is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
-remote exit code. If `cargo test` fails remotely with exit status 101, the
-local process will also exit 101. Commands run via `sync_and_run` automatically
-`cd` into `MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to
-prefix their commands with a directory change.
+remote exit code when teardown succeeds. If `cargo test` fails remotely with
+exit status 101, the local process will also exit 101. If teardown then fails,
+the run exits with the teardown error and the remote status is not carried
+through. Commands run via `sync_and_run` automatically `cd` into
+`MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to prefix
+their commands with a directory change.
 
 ## Run a command remotely
 
 Use `mriya run -- <command>` to provision a VM, sync the working tree, and run
 the provided command over SSH. Output streams live to the local terminal using
-the system `ssh` client and the configured `rsync` binary. The CLI exits with
-the remote command's status code; when the remote process terminates without a
-status (for example, due to a signal), Mriya exits with code 1 and reports the
-missing status.
+the system `ssh` client and the configured `rsync` binary. When teardown
+succeeds, the CLI exits with the remote command's status code; a teardown
+failure exits with the teardown error instead. When the remote process
+terminates without a status (for example, due to a signal), Mriya exits with
+code 1 and reports the missing status.
 
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
@@ -196,10 +199,17 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 ## Persistent cache volume
 
 Mriya can attach a Block Storage volume to the ephemeral VM for caching build
-artefacts between runs. When configured, Mriya attempts to attach the volume
-before the instance starts and to mount it at `/mriya`. Place build caches
-(such as Cargo's target directory) on this volume to persist compiled
-dependencies across runs.
+artefacts between runs. When configured, Mriya attaches the volume to the newly
+created, stopped server and then powers it on; after boot it attempts to mount
+the volume at `/mriya`. Place build caches (such as Cargo's target directory)
+on this volume to persist compiled dependencies across runs.
+
+> Caveat: `mriya init` calls the Instances API volume endpoint with the
+> `b_ssd` type. Scaleway removed new Block Storage volume creation from that
+> API on 30 April 2025, so the creation step may be rejected and has no
+> recorded live success. Attaching a volume that already exists is a separate
+> path and is unaffected. The migration is tracked in
+> [issue #153](https://github.com/leynos/mriya/issues/153).
 
 To enable the cache volume:
 
@@ -297,12 +307,15 @@ they are part of the configuration surface users already have on disk.
 - Creates an instance with a routed public IPv4 address and tags `mriya` and
   `ephemeral`. The instance type is validated from the provider's create-server
   response rather than by a preflight check.
-- Requests the cache volume at creation time when `SCW_DEFAULT_VOLUME_ID` is
-  configured, and mounts it to `/mriya` after the instance boots. The mount is
-  attempted, not guaranteed; see
-  [Persistent cache volume](#persistent-cache-volume).
-- Polls every five seconds (up to five minutes) until the instance is running
-  and reachable via SSH on port 22.
+- Creates the server first and, when `SCW_DEFAULT_VOLUME_ID` is configured,
+  attaches the cache volume to that stopped server before powering it on. An
+  attachment failure at this point is the pre-handle case described under
+  [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
+  After boot, the volume is mounted to `/mriya`. The mount is attempted, not
+  guaranteed; see [Persistent cache volume](#persistent-cache-volume).
+- Polls every five seconds until the instance is running with a public IP, then
+  probes TCP port 22. Each of those two waits has its own 300-second budget, so
+  the combined readiness phase can run for about ten minutes.
 - Sends a delete request for the instance and polls until the API no longer
   lists it, failing when the server is still listed at the deadline.
 
@@ -322,9 +335,10 @@ retrying, as the request may have reached Scaleway even though its response did
 not arrive. Image lookup is the exception: it goes through the Scaleway SDK,
 which applies no such bound.
 
-The 300-second readiness deadline and the 600-second cloud-init deadline are
-polling settings, not guarantees about how long a run takes or how long it is
-billed.
+The two 300-second readiness deadlines and the 600-second cloud-init deadline
+are polling settings, not guarantees about how long a run takes or how long it
+is billed. Each SSH connection attempt also has its own short timeout, so a
+wait can overrun its budget by up to that timeout.
 
 ## Running the integration check
 
@@ -385,9 +399,9 @@ From the moment the create-server request is accepted, a run can involve:
   interval before power-on and the sync and cloud-init wait after it.
 - A root (boot) volume whose type and size Mriya does not choose. See
   [Root storage is implicit](#root-storage-is-implicit).
-- A public IP address. Mriya requests a dynamic, routed address without
-  specifying its type, so the applicable billing rule is whatever the provider
-  attaches to the allocation it makes.
+- A public IP address. Mriya requests a dynamic, routed address, but it does
+  not select the billing class the provider allocates, so the applicable rule
+  is whatever applies to that allocation.
 - Optionally, a retained cache volume, billed from its creation until it is
   deleted — across every run, and while no run is active.
 - For `mriya init`, a short-lived formatter instance plus the new volume.
@@ -451,13 +465,14 @@ Two failure modes extend that lifetime unexpectedly:
 
 ### IP addresses
 
-Mriya requests a dynamic, routed public IPv4 address and does not specify an IP
-type. The IP billing page[^4] bills flexible IPs separately from the resource
-they are attached to, from reservation until deletion, whether or not they are
-attached. The Billing FAQ instead ties dynamic-IP billing to association with a
-running instance. Because Mriya does not assert which type it receives, treat
-the address as potentially billable beyond the server's own lifetime and check
-the allocation after a run. Do not assume the assigned type from the request.
+Mriya requests a dynamic, routed public IPv4 address, but it does not choose
+the billing class the provider allocates to it. The IP billing page[^4] bills
+flexible IPs separately from the resource they are attached to, from
+reservation until deletion, whether or not they are attached. The Billing FAQ
+instead ties dynamic-IP billing to association with a running instance. Because
+Mriya does not assert which type it receives, treat the address as potentially
+billable beyond the server's own lifetime and check the allocation after a run.
+Do not assume the assigned type from the request.
 
 ### Worked example: ten short jobs at the per-run minimum
 
