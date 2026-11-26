@@ -95,7 +95,7 @@ pub(super) fn detach_rejected() -> Reply {
 pub(super) fn stopped_server() -> Reply {
     Reply {
         status: 200,
-        body: include_str!("fixtures/create-instance.json").to_owned(),
+        body: include_str!("fixtures/listed-stopped-instance.json").to_owned(),
     }
 }
 

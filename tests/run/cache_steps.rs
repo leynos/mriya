@@ -91,10 +91,10 @@ fn cache_directories_command(run_context: &RunContext) -> Result<String, StepErr
         .rev()
         .find(|invocation| {
             invocation.program == ssh_bin
-                && invocation
-                    .args
-                    .last()
-                    .is_some_and(|arg| arg.to_string_lossy().contains(&expected))
+                && invocation.args.last().is_some_and(|arg| {
+                    let payload = arg.to_string_lossy();
+                    payload.contains("mkdir -p") && payload.contains(&expected)
+                })
         })
         .and_then(|invocation| {
             invocation
