@@ -36,5 +36,5 @@ exclude_re = [
     # The pattern is anchored to this file and this function and tolerates
     # only a moved line and column; tests/mutants_config_contract.rs holds it
     # to that scope.
-    '^src/sync/types\.rs:[0-9]+:[0-9]+: replace == with != in forward_stream$',
+    '^src/sync/types/mod\.rs:[0-9]+:[0-9]+: replace == with != in forward_stream$',
 ]

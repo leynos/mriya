@@ -4,9 +4,9 @@
 //! that is too wide hides survivors that should have been caught and an entry
 //! that is too narrow leaves the hang it existed to remove. These tests pin the
 //! narrow entry directly: they compile every `exclude_re` with the `regex`
-//! crate, locate the end-of-file exclusion inside `src/sync/types.rs`'s
-//! `forward_stream`, and probe it with the observed mutant name and with names
-//! that must not match.
+//! crate, locate the end-of-file exclusion for `forward_stream` in
+//! `src/sync/types/mod.rs`, and probe it with the observed mutant name and
+//! with names that must not match.
 //!
 //! The probes are a model of cargo-mutants' selection, not the tool itself. A
 //! regex that satisfies this contract still has to be shown live, by comparing
@@ -24,7 +24,7 @@ const CONFIG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.cargo/m
 const FORWARD_STREAM: &str = "forward_stream";
 
 /// The file that defines it, as cargo-mutants names it in a mutant name.
-const TYPES_FILE: &str = "src/sync/types.rs";
+const TYPES_FILE: &str = "src/sync/types/mod.rs";
 
 /// The operator replacement the exclusion exists for.
 const EOF_REPLACEMENT: &str = "replace == with != in forward_stream";
@@ -35,7 +35,7 @@ const EOF_REPLACEMENT: &str = "replace == with != in forward_stream";
 /// move whenever anything above the check changes. The exclusion must survive
 /// that, or the next unrelated edit silently restores the hang.
 const SAME_MUTANT_ELSEWHERE: &str =
-    "src/sync/types.rs:412:33: replace == with != in forward_stream";
+    "src/sync/types/mod.rs:412:33: replace == with != in forward_stream";
 
 /// The single exclusion that must match `SAME_MUTANT_ELSEWHERE`, found by its
 /// effect rather than by its text so a rewrite cannot satisfy it by name alone.
@@ -140,6 +140,9 @@ fn the_exclusion_matches_the_end_of_file_mutant(#[case] name: String) -> Result<
     "src/scaleway/mod.rs:69:38: replace == with != in ScalewayBackend::is_instance_type_error"
 ))]
 #[case::same_text_in_another_file(format!("src/sync/other.rs:125:21: {EOF_REPLACEMENT}"))]
+#[case::same_text_in_the_old_file_location(format!(
+    "src/sync/types.rs:125:21: {EOF_REPLACEMENT}"
+))]
 #[case::same_text_with_a_longer_function_name(format!(
     "{TYPES_FILE}:125:21: {EOF_REPLACEMENT}_extra"
 ))]
