@@ -204,46 +204,59 @@ created, stopped server and then powers it on; after boot it attempts to mount
 the volume at `/mriya`. Place build caches (such as Cargo's target directory)
 on this volume to persist compiled dependencies across runs.
 
-> Caveat: `mriya init` calls the Instances API volume endpoint with the
-> `b_ssd` type. Scaleway's
-> [changelog](https://www.scaleway.com/en/docs/changelog/)
-> states that creating new block volumes through the Instances API has been
-> impossible since 30 April 2025, so the creation step is expected to fail
-> until the migration in
-> [issue #153](https://github.com/leynos/mriya/issues/153) lands. Attaching a
-> volume that already exists is a separate path and is unaffected. There is no
-> recorded live success for `mriya init`.
+> Important: `mriya init` is expected to fail against Scaleway today. It calls
+> the Instances API volume endpoint with the `b_ssd` type, and Scaleway's
+> [changelog](https://www.scaleway.com/en/docs/changelog/) states that creating
+> new block volumes through the Instances API has been impossible since
+> 30 April 2025. There is no recorded live success for `mriya init`. The
+> migration is tracked in
+> [issue #153](https://github.com/leynos/mriya/issues/153).
 
-To enable the cache volume:
+### Use an existing volume
 
-1. Run `mriya init` to create and format a Block Storage volume in the
-   configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` to replace an existing configured volume ID. If any
-   step after the formatter instance is created fails — including the instance
-   read it performs before detaching the volume — the command attempts to
-   destroy the formatter instance before reporting the error, and adds a note
-   when that teardown also fails. A teardown failure therefore still leaves a
-   VM billing, and `mriya init` never deletes the volume it created: a failed
-   run can leave an unrecorded volume that only manual cleanup removes, because
-   the janitor sweeps only resources carrying a `mriya-test-run-<id>` tag.
-2. (Optional) override the volume ID explicitly via configuration:
+An existing, formatted volume can be configured without running `mriya init`:
+
+1. Create and format a Block Storage volume in the Scaleway console or through
+   the Block Storage API, in the same availability zone as the instances.
+2. Record its ID in configuration, using either the environment:
 
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
    ```
 
-   Or in `mriya.toml`:
+   or `mriya.toml`:
 
    ```toml
    [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
    ```
 
-3. Configure the build tool to use the mounted volume. For Cargo:
+3. Run the build command on the remote host:
 
    ```bash
    mriya run -- cargo build
    ```
+
+Attachment uses the Instances API server volume map and sends only the volume
+ID and boot flag. Live attachment of an `sbs_volume` through that API is not
+verified, so treat the existing-volume path as supported by the code and the
+scripted request tests rather than proven against the provider. A rejected
+attachment stops the run after the server has already been created, which is
+the pre-handle case described under
+[Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
+
+### Create and format a volume with `mriya init`
+
+`mriya init` creates and formats a volume in the configured zone and writes the
+new volume ID into `mriya.toml`. Use `mriya init --force` to replace an
+existing configured volume ID. If any step after the formatter instance is
+created fails — including the instance read it performs before detaching the
+volume — the command attempts to destroy the formatter instance before
+reporting the error, and adds a note when that teardown also fails. A teardown
+failure therefore still leaves a VM billing, and `mriya init` never deletes the
+volume it created: a failed run can leave an unrecorded volume that only manual
+cleanup removes, because the janitor sweeps only resources carrying a
+`mriya-test-run-<id>` tag.
 
 Mriya attempts the mount at the configured path, `/mriya` by default, and keeps
 going when it fails. If the mount fails — for example, because the volume has
@@ -503,12 +516,9 @@ the `mriya init` formatter instance is a run of its own for compute purposes.
 Take ten runs of a two-minute command with three minutes of setup and three
 minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
 lifetime cover 20 minutes of command time. With `M = 60` minutes and `g = 60`
-minutes, each run is billed as one hour:
-
-```text
-per-run billed compute = max(60, ceil((3 + 2 + 3) / 60) * 60) = 60 minutes
-total compute cost     = 10 * 60 / 60 * R_vm = 10 * R_vm
-```
+minutes, each run is billed as one hour: the per-run billed compute is
+`max(60, ceil((3 + 2 + 3) / 60) * 60)`, which is 60 minutes, and the total
+compute cost is `10 * 60 / 60 * R_vm`, which is `10 * R_vm`.
 
 So 20 minutes of command time costs 10 instance-hours of compute — ten times
 `R_vm` — before storage or IP charges are added. Halving the command time
