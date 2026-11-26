@@ -16,6 +16,6 @@ global-timeout = "30m"
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'binary(=cli_run) | binary(=cli_smoke) | binary(=cloud_init_behaviour) | binary(=instance_overrides_behaviour) | binary(=ui)'
+filter = 'binary(=cli_run) | binary(=cli_smoke) | binary(=cloud_init_behaviour) | binary(=instance_overrides_behaviour) | binary(=feature_gate_contract) | binary(=ui)'
 test-group = "nested-cargo-builds"
 slow-timeout = { period = "60s", terminate-after = 10 }

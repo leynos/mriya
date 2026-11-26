@@ -1,9 +1,16 @@
 //! BDD step definitions for instance overrides on `mriya run`.
+//!
+//! Every step drives the ordinary binary in an isolated environment, so the
+//! remaining scenarios observe the diagnostics an invalid override produces
+//! before provisioning starts.
 
 use rstest_bdd_macros::{given, then, when};
 
 use super::test_helpers::CliContext;
-use crate::cli_support::{CliOutput, check_field_value, check_run_failed_with, string_newtype};
+use crate::{
+    cli_support::{check_run_failed_with, string_newtype},
+    isolated_cli::CliOutput,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
@@ -17,73 +24,35 @@ string_newtype!(InstanceType);
 string_newtype!(ImageLabel);
 string_newtype!(ErrorSnippet);
 
-#[given("fake request dumping is enabled")]
-fn fake_dumping_enabled(cli_context: CliContext) -> CliContext { cli_context }
-
-/// Runs the default `mriya run` path and retains its output for the following
-/// behavioural assertions.
-#[when("I run mriya without instance overrides")]
-fn run_without_overrides(mut cli_context: CliContext) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context
-        .base_command()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-    cmd.args(["run", "--", "echo", "ok"]);
-    let output = cmd
-        .output()
-        .map_err(|err| StepError::Execution(err.to_string()))?;
-
-    cli_context.output = Some(CliOutput::from_process_output(output));
-    Ok(cli_context)
-}
+/// Declares that the scenarios drive the binary a user receives.
+///
+/// There is no feature-gated variant to select, so the step only names the
+/// subject; it keeps the feature file reading as a sentence.
+#[given("the ordinary mriya binary")]
+fn ordinary_binary(cli_context: CliContext) -> CliContext { cli_context }
 
 /// Applies the scenario's instance type and image overrides, then captures the
-/// request-dump output for the following behavioural assertions.
+/// output for the following behavioural assertions.
 #[when("I run mriya with instance type \"{instance_type}\" and image \"{image}\"")]
 fn run_with_overrides(
     mut cli_context: CliContext,
     instance_type: InstanceType,
     image: ImageLabel,
 ) -> Result<CliContext, StepError> {
-    let mut cmd = cli_context
+    let run = cli_context
         .base_command()
         .map_err(|err| StepError::Execution(err.to_string()))?;
-    cmd.args([
-        "run",
-        "--instance-type",
-        instance_type.as_ref(),
-        "--image",
-        image.as_ref(),
-        "--",
-        "echo",
-        "ok",
-    ]);
-    let output = cmd
-        .output()
+    let output = run
+        .execute(&[
+            "--instance-type",
+            instance_type.as_ref(),
+            "--image",
+            image.as_ref(),
+        ])
         .map_err(|err| StepError::Execution(err.to_string()))?;
 
     cli_context.output = Some(CliOutput::from_process_output(output));
     Ok(cli_context)
-}
-
-fn assert_field_value(
-    cli_context: &CliContext,
-    key: &str,
-    expected: &str,
-) -> Result<(), StepError> {
-    check_field_value(cli_context.output.as_ref(), key, expected).map_err(StepError::Assertion)
-}
-
-#[then("the run request uses instance type \"{instance_type}\"")]
-fn assert_instance_type(
-    cli_context: &CliContext,
-    instance_type: InstanceType,
-) -> Result<(), StepError> {
-    assert_field_value(cli_context, "instance_type", instance_type.as_ref())
-}
-
-#[then("the run request uses image \"{image}\"")]
-fn assert_image(cli_context: &CliContext, image: ImageLabel) -> Result<(), StepError> {
-    assert_field_value(cli_context, "image_label", image.as_ref())
 }
 
 #[then("the run fails with error containing \"{snippet}\"")]

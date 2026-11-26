@@ -3,12 +3,12 @@
 # .github/workflows/mutation-testing.yml; cargo-mutants merges both.
 
 exclude_re = [
-    # Test-backdoor scaffolding in src/test_backdoors.rs, compiled only under
-    # cfg(any(test, feature = "test-backdoors")) so the CLI behaviour
-    # tests can script the binary. No production path executes these
-    # functions, so their mutants are noise (mirrors the existing
-    # src/test_support.rs exclusion). These are function-name patterns, not a
-    # module exclusion: rename or add a backdoor function here as well.
+    # Test-only fake-run scaffolding in src/test_backdoors.rs, compiled only
+    # under cfg(test) for the binary's unit tests. No Cargo feature enables
+    # it, so no production path executes these functions and their mutants are
+    # noise (mirrors the existing src/test_support.rs exclusion). These are
+    # function-name patterns, not a module exclusion: rename or add a fake-run
+    # function here as well.
     "enable_fake_modes",
     "fake_mode_from_env",
     "run_fake_mode",

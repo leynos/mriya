@@ -19,7 +19,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 mod cli;
-#[cfg(any(test, feature = "test-backdoors"))]
+#[cfg(test)]
 mod test_backdoors;
 
 use cli::{Cli, InitCommand, RunCommand};
@@ -39,10 +39,12 @@ use mriya::{
     SyncConfig,
     Syncer,
 };
-#[cfg(any(test, feature = "test-backdoors"))]
+#[cfg(test)]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
 
 mod cli_args;
+#[cfg(test)]
+mod main_request_tests;
 #[cfg(test)]
 mod main_tests;
 
@@ -150,26 +152,24 @@ async fn exec_run(command: RunCommand) -> Result<i32, CliError> {
 /// yields [`CliError::Config`] for the caller to report.
 async fn exec_init(command: InitCommand) -> Result<i32, CliError> { init_command(command).await }
 
-/// Provisions an instance, runs the requested command, and tears it down.
+/// Provisions an instance, syncs the workspace, runs the command remotely,
+/// and returns the remote exit code.
 ///
-/// Short-circuits to a fake outcome when a test backdoor selects one, so the
-/// CLI behaviour suite can assert exit codes without cloud access.
+/// In a unit-test build only, an outcome selected from the environment
+/// short-circuits everything below so tests can assert exit codes and streamed
+/// output without cloud access. That branch is compiled out of every other
+/// build; no Cargo feature or profile can enable it. Command arguments are
+/// validated after the backend and syncer have been constructed.
+///
+/// For example, a remote command exiting 7 yields 7, so the caller can pass
+/// the remote status straight through as the process exit code.
 ///
 /// # Errors
 ///
 /// Returns the first failure from request construction, sync configuration,
 /// the remote command, or teardown.
-/// Provisions an instance, syncs the workspace, runs the command remotely,
-/// and returns the remote exit code.
-///
-/// With the `test-backdoors` feature (or in unit tests), environment-selected
-/// fake modes can short-circuit everything below. Command arguments are
-/// validated after the backend and syncer have been constructed.
-///
-/// For example, a remote command exiting 7 yields 7, so the caller can pass
-/// the remote status straight through as the process exit code.
 async fn run_command(args: RunCommand) -> Result<i32, CliError> {
-    #[cfg(any(test, feature = "test-backdoors"))]
+    #[cfg(test)]
     {
         if let Some(outcome) = select_fake_outcome(&mockable::DefaultEnv) {
             let mut stdout = io::stdout();
@@ -254,12 +254,33 @@ fn build_backend_and_request(
 ) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
     let scaleway_config =
         ScalewayConfig::load_without_cli_args().map_err(|err| CliError::Config(err.to_string()))?;
-    let backend =
-        ScalewayBackend::new(scaleway_config).map_err(|err| CliError::Backend(err.to_string()))?;
-    let mut request = backend
-        .default_request()
+    build_backend_and_request_with(&scaleway_config, args, &mockable::DefaultEnv)
+}
+
+/// Builds the backend and its default instance request from configuration and
+/// environment that have already been resolved, then applies the command-line
+/// overrides.
+///
+/// Loading is split from building so a test can supply both inputs without
+/// reading the process environment, matching `ScalewayConfig::as_request` and
+/// `as_request_with_env`. The environment reaches every read on the way to the
+/// request: `MRIYA_TEST_RUN_ID` for resource tagging during backend
+/// construction, and `HOME` for a `~/` cloud-init path in both the configured
+/// file and the command-line flag. For example, a test passes the documented
+/// defaults and a `MockEnv` and asserts the request the binary would send,
+/// while production passes what `ScalewayConfig::load_without_cli_args` and
+/// `DefaultEnv` resolved.
+fn build_backend_and_request_with(
+    scaleway_config: &ScalewayConfig,
+    args: &RunCommand,
+    env: &impl mockable::Env,
+) -> Result<(ScalewayBackend, InstanceRequest), CliError> {
+    let backend = ScalewayBackend::new_with_env(scaleway_config.clone(), env)
         .map_err(|err| CliError::Backend(err.to_string()))?;
-    apply_instance_overrides(&mut request, args)?;
+    let mut request = backend
+        .default_request_with_env(env)
+        .map_err(|err| CliError::Backend(err.to_string()))?;
+    apply_instance_overrides_with(&mut request, args, env)?;
     Ok((backend, request))
 }
 
@@ -271,9 +292,10 @@ fn build_backend_and_request(
 /// For example, passing only `--image` changes the image label and leaves the
 /// instance type untouched, while `--instance-type "  "` returns
 /// [`CliError::InvalidOverride`] naming that flag.
-fn apply_instance_overrides(
+fn apply_instance_overrides_with(
     request: &mut InstanceRequest,
     args: &RunCommand,
+    env: &impl mockable::Env,
 ) -> Result<(), CliError> {
     if let Some(instance_type) = args.instance_type.as_deref() {
         request.instance_type = parse_override("--instance-type", instance_type)?;
@@ -284,7 +306,7 @@ fn apply_instance_overrides(
     }
 
     if args.cloud_init.is_some() || args.cloud_init_file.is_some() {
-        request.cloud_init_user_data = resolve_cloud_init_for_run(args)?;
+        request.cloud_init_user_data = resolve_cloud_init_for_run_with(args, env)?;
     }
 
     Ok(())
@@ -293,13 +315,18 @@ fn apply_instance_overrides(
 /// Resolves the cloud-init flags into user-data, rewording each failure in
 /// terms of the CLI flag names.
 ///
-/// For example, `--cloud-init "#cloud-config"` yields that payload, while
-/// passing both `--cloud-init` and `--cloud-init-file` returns
+/// A `~/` path expands through `env`, so the caller controls where `HOME`
+/// comes from. For example, `--cloud-init "#cloud-config"` yields that
+/// payload, while passing both `--cloud-init` and `--cloud-init-file` returns
 /// [`CliError::InvalidCloudInit`] naming both flags.
-fn resolve_cloud_init_for_run(args: &RunCommand) -> Result<Option<String>, CliError> {
-    mriya::cloud_init::resolve_cloud_init_user_data(
+fn resolve_cloud_init_for_run_with(
+    args: &RunCommand,
+    env: &impl mockable::Env,
+) -> Result<Option<String>, CliError> {
+    mriya::cloud_init::resolve_cloud_init_user_data_with_env(
         args.cloud_init.as_deref(),
         args.cloud_init_file.as_deref(),
+        env,
     )
     .map_err(|err| match err {
         mriya::cloud_init::CloudInitError::BothProvided => CliError::InvalidCloudInit(

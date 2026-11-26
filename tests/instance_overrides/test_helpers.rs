@@ -3,7 +3,13 @@
 use rstest::fixture;
 
 use crate::{
-    cli_support::{CliOutput, DEFAULT_IMAGE_LABEL, fake_run_command},
+    isolated_cli::{
+        CliOutput,
+        DEFAULT_IMAGE_LABEL,
+        IsolatedRun,
+        RunEnvironment,
+        isolated_run_command,
+    },
     test_constants::DEFAULT_INSTANCE_TYPE,
 };
 
@@ -15,24 +21,29 @@ pub struct CliContext {
 }
 
 impl CliContext {
-    /// Creates a command for the lazily compiled, feature-enabled test binary.
-    /// The executable is reused across scenarios while each call returns a
-    /// fresh command.
+    /// Starts one isolated `mriya run` invocation.
     ///
-    /// The command selects fake request-dump mode and applies this context's
-    /// fixture defaults plus dummy Scaleway credentials. Other environment
-    /// variables remain inherited from the test process. If Cargo exits with a
-    /// failure, `BuildError` retains its status, stdout, and stderr; launch and
-    /// artefact-selection failures are also returned as `BuildError`.
+    /// The executable is the ordinary binary, reused across scenarios, while
+    /// each call returns a fresh command with this context's fixture defaults.
+    /// Every inherited environment variable is cleared, so only the isolated
+    /// values and the scenario's own overrides reach the child.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binary cannot be built or the isolation
+    /// directories cannot be created.
     ///
     /// # Example
     ///
-    /// Add `run` options to the returned command, then inspect the captured
-    /// request dump to verify how instance overrides were represented.
-    pub fn base_command(
-        &self,
-    ) -> Result<assert_cmd::Command, &'static crate::test_binary::BuildError> {
-        fake_run_command(&self.default_instance_type, &self.default_image)
+    /// Pass the scenario's `--instance-type` and `--image` options to
+    /// [`IsolatedRun::execute`] to observe how the binary handled them.
+    pub fn base_command(&self) -> anyhow::Result<IsolatedRun> {
+        isolated_run_command(&RunEnvironment {
+            default_instance_type: &self.default_instance_type,
+            default_image: &self.default_image,
+            home: None,
+            variables: &[],
+        })
     }
 }
 

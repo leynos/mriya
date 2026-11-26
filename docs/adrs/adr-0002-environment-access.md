@@ -101,3 +101,20 @@ depended on.
 - `test_support`'s `EnvGuard` and `ENV_LOCK` are removed. A test that needs a
   process-level value uses `temp_env::with_var`, which is `unsafe` and
   serialized, or sets it on a spawned child.
+
+## Addendum: 2026-11-26 — the fake run modes are unit-test only
+
+Issue #12 removed the `test-backdoors` Cargo feature and guards
+`src/test_backdoors.rs`, its import and its dispatch with `#[cfg(test)]` alone,
+so no build flag can compile the fake run modes into a released binary. The
+`MRIYA_FAKE_*` gates named above therefore apply only to the binary's unit
+tests. `tests/cli_run.rs` drives the ordinary binary and requires it to ignore
+those variables.
+
+The decision above that a test needing a process-level value uses
+`temp_env::with_var` is also superseded: the `temp-env` dev-dependency was
+removed and no test mutates the process environment. `expand_tilde` and
+`ScalewayConfig::as_request` delegate to `_with_env` counterparts, and the run
+request builder splits into `build_backend_and_request` and
+`build_backend_and_request_with`, so tests inject a `MockEnv` or a
+`ScalewayConfig` instead. The rest of this record stands.

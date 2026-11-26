@@ -158,6 +158,12 @@ nested build offline:
   timed run's flags wholesale, so one that changes the build shape needs the
   same options in `CARGO_FLAGS` or `WARM_FLAGS`. On a cold target the warm-up
   pays about 8 s for the `ui` test and the timed test then takes about 1.2 s.
+- The CLI suites' own build follows the same rule. `tests/common/test_binary.rs`
+  runs `cargo build --bin mriya` with no features, no dev-dependencies and the
+  inherited `RUSTFLAGS`, and `make test` builds exactly that unit before the
+  timed pass with `cargo build --bin mriya`. Keep the two in step: if the
+  helper ever needed another flag, the preparation line would have to match it
+  or the timed `cli_run` allowance would pay for a cold build.
 - `ci.yml` and `coverage-main.yml` run `cargo fetch --locked` as an
   unconditional step before the coverage step, with no `|| true`.
 - The test binary build sets `CARGO_NET_OFFLINE=true`. Prepare a direct or
@@ -249,15 +255,24 @@ loopback script.
 
 ### Behavioural test support
 
-The behavioural suites under `tests/` share two support modules rather than
-each keeping a private copy:
+The behavioural suites under `tests/` share support modules rather than each
+keeping a private copy. Each test file is its own crate, so a shared module is
+compiled once per consumer and must contain only what every consumer uses; an
+item only one suite needs belongs in that suite.
 
-- `tests/common/cli_support.rs` supplies the binary-driving helpers the
-  `cloud_init` and `instance_overrides` suites both need, including
-  `DEFAULT_IMAGE_LABEL` — the label the CLI resolves when a scenario sets none,
-  which must track `ScalewayConfig::default_image` — and
-  `check_run_failed_with`, whose failure message reports both streams so a run
-  that fails before writing to stderr still explains itself.
+- `tests/common/isolated_cli.rs` supplies the binary-driving helper the
+  `cli_run`, `cloud_init` and `instance_overrides` suites all need. It clears
+  the child's environment, gives it temporary `HOME` and XDG directories, an
+  empty configuration file, dummy Scaleway credentials and a fresh working
+  directory, appends a tab-bearing remote-command argument that the CLI rejects
+  before `backend.create`, and owns the temporary directories for the life of
+  the child. It also supplies `DEFAULT_IMAGE_LABEL` — the label the CLI
+  resolves when a scenario sets none, which must track
+  `ScalewayConfig::default_image`.
+- `tests/common/cli_support.rs` supplies what the `cloud_init` and
+  `instance_overrides` suites both need beyond that: the step-parameter
+  newtypes and `check_run_failed_with`, whose failure message reports both
+  streams so a run that fails before writing to stderr still explains itself.
 - `tests/sync/rsync_simulator.rs` derives `RsyncFlags` from the real argument
   vector the sync code built. `--delete` and `--filter=:- .gitignore` are
   matched exactly, so a scenario fails when production stops passing either
@@ -269,12 +284,12 @@ scenario requested, carried on `RunContext::requested_command`, so its ordering
 assertions fail when the remote command is skipped instead of passing on any
 trailing SSH call.
 
-Mutation exclusions in `.cargo/mutants.toml` remain limited to test-backdoor
-scaffolding and the equivalent instance-request builder mutant. Scoped mutation
-counts recorded before these lifecycle tests are historical results; rerun
-mutation testing against the current candidate before using counts as evidence.
-The loopback tests exercise the network-boundary survivors reported by the
-earlier run.
+Mutation exclusions in `.cargo/mutants.toml` remain limited to the test-only
+fake-run functions and the equivalent instance-request builder mutant. Scoped
+mutation counts recorded before these lifecycle tests are historical results;
+rerun mutation testing against the current candidate before using counts as
+evidence. The loopback tests exercise the network-boundary survivors reported
+by the earlier run.
 
 ### The environment boundary
 
@@ -308,6 +323,7 @@ injected one takes `&impl Env` and is what a test targets:
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------- |
 | `ScalewayBackend::new(config)`                                             | `ScalewayBackend::new_with_env(config, env)`                           | the test-run identifier         |
 | `cloud_init::resolve_cloud_init_user_data(inline, file)`                   | `cloud_init::resolve_cloud_init_user_data_with_env(inline, file, env)` | `HOME` for a `~/` file path     |
+| `ScalewayBackend::default_request()`                                       | `ScalewayBackend::default_request_with_env(env)`                       | `HOME` for a `~/` file path     |
 | `Syncer::build_ssh_args(..)` / `common_ssh_options` / `build_remote_shell` | the same methods with a trailing `&impl Env`                           | `HOME` for a `~/` identity path |
 | `expand_tilde(path)`                                                       | `home_from_env(env, path)` plus `expand_tilde_with_home`               | `HOME`                          |
 
@@ -329,8 +345,12 @@ directory: `clippy.toml` disallows `std::env::set_var`, `remove_var`,
 `set_current_dir` and `temp_env`'s four entry points, so a new site fails lint.
 No test is an exception: `expand_tilde` and `ScalewayConfig::as_request`
 delegate to `expand_tilde_with_env` and `ScalewayConfig::as_request_with_env`,
-which take the environment, and their cases inject a `MockEnv`. A CLI behaviour
-scenario that needs `HOME` sets it on the child with `Command::env`.
+which take the environment, and their cases inject a `MockEnv`. The run request
+builder follows the same split: `build_backend_and_request` loads the
+configuration and delegates to `build_backend_and_request_with`, so the cases in
+`main_request_tests` pass the documented defaults and read no process
+environment either. A CLI behaviour scenario that needs `HOME` sets it on the
+child with `Command::env`.
 
 The CLI behaviour suite sets `HOME` on the spawned binary rather than on the
 test process, which is why the tilde cloud-init scenario can assert an expanded
@@ -381,12 +401,20 @@ without changing behaviour, and each publishes only what its parent needs:
   the selection, and it takes its stdout and stderr as arguments rather than
   reaching for the process streams, so a unit test asserts exactly what a fake
   run emits. `run_command` is the only caller that supplies the real streams.
-  The module is compiled for unit tests and for the `test-backdoors` feature
-  the CLI integration tests enable. `select_fake_outcome` takes `&impl Env`
-  rather than reading `std::env` directly; `run_fake_outcome` takes the
-  selected outcome and the two streams it writes to, and reads no environment
-  at all. The `MRIYA_FAKE_*` variables are read only after `enable_fake_modes`
-  gates them, so an ordinary run cannot be diverted by a stray variable.
+  `select_fake_outcome` takes `&impl Env` rather than reading `std::env`
+  directly; `run_fake_outcome` takes the selected outcome and the two streams
+  it writes to, and reads no environment at all. The `MRIYA_FAKE_*` variables
+  are read only after `enable_fake_modes` gates them, so a stray variable
+  cannot divert a run in a unit-test build.
+
+  The module and its two call sites in `src/main.rs` are guarded by
+  `#[cfg(test)]` alone. No Cargo feature enables them: a release binary, and a
+  `cargo build --all-features` binary, contain no fake dispatch at all, so an
+  attacker or a misconfigured environment cannot set `MRIYA_FAKE_RUN_ENABLE` and
+  `MRIYA_FAKE_RUN_MODE` to bypass provisioning, sync or the remote command.
+  `cargo build --features test-backdoors` fails with an unknown-feature error
+  rather than producing a backdoored binary. `tests/cli_run.rs` drives the
+  ordinary binary with every retired control and requires it to ignore them.
   `.cargo/mutants.toml` excludes this scaffolding from mutation testing by
   function name, not by module: `exclude_re` lists each function whose mutants
   are noise because no production path reaches it. Adding or renaming one of
@@ -539,14 +567,31 @@ and every rebuild recompiles whole crates. To debug, run with
 ### CLI integration-test builds
 
 CLI behavioural tests share `tests/common/test_binary.rs`. It invokes Cargo from
-`CARGO_MANIFEST_DIR`, enables `test-backdoors` explicitly, and selects the
-executable from Cargo's `compiler-artifact` JSON. Running from the manifest
-root preserves the configured target directory and inherited Cargo settings.
+`CARGO_MANIFEST_DIR` with no feature flag, so the executable under test is the
+ordinary `mriya` binary rather than a test-only variant, and selects it from
+Cargo's `compiler-artifact` JSON. Running from the manifest root preserves the
+configured target directory and inherited Cargo settings.
 
 The helper uses `std::process::Command::output()` to drain stdout and stderr
 concurrently. A nested build can fill stderr while its caller waits for stdout,
 blocking compilation. Build errors retain both streams so compiler diagnostics
 remain available when a build fails.
+
+`tests/cli_run.rs` is the regression that keeps the retired `MRIYA_FAKE_*`
+controls out of that binary. Each case arms one control, runs the isolated
+command, and requires exit status 1 with the control-character diagnostic and
+none of the output a fake mode used to print. The isolation clears the child's
+environment to a temporary `HOME`, temporary XDG directories, an empty
+configuration file named by `MRIYA_CONFIG_PATH`, the dummy Scaleway credentials
+and a fresh working directory, so a developer's own `mriya.toml` or `SCW_*`
+values cannot change the result. Every isolated invocation appends a
+remote-command argument containing a tab, which `validate_command_args` rejects
+after the request is built and before `backend.create`; the suite therefore
+fails closed instead of provisioning a billable instance. The pre-provisioning
+success assertions that used to run through the feature-gated request dump now
+live in `src/main_request_tests.rs`, where they parse a real command line and
+call the real request builder through `build_backend_and_request_with`,
+supplying the documented defaults so the cases read no process environment.
 
 ### Test runner policy
 
