@@ -20,4 +20,21 @@ exclude_re = [
     # Self::default(), so replacing the builder body with
     # Default::default() cannot change behaviour.
     'replace InstanceRequest::builder -> InstanceRequestBuilder with Default::default\(\)',
+    # Hang-inducing boundary mutant, accepted rather than killed. In
+    # forward_stream the EOF check `if read == 0 { break; }` becomes
+    # `if read != 0 { break; }`, so the loop never stops at end of file: the
+    # reader keeps answering `Ok(0)` and the thread spins for ever. The
+    # forwarders are joined with no bound after the child is waited for, and
+    # src/sync/tests/streaming.rs drives them through real child processes
+    # whose pipes legitimately reach EOF, so the spinning thread holds the
+    # process stdout lock and cargo-mutants records TIMEOUT, not CAUGHT. A
+    # bounded wait cannot turn that into CAUGHT while the thread holds the
+    # lock. The behaviour is covered directly instead, by the controlled
+    # readers in src/sync/types/tests.rs, which make the read after EOF fail
+    # so the flipped operator returns a Spawn error rather than spinning. No
+    # read guard belongs in production: a zero-byte read is legitimate EOF.
+    # The pattern is anchored to this file and this function and tolerates
+    # only a moved line and column; tests/mutants_config_contract.rs holds it
+    # to that scope.
+    '^src/sync/types\.rs:[0-9]+:[0-9]+: replace == with != in forward_stream$',
 ]
