@@ -36,5 +36,5 @@ jobs:
       # its survivors are noise.
       exclude-globs: "src/test_support.rs"
       # Match the CI baseline (`make test` runs --all-features) so the
-      # test-backdoors feature-gated tests run against mutants.
+      # suite is built and run against mutants exactly as CI gates it.
       extra-args: "--all-features"
