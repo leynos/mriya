@@ -186,6 +186,83 @@ provisioning) that will guide subsequent optimizations.
   `InstanceRequest` and is processed during the create flow, before the
   instance is powered on.
 
+### Boot volume decision (26 November 2026)
+
+- Model boot storage in a provider-neutral `src/boot_volume.rs`: the storage
+  type (`l_ssd` or `sbs_volume`), the profile's request, the resolved plan with
+  its compatibility-default provenance, the reported root volume, and the
+  allocation pairing the plan with what was bought. The `Backend` port names
+  the plan without importing Scaleway types.
+- Keep the boot disk and the retained cache volume on separate fields and
+  separate report lines. `default_volume_id` is the cache; it never selects the
+  boot disk.
+- Units: boot sizes are decimal gigabytes (10^9 bytes) on the configuration
+  surface, bytes in provider payloads, and both in reports. The cache volume's
+  `volume_init_size_gb` keeps its binary GiB conversion because it is a
+  different setting with a different unit.
+- Validate against the zone product catalogue
+  (`GET /instance/v1/zones/{zone}/products/servers`, paginated) and the image's
+  own root volume. The rule order is architecture, storage availability, size
+  bounds, then 512-byte alignment. `volumes_constraint` gives the type's
+  general range; `per_volume_constraint.l_ssd` gives the local range;
+  `capabilities.block_storage` reports Block Storage support.
+- Resolve image storage compatibility by exact provider identifier: `l_ssd` is
+  local, `sbs_snapshot` and `sbs_volume` are Block Storage, `unified` is both.
+  Every other value, including the deprecated `b_ssd` and `scratch`, is refused
+  by name rather than assumed compatible.
+- Compatibility default: local at the instance type's maximum capacity when
+  the type offers local storage and the image can back it, mirroring the
+  documented behaviour for a marketplace image ID; otherwise Block Storage at
+  the larger of the image root and 10 GB, rounded up to a whole gigabyte. Each
+  defaulted setting is recorded on the plan and printed.
+- Named constants and their sources:
+  - `SBS_MIN_SIZE_BYTES = 5 GB` and `SBS_MAX_SIZE_BYTES = 15 TB`: Scaleway
+    Block Storage FAQ, <https://www.scaleway.com/en/docs/block-storage/faq/>.
+  - `SBS_DEFAULT_FLOOR_BYTES = 10 GB`: Scaleway Instances API, "Creating an
+    Instance: the volumes object", which states an image label defaults to an
+    `sbs_volume` "the size of the OS (typically 10GB in most cases)".
+  - `SIZE_ALIGNMENT_BYTES = 512`: the `VolumeServerTemplate.size` field
+    documents "must be a multiple of 512". A whole decimal gigabyte is
+    512 * 1_953_125, so every size derived from whole gigabytes is aligned by
+    construction; the check exists for catalogue-derived sizes.
+- Send the plan as an explicit `volumes["0"]` entry carrying `volume_type`,
+  `size`, and `boot: true`, and omit `name` and `base_snapshot`: the documented
+  "create a volume from a snapshot of an image" case leaves both optional and
+  derives the snapshot from `image`.
+- Read the reported root back. A local root's size and type come from the
+  create response; a Block Storage root's size comes from
+  `GET /block/v1/zones/{zone}/volumes/{id}`, because the Instances API does not
+  report it reliably. A reported type or size that differs from the plan fails
+  the create.
+- Decode the create response with a local minimal model. The SDK's
+  `ScalewayInstance` drops the `boot` flag on volume entries, which is the
+  field that identifies the root volume, so it cannot answer the question
+  capture asks.
+- On any post-POST failure, destroy the server best-effort and return the
+  original error, appending the teardown outcome as `src/run.rs` does. Do not
+  delete volumes explicitly: ownership-aware boot-volume cleanup is issue
+  #154's scope.
+- Include `volume_type: "sbs_volume"` on the root entry of attach and detach
+  PATCH bodies, and only there. The provider requires it for Block Storage and
+  rejects it for local volumes, so the root's own type decides.
+
+Unverified values, recorded rather than assumed:
+
+- The image-root vocabulary is only partly documented. `unified` is marked
+  deprecated in the schema yet still mapped to both storage kinds; a live image
+  reporting it must be checked before that mapping is relied on.
+- The Block Storage bounds are read from the FAQ rather than the schema; the
+  schema does not publish a size range.
+- Deleting a server through the Instances API is documented in the Block
+  Storage FAQ as deleting all attached local and Block Storage volumes, while
+  the Instances API notes say an `sbs_volume` is only detached. The opt-in live
+  check measures which happens and reaps a surviving root by its captured
+  identifier; #154 owns the policy.
+- The `sbs_volume` boot template is documented as optional
+  `volume_type`/`size`/`boot` derived from `image`, but creating a Block
+  Storage boot disk this way is not exercised by any example in the public
+  documentation. The live check is what proves it.
+
 ### Cache routing decision (December 2025)
 
 - Route build caches to the attached volume by exporting language-specific
@@ -241,11 +318,13 @@ provisioning) that will guide subsequent optimizations.
   `DEV1-S`, image label `Ubuntu 24.04 Noble Numbat`, arch `x86_64`) and merges
   files, environment, and CLI flags. Missing `SCW_SECRET_KEY` or project IDs
   fail fast during validation.
-- **Lifecycle contract:** Creation resolves the freshest image ID matching the
-  requested label and architecture in the target zone, then requests a public
-  routed IP so SSH is reachable. Readiness polling runs every 5 seconds, using
-  a 5-minute polling deadline, and requires a `running` state with a parseable
-  public IP.
+- **Lifecycle contract:** Creation reads the zone product catalogue, validates
+  the boot-volume plan against it and the image, resolves the freshest image ID
+  matching the requested label and architecture in the target zone, sends the
+  plan as an explicit boot entry, reads the root volume back and verifies it,
+  then requests a public routed IP so SSH is reachable. Readiness polling runs
+  every 5 seconds, using a 5-minute polling deadline, and requires a `running`
+  state with a parseable public IP.
 - **Teardown verification:** Destruction calls the Instances API delete
   endpoint then polls until the server disappears, failing the integration test
   if any residual resource remains. Integration coverage provisions the
@@ -697,8 +776,14 @@ provides the exact type string as known in that cloud, e.g., Scaleway’s
 - Keep provider-specific validation in the backend:
   - Scaleway rejects unknown instance types during create.
   - Scaleway rejects unknown image labels when resolving the image identifier.
-- Avoid preflight enumeration (listing every instance type or image) to keep
-  API calls minimal and reduce drift between cached metadata and the provider.
+- Superseded: an earlier version of this decision avoided preflight
+  enumeration, listing every instance type or image, to keep API calls minimal.
+  The boot-volume decision below replaces it for one endpoint only: the zone
+  product catalogue at `GET /instance/v1/zones/{zone}/products/servers`. A
+  CPU/RAM choice does not specify the disk, and the disk must be validated
+  before it is billed, so that single catalogue read is now required. Image
+  lookup still selects from the label's candidates rather than enumerating the
+  marketplace.
 
 **Cloud-Init User Data:** We introduce support for a `user_data` field in the
 config or a separate file reference. This allows the user to provide a

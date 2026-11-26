@@ -11,18 +11,18 @@ ExecPlan rules in the `execplans` skill.
 
 Mriya resolves a Scaleway image label to an image UUID and then creates a
 server without saying anything about the boot volume. Scaleway fills the gap
-with a default that depends on how the image was named, on whether the
-instance type offers local storage, and on the marketplace image's own type.
-A run that names a CPU/RAM shape therefore does not fully specify what it
-buys, nor how much workspace the remote command gets.
+with a default that depends on how the image was named, on whether the instance
+type offers local storage, and on the marketplace image's own type. A run that
+names a CPU/RAM shape therefore does not fully specify what it buys, nor how
+much workspace the remote command gets.
 
 After this change a profile can state the boot volume type and capacity
 explicitly, Mriya validates that combination against the zone's product
-catalogue and the chosen image *before* it creates anything billable, sends
-the resolved plan as an explicit `volumes["0"]` entry, reads the actual root
-volume back, records it on the handle, and prints the boot and cache
-allocations on separate lines. When a profile omits the settings, Mriya picks
-a documented deterministic default and says on stderr that it did so.
+catalogue and the chosen image *before* it creates anything billable, sends the
+resolved plan as an explicit `volumes["0"]` entry, reads the actual root volume
+back, records it on the handle, and prints the boot and cache allocations on
+separate lines. When a profile omits the settings, Mriya picks a documented
+deterministic default and says on stderr that it did so.
 
 Observable success:
 
@@ -55,8 +55,7 @@ Observable success:
 - If the change exceeds 3,500 net lines of code across production and test
   sources, stop and reassess decomposition. ExecPlan files do not count.
 - If a provider contract cannot be verified from Scaleway's published OpenAPI
-  schema or documentation, stop and record the uncertainty rather than
-  guessing.
+  schema or documentation, stop and record the uncertainty rather than guessing.
 - If a gate fails twice for the same root cause, stop and record the diagnosis
   before changing the design.
 
@@ -81,8 +80,8 @@ Observable success:
 ## Conformance basis
 
 Upstream: GitHub issue `leynos/mriya#155`, "Make Scaleway boot-volume type and
-size explicit", including its Coding Plan (26 November 2026). Related:
-`#153` (SBS cache volumes) and `#154` (ownership-aware boot-volume cleanup).
+size explicit", including its Coding Plan (26 November 2026). Related: `#153`
+(SBS cache volumes) and `#154` (ownership-aware boot-volume cleanup).
 
 Governing contracts, reviewed 26 November 2026:
 
@@ -92,12 +91,12 @@ Governing contracts, reviewed 26 November 2026:
   `VolumeServerTemplate`; `GET /instance/v1/zones/{zone}/products/servers`
   returning `ServerType` with `volumes_constraint.min_size`,
   `volumes_constraint.max_size`, and `per_volume_constraint.l_ssd`; the
-  `Volume.VolumeType` enum `l_ssd | b_ssd | unified | scratch | sbs_volume |
-  sbs_snapshot`.
+  `Volume.VolumeType` enum
+  `l_ssd | b_ssd | unified | scratch | sbs_volume | sbs_snapshot`.
 - Scaleway Instances API "Creating an Instance: the volumes object":
   an image *label* defaults to an `sbs_volume` the size of the OS; a
-  marketplace image *ID* on a type with local storage defaults to an `l_ssd`
-  at the instance's maximum local capacity.
+  marketplace image *ID* on a type with local storage defaults to an `l_ssd` at
+  the instance's maximum local capacity.
 - Scaleway Block Storage API v1 schema,
   <https://www.scaleway.com/en/developers/api/block/v1/schema.yml>:
   `GET /block/v1/zones/{zone}/volumes/{volume_id}` returning an unwrapped
@@ -157,8 +156,8 @@ non-empty case list when enabled.
 `src/backend.rs` owns `InstanceRequest` and `InstanceHandle`, the provider
 neutral request and result types. `src/config.rs` maps `ScalewayConfig` to an
 `InstanceRequest` in `as_request_with_env`. `src/scaleway/mod.rs` implements
-`Backend`; its `create` resolves an image (`lifecycle/image.rs`), posts a
-server (`lifecycle/create.rs`), attaches a cache volume
+`Backend`; its `create` resolves an image (`lifecycle/image.rs`), posts a server
+(`lifecycle/create.rs`), attaches a cache volume
 (`lifecycle/volume_attach.rs`), and powers the server on. `src/init/mod.rs`
 orchestrates cache-volume creation. `src/run.rs` orchestrates a remote run.
 `src/test_backdoors.rs` (test-only) renders `dump-request` output.
@@ -199,30 +198,48 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 ## Progress
 
 - [x] Read the repository, the Scaleway OpenAPI schemas, and the issue.
-- [ ] EP-M1: domain model and configuration.
-- [ ] EP-M2: preflight and resolver.
-- [ ] EP-M3: create payload, root capture, cleanup.
-- [ ] EP-M4: init preflight and reporting.
-- [ ] EP-M5: documentation and live check.
+- [x] EP-M1: domain model and configuration. `src/boot_volume.rs` holds
+  `BootVolumeType`, `BootVolumeRequest`, `BootVolumePlan`,
+  `CompatibilityDefault`, `ImageStorage`, `RootVolume`, and
+  `BootVolumeAllocation`. `ScalewayConfig` carries `boot_volume_type` and
+  `boot_volume_size_gb`, `InstanceRequest` carries `boot_volume`,
+  `InstanceHandle` carries the optional allocation, and `dump-request` prints
+  both settings. Committed as `779819c`.
+- [x] EP-M2: preflight and resolver. `products.rs` reads the paginated zone
+  catalogue; `boot_plan.rs` is the pure resolver with the documented rule order;
+  `Backend::preflight` is required and Scaleway implements it; image selection
+  filters by architecture, availability, then storage compatibility, and
+  reports the observed root types when nothing matches. Committed as `779819c`.
+- [x] EP-M3: create payload, root capture, cleanup. `volumes["0"]` carries the
+  plan; the create response uses a local minimal model because the SDK type
+  drops the `boot` flag; SBS root size is read from the Block Storage API; a
+  mismatch fails the create; a post-POST failure destroys the server
+  best-effort. Attach and detach label an SBS root. Committed as `64c132a`.
+- [x] EP-M4: init preflight and reporting. Init calls `preflight` before
+  `create_volume`; both orchestrators accept an optional reporter; the binary
+  wires a stderr reporter. Committed as `64c132a`.
+- [x] EP-M5: documentation and live check. Users guide, technical design, the
+  opt-in `tests/scaleway_boot_volume.rs`, and the `scaleway-boot-test` target.
+- [ ] Commit gates and CodeRabbit review, then push and open the draft PR.
 
 ## Surprises & Discoveries
 
 - Observation: this branch is based on `200563a`, which predates the `#153`
   Block Storage migration. The cache volume here is still created through the
-  Instances API with `b_ssd`, and the SBS migration lands separately.
-  Evidence: `git merge-base HEAD main` is `4a3ceda`; `git branch --contains`
-  shows `5c2a8c2` only on the `#153` branch.
-  Consequence: this work uses the Instances volume API as it exists on this
-  base and does not depend on `#153`'s new module layout. Where a boot-storage
-  decision overlaps `#153` (SBS volume types), the identifier chosen here is
-  the one both branches must agree on: `sbs_volume`.
+  Instances API with `b_ssd`, and the SBS migration lands separately. Evidence:
+  `git merge-base HEAD main` is `4a3ceda`; `git branch --contains` shows
+  `5c2a8c2` only on the `#153` branch. Consequence: this work uses the
+  Instances volume API as it exists on this base and does not depend on
+  `#153`'s new module layout. Where a boot-storage decision overlaps `#153`
+  (SBS volume types), the identifier chosen here is the one both branches must
+  agree on: `sbs_volume`.
 
 ## Decision Log
 
 - Decision: hold the provider-neutral domain model in `src/boot_volume.rs`
-  rather than in `src/scaleway/`.
-  Rationale: the `Backend` port must be able to name a boot plan without
-  importing Scaleway types, and a future backend should reuse it.
+  rather than in `src/scaleway/`. Rationale: the `Backend` port must be able to
+  name a boot plan without importing Scaleway types, and a future backend
+  should reuse it.
 
 ## Outcomes & Retrospective
 

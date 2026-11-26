@@ -1,6 +1,6 @@
 .PHONY: help all clean test build release lint fmt check-fmt markdownlint nixie \
-	typecheck scaleway-test scaleway-janitor test-workflow-contracts spelling \
-	install-build-tools check-build-tools
+	typecheck scaleway-test scaleway-boot-test scaleway-janitor \
+	test-workflow-contracts spelling install-build-tools check-build-tools
 
 
 TARGET ?= mriya
@@ -127,6 +127,17 @@ test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutat
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
+
+scaleway-boot-test: check-build-tools ## Run the opt-in boot-volume live check with janitor sweep
+	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)
+	@command -v scw >/dev/null 2>&1 || (echo "scw is required" && exit 1)
+	@test -n "$(MRIYA_TEST_BOOT_CASES)" || \
+		(echo "MRIYA_TEST_BOOT_CASES must list instance_type:volume_type:size_gb cases" && exit 1)
+	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
+	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
+	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
+	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor ; \
+	MRIYA_RUN_SCALEWAY_BOOT_TESTS=1 MRIYA_TEST_BOOT_CASES="$(MRIYA_TEST_BOOT_CASES)" MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) test --test scaleway_boot_volume -- --test-threads=1
 
 scaleway-test: check-build-tools ## Run Scaleway integration tests with janitor sweep
 	@command -v uuidgen >/dev/null 2>&1 || (echo "uuidgen is required" && exit 1)

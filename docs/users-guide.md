@@ -91,6 +91,113 @@ zone during provisioning, and resolves image labels for the selected
 architecture. Unsupported values yield provider-specific errors (for example,
 unknown instance types).
 
+## Boot volume
+
+Choosing an instance type chooses CPU and RAM. It does not, on its own, choose
+the disk the instance starts from: Scaleway picks a default that depends on how
+the image was named, whether the instance type offers local storage, and the
+marketplace image's own type. Mriya therefore resolves the boot volume
+explicitly and sends it in the create request.
+
+Set the boot volume in `[scaleway]`:
+
+```toml
+boot_volume_type = "l_ssd"
+boot_volume_size_gb = 20
+```
+
+Or through the environment:
+
+- `SCW_BOOT_VOLUME_TYPE` — `l_ssd` (local SSD) or `sbs_volume` (Block Storage).
+- `SCW_BOOT_VOLUME_SIZE_GB` — capacity in **decimal gigabytes** (10^9 bytes).
+
+Only those two storage types are accepted. The deprecated `b_ssd`, `scratch`,
+`unified`, and snapshot identifiers are refused by name rather than silently
+mapped onto something else.
+
+### Size units
+
+Three different units appear on this path, and they are not interchangeable:
+
+- `boot_volume_size_gb` and `SCW_BOOT_VOLUME_SIZE_GB` are decimal gigabytes
+  (10^9 bytes), matching Scaleway's published examples.
+- The provider payload and every API response use plain bytes.
+- Mriya's reports state both: `20 GB (20000000000 bytes)`.
+
+The persistent cache volume's `MRIYA_INIT_VOLUME_SIZE_GB` / `volume_size_gb`
+setting is a *different* setting and still uses binary gibibytes (1024^3
+bytes). Keep the two apart: the boot disk is destroyed with the instance, while
+`default_volume_id` names a retained cache volume.
+
+### Compatibility default
+
+When a profile names neither setting, Mriya applies a documented, deterministic
+default rather than guessing per run:
+
+1. If the instance type offers local storage and the image can be booted from
+   local storage, use `l_ssd` at the instance type's maximum local capacity.
+   This mirrors Scaleway's own behaviour for a marketplace image ID.
+2. Otherwise use `sbs_volume` at the larger of the image's own root size and
+   10 GB, rounded up to a whole gigabyte. The 10 GB floor mirrors the
+   provider's documented default OS size.
+
+When the type is named but the size is not, local storage still defaults to the
+type's maximum and Block Storage still defaults to the larger of the image root
+and 10 GB. A named type is never replaced by the other type.
+
+Each defaulted setting is recorded and printed, so a profile that meant to be
+explicit can see that it was not:
+
+```text
+boot volume: l_ssd 40 GB (40000000000 bytes) [compatibility default: type, size]
+cache volume: none
+```
+
+A fully explicit plan prints `[configured]` instead.
+
+### Validation before allocation
+
+Everything below is checked before the create POST, so an impossible
+combination costs nothing:
+
+- the instance type's published architecture matches the requested one;
+- the instance type offers the requested storage type;
+- the image's own root volume can back the requested storage type;
+- the requested size covers the image's root volume;
+- the requested size sits inside the instance type's range for that storage
+  type, and inside Scaleway's Block Storage range for `sbs_volume`;
+- the size is a multiple of the provider's 512-byte increment.
+
+A request that names a size and type is never silently adjusted. A refusal
+names both routes a user can change, for example:
+
+```text
+boot volume of 41000000000 bytes is outside the 20000000000..=40000000000
+byte range instance type 'DEV1-S' accepts for l_ssd
+```
+
+### What a run reports
+
+After the instance exists and before readiness checks begin, both `mriya run`
+and `mriya init` print two separate lines to standard error:
+
+```text
+boot volume: vol-root l_ssd 20 GB (20000000000 bytes) [configured]
+cache volume: vol-cache
+```
+
+The boot line comes from the root volume the provider reported, and the cache
+line from the configured `default_volume_id`; neither is derived from the
+other. A request with no cache prints `cache volume: none`, and a handle with
+no recorded root prints `boot volume: unknown` rather than omitting the line.
+
+Mriya also compares the reported root volume with the resolved plan. A provider
+substitution in type or size fails the create, and a post-create failure
+destroys the server best-effort before reporting the original reason.
+
+`mriya init` resolves this plan before it creates the cache volume, so an
+impossible boot configuration leaves no volume behind.
+
 ## Cloud-init provisioning
 
 Mriya can pass a cloud-init *user-data* payload through to the provider when
@@ -249,11 +356,14 @@ volume_size_gb = 50
 
 ## What the Scaleway backend does now
 
-- Resolves the freshest public image matching `SCW_DEFAULT_IMAGE` and
-  architecture in the chosen zone.
+- Reads the zone's product catalogue, then resolves the freshest public image
+  matching `SCW_DEFAULT_IMAGE` and architecture in the chosen zone.
+- Validates the boot-volume plan against that catalogue entry and the image.
 - Ensures the requested instance type is available before provisioning.
-- Creates an instance with a routed public IPv4 address and tags `mriya` and
-  `ephemeral`.
+- Creates an instance with a routed public IPv4 address, an explicit
+  `volumes["0"]` boot entry, and tags `mriya` and `ephemeral`.
+- Reads the root volume back — the size of a Block Storage root comes from the
+  Block Storage API — and compares it with the plan.
 - Attaches a Block Storage volume if `SCW_DEFAULT_VOLUME_ID` is configured,
   then mounts it to `/mriya` after the instance boots.
 - Polls every five seconds (up to five minutes) until the instance is running
@@ -290,6 +400,43 @@ The target:
 
 The underlying `cargo test` uses `--test-threads=1` to keep only one instance
 alive at a time.
+
+### Opt-in boot-volume live check
+
+`make scaleway-test` proves create → wait → destroy. It does not prove that the
+root volume the provider created is the disk the plan asked for, because a
+provider default can satisfy a create. The boot-volume check does, and it is
+separate because it creates real servers of the shapes you name.
+
+List the cases in `MRIYA_TEST_BOOT_CASES` as
+`instance_type:volume_type:size_gb` triples separated by semicolons, then run:
+
+```bash
+MRIYA_TEST_BOOT_CASES='DEV1-S:l_ssd:20;DEV1-S:sbs_volume:20' \
+  make scaleway-boot-test
+```
+
+The target sets `MRIYA_RUN_SCALEWAY_BOOT_TESTS=1`, generates
+`MRIYA_TEST_RUN_ID` via `uuidgen`, and runs `mriya-janitor` before and after,
+so leaked resources are swept even when the check fails.
+
+When enabled, the check never skips silently. Missing credentials, an
+unreadable configuration, a provider permission error, or an empty case list is
+a failure. For each case it clears the cache volume, sets the boot type and
+size, creates the server, compares the handle's record with the resolved plan,
+and independently re-reads the server and — for Block Storage — the Block
+Storage volume to compare identifier, type, and size.
+
+Every created server is destroyed even when an assertion fails. The captured
+root volume is then checked for survival: if it remains, the check deletes it
+by its captured identifier and prints a note pointing at issue #154, which
+tracks ownership-aware boot-volume cleanup. Cleanup failures are reported
+separately from assertion failures, and the run ends with an executed-case
+summary.
+
+```text
+boot-volume live check: 2 case(s) executed, 0 assertion failure(s), 0 cleanup error(s)
+```
 
 ## Building from source
 
