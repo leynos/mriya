@@ -216,8 +216,15 @@ on this volume to persist compiled dependencies across runs.
 
 An existing, formatted volume can be configured without running `mriya init`:
 
-1. Create and format a Block Storage volume in the Scaleway console or through
-   the Block Storage API, in the same availability zone as the instances.
+1. Create a Block Storage volume in the Scaleway console or through the Block
+   Storage API, in the same availability zone as the instances, and give it an
+   ext4 filesystem. `mriya init` formats with `sudo mkfs.ext4 -F`; a volume
+   formatted the same way elsewhere works equally well. Detach the volume from
+   any other server first, because a volume can be attached to only one
+   instance at a time. Mriya does not check the filesystem or the attachment
+   state: an unformatted volume fails to mount silently (the mount discards its
+   error), and cache routing is then skipped, so builds write to the root disk
+   instead.
 2. Record its ID in configuration, using either the environment:
 
    ```bash
@@ -306,7 +313,9 @@ they are part of the configuration surface users already have on disk.
 
 - The volume must exist in the same zone as the instance.
 - The volume should be formatted with a filesystem (ext4 recommended) before
-  first use. `mriya init` formats the volume automatically.
+  first use. The creation path that `mriya init` would run formats it
+  automatically, but that path does not currently succeed against Scaleway;
+  format the volume through the provider instead.
 - Only one instance can attach a given volume at a time. Mriya has no lock,
   queue, or retry around this: two concurrent runs that share a volume will
   contend, and the loser's attachment is rejected after its server has already

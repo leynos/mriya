@@ -48,9 +48,11 @@ code.
 - **Cloud-init provisioning** – Pass cloud-config YAML or a first-boot script
   inline or from a file, and Mriya waits for it to finish before running your
   command.
-- **Persistent cache volume** – Create a Block Storage volume with `mriya init`,
-  attach it to each ephemeral VM, and route Cargo, Go, Python, and Node caches
-  onto it so builds stay incremental between runs.
+- **Persistent cache volume** – Attach a Block Storage volume to each ephemeral
+  VM and route Cargo, Go, Python, and Node caches onto it so builds stay
+  incremental between runs. Volume creation through `mriya init` currently
+  fails against Scaleway; supply an existing volume ID instead. See
+  [Use an existing volume](docs/users-guide.md#use-an-existing-volume).
 - **Attempted teardown with reported failures** – Whenever provisioning has
   returned a server handle, Mriya asks the provider to delete that server after
   the run, successful or not, and surfaces a teardown failure instead of
