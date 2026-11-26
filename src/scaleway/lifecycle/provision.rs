@@ -8,7 +8,11 @@
 //! server through the API also deletes its attached volumes.
 
 use super::{
-    super::{ScalewayBackend, ScalewayBackendError, volume::expected_map},
+    super::{
+        ScalewayBackend,
+        ScalewayBackendError,
+        volume::{ExpectedVolumeMap, expected_map},
+    },
     InstanceSnapshot,
 };
 use crate::{
@@ -53,25 +57,17 @@ impl ScalewayBackend {
         };
         let expected = expected_map(&server.volumes.volumes);
 
-        let mut attached_cache = None;
-        if let Some(id) = volume_id {
-            let Some(root) = expected.get("0") else {
-                let error = ScalewayBackendError::VolumeNotFound {
-                    volume_id: String::from("0"),
-                    zone: handle.zone.clone(),
-                };
-                return Err(self.rollback_after_create(&handle, None, error).await);
-            };
-
-            if let Err(error) = Self::validate_cache_volume_id(id, &root.id, &handle) {
-                return Err(self.rollback_after_create(&handle, None, error).await);
+        let attached_cache = match self
+            .attach_configured_cache(&handle, volume_id, &expected)
+            .await
+        {
+            Ok(cache) => cache,
+            Err(failure) => {
+                return Err(self
+                    .rollback_after_create(&handle, failure.cache, failure.error)
+                    .await);
             }
-
-            if let Err(error) = self.attach_volume(&handle, id, &expected).await {
-                return Err(self.rollback_after_create(&handle, None, error).await);
-            }
-            attached_cache = Some(AttachedCache { volume_id: id });
-        }
+        };
 
         let snapshot = InstanceSnapshot {
             id: server.id.into(),
@@ -92,6 +88,46 @@ impl ScalewayBackend {
         }
 
         Ok(handle)
+    }
+
+    /// Attaches the configured cache and reports whether it may be attached.
+    ///
+    /// A rejected attach request did not attach anything. Any other failure
+    /// after a successful POST may have attached the volume, so the caller
+    /// must treat the cache as present during rollback and detach it before
+    /// the server is destroyed.
+    async fn attach_configured_cache<'a>(
+        &self,
+        handle: &InstanceHandle,
+        volume_id: Option<&'a str>,
+        expected: &ExpectedVolumeMap,
+    ) -> Result<Option<AttachedCache<'a>>, PartialCreateFailure<'a>> {
+        let Some(id) = volume_id else {
+            return Ok(None);
+        };
+
+        let Some(root) = expected.get("0") else {
+            return Err(PartialCreateFailure {
+                cache: None,
+                error: ScalewayBackendError::VolumeNotFound {
+                    volume_id: String::from("0"),
+                    zone: handle.zone.clone(),
+                },
+            });
+        };
+
+        if let Err(error) = Self::validate_cache_volume_id(id, &root.id, handle) {
+            return Err(PartialCreateFailure { cache: None, error });
+        }
+
+        match self.attach_volume(handle, id, expected).await {
+            Ok(()) => Ok(Some(AttachedCache { volume_id: id })),
+            Err(error) => {
+                let cache = (!matches!(error, ScalewayBackendError::VolumeAttachmentFailed { .. }))
+                    .then_some(AttachedCache { volume_id: id });
+                Err(PartialCreateFailure { cache, error })
+            }
+        }
     }
 
     /// Rejects a configured cache volume before any server is created.
@@ -242,4 +278,12 @@ impl ScalewayBackend {
 struct AttachedCache<'a> {
     /// Volume that must be detached before the server can be destroyed.
     volume_id: &'a str,
+}
+
+/// A post-create failure and any cache that rollback must detach first.
+struct PartialCreateFailure<'a> {
+    /// Cache that may be attached, or `None` when the attach never happened.
+    cache: Option<AttachedCache<'a>>,
+    /// Original error to report once cleanup finishes.
+    error: ScalewayBackendError,
 }

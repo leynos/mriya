@@ -120,50 +120,57 @@ pub(crate) fn verify_attached(
     volume_id: &str,
     expected: &ExpectedVolumeMap,
 ) -> Result<(), String> {
+    verify_expected_entries(returned, expected)?;
+    verify_cache_entry(returned, volume_id)
+}
+
+/// Verifies that every pre-attachment entry survives unchanged.
+fn verify_expected_entries(
+    returned: &ServerVolumeMap,
+    expected: &ExpectedVolumeMap,
+) -> Result<(), String> {
     for (index, before) in expected {
-        match returned.get(index) {
-            Some(after) if after.id == before.id => {}
-            Some(after) => {
-                return Err(format!(
-                    "volume index {index} changed from {} to {}",
-                    before.id, after.id
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "volume index {index} ({}) disappeared after attachment",
-                    before.id
-                ));
-            }
+        let Some(after) = returned.get(index) else {
+            return Err(format!(
+                "volume index {index} ({}) disappeared after attachment",
+                before.id
+            ));
+        };
+        if after.id != before.id {
+            return Err(format!(
+                "volume index {index} changed from {} to {}",
+                before.id, after.id
+            ));
         }
     }
+    Ok(())
+}
 
-    let cache_entries = returned
-        .iter()
-        .filter(|(_, entry)| entry.id == volume_id)
-        .collect::<Vec<_>>();
-    match cache_entries.as_slice() {
-        [(index, entry)] => {
-            if index.as_str() == "0" {
-                return Err(String::from(
-                    "cache volume was attached at the root index \"0\"",
-                ));
-            }
-            match entry.volume_type.as_deref() {
-                Some(SBS_VOLUME_TYPE) => Ok(()),
-                Some(other) => Err(format!(
-                    "cache volume {volume_id} was attached as '{other}', not '{SBS_VOLUME_TYPE}'"
-                )),
-                None => Err(format!(
-                    "cache volume {volume_id} was attached without a volume type"
-                )),
-            }
-        }
-        [] => Err(format!(
+/// Verifies that the cache is present once, off the root index, and typed SBS.
+fn verify_cache_entry(returned: &ServerVolumeMap, volume_id: &str) -> Result<(), String> {
+    let mut matches = returned.iter().filter(|(_, entry)| entry.id == volume_id);
+    let Some((index, entry)) = matches.next() else {
+        return Err(format!(
             "cache volume {volume_id} is absent from the returned volume map"
-        )),
-        _ => Err(format!(
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(format!(
             "cache volume {volume_id} appears at more than one volume index"
+        ));
+    }
+    if index.as_str() == "0" {
+        return Err(String::from(
+            "cache volume was attached at the root index \"0\"",
+        ));
+    }
+    match entry.volume_type.as_deref() {
+        Some(SBS_VOLUME_TYPE) => Ok(()),
+        Some(other) => Err(format!(
+            "cache volume {volume_id} was attached as '{other}', not '{SBS_VOLUME_TYPE}'"
+        )),
+        None => Err(format!(
+            "cache volume {volume_id} was attached without a volume type"
         )),
     }
 }

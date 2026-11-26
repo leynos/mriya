@@ -1,254 +1,37 @@
-//! Orchestrates end-to-end remote runs over SSH.
+//! Post-provisioning steps for the run workflow.
 //!
-//! The run workflow provisions an instance via a backend, waits for SSH
-//! readiness, synchronizes the local workspace, executes a remote command
-//! using the system `ssh` client, and tears the instance down. Remote exit
-//! codes are preserved so callers observe the same status locally.
+//! Mounting, synchronization, remote execution and ordered teardown all need
+//! the instance handle plus, once SSH is reachable, its networking details.
+//! They live here to keep the orchestration module readable.
 
-use std::{
-    fmt::Display,
-    time::{Duration, Instant},
-};
+use std::{fmt::Display, time::Instant};
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
-use thiserror::Error;
 use tokio::time::sleep;
 
+use super::{ProvisionedInstance, RunError, RunOrchestrator, StepContext};
 use crate::{
-    backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
+    backend::{InstanceNetworking, InstanceRequest},
     cache_device::{self, CacheDeviceStatus},
-    sync::{
-        CommandRunner,
-        RemoteCommandOutput,
-        SyncError,
-        Syncer,
-        create_cache_directories_command,
-    },
+    sync::{CommandRunner, RemoteCommandOutput, SyncDestination, create_cache_directories_command},
     teardown::append_teardown_note,
     volume::VolumeBackend,
 };
 
-/// Delay between checks for the cloud-init completion marker.
-const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// Total time to wait for cloud-init to finish (ten minutes).
-const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Errors surfaced while performing a remote run.
-#[derive(Debug, Error)]
-pub enum RunError<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    /// Raised when provisioning a new instance fails.
-    #[error("failed to create instance: {0}")]
-    Provision(#[source] Box<BackendError>),
-    /// Raised when the instance does not become reachable over SSH.
-    #[error("instance did not become ready: {message}")]
-    Wait {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Provider-specific error.
-        #[source]
-        source: Box<BackendError>,
-    },
-    /// Raised when cloud-init provisioning does not complete.
-    #[error("instance provisioning did not complete: {message}")]
-    Provisioning {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when cloud-init provisioning does not complete before the timeout.
-    #[error("instance provisioning did not complete: {message}")]
-    ProvisioningTimeout {
-        /// Human-readable description of the failure.
-        message: String,
-    },
-    /// Raised when workspace synchronization fails.
-    #[error("workspace sync failed: {message}")]
-    Sync {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when the remote command fails to start.
-    #[error("remote command failed to start: {message}")]
-    Remote {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when a configured cache cannot be mounted or verified.
-    #[error("failed to mount the configured cache volume: {message}")]
-    CacheMount {
-        /// Human-readable description of the refusal.
-        message: String,
-        /// Underlying synchronization error, when the SSH call itself failed.
-        #[source]
-        source: Option<SyncError>,
-    },
-    /// Raised when teardown fails after the primary operation succeeded.
-    #[error("failed to destroy instance: {message}")]
-    Teardown {
-        /// Human-readable description, including any unmount failure.
-        message: String,
-        /// Provider-specific error.
-        #[source]
-        source: Box<BackendError>,
-    },
-}
-
-/// Executes the remote run flow using the provided backend and syncer.
-#[derive(Debug)]
-pub struct RunOrchestrator<B, R: CommandRunner> {
-    /// Backend that creates, waits for, and destroys the instance.
-    backend: B,
-    /// Syncer used for workspace transfer and remote command execution.
-    syncer: Syncer<R>,
-    /// Delay between cloud-init completion checks.
-    cloud_init_poll_interval: Duration,
-    /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
-    cloud_init_wait_timeout: Duration,
-}
-
 impl<B, R> RunOrchestrator<B, R>
 where
-    B: Backend + VolumeBackend,
+    B: crate::backend::Backend + VolumeBackend,
     B::Error: Display + Send + Sync + std::error::Error + 'static,
     R: CommandRunner,
 {
-    /// Creates a new orchestrator.
-    #[must_use]
-    pub const fn new(backend: B, syncer: Syncer<R>) -> Self {
-        Self {
-            backend,
-            syncer,
-            cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
-            cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
-        }
-    }
-
-    /// Overrides the cloud-init polling interval.
-    ///
-    /// This is primarily used by tests to keep timeout scenarios fast.
-    #[must_use]
-    pub const fn with_cloud_init_poll_interval(mut self, interval: Duration) -> Self {
-        self.cloud_init_poll_interval = interval;
-        self
-    }
-
-    /// Overrides the cloud-init wait timeout.
-    ///
-    /// This is primarily used by tests to keep timeout scenarios fast.
-    #[must_use]
-    pub const fn with_cloud_init_wait_timeout(mut self, timeout: Duration) -> Self {
-        self.cloud_init_wait_timeout = timeout;
-        self
-    }
-
-    /// Runs the end-to-end workflow and returns the remote command output.
-    ///
-    /// The remote exit code is returned even when non-zero. Teardown is
-    /// always attempted; when teardown fails the error is surfaced even if
-    /// the remote command succeeded.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RunError`] when provisioning, readiness checks,
-    /// synchronization, remote execution, or teardown fail.
-    pub async fn execute(
-        &self,
-        request: &InstanceRequest,
-        source: &Utf8Path,
-        remote_command: &str,
-    ) -> Result<RemoteCommandOutput, RunError<B::Error>> {
-        let handle = self
-            .backend
-            .create(request)
-            .await
-            .map_err(|error| RunError::Provision(Box::new(error)))?;
-        let instance = ProvisionedInstance {
-            handle: &handle,
-            volume_id: request.volume_id.as_deref(),
-        };
-        let networking = self.wait_for_ready_or_destroy(instance).await?;
-
-        let cache_routing = self
-            .mount_volume_if_needed(instance, &networking, request)
-            .await?;
-        let context = StepContext {
-            instance,
-            networking: &networking,
-        };
-
-        let dest = self.syncer.destination_for(&networking);
-        self.sync_or_destroy(context, source, &dest).await?;
-
-        if request.cloud_init_user_data.is_some() {
-            self.wait_for_cloud_init(context).await?;
-        }
-
-        let output = self
-            .run_remote_or_destroy(context, remote_command, cache_routing)
-            .await?;
-
-        let unmount_note = self.unmount_cache(&networking, instance.volume_id);
-        if let Err(teardown_error) = self
-            .backend
-            .teardown(instance.handle, instance.volume_id)
-            .await
-        {
-            let message = unmount_note.map_or_else(
-                || teardown_error.to_string(),
-                |note| format!("{teardown_error} ({note})"),
-            );
-            return Err(RunError::Teardown {
-                message,
-                source: Box::new(teardown_error),
-            });
-        }
-
-        Ok(output)
-    }
-
-    /// Waits for the backend to report SSH readiness, destroying the instance
-    /// if that fails.
-    ///
-    /// The teardown outcome is appended to the error message.
-    ///
-    /// For example, an SSH timeout returns its own error with
-    /// `(teardown also failed: ...)` appended when the destroy also fails, so
-    /// the caller sees both problems rather than only the first.
-    async fn wait_for_ready_or_destroy(
-        &self,
-        instance: ProvisionedInstance<'_>,
-    ) -> Result<InstanceNetworking, RunError<B::Error>> {
-        match self.backend.wait_for_ready(instance.handle).await {
-            Ok(net) => Ok(net),
-            Err(err) => {
-                let message = self.teardown_with_note(instance, None, &err).await;
-                Err(RunError::Wait {
-                    message,
-                    source: Box::new(err),
-                })
-            }
-        }
-    }
-
     /// Mounts the cache volume only when the request attached one.
     ///
     /// Returns whether cache routing is allowed. A request without an attached
     /// volume keeps the historical behaviour: the preamble is emitted with its
     /// `mountpoint -q` guard. A request with a volume is allowed to route only
     /// after the mount is verified.
-    async fn mount_volume_if_needed(
+    pub(super) async fn mount_volume_if_needed(
         &self,
         instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
@@ -267,11 +50,11 @@ where
     /// For example, a failed rsync returns the sync error with the teardown
     /// outcome appended, so a leaked instance is never reported as a plain
     /// sync failure.
-    async fn sync_or_destroy(
+    pub(super) async fn sync_or_destroy(
         &self,
         context: StepContext<'_>,
         source: &Utf8Path,
-        dest: &crate::sync::SyncDestination,
+        dest: &SyncDestination,
     ) -> Result<(), RunError<B::Error>> {
         if let Err(err) = self.syncer.sync(source, dest) {
             let message = self
@@ -293,7 +76,7 @@ where
     /// For example, a command exiting 7 returns that status in
     /// [`RemoteCommandOutput`], while a failure to start the command destroys
     /// the instance and returns the error text.
-    async fn run_remote_or_destroy(
+    pub(super) async fn run_remote_or_destroy(
         &self,
         context: StepContext<'_>,
         remote_command: &str,
@@ -327,7 +110,7 @@ where
     /// When `create_cache_directories` is enabled, the cache subdirectories are
     /// created after verification so language toolchains can write
     /// immediately. The `mountpoint -q` guard remains as a second check.
-    async fn mount_cache_volume(
+    pub(super) async fn mount_cache_volume(
         &self,
         instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
@@ -406,7 +189,7 @@ where
     /// For example, the marker `/var/lib/cloud/instance/boot-finished`
     /// appearing ends the wait successfully, while the deadline passing
     /// destroys the instance and reports the timeout.
-    async fn wait_for_cloud_init(
+    pub(super) async fn wait_for_cloud_init(
         &self,
         context: StepContext<'_>,
     ) -> Result<(), RunError<B::Error>> {
@@ -452,7 +235,7 @@ where
     /// Returns a description of the failure, if any. The caller still requests
     /// the power-off fallback, which teardown performs; this note keeps the
     /// unmount outcome visible when teardown also fails.
-    fn unmount_cache(
+    pub(super) fn unmount_cache(
         &self,
         networking: &InstanceNetworking,
         volume_id: Option<&str>,
@@ -487,7 +270,7 @@ where
     ///
     /// For example, `teardown` failing yields `"<err> (teardown also failed:
     /// ...)"` rather than discarding the original error.
-    async fn teardown_with_note<E: Display>(
+    pub(super) async fn teardown_with_note<E: Display>(
         &self,
         instance: ProvisionedInstance<'_>,
         networking: Option<&InstanceNetworking>,
@@ -507,22 +290,4 @@ where
             .err();
         append_teardown_note(message, teardown_error.as_ref())
     }
-}
-
-/// Instance references shared by the steps after provisioning.
-#[derive(Clone, Copy)]
-struct ProvisionedInstance<'a> {
-    /// Server created for this run.
-    handle: &'a InstanceHandle,
-    /// Configured cache volume, when one was attached.
-    volume_id: Option<&'a str>,
-}
-
-/// A provisioned instance plus its reachable networking details.
-#[derive(Clone, Copy)]
-struct StepContext<'a> {
-    /// Instance created for this run.
-    instance: ProvisionedInstance<'a>,
-    /// Public address and port used for SSH.
-    networking: &'a InstanceNetworking,
 }
