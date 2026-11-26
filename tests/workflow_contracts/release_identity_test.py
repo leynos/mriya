@@ -26,39 +26,66 @@ OLD_MAINTAINER = rules.MAINTAINER_DEFAULT
 OLD_IDENTIFIER = "net.df12.mriya"
 
 
-def _synthetic(
-    *,
-    include_maintainer_input: bool = True,
-    include_identifier_input: bool = True,
-    include_maintainer_output: bool = True,
-    include_identifier_output: bool = True,
-    maintainer_candidate: str = rules.MAINTAINER_CANDIDATE,
-    identifier_candidate: str = rules.IDENTIFIER_CANDIDATE,
-    linux_maintainer: str = rules.MAINTAINER_EXPRESSION,
-    macos_identifier: str = rules.IDENTIFIER_EXPRESSION,
-) -> dict[str, Any]:
-    """Return a workflow wiring the identity the way the contract requires."""
-    inputs: dict[str, Any] = {}
-    if include_maintainer_input:
-        inputs["maintainer"] = {"required": False, "type": "string", "default": ""}
-    if include_identifier_input:
-        inputs["macos-identifier"] = {"required": False, "type": "string", "default": ""}
-    outputs: dict[str, Any] = {}
-    if include_maintainer_output:
-        outputs["maintainer"] = rules.MAINTAINER_OUTPUT
-    if include_identifier_output:
-        outputs["macos_identifier"] = rules.IDENTIFIER_OUTPUT
+#: The optional inputs the synthetic workflow declares, and their specs.
+SYNTHETIC_INPUTS = {
+    "maintainer": {"required": False, "type": "string", "default": ""},
+    "macos-identifier": {"required": False, "type": "string", "default": ""},
+}
+
+#: The metadata outputs the synthetic workflow declares, and their values.
+SYNTHETIC_OUTPUTS = {
+    "maintainer": rules.MAINTAINER_OUTPUT,
+    "macos_identifier": rules.IDENTIFIER_OUTPUT,
+}
+
+#: The packaging inputs the synthetic workflow passes, and their values.
+SYNTHETIC_PACKAGING = {
+    "maintainer": rules.MAINTAINER_EXPRESSION,
+    "identifier": rules.IDENTIFIER_EXPRESSION,
+}
+
+
+def _declared(names: dict[str, Any], drop: str | None) -> dict[str, Any]:
+    """Return the declarations without ``drop``, when one is named."""
+    return {name: value for name, value in names.items() if name != drop}
+
+
+def _synthetic(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return a workflow wiring the identity the way the contract requires.
+
+    ``options`` names the deviations a case needs, so a case states only what
+    it withholds or replaces:
+
+    - ``drop_input``, ``drop_output``: the ``workflow_call`` input or metadata
+      output to leave out, named by its YAML key.
+    - ``maintainer_candidate``, ``identifier_candidate``: replacements for the
+      resolver's ``env`` values.
+    - ``maintainer``, ``identifier``: replacements for the packaging inputs.
+    """
+    chosen = options or {}
+    packaging = {
+        "maintainer": chosen.get("maintainer", SYNTHETIC_PACKAGING["maintainer"]),
+        "identifier": chosen.get("identifier", SYNTHETIC_PACKAGING["identifier"]),
+    }
     return {
-        "on": {"workflow_call": {"inputs": inputs}},
+        "on": {
+            "workflow_call": {
+                "inputs": _declared(SYNTHETIC_INPUTS, chosen.get("drop_input"))
+            }
+        },
         "jobs": {
             "metadata": {
-                "outputs": outputs,
+                "outputs": _declared(SYNTHETIC_OUTPUTS, chosen.get("drop_output")),
                 "steps": [
                     {
                         "id": rules.IDENTITY_STEP,
                         "env": {
-                            "MAINTAINER_CANDIDATE": maintainer_candidate,
-                            "MACOS_IDENTIFIER_CANDIDATE": identifier_candidate,
+                            "MAINTAINER_CANDIDATE": chosen.get(
+                                "maintainer_candidate", rules.MAINTAINER_CANDIDATE
+                            ),
+                            "MACOS_IDENTIFIER_CANDIDATE": chosen.get(
+                                "identifier_candidate", rules.IDENTIFIER_CANDIDATE
+                            ),
                         },
                         "run": "true",
                     }
@@ -67,13 +94,13 @@ def _synthetic(
             "packaging": {
                 "steps": [
                     {
-                        "uses": f"org/shared/.github/actions/{rules.LINUX_PACKAGES_ACTION}abc",
-                        "with": {"maintainer": linux_maintainer},
-                    },
-                    {
-                        "uses": f"org/shared/.github/actions/{rules.MACOS_PACKAGE_ACTION}abc",
-                        "with": {"identifier": macos_identifier},
-                    },
+                        "uses": f"org/shared/.github/actions/{action}abc",
+                        "with": {field: packaging[field]},
+                    }
+                    for action, field in (
+                        (rules.LINUX_PACKAGES_ACTION, "maintainer"),
+                        (rules.MACOS_PACKAGE_ACTION, "identifier"),
+                    )
                 ]
             },
         },
@@ -84,12 +111,12 @@ def _synthetic(
     ("overrides", "fragment"),
     [
         ({}, ""),
-        ({"linux_maintainer": OLD_MAINTAINER}, "literal maintainer"),
-        ({"macos_identifier": OLD_IDENTIFIER}, "literal identifier"),
-        ({"include_maintainer_output": False}, "does not declare"),
-        ({"macos_identifier": ""}, "empty identifier"),
-        ({"include_maintainer_input": False}, "input 'maintainer' is missing"),
-        ({"include_identifier_input": False}, "input 'macos-identifier' is missing"),
+        ({"maintainer": OLD_MAINTAINER}, "literal maintainer"),
+        ({"identifier": OLD_IDENTIFIER}, "literal identifier"),
+        ({"drop_output": "maintainer"}, "does not declare"),
+        ({"identifier": ""}, "empty identifier"),
+        ({"drop_input": "maintainer"}, "input 'maintainer' must"),
+        ({"drop_input": "macos-identifier"}, "input 'macos-identifier' must"),
         ({"maintainer_candidate": "literal@example.test"}, "MAINTAINER_CANDIDATE"),
         (
             {
@@ -140,7 +167,7 @@ def _synthetic(
 )
 def test_release_identity_cases(overrides: dict[str, Any], fragment: str) -> None:
     """Each way of dropping the configuration is a complaint; the wired form is not."""
-    problems, judged = rules.identity_problems(_synthetic(**overrides), "w.yml")
+    problems, judged = rules.identity_problems(_synthetic(overrides), "w.yml")
     assert judged == 2
     if fragment:
         assert any(fragment in problem for problem in problems), problems
