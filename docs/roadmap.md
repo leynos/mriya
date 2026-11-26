@@ -59,8 +59,9 @@ rather than implied by the tick.
   - Evidence: attach and detach request bodies are asserted against a loopback
     HTTP stub, and the mount and routing steps are scripted. No test performs
     two consecutive runs, so file retention across runs is unverified. Volume
-    creation still uses the Instances API `b_ssd` contract; see
-    [issue #153](https://github.com/leynos/mriya/issues/153).
+    creation still uses the Instances API `b_ssd` contract, and the attachment
+    payload omits the `volume_type` that API expects for an `sbs_volume`; both
+    are tracked in [issue #153](https://github.com/leynos/mriya/issues/153).
 
 ### 2.2. Cache routing
 

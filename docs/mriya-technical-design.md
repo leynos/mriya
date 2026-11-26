@@ -265,8 +265,9 @@ provisioning) that will guide subsequent optimizations.
   changelog records the removal of new Block Storage creation through the
   Instances API on 30 April 2025, so this path rests on a retired creation
   contract. Attachment remains at the documented server boundary, but the
-  payload carries only the volume identifier and boot flag, so live attachment
-  of an `sbs_volume` is also unverified. Migration is tracked in
+  payload carries only the volume identifier and boot flag. The Instances API
+  expects a `volume_type` for an existing `sbs_volume`, so attaching one is
+  expected to be rejected until that field is added. Migration is tracked in
   [issue #153](https://github.com/leynos/mriya/issues/153).
 - **Boot storage is implicit:** the create-server body carries no `volumes`
   object, so the boot-volume type and size are provider defaults that Mriya

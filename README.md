@@ -88,9 +88,10 @@ Implemented but **not currently functional against Scaleway**:
   impossible since 30 April 2025, so the creation step should be expected to
   fail until the migration in
   [issue #153](https://github.com/leynos/mriya/issues/153) lands. Configuring
-  an already-created volume skips that step, though live attachment of an
-  `sbs_volume` through the Instances API is also unverified. The user guide
-  carries the same limitation.
+  an already-created volume skips that step, but attachment does not send the
+  `volume_type` the Instances API expects for an `sbs_volume`, so attaching one
+  is expected to be rejected as well. The user guide carries the same
+  limitation.
 
 Planned, not implemented:
 

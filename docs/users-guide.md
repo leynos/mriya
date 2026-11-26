@@ -238,11 +238,14 @@ An existing, formatted volume can be configured without running `mriya init`:
    `mriya run -- cargo build`.
 
 Attachment uses the Instances API server volume map and sends only the volume
-ID and boot flag. Live attachment of an `sbs_volume` through that API is not
-verified, so treat the existing-volume path as supported by the code and the
-scripted request tests rather than proven against the provider. A rejected
-attachment stops the run after the server has already been created, which is
-the pre-handle case described under
+ID and boot flag. The Instances API expects a `volume_type` alongside the ID
+when attaching an existing `sbs_volume`, and Mriya does not send one, so
+attaching an `sbs_volume` is expected to be rejected. The scripted tests assert
+the current payload, so they cannot catch this. Treat the existing-volume
+procedure as complete only for storage the attachment request already matches,
+and follow [issue #153](https://github.com/leynos/mriya/issues/153) for the
+migration that adds the field. A rejected attachment stops the run after the
+server has already been created, which is the pre-handle case described under
 [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
 
 ### Create and format a volume with `mriya init`
