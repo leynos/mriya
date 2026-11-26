@@ -77,14 +77,17 @@ Implemented in code:
 - Git-aware rsync sync, streamed output, exit-code preservation, and attempted
   teardown.
 
-Implemented but **not yet verified against the live provider**:
+Implemented but **not currently functional against Scaleway**:
 
 - `mriya init`, which formats a new cache volume and records its ID. Volume
   creation still posts to the Instances API volume endpoint with the `b_ssd`
-  type, which Scaleway retired for new volumes on 30 April 2025. Treat the
-  documented setup as unverified until the migration in
-  [issue #153](https://github.com/leynos/mriya/issues/153) lands; the user
-  guide carries the same limitation.
+  type. Scaleway's [changelog](https://www.scaleway.com/en/docs/changelog/)
+  states that creating new block volumes through the Instances API has been
+  impossible since 30 April 2025, so the creation step should be expected to
+  fail until the migration in
+  [issue #153](https://github.com/leynos/mriya/issues/153) lands. Attaching an
+  already-created volume is a separate path and is unaffected. The user guide
+  carries the same limitation.
 
 Planned, not implemented:
 

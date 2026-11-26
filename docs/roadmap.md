@@ -105,7 +105,10 @@ rather than implied by the tick.
   - Evidence: nine scripted scenarios cover success, formatting, readiness,
     detachment, and teardown failures, and `--force` against a fake backend and
     scripted SSH runner. No live `mriya init` and no `init`-then-`run` test
-    exists. A failed `init` leaves its created volume unrecorded. See
+    exists. A failed `init` leaves its created volume unrecorded. Volume
+    creation still posts to the Instance API, which Scaleway's changelog says
+    has been unable to create block volumes since 30 April 2025, so the
+    creation step is expected to fail until the migration lands. See
     [issue #153](https://github.com/leynos/mriya/issues/153) and
     [issue #154](https://github.com/leynos/mriya/issues/154).
 

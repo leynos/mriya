@@ -205,11 +205,14 @@ the volume at `/mriya`. Place build caches (such as Cargo's target directory)
 on this volume to persist compiled dependencies across runs.
 
 > Caveat: `mriya init` calls the Instances API volume endpoint with the
-> `b_ssd` type. Scaleway removed new Block Storage volume creation from that
-> API on 30 April 2025, so the creation step may be rejected and has no
-> recorded live success. Attaching a volume that already exists is a separate
-> path and is unaffected. The migration is tracked in
-> [issue #153](https://github.com/leynos/mriya/issues/153).
+> `b_ssd` type. Scaleway's
+> [changelog](https://www.scaleway.com/en/docs/changelog/)
+> states that creating new block volumes through the Instances API has been
+> impossible since 30 April 2025, so the creation step is expected to fail
+> until the migration in
+> [issue #153](https://github.com/leynos/mriya/issues/153) lands. Attaching a
+> volume that already exists is a separate path and is unaffected. There is no
+> recorded live success for `mriya init`.
 
 To enable the cache volume:
 
