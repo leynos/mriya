@@ -28,10 +28,11 @@ integration works out of the box.
 
 ## What it does
 
-- **Git-aware sync** – Uses rsync with `.gitignore` filters, so only tracked
-  files travel, and ignored paths such as `target/` are not deleted on the
-  remote. Persistence *across* runs needs a cache volume: each VM is ephemeral,
-  so anything left on its own disk goes with it.
+- **Git-aware sync** – Uses rsync with `.gitignore` filters, so ignored paths
+  are excluded from the transfer and are not deleted on the remote. The filter
+  reads `.gitignore` patterns rather than Git's index, so an untracked but
+  unignored file still travels. Persistence *across* runs needs a cache volume:
+  each VM is ephemeral, so anything left on its own disk goes with it.
 - **Live output streaming** – stdout and stderr stream back to your terminal in
   real time.
 - **Exit code preservation** – If `cargo test` fails remotely with status 101,
@@ -45,10 +46,12 @@ integration works out of the box.
 - **Persistent cache volume** – Create a Block Storage volume with `mriya init`,
   attach it to each ephemeral VM, and route Cargo, Go, Python, and Node caches
   onto it so builds stay incremental between runs.
-- **Attempted teardown with reported failures** – Mriya asks the provider to
-  delete the server after every run, successful or not, and surfaces a teardown
-  failure instead of discarding it. What that establishes is narrower than
-  "guaranteed cleanup"; see
+- **Attempted teardown with reported failures** – Whenever provisioning has
+  returned a server handle, Mriya asks the provider to delete that server after
+  the run, successful or not, and surfaces a teardown failure instead of
+  discarding it. A provisioning failure that never yields a handle is the
+  exception, and can leave a stopped server. What this establishes is narrower
+  than "guaranteed cleanup"; see
   [Cleanup: what is and is not verified](docs/users-guide.md#cleanup-what-is-and-is-not-verified)
   and the
   [cost and resource lifetime](docs/users-guide.md#cost-and-resource-lifetime)

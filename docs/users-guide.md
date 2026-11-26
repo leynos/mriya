@@ -511,8 +511,9 @@ those fields is unusable six months later and misleading immediately.
 
 ### Cleanup: what is and is not verified
 
-Mriya sends a delete request for the server after every run and polls until the
-provider stops listing it. That is the extent of the guarantee:
+Whenever provisioning has returned a server handle, Mriya sends a delete
+request for that server after the run and polls until the provider stops
+listing it. That is the extent of the guarantee:
 
 - The delete is **attempted** on every path that holds a server handle, and a
   teardown failure is reported rather than swallowed.
