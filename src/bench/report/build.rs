@@ -298,6 +298,8 @@ pub fn build_report(
     let by_workload = super::rules::attempts_by_workload(campaign);
     let mut workloads: BTreeMap<String, Vec<WorkloadResult>> = BTreeMap::new();
     let mut capability_notes = Vec::new();
+    let mut incomplete_totals = Vec::new();
+    note_unpriced_extras(campaign, sheet, &mut incomplete_totals);
     let mut comparability_problems = Vec::new();
     for (workload_id, result) in flat {
         workloads.entry(workload_id).or_default().push(result);
@@ -321,8 +323,35 @@ pub fn build_report(
         retrieved: sheet.retrieved.clone(),
         workloads,
         capability_notes,
+        incomplete_totals,
         comparability_problems,
         totals,
         subscription_micros,
     })
+}
+
+/// States every charge a used provider bills that the sheet does not price.
+///
+/// The price path can only charge resources a record names. A provider that
+/// bills something the record format has no unit for — an attached public
+/// address, for example — would otherwise be silently understated, so the
+/// report records why its totals are incomplete.
+fn note_unpriced_extras(campaign: &Campaign, sheet: &PriceSheet, notes: &mut Vec<String>) {
+    let providers: BTreeSet<&str> = campaign
+        .runs
+        .iter()
+        .map(|(_, run)| run.provider.provider.as_str())
+        .collect();
+    for provider in providers {
+        let Some(rules) = sheet.providers.get(provider) else {
+            continue;
+        };
+        if rules.unpriced_extras.is_empty() {
+            continue;
+        }
+        notes.push(format!(
+            "{provider}: every total below excludes {}, which the price sheet does not price",
+            rules.unpriced_extras.join(", ")
+        ));
+    }
 }

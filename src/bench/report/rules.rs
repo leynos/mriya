@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::WorkloadResult;
 use crate::bench::{
     billing::{PriceSheet, PriceSheetError, convert_micros},
-    record::{CacheState, GuestArchitecture, RunRecord, WorkloadClass},
+    record::{CacheState, GuestArchitecture, RunRecord, RunRole, WorkloadClass},
     validate::Campaign,
 };
 
@@ -90,7 +90,15 @@ fn note_cache_differences(
 
 /// Reports every way the group's attempts are not equal work.
 fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut Vec<String>) {
-    let classes: BTreeSet<bool> = attempts
+    // A warm-up exists to populate a cache and may legitimately run a different
+    // command, so it is not one of the timed attempts whose equality the report
+    // is asserting. Comparing it would make equal timed work look unequal.
+    let timed: Vec<&RunRecord> = attempts
+        .iter()
+        .copied()
+        .filter(|run| run.role != RunRole::WarmUp)
+        .collect();
+    let classes: BTreeSet<bool> = timed
         .iter()
         .map(|run| run.class == WorkloadClass::Gpu)
         .collect();
@@ -102,22 +110,19 @@ fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut
     // The argument vectors are compared whole, not joined: `["cargo",
     // "build x"]` and `["cargo build", "x"]` are different commands that a
     // join would make identical.
-    let commands: BTreeSet<&Vec<String>> = attempts.iter().map(|run| &run.command).collect();
+    let commands: BTreeSet<&Vec<String>> = timed.iter().map(|run| &run.command).collect();
     if commands.len() > 1 {
         problems.push(format!(
             "{workload_id}: attempts ran different commands, so they are not equal work"
         ));
     }
-    let revisions: BTreeSet<&str> = attempts
-        .iter()
-        .map(|run| run.tree.commit.as_str())
-        .collect();
+    let revisions: BTreeSet<&str> = timed.iter().map(|run| run.tree.commit.as_str()).collect();
     if revisions.len() > 1 {
         problems.push(format!(
             "{workload_id}: attempts ran different revisions, so they are not equal work"
         ));
     }
-    let digests: BTreeSet<&str> = attempts
+    let digests: BTreeSet<&str> = timed
         .iter()
         .map(|run| run.tree.tree_digest.as_str())
         .collect();
@@ -126,13 +131,13 @@ fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut
             "{workload_id}: attempts ran different tree digests, so they are not equal work"
         ));
     }
-    let cleanliness: BTreeSet<bool> = attempts.iter().map(|run| run.tree.dirty).collect();
+    let cleanliness: BTreeSet<bool> = timed.iter().map(|run| run.tree.dirty).collect();
     if cleanliness.len() > 1 {
         problems.push(format!(
             "{workload_id}: attempts mixed dirty and clean trees, which are not comparable"
         ));
     }
-    let toolchains: BTreeSet<(&str, &str, &str, &str)> = attempts
+    let toolchains: BTreeSet<(&str, &str, &str, &str)> = timed
         .iter()
         .map(|run| {
             (
@@ -148,7 +153,7 @@ fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut
             "{workload_id}: attempts used different toolchains, so they are not equal work"
         ));
     }
-    let architectures: BTreeSet<GuestArchitecture> = attempts
+    let architectures: BTreeSet<GuestArchitecture> = timed
         .iter()
         .map(|run| run.allocation.guest_architecture)
         .collect();

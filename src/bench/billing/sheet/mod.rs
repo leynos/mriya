@@ -142,6 +142,13 @@ pub struct ProviderRules {
     pub storage: BTreeMap<String, StorageRule>,
     /// The subscription that sets a floor under this provider's bill, if any.
     pub plan: Option<PlanRule>,
+    /// Charges this provider bills that the sheet does not price.
+    ///
+    /// A provider can charge for a resource the record format has no unit for,
+    /// such as an attached public address. Naming it here makes every report
+    /// that uses this provider say the total excludes it, rather than leaving
+    /// the omission silent.
+    pub unpriced_extras: Vec<String>,
 }
 
 /// Reasons a price sheet cannot be loaded or used.
@@ -179,6 +186,13 @@ pub enum PriceSheetError {
     UnknownCurrency(String),
     /// A declared conversion rate is zero, which would make every charge free.
     ZeroExchangeRate(String),
+    /// A plan measures its included compute in a product the provider lacks.
+    UnknownBaselineProduct {
+        /// Provider whose plan names the product.
+        provider: String,
+        /// The product the plan names.
+        product: String,
+    },
 }
 
 impl fmt::Display for PriceSheetError {
@@ -219,6 +233,11 @@ impl fmt::Display for PriceSheetError {
                 formatter,
                 "price sheet declares a zero rate for {code:?}; every charge in that currency \
                  would be free"
+            ),
+            Self::UnknownBaselineProduct { provider, product } => write!(
+                formatter,
+                "the plan for provider {provider:?} measures its included compute in product \
+                 {product:?}, which the provider does not describe"
             ),
         }
     }

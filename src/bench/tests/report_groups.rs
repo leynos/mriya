@@ -139,6 +139,53 @@ fn retained_storage_is_priced_into_the_campaign_total() {
 }
 
 #[test]
+fn a_charge_the_sheet_does_not_price_is_named_before_the_totals() {
+    // The example sheet deliberately does not price Scaleway's public address.
+    // A total that silently omitted it would be an understated bill.
+    let report = build_report(
+        &campaign_with(vec![run_with(|_| {})]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    assert!(
+        report
+            .incomplete_totals
+            .iter()
+            .any(|note| note.contains("scaleway") && note.contains("IPv4")),
+        "{:?}",
+        report.incomplete_totals
+    );
+    let rendered = render(&report);
+    assert!(rendered.contains("totals are incomplete"), "{rendered}");
+    assert!(rendered.contains("(incomplete)"), "{rendered}");
+}
+
+#[test]
+fn a_warm_up_running_a_different_command_does_not_make_timed_attempts_incomparable() {
+    let warm_up = run_with(|run| {
+        run.role = super::super::record::RunRole::WarmUp;
+        run.command = vec![String::from("cargo"), String::from("fetch")];
+        run.repetition = 1;
+    });
+    let timed = run_with(|run| {
+        run.repetition = 2;
+    });
+    let report = build_report(
+        &campaign_with(vec![warm_up, timed]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    assert!(
+        !report
+            .comparability_problems
+            .iter()
+            .any(|problem| problem.contains("different commands")),
+        "{:?}",
+        report.comparability_problems
+    );
+}
+
+#[test]
 fn each_providers_subscription_is_attributed_only_to_that_provider() {
     // Boat has a plan; Scaleway does not. A group on Scaleway must not be
     // charged any of Boat's plan, and the shares must add back to the total.

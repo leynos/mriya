@@ -40,6 +40,10 @@ month_seconds = 2592000
 [providers.scaleway]
 display_name = "Scaleway"
 source = "https://www.scaleway.com/en/docs/billing/faq/"
+# Scaleway's list prices exclude an attached public IPv4 address, which the
+# instance request asks for and the record format has no unit to price. A
+# report that uses this provider therefore says its total excludes it.
+unpriced_extras = ["public IPv4 address (billed per hour while attached)"]
 
 [providers.scaleway.products.DEV1-S]
 price_per_hour_micros = 8980
@@ -75,6 +79,9 @@ minimum_seconds = 3600
 [providers.hetzner]
 display_name = "Hetzner Cloud"
 source = "https://docs.hetzner.com/cloud/billing/faq/"
+# The primary IPv4 address is billed monthly per server and is not part of the
+# server's hourly rate.
+unpriced_extras = ["primary IPv4 address (billed monthly per server)"]
 
 [providers.hetzner.products.CX23]
 price_per_hour_micros = 9600
@@ -171,6 +178,9 @@ included_starts = 0
 display_name = "Ubicloud"
 source = "https://www.ubicloud.com/docs/about/pricing"
 currency = "USD"
+# Ubicloud bills a public IPv4 address per month, pro-rated per minute; the
+# record format names no address resource, so this sheet cannot price it.
+unpriced_extras = ["public IPv4 address (billed monthly, pro-rated per minute)"]
 
 [providers.ubicloud.products.standard-2]
 price_per_hour_micros = 62400

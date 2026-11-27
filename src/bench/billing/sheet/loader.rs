@@ -82,6 +82,9 @@ struct RawProvider {
     /// The subscription, when the provider has one.
     #[serde(default)]
     plan: Option<RawPlan>,
+    /// Charges the provider bills that this sheet does not price.
+    #[serde(default)]
+    unpriced_extras: Vec<String>,
 }
 
 /// The on-disk shape of one compute product.
@@ -209,11 +212,12 @@ pub fn load_price_sheet(text: &str) -> Result<PriceSheet, PriceSheetError> {
             return Err(PriceSheetError::MissingSource(format!("[fx.{code}]")));
         }
     }
-    let providers = raw
+    let providers: BTreeMap<String, ProviderRules> = raw
         .providers
         .into_iter()
         .map(|(name, provider)| (name, provider.into_rules(&currency)))
         .collect();
+    check_plan_baselines(&providers)?;
     let fx = raw
         .fx
         .into_iter()
@@ -235,6 +239,33 @@ pub fn load_price_sheet(text: &str) -> Result<PriceSheet, PriceSheetError> {
         providers,
         fx,
     })
+}
+
+/// Requires every plan to measure its allowance in a product that exists.
+///
+/// A misspelled `baseline_product` would otherwise be accepted here and then
+/// silently skipped when the allowance is valued, so the covered compute would
+/// be priced in full rather than reported as an invalid sheet.
+fn check_plan_baselines(
+    providers: &BTreeMap<String, ProviderRules>,
+) -> Result<(), PriceSheetError> {
+    for (name, provider) in providers {
+        let Some(plan) = provider.plan.as_ref() else {
+            continue;
+        };
+        // A plan with no included compute has no allowance to value, so its
+        // baseline product is not consulted and need not exist.
+        if plan.included_compute_nanos == 0
+            || provider.products.contains_key(&plan.baseline_product)
+        {
+            continue;
+        }
+        return Err(PriceSheetError::UnknownBaselineProduct {
+            provider: name.clone(),
+            product: plan.baseline_product.clone(),
+        });
+    }
+    Ok(())
 }
 
 impl RawProvider {
@@ -262,6 +293,12 @@ impl RawProvider {
                 .map(|(name, storage)| (name, storage.into_rule()))
                 .collect(),
             plan: self.plan.map(RawPlan::into_rule),
+            unpriced_extras: self
+                .unpriced_extras
+                .into_iter()
+                .map(|extra| extra.trim().to_owned())
+                .filter(|extra| !extra.is_empty())
+                .collect(),
         }
     }
 }

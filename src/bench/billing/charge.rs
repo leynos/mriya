@@ -271,6 +271,12 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
     let minimum_nanos = product
         .minimum_seconds
         .saturating_mul(super::NANOS_PER_SECOND);
+    // A zero granularity is a defect in the sheet, not a licence to skip its
+    // rules. Checking it before the match keeps a recorded billed lifetime from
+    // bypassing the validation that a measured lifetime would hit.
+    if product.granularity_seconds == 0 {
+        return Err(ChargeError::ZeroGranularity);
+    }
     let chargeable = match usage.billed_nanos {
         // A recorded billed figure is not rounded to the granularity again, but
         // a provider still bills at least its minimum, so the floor applies.

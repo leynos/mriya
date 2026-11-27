@@ -18,25 +18,7 @@ use super::super::{
         StorageRule,
         load_price_sheet,
     },
-    record::{
-        Allocation,
-        CacheObservation,
-        CacheState,
-        Concurrency,
-        GuestArchitecture,
-        Lifetime,
-        ProviderProduct,
-        Record,
-        RecordKind,
-        RunOutcome,
-        RunRecord,
-        RunRole,
-        SCHEMA_VERSION,
-        ToolchainPin,
-        TreePin,
-        WorkloadClass,
-        parse_line,
-    },
+    record::{Record, RunRecord, parse_line},
     validate::{Campaign, validate_str},
 };
 
@@ -125,6 +107,7 @@ pub fn sheet_with(product: ProductRule, storage: StorageRule) -> PriceSheet {
             products,
             storage: provider_storage,
             plan: None,
+            unpriced_extras: Vec::new(),
         },
     );
     PriceSheet {
@@ -156,39 +139,34 @@ pub fn sheet_with_plan(product: ProductRule, included_starts: u64) -> PriceSheet
     sheet
 }
 
-/// A run record that validates clean under `campaign_id`.
+/// Returns the fixture's run record before any test-specific change.
+///
+/// # Errors
+///
+/// Returns a message when the embedded fixture has no run line or when that
+/// line is not a run record, so a broken fixture is reported rather than
+/// replaced by a synthetic record that would agree with itself.
+pub fn fixture_run() -> Result<RunRecord, String> {
+    let line = VALID_CAMPAIGN
+        .lines()
+        .nth(1)
+        .ok_or_else(|| String::from("the valid campaign fixture has no run line"))?;
+    match parse_line(line).map_err(|err| err.to_string())? {
+        Record::Run(run) => Ok(*run),
+        other => Err(format!("expected a run record, got {:?}", other.kind())),
+    }
+}
+
+/// A run record that validates clean.
+///
+/// # Panics
+///
+/// Panics when the embedded fixture is broken, which is a defect in the test
+/// data rather than in the code under test.
 pub fn run_record(index: usize) -> RunRecord {
-    match super::super::record::parse_line(
-        super::fixture("valid-campaign.jsonl")
-            .expect("the embedded fixture")
-            .lines()
-            .nth(1)
-            .expect("the fixture has a run line"),
-    )
-    .expect("the fixture's run line parses")
-    .into_run(index)
-    {
-        Ok(run) => run,
-        Err(err) => panic!("{err}"),
-    }
-}
-
-/// Converts a parsed record into a run record, numbering its repetition.
-trait IntoRun {
-    /// Returns the run record, numbering it `index`.
-    fn into_run(self, index: usize) -> Result<RunRecord, String>;
-}
-
-impl IntoRun for Record {
-    fn into_run(self, index: usize) -> Result<RunRecord, String> {
-        match self {
-            Self::Run(mut run) => {
-                run.repetition = u32::try_from(index).unwrap_or(1).saturating_add(1);
-                Ok(*run)
-            }
-            other => Err(format!("expected a run record, got {:?}", other.kind())),
-        }
-    }
+    let mut run = fixture_run().expect("the embedded fixture has a parseable run line");
+    run.repetition = u32::try_from(index).unwrap_or(1).saturating_add(1);
+    run
 }
 
 /// Returns the fixture's header and run lines as a campaign.
@@ -208,85 +186,20 @@ pub fn campaign_with(runs: Vec<RunRecord>) -> Result<Campaign, String> {
         // duplicates this helper would otherwise build.
         run.run_id = format!("{}/run-{index}", run.campaign_id);
         let record = Record::Run(Box::new(run));
-        text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
+        text.push_str(&super::super::record::to_line(&record).map_err(|err| err.to_string())?);
         text.push('\n');
     }
     validate_str(&text).map_err(|complaints| format!("{complaints:?}"))
 }
 
 /// Returns the fixture's run record, adjusted by `change`.
+///
+/// # Panics
+///
+/// Panics when the embedded fixture is broken, for the reason
+/// [`run_record`] gives.
 pub fn run_with(change: impl FnOnce(&mut RunRecord)) -> RunRecord {
-    let Some(line) = VALID_CAMPAIGN.lines().nth(1) else {
-        // The fixture is a compile-time constant with known contents, so this
-        // branch is unreachable in practice; it returns a minimal record rather
-        // than panicking so the helper itself never aborts a run.
-        return minimal_run();
-    };
-    let mut run = match parse_line(line) {
-        Ok(Record::Run(run)) => *run,
-        _ => return minimal_run(),
-    };
+    let mut run = run_record(0);
     change(&mut run);
     run
-}
-
-/// Returns a minimal run record, for the case the fixture cannot be parsed.
-fn minimal_run() -> RunRecord {
-    RunRecord {
-        schema: SCHEMA_VERSION,
-        kind: RecordKind::Run,
-        campaign_id: String::from("fixture"),
-        run_id: String::from("fixture/run"),
-        workload_id: String::from("cold-build"),
-        command: vec![String::from("cargo"), String::from("build")],
-        role: RunRole::Timed,
-        class: WorkloadClass::Cpu,
-        tree: TreePin {
-            remote: String::from("git@github.com:leynos/mriya.git"),
-            commit: String::from("fixture"),
-            tree_digest: String::from("fixture"),
-            dirty: false,
-            size_bytes: 1,
-            file_count: 1,
-        },
-        toolchain: ToolchainPin {
-            compiler: String::from("rustc"),
-            compiler_version: String::from("1"),
-            package_manager: String::from("cargo"),
-            package_manager_version: String::from("1"),
-        },
-        provider: ProviderProduct {
-            provider: String::from("scaleway"),
-            product: String::from("DEV1-S"),
-            location: String::from("fr-par-1"),
-        },
-        allocation: Allocation {
-            cpu_count: 2,
-            memory_bytes: 1,
-            disk_bytes: 1,
-            requested_architecture: String::from("x86_64"),
-            guest_architecture: GuestArchitecture::X86_64,
-        },
-        concurrency: Concurrency {
-            intended_workers: 1,
-            effective_workers: 1,
-        },
-        cache: CacheObservation {
-            state: CacheState::Absent,
-            size_bytes: 0,
-            mounted: false,
-            saved_bytes: 0,
-        },
-        lifetime: Lifetime {
-            total_nanos: 1,
-            chargeable_nanos: 1,
-        },
-        outcome: RunOutcome::Completed {
-            exit_code: 0,
-            correctness_passed: true,
-        },
-        gpu: None,
-        repetition: 1,
-        retained: Vec::new(),
-    }
 }

@@ -4,6 +4,7 @@ use rstest::rstest;
 
 use super::{
     super::billing::{
+        ChargeError,
         NANOS_PER_HOUR,
         NANOS_PER_SECOND,
         PriceSheetError,
@@ -154,7 +155,95 @@ fn a_billed_lifetime_is_not_rounded_twice(
 }
 
 #[test]
-fn a_sheet_without_a_retrieval_date_is_refused() {
+fn a_zero_granularity_is_refused_even_for_a_recorded_billed_lifetime() {
+    // A writer can supply a billed lifetime directly, which skips the rounding
+    // path; the rule itself is still invalid, because no billable unit exists.
+    let product = ProductRule {
+        price_per_hour_micros: 3_600_000,
+        granularity_seconds: 0,
+        minimum_seconds: 1,
+        monthly_cap_micros: None,
+        start_charge_micros: 0,
+    };
+    let sheet = sheet_with(product, hourly_storage());
+    let usage =
+        Usage::new("prov", "p", NANOS_PER_SECOND).with_billed_lifetime(2 * NANOS_PER_SECOND);
+    let error = charge(&sheet, &usage).expect_err("a zero granularity cannot define a unit");
+    assert!(matches!(error, ChargeError::ZeroGranularity), "{error}");
+}
+
+#[test]
+fn a_plan_naming_an_unknown_baseline_product_is_refused() {
+    let text = r#"
+[sheet]
+currency = "EUR"
+retrieved = "2026-11-26"
+
+[providers.x]
+source = "https://example.test/x"
+
+[providers.x.products.p]
+price_per_hour_micros = 36000
+granularity_seconds = 3600
+
+[providers.x.plan]
+monthly_price_micros = 20000000
+included_compute_hours = 10
+baseline_product = "missing"
+"#;
+    let error = load_price_sheet(text).expect_err("the allowance names no product");
+    assert!(
+        matches!(error, PriceSheetError::UnknownBaselineProduct { ref product, .. } if product == "missing"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_plan_without_included_compute_needs_no_baseline_product() {
+    let text = r#"
+[sheet]
+currency = "EUR"
+retrieved = "2026-11-26"
+
+[providers.x]
+source = "https://example.test/x"
+
+[providers.x.products.p]
+price_per_hour_micros = 36000
+granularity_seconds = 3600
+
+[providers.x.plan]
+monthly_price_micros = 20000000
+baseline_product = "not-consulted"
+"#;
+    let sheet = load_price_sheet(text).expect("the plan grants no compute, so nothing is valued");
+    assert!(
+        sheet
+            .providers
+            .get("x")
+            .is_some_and(|provider| provider.plan.is_some())
+    );
+}
+
+#[test]
+fn the_example_sheet_names_the_charges_it_does_not_price() {
+    let sheet = example_sheet().expect("the example sheet parses");
+    let scaleway = sheet
+        .providers
+        .get("scaleway")
+        .expect("the example sheet describes Scaleway");
+    assert!(
+        scaleway
+            .unpriced_extras
+            .iter()
+            .any(|extra| extra.contains("IPv4")),
+        "Scaleway's public address must be named as unpriced: {:?}",
+        scaleway.unpriced_extras
+    );
+}
+
+#[test]
+fn a_sheet_without_retrieval_date_is_refused() {
     let error = load_price_sheet("[sheet]\ncurrency = \"EUR\"\n")
         .expect_err("a rate without a date cannot be re-checked");
     assert!(

@@ -201,6 +201,9 @@ pub struct BenchmarkReport {
     pub workloads: BTreeMap<String, Vec<WorkloadResult>>,
     /// Capability differences the reader must see before comparing.
     pub capability_notes: Vec<String>,
+    /// Why the totals are incomplete, when a used provider bills a charge the
+    /// price sheet does not price.
+    pub incomplete_totals: Vec<String>,
     /// Problems that prevent a comparison between providers.
     pub comparability_problems: Vec<String>,
     /// Campaign-wide totals in the sheet's currency.

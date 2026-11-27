@@ -26,6 +26,7 @@ use crate::bench::billing::{NANOS_PER_SECOND, figures_agree, format_currency};
 ///     retrieved: String::from("2026-11-26"),
 ///     workloads: BTreeMap::new(),
 ///     capability_notes: Vec::new(),
+///     incomplete_totals: Vec::new(),
 ///     comparability_problems: Vec::new(),
 ///     totals: Totals::default(),
 ///     subscription_micros: 0,
@@ -43,20 +44,21 @@ pub fn render(report: &BenchmarkReport) -> String {
         String::new(),
     ];
 
-    if !report.comparability_problems.is_empty() {
-        lines.push(String::from("comparability problems"));
-        for problem in &report.comparability_problems {
-            lines.push(format!("- {problem}"));
-        }
-        lines.push(String::new());
-    }
-    if !report.capability_notes.is_empty() {
-        lines.push(String::from("capability differences"));
-        for note in &report.capability_notes {
-            lines.push(format!("- {note}"));
-        }
-        lines.push(String::new());
-    }
+    push_notes(
+        &mut lines,
+        "comparability problems",
+        &report.comparability_problems,
+    );
+    push_notes(
+        &mut lines,
+        "capability differences",
+        &report.capability_notes,
+    );
+    push_notes(
+        &mut lines,
+        "totals are incomplete",
+        &report.incomplete_totals,
+    );
 
     if report.workloads.is_empty() {
         lines.push(String::from("no run records; nothing to report"));
@@ -69,17 +71,34 @@ pub fn render(report: &BenchmarkReport) -> String {
         lines.push(String::new());
     }
 
+    let incomplete = if report.incomplete_totals.is_empty() {
+        ""
+    } else {
+        " (incomplete)"
+    };
     lines.push(format!(
-        "campaign marginal cost {}",
+        "campaign marginal cost {}{incomplete}",
         format_currency(&report.currency, report.totals.marginal_micros)
     ));
     lines.push(format!(
-        "campaign total-account cost {} of which subscription {}",
+        "campaign total-account cost {}{incomplete} of which subscription {}",
         format_currency(&report.currency, report.totals.total_account_micros),
         format_currency(&report.currency, report.subscription_micros)
     ));
     lines.push(String::new());
     lines.join("\n")
+}
+
+/// Appends a titled bullet list, when the list has any entries.
+fn push_notes(lines: &mut Vec<String>, title: &str, notes: &[String]) {
+    if notes.is_empty() {
+        return;
+    }
+    lines.push(title.to_owned());
+    for note in notes {
+        lines.push(format!("- {note}"));
+    }
+    lines.push(String::new());
 }
 
 /// Renders one provider-product group.
