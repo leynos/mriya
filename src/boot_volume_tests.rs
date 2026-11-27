@@ -88,17 +88,6 @@ fn decimal_gb_is_not_a_gibibyte() {
     assert_ne!(decimal, 10 * 1024 * 1024 * 1024);
 }
 
-/// Alignment rounds up to the next 512-byte multiple.
-#[rstest]
-#[case::zero(0, 0)]
-#[case::exact(512, 512)]
-#[case::one_over(513, 1024)]
-#[case::just_under(511, 512)]
-#[case::aligned_ten_gb(10_000_000_000, 10_000_000_000)]
-fn align_up_to_size_increment_rounds_up(#[case] input: u64, #[case] expected: u64) {
-    assert_eq!(align_up_to_size_increment(input), expected);
-}
-
 /// Size rendering states decimal GB and bytes together.
 #[rstest]
 #[case::ten(10_000_000_000, "10 GB (10000000000 bytes)")]

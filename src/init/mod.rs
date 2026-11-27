@@ -176,9 +176,10 @@ where
 
     /// Installs a reporter for the boot plan and the created allocation.
     ///
-    /// For example, wiring a [`crate::provisioning::StderrReporter`] makes
-    /// `mriya init` state the boot disk it will format before it creates the
-    /// cache volume.
+    /// The reported boot disk is the helper instance's, not the cache volume
+    /// this command formats. For example, wiring a
+    /// [`crate::provisioning::StderrReporter`] makes `mriya init` state the
+    /// helper's boot disk before it creates the cache volume.
     #[must_use]
     pub fn with_reporter(mut self, reporter: Arc<dyn ProvisioningReporter>) -> Self {
         self.reporter = Some(reporter);

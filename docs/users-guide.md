@@ -126,8 +126,12 @@ Three different units appear on this path, and they are not interchangeable:
 
 The persistent cache volume's `MRIYA_INIT_VOLUME_SIZE_GB` / `volume_size_gb`
 setting is a *different* setting and still uses binary gibibytes (1024^3
-bytes). Keep the two apart: the boot disk is destroyed with the instance, while
-`default_volume_id` names a retained cache volume.
+bytes). Keep the two apart: the boot disk belongs to one instance and is not
+retained across runs, while `default_volume_id` names a retained cache volume.
+Instance teardown is attempted after every run, but removal of the boot volume
+is not yet guaranteed: Scaleway's documentation disagrees about whether a Block
+Storage root survives a server delete, and ownership-aware cleanup is tracked
+in issue #154.
 
 ### Compatibility default
 

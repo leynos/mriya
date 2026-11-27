@@ -1,10 +1,15 @@
 //! Boot-storage domain model shared by every backend.
 //!
-//! A boot volume is the disk an instance starts from, and it is separate
-//! from any retained cache volume: the cache is attached for reuse across
-//! runs, while the boot volume is destroyed with the instance. Keeping the
-//! two apart in the type system is what stops a cache volume ID being sent
-//! where a boot specification belongs.
+//! A boot volume is the disk an instance starts from, and it is separate from
+//! any retained cache volume: the cache is attached for reuse across runs,
+//! while the boot volume is scoped to one instance. Keeping the two apart in
+//! the type system is what stops a cache volume ID being sent where a boot
+//! specification belongs.
+//!
+//! Deleting an instance is *attempted* as part of teardown, but removal of the
+//! boot volume is not yet guaranteed: Scaleway's own documentation disagrees
+//! about whether a Block Storage root survives a server delete, and
+//! ownership-aware cleanup is tracked in issue #154.
 //!
 //! Sizes here are decimal gigabytes (10^9 bytes), the unit Scaleway's
 //! published examples use. The cache volume's own `mriya init` size keeps its
@@ -25,7 +30,6 @@ pub use allocation::{BootVolumeAllocation, BootVolumeMismatch, RootVolume};
 pub use measurement::{
     BYTES_PER_DECIMAL_GB,
     SIZE_ALIGNMENT_BYTES,
-    align_up_to_size_increment,
     decimal_gb_to_bytes,
     format_size,
 };

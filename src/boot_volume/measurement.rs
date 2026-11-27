@@ -36,15 +36,6 @@ pub fn decimal_gb_to_bytes(size_gb: u32) -> Result<u64, BootVolumeError> {
         .ok_or(BootVolumeError::SizeOverflow { size_gb })
 }
 
-/// Rounds a byte size up to the provider's 512-byte increment.
-///
-/// For example, 513 bytes becomes 1024 and an already aligned size is
-/// unchanged.
-#[must_use]
-pub const fn align_up_to_size_increment(size_bytes: u64) -> u64 {
-    size_bytes.div_ceil(SIZE_ALIGNMENT_BYTES) * SIZE_ALIGNMENT_BYTES
-}
-
 /// Renders a byte size as both decimal gigabytes and raw bytes.
 ///
 /// For example, `20_000_000_000` bytes renders as

@@ -126,6 +126,7 @@ impl ScalewayBackend {
         let response = super::HTTP_CLIENT
             .get(&url)
             .header("X-Auth-Token", &self.config.secret_key)
+            .timeout(super::HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|err| ScalewayBackendError::Provider {

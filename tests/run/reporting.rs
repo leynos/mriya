@@ -24,7 +24,10 @@ use super::{
 ///
 /// The backend is returned with the reporter so a caller can assert how many
 /// preflight calls the run made.
-fn run_with_reporter(request: &InstanceRequest) -> (RecordingReporter, ScriptedBackend) {
+fn run_with_reporter(
+    request: &InstanceRequest,
+    with_boot_record: bool,
+) -> (RecordingReporter, ScriptedBackend) {
     let context = build_run_context().expect("the run fixture should build");
     let reporter = RecordingReporter::new();
     let runner = ScriptedRunner::new();
@@ -35,6 +38,9 @@ fn run_with_reporter(request: &InstanceRequest) -> (RecordingReporter, ScriptedB
     }
     let syncer = Syncer::new(context.sync_config.clone(), runner).expect("syncer should build");
     let backend = context.backend.clone();
+    if with_boot_record {
+        backend.record_boot_volume();
+    }
     let orchestrator: RunOrchestrator<ScriptedBackend, ScriptedRunner> =
         RunOrchestrator::new(backend.clone(), syncer)
             .with_reporter(Arc::new(reporter.clone()) as Arc<dyn ProvisioningReporter>);
@@ -58,7 +64,7 @@ fn run_reports_the_boot_record_and_the_cache_separately() {
     let mut request = request().expect("the base request should build");
     request.volume_id = Some(String::from("vol-cache"));
 
-    let (reporter, _backend) = run_with_reporter(&request);
+    let (reporter, _backend) = run_with_reporter(&request, false);
     let allocations = reporter.allocations();
 
     assert_eq!(allocations.len(), 1, "exactly one allocation is reported");
@@ -76,12 +82,39 @@ fn run_reports_the_boot_record_and_the_cache_separately() {
 fn run_reports_no_cache_when_none_is_configured() {
     let request = request().expect("the base request should build");
 
-    let (reporter, _backend) = run_with_reporter(&request);
+    let (reporter, _backend) = run_with_reporter(&request, false);
     let allocations = reporter.allocations();
 
     assert_eq!(allocations.len(), 1);
     let recorded = allocations.first().expect("one allocation was recorded");
     assert_eq!(recorded.cache_volume_id, None);
+}
+
+/// A run whose handle records a root volume reports that record, and keeps it
+/// distinct from the cache identifier.
+///
+/// Without this case, an implementation that dropped every boot allocation
+/// would still pass the absent-record cases above.
+#[test]
+fn run_reports_a_populated_boot_record_separately_from_the_cache() {
+    let mut request = request().expect("the base request should build");
+    request.volume_id = Some(String::from("vol-cache"));
+
+    let (reporter, _backend) = run_with_reporter(&request, true);
+
+    let allocations = reporter.allocations();
+    assert_eq!(allocations.len(), 1);
+    let recorded = allocations.first().expect("one allocation was recorded");
+    assert_eq!(
+        recorded.boot_volume.as_deref(),
+        Some("vol-root"),
+        "the run must report the root the handle recorded"
+    );
+    assert_eq!(
+        recorded.cache_volume_id.as_deref(),
+        Some("vol-cache"),
+        "the cache line must stay the request's own value"
+    );
 }
 
 /// The run does not add a preflight round-trip: its create resolves the plan
@@ -90,7 +123,7 @@ fn run_reports_no_cache_when_none_is_configured() {
 fn run_reports_no_plan_because_create_resolves_it() {
     let request = request().expect("the base request should build");
 
-    let (reporter, backend) = run_with_reporter(&request);
+    let (reporter, backend) = run_with_reporter(&request, false);
 
     assert!(
         reporter.plans().is_empty(),

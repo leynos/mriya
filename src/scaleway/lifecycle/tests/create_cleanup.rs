@@ -14,13 +14,18 @@ use rstest::rstest;
 
 use super::{
     backend_fixture,
-    http_stub::{Reply, request_url, with_stub},
+    handle as existing_handle,
+    http_stub::{Reply, only_request, request_url, with_stub},
     is_differing_mismatch,
     root_volume::local_server,
 };
 use crate::{
     boot_volume::{BootVolumePlan, BootVolumeType, CompatibilityDefault},
-    scaleway::{ScalewayBackend, ScalewayBackendError, lifecycle::CreatedInstance},
+    scaleway::{
+        ScalewayBackend,
+        ScalewayBackendError,
+        lifecycle::{CreateFailure, CreatedInstance},
+    },
 };
 
 /// A minimal request, used by the cleanup cases.
@@ -143,4 +148,145 @@ async fn a_failed_cleanup_reports_both_outcomes(backend_fixture: ScalewayBackend
         "the original failure must be preserved as the source: {source:?}"
     );
     Ok(())
+}
+
+/// Scenario: an attachment failure whose outcome is unknown.
+///
+/// Invariant: a transport failure is settled by reading the instance back. A
+/// cache the provider reports as attached keeps the server, one it reports as
+/// absent allows the delete, and an unreadable instance keeps the server
+/// because detachment is unproven.
+#[rstest]
+#[case::attached(attached_instance(), true)]
+#[case::absent(instance_without_cache(), false)]
+#[case::unreadable(rejected(), true)]
+#[tokio::test]
+async fn an_ambiguous_attachment_failure_is_settled_by_a_read(
+    backend_fixture: ScalewayBackend,
+    #[case] reply: Reply,
+    #[case] expect_keep: bool,
+) -> Result<()> {
+    let handle = existing_handle();
+    let (result, requests) = with_stub(backend_fixture, vec![reply], async |backend| {
+        Ok::<_, crate::scaleway::ScalewayBackendError>(
+            backend
+                .classify_attachment_failure(
+                    &handle,
+                    "vol-cache",
+                    ScalewayBackendError::Provider {
+                        message: String::from("connection reset"),
+                    },
+                )
+                .await,
+        )
+    })
+    .await?;
+
+    let failure = result.expect("classification should be reported");
+    assert_eq!(failure.keep_server, expect_keep, "{failure:?}");
+    assert_eq!(requests.len(), 1, "exactly one read should be made");
+    assert!(only_request(&requests)?.starts_with("GET "));
+    Ok(())
+}
+
+/// Scenario: the provider rejected the attachment outright.
+///
+/// Invariant: a rejected response cannot have applied, so the server may be
+/// deleted and no read is needed.
+#[rstest]
+#[tokio::test]
+async fn a_rejected_attachment_allows_cleanup(backend_fixture: ScalewayBackend) -> Result<()> {
+    let handle = existing_handle();
+    let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
+        Ok::<_, crate::scaleway::ScalewayBackendError>(
+            backend
+                .classify_attachment_failure(
+                    &handle,
+                    "vol-cache",
+                    ScalewayBackendError::VolumeAttachmentFailed {
+                        volume_id: String::from("vol-cache"),
+                        instance_id: String::from("id"),
+                        message: String::from("conflict"),
+                    },
+                )
+                .await,
+        )
+    })
+    .await?;
+
+    let failure = result.expect("classification should be reported");
+    assert!(!failure.keep_server, "{failure:?}");
+    assert!(
+        requests.is_empty(),
+        "a rejection needs no read: {requests:?}"
+    );
+    Ok(())
+}
+
+/// Scenario: a retained server must not be deleted by the cleanup step.
+///
+/// Invariant: `clean_up_after_failed_create` honours the retention decision and
+/// issues no DELETE, even though it is the same call the ordinary failure path
+/// makes.
+#[rstest]
+#[tokio::test]
+async fn cleanup_keeps_a_server_marked_for_retention(
+    backend_fixture: ScalewayBackend,
+) -> Result<()> {
+    let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
+        let failure = Box::new(CreateFailure {
+            error: ScalewayBackendError::Provider {
+                message: String::from("power on failed"),
+            },
+            handle: handle(),
+            keep_server: true,
+        });
+        Ok::<_, crate::scaleway::ScalewayBackendError>(
+            backend.clean_up_after_failed_create(failure).await,
+        )
+    })
+    .await?;
+
+    let error = result.expect("the combined failure should be reported");
+    let ScalewayBackendError::CreateCleanupFailed { message, .. } = &error else {
+        panic!("expected a cleanup failure, got {error:?}");
+    };
+    assert!(message.contains("left running"), "{message}");
+    assert!(
+        requests.is_empty(),
+        "a retained server must not be deleted: {requests:?}"
+    );
+    Ok(())
+}
+
+/// A provider response denying the instance read.
+fn rejected() -> Reply {
+    Reply {
+        status: 404,
+        body: String::from(r#"{"type":"denied","message":"no such instance"}"#),
+    }
+}
+
+/// A provider response listing an instance with the cache volume attached.
+fn attached_instance() -> Reply {
+    Reply {
+        status: 200,
+        body: include_str!("fixtures/detach-instance.json").to_owned(),
+    }
+}
+
+/// A provider response listing an instance with only its root volume.
+fn instance_without_cache() -> Reply {
+    let mut instance: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/detach-instance.json"))
+            .expect("detach fixture is JSON");
+    instance
+        .pointer_mut("/server/volumes")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("fixture volumes")
+        .remove("1");
+    Reply {
+        status: 200,
+        body: serde_json::to_string(&instance).expect("serialize fixture"),
+    }
 }

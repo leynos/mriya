@@ -31,17 +31,23 @@ use crate::{
 ///
 /// ```ignore
 /// // Reporting the same plan twice is not an error; a reporter is a sink.
-/// let reporter = StderrReporter::new();
+/// let reporter = StderrReporter::new(std::io::stderr());
 /// reporter.plan_resolved(&plan);
 /// ```
 pub trait ProvisioningReporter: Debug + Send + Sync {
     /// Reports a resolved boot plan, before any billable resource exists.
+    ///
+    /// # Parameters
+    /// - `plan`: the resolved type, capacity, and compatibility default.
     fn plan_resolved(&self, _plan: &BootVolumePlan) {}
 
     /// Reports the instance that now exists, before readiness checks begin.
     ///
-    /// `cache_volume_id` is the retained cache volume the request named, or
-    /// `None` when the run has no cache.
+    /// # Parameters
+    /// - `handle`: the created instance, including the root volume the provider reported when one
+    ///   was captured.
+    /// - `cache_volume_id`: the retained cache volume the request named, or `None` when the run has
+    ///   no cache. This is the requested identifier, not a separately verified allocation.
     fn instance_created(&self, _handle: &InstanceHandle, _cache_volume_id: Option<&str>) {}
 }
 
@@ -58,6 +64,13 @@ impl ProvisioningReporter for NoopReporter {}
 ///
 /// The compatibility-default marker is included only when a setting was
 /// defaulted, so a reader can tell a chosen value from an inherited one.
+///
+/// # Parameters
+/// - `plan`: the resolved plan to render.
+///
+/// # Returns
+/// One line naming the provider identifier, both size units, and whether the
+/// settings were configured or defaulted.
 ///
 /// For example, an explicit 20 GB local plan renders
 /// `boot volume: l_ssd 20 GB (20000000000 bytes) [configured]`.
@@ -77,6 +90,13 @@ pub fn render_plan_line(plan: &BootVolumePlan) -> String {
 /// line from the request's own cache setting; neither is inferred from the
 /// other. A handle without a recorded root renders `unknown` rather than
 /// omitting the line, so an operator can see that the value is missing.
+///
+/// # Parameters
+/// - `handle`: the created instance, whose boot record supplies the boot line.
+/// - `cache_volume_id`: the retained cache volume the request named, or `None` to report `none`.
+///
+/// # Returns
+/// Two lines: the boot allocation, then the cache allocation.
 ///
 /// For example, a handle with a 20 GB local root and no cache renders
 /// `boot volume: vol-root l_ssd 20 GB (20000000000 bytes) [configured]` then
@@ -123,7 +143,7 @@ fn source_label(plan: &BootVolumePlan) -> String {
 /// # Examples
 ///
 /// ```ignore
-/// let reporter = StderrReporter::new();
+/// let reporter = StderrReporter::new(std::io::stderr());
 /// orchestrator.with_reporter(Arc::new(reporter));
 /// ```
 pub struct StderrReporter<W: Write> {
@@ -133,6 +153,12 @@ pub struct StderrReporter<W: Write> {
 
 impl<W: Write> StderrReporter<W> {
     /// Creates a reporter writing to `writer`.
+    ///
+    /// # Parameters
+    /// - `writer`: destination for the report lines, usually [`std::io::stderr`].
+    ///
+    /// # Returns
+    /// A reporter that writes one line per reported fact.
     #[must_use]
     pub const fn new(writer: W) -> Self {
         Self {

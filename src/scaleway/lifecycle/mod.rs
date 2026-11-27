@@ -14,6 +14,8 @@ mod volume_create;
 mod volume_detach;
 mod wait;
 
+#[cfg(test)]
+pub(super) use boot_capture::CreateFailure;
 pub(super) use boot_capture::CreatedInstance;
 
 use crate::scaleway::types::{Action, InstanceId, InstanceState};

@@ -300,6 +300,36 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 - Decision: drop images whose root type this backend does not model, even when
   the profile named no storage type. Rationale: such an image cannot back any
   plan, so selecting it and failing would lose to an older usable image.
+- Decision: record on `CreateFailure` whether the server must be kept, and have
+  `clean_up_after_failed_create` honour it. Rationale: the power-on path
+  already refuses to delete a server whose cache attachment could not be
+  undone, and a cleanup that ignored that decision would delete the cache
+  anyway.
+- Decision: settle an ambiguous attachment failure (a transport error, where the
+  provider may have applied the PATCH) by reading the instance back. Rationale:
+  deleting a server with the cache attached destroys the cache; an unreadable
+  instance is treated as attached, because an unproven detachment must not be
+  followed by a delete.
+- Decision: treat a catalogue `l_ssd` range with no positive capacity as absent
+  local storage. Rationale: selecting it by default would fail a request that
+  could have fallen back to Block Storage.
+- Decision: refuse an empty size range as a typed error rather than clamping
+  into it. Rationale: `clamp` panics on an inverted range, and a catalogue
+  entry can produce one; an explicit size already fails cleanly, so the default
+  path now matches.
+- Decision: remove the unused public `align_up_to_size_increment` helper rather
+  than make it overflow-aware. Rationale: nothing outside tests called it, and
+  the resolver enforces alignment itself, so the smallest public surface is the
+  honest fix.
+- Decision: keep `size_bytes: u64` rather than introduce byte-size and
+  volume-identifier newtypes. Rationale: the field names already carry the
+  unit, the plan fixed these shapes, and a newtype migration would ripple
+  through the provider payloads. Recorded as a possible follow-up rather than
+  done here.
+- Decision: do not add user-guide `tested-example` markers in this change.
+  Rationale: the style guide's loader does not exist in this repository yet, so
+  marking six new fences would not make them exercised and would diverge from
+  every existing example; it is a repository-wide follow-up.
 
 ## Outcomes & Retrospective
 

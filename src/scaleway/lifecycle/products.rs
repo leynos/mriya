@@ -96,7 +96,13 @@ impl ProductServerType {
     /// `false`, so a local plan against it is refused before the create.
     pub(in crate::scaleway) const fn local_constraint(&self) -> Option<ConstraintSizes> {
         match self.per_volume_constraint {
-            Some(by_type) => by_type.l_ssd,
+            // A published range with no positive capacity is not local
+            // storage: treating it as such would select it by default and then
+            // fail, instead of falling back to Block Storage.
+            Some(by_type) => match by_type.l_ssd {
+                Some(sizes) if sizes.max_size > 0 => Some(sizes),
+                _ => None,
+            },
             None => None,
         }
     }

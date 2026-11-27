@@ -10,12 +10,14 @@ use std::{
 
 use mriya::{
     Backend,
+    BootVolumeAllocation,
     BootVolumePlan,
     BootVolumeType,
     CompatibilityDefault,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    RootVolume,
     backend::BackendFuture,
 };
 use thiserror::Error;
@@ -33,6 +35,7 @@ struct State {
     fail_on_destroy: bool,
     preflight_calls: u32,
     destroy_calls: u32,
+    record_boot_volume: bool,
 }
 
 impl ScriptedBackend {
@@ -47,6 +50,15 @@ impl ScriptedBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .fail_on_destroy = true;
+    }
+
+    /// Makes `create` record a boot allocation, so a test can prove the report
+    /// carries a populated record rather than only its absence.
+    pub fn record_boot_volume(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_boot_volume = true;
     }
 
     pub fn preflight_calls(&self) -> u32 {
@@ -97,10 +109,23 @@ impl Backend for ScriptedBackend {
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
+            let record = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .record_boot_volume;
+            let plan = scripted_plan();
             Ok(InstanceHandle {
                 id: String::from("scripted-id"),
                 zone: String::from("test-zone"),
-                boot_volume: None,
+                boot_volume: record.then(|| BootVolumeAllocation {
+                    plan,
+                    root: RootVolume {
+                        id: String::from("vol-root"),
+                        volume_type: plan.volume_type,
+                        size_bytes: plan.size_bytes,
+                    },
+                }),
             })
         })
     }

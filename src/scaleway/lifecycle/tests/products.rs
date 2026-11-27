@@ -110,6 +110,22 @@ async fn a_type_on_a_later_page_is_found() {
 
     result.expect("the type should resolve");
     assert_eq!(requests.len(), 2, "the lookup should have read two pages");
+    let pages: Vec<String> = requests
+        .iter()
+        .map(|request| {
+            request_url(request)
+                .expect("the request URL should parse")
+                .query_pairs()
+                .find(|(key, _)| key == "page")
+                .map(|(_, value)| value.into_owned())
+                .expect("the request should carry a page")
+        })
+        .collect();
+    assert_eq!(
+        pages,
+        vec![String::from("1"), String::from("2")],
+        "the lookup must request successive pages"
+    );
 }
 
 /// Scenario: the endpoint keeps returning the same page.

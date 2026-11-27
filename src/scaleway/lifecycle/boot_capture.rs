@@ -58,6 +58,12 @@ pub(in crate::scaleway) struct CreateFailure {
     pub(in crate::scaleway) error: ScalewayBackendError,
     /// A handle identifying the server to clean up.
     pub(in crate::scaleway) handle: InstanceHandle,
+    /// True when the server must be kept because it may hold the cache volume.
+    ///
+    /// Deleting a server through the API deletes its attached volumes, so a
+    /// failure that leaves the cache attached, or that cannot prove it is
+    /// detached, must not be followed by a delete.
+    pub(in crate::scaleway) keep_server: bool,
 }
 
 impl ScalewayBackend {
@@ -148,6 +154,7 @@ impl ScalewayBackend {
             Box::new(CreateFailure {
                 error,
                 handle: failed_handle.clone(),
+                keep_server: false,
             })
         };
 
@@ -173,9 +180,11 @@ impl ScalewayBackend {
                 })?;
             Self::validate_cache_volume_id(cache_volume_id, &root.id, &handle)
                 .map_err(|error| fail(error, &handle))?;
-            self.attach_volume(&handle, cache_volume_id, &root)
-                .await
-                .map_err(|error| fail(error, &handle))?;
+            if let Err(attach_error) = self.attach_volume(&handle, cache_volume_id, &root).await {
+                return Err(self
+                    .classify_attachment_failure(&handle, cache_volume_id, attach_error)
+                    .await);
+            }
         }
 
         let zone = crate::scaleway::types::Zone::from(request.zone.as_str());
@@ -199,12 +208,83 @@ impl ScalewayBackend {
                         source: Box::new(power_error),
                     },
                     handle,
+                    keep_server: true,
                 }));
             }
             return Err(fail(power_error, &handle));
         }
 
         Ok(handle)
+    }
+
+    /// Decides whether the server may be destroyed after an attachment
+    /// failure.
+    ///
+    /// A rejected response means the PATCH did not apply, so deleting the
+    /// server is safe. A transport failure is ambiguous — the provider may have
+    /// applied the change before the error reached the client — so the instance
+    /// is read back to settle it. A read that also fails keeps the server,
+    /// because an unproven detachment must not be followed by a delete that
+    /// would take the cache with it.
+    pub(in crate::scaleway) async fn classify_attachment_failure(
+        &self,
+        handle: &InstanceHandle,
+        cache_volume_id: &str,
+        attach_error: ScalewayBackendError,
+    ) -> Box<CreateFailure> {
+        if !matches!(attach_error, ScalewayBackendError::Provider { .. }) {
+            return Box::new(CreateFailure {
+                error: attach_error,
+                handle: handle.clone(),
+                keep_server: false,
+            });
+        }
+
+        match self.is_volume_attached(handle, cache_volume_id).await {
+            Ok(false) => Box::new(CreateFailure {
+                error: attach_error,
+                handle: handle.clone(),
+                keep_server: false,
+            }),
+            Ok(true) => Box::new(CreateFailure {
+                error: ScalewayBackendError::CreateCleanupFailed {
+                    message: format!(
+                        "{attach_error} (the cache volume {cache_volume_id} is attached \
+                         despite the error; the server was left running rather than risk \
+                         deleting the cache)"
+                    ),
+                    source: Box::new(attach_error),
+                },
+                handle: handle.clone(),
+                keep_server: true,
+            }),
+            Err(read_error) => Box::new(CreateFailure {
+                error: ScalewayBackendError::CreateCleanupFailed {
+                    message: format!(
+                        "{attach_error} (the cache volume {cache_volume_id} may be attached, and \
+                         checking failed: {read_error}; the server was left running rather than \
+                         risk deleting the cache)"
+                    ),
+                    source: Box::new(attach_error),
+                },
+                handle: handle.clone(),
+                keep_server: true,
+            }),
+        }
+    }
+
+    /// Reports whether `volume_id` is attached to the instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider error when the instance cannot be read.
+    pub(in crate::scaleway) async fn is_volume_attached(
+        &self,
+        handle: &InstanceHandle,
+        volume_id: &str,
+    ) -> Result<bool, ScalewayBackendError> {
+        let server = self.get_instance(handle).await?;
+        Ok(server.volumes.values().any(|volume| volume.id == volume_id))
     }
 
     /// Destroys the instance after a failed create and returns the original
@@ -220,7 +300,20 @@ impl ScalewayBackend {
         &self,
         failure: Box<CreateFailure>,
     ) -> ScalewayBackendError {
-        let CreateFailure { error, handle } = *failure;
+        let CreateFailure {
+            error,
+            handle,
+            keep_server,
+        } = *failure;
+        if keep_server {
+            return ScalewayBackendError::CreateCleanupFailed {
+                message: format!(
+                    "{error} (the server was left running because the cache volume may \
+                     still be attached)"
+                ),
+                source: Box::new(error),
+            };
+        }
         match self.destroy_for_cleanup(&handle).await {
             Ok(()) => error,
             Err(teardown_error) => ScalewayBackendError::CreateCleanupFailed {

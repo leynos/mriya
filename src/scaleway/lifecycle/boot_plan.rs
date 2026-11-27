@@ -258,16 +258,31 @@ impl Resolution<'_> {
     }
 
     /// Returns the type's bounds, or the error that says it publishes none.
+    ///
+    /// An empty intersection — a general range that does not overlap the
+    /// provider's Block Storage range — is refused here rather than passed on,
+    /// because selecting a default inside an empty range would have to panic.
     fn bounds_or_unavailable(
         &self,
         volume_type: BootVolumeType,
     ) -> Result<SizeBounds, ScalewayBackendError> {
-        self.bounds(volume_type)
-            .ok_or_else(|| ScalewayBackendError::BootVolumeTypeUnavailable {
+        let bounds = self.bounds(volume_type).ok_or_else(|| {
+            ScalewayBackendError::BootVolumeTypeUnavailable {
                 instance_type: self.instance_type.to_owned(),
                 volume_type,
                 reason: String::from("the instance type publishes no size range for it"),
-            })
+            }
+        })?;
+        if bounds.min_size > bounds.max_size {
+            return Err(ScalewayBackendError::BootVolumeInvalid {
+                message: format!(
+                    "instance type '{}' publishes an empty {volume_type} range: \
+                     {}..={} bytes",
+                    self.instance_type, bounds.min_size, bounds.max_size
+                ),
+            });
+        }
+        Ok(bounds)
     }
 }
 
