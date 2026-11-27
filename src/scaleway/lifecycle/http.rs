@@ -150,6 +150,32 @@ impl ScalewayBackend {
         }
     }
 
+    /// Lists servers whose name matches `name` exactly.
+    ///
+    /// Scaleway filters by `name` and `project` server-side. The caller uses
+    /// this only to reconcile a create whose outcome is unknown, so every
+    /// returned server is one the provider says carries the generated name.
+    pub(in crate::scaleway) async fn find_instances_named(
+        &self,
+        zone: &str,
+        project_id: &str,
+        name: &str,
+    ) -> Result<Vec<ScalewayInstance>, ScalewayBackendError> {
+        let url = format!("{}/zones/{zone}/servers", self.instance_api_base);
+        let response = checked_response(
+            super::HTTP_CLIENT
+                .get(&url)
+                .header("X-Auth-Token", &self.config.secret_key)
+                .query(&[("name", name), ("project", project_id), ("per_page", "50")]),
+        )
+        .await?;
+        let result = response
+            .json::<ListInstancesResponse>()
+            .await
+            .map_err(|error| request_error(&error))?;
+        Ok(result.servers)
+    }
+
     /// Deletes an instance before the caller polls for its disappearance.
     ///
     /// For example, a successful 204 response returns `Ok(())`; a provider

@@ -153,7 +153,9 @@ impl ScalewayBackend {
                 zone: zone.to_owned(),
             });
         }
-        if !state.project_id.trim().is_empty() && state.project_id != project_id {
+        // A blank project ID is outside the documented response, so it must not
+        // bypass the ownership check.
+        if state.project_id.trim() != project_id.trim() {
             return Err(ScalewayBackendError::VolumeProjectMismatch {
                 volume_id: volume_id.to_owned(),
                 expected_project_id: project_id.to_owned(),

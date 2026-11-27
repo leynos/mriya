@@ -366,12 +366,17 @@ fn new_volume_waited_for(init_context_result: &InitContextResult) -> Result<(), 
 
 #[then("the owned volume is deleted")]
 fn owned_volume_deleted(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    assert_counter_condition(
-        init_context_result,
-        |ctx| ctx.backend.delete_volume_calls(),
-        |count| count > 0,
-        "rollback should delete the volume this run created",
-    )
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    if events.contains(&LifecycleEvent::VolumeDeleted) {
+        Ok(())
+    } else {
+        Err(StepError::Assertion(format!(
+            "rollback should delete the volume this run created; events: {events:?}"
+        )))
+    }
 }
 
 #[then("no volume is deleted")]

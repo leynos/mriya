@@ -35,7 +35,51 @@ where
     mounted: F,
 }
 
+/// Handles shared by the guest-side steps of one lifetime.
+struct Guest<'a> {
+    /// Live configuration and backend.
+    harness: &'a CacheHarness,
+    /// SSH runner used for every guest command.
+    syncer: &'a Syncer<ProcessCommandRunner>,
+    /// Volume whose scripts run on the guest.
+    volume: &'a VolumeHandle,
+}
+
+impl Guest<'_> {
+    /// Formats when required, mounts, runs the lifetime action and unmounts.
+    fn exercise<F>(&self, networking: &InstanceNetworking, lifetime: Lifetime<F>) -> Result<()>
+    where
+        F: FnOnce(&InstanceNetworking) -> Result<()>,
+    {
+        if lifetime.format {
+            format_volume(self.syncer, networking, self.volume)?;
+        }
+        self.mount(networking)?;
+        (lifetime.mounted)(networking)?;
+        self.unmount(networking)
+    }
+
+    /// Mounts and verifies the cache.
+    fn mount(&self, networking: &InstanceNetworking) -> Result<()> {
+        mount(self.harness, self.syncer, networking, self.volume)
+    }
+
+    /// Flushes and unmounts the cache.
+    fn unmount(&self, networking: &InstanceNetworking) -> Result<()> {
+        unmount(
+            self.syncer,
+            networking,
+            self.volume,
+            &self.harness.sync_config.volume_mount_path,
+        )
+    }
+}
+
 /// Creates, mounts, exercises and tears down one VM, returning its status.
+///
+/// A guest-side failure still runs an ordered teardown before it is reported,
+/// so a broken step cannot leave a paid server running. A detach failure
+/// retains the server, because deleting it would destroy the cache.
 async fn one_lifetime<F>(
     harness: &CacheHarness,
     syncer: &Syncer<ProcessCommandRunner>,
@@ -46,18 +90,29 @@ where
     F: FnOnce(&InstanceNetworking) -> Result<()>,
 {
     let (handle, networking) = provision(harness, volume).await?;
-    if lifetime.format {
-        format_volume(syncer, &networking, volume)?;
-    }
-    mount(harness, syncer, &networking, volume)?;
-    (lifetime.mounted)(&networking)?;
-    unmount(
+    let guest = Guest {
+        harness,
         syncer,
-        &networking,
         volume,
-        &harness.sync_config.volume_mount_path,
-    )?;
-    teardown_and_check(harness, handle, volume).await
+    };
+    let outcome = guest.exercise(&networking, lifetime);
+    match outcome {
+        Ok(()) => teardown_and_check(harness, handle, volume).await,
+        Err(error) => {
+            let unmount_note = guest.unmount(&networking).err();
+            let teardown = harness.backend.teardown(&handle, Some(&volume.id)).await;
+            Err(match teardown {
+                Ok(()) => error,
+                Err(teardown_error) => anyhow::anyhow!(
+                    "{error}; teardown after the failed step also failed: {teardown_error}; server {} may need manual cleanup{}",
+                    handle.id,
+                    unmount_note.map_or_else(String::new, |note| format!(
+                        " (unmount also failed: {note})"
+                    ))
+                ),
+            })
+        }
+    }
 }
 
 /// Sentinel paths and values used across the three lifetimes.

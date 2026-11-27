@@ -76,7 +76,10 @@ fn classify_invocation(
         InvocationRole::Mount
     } else if payload.contains("umount") {
         InvocationRole::Unmount
-    } else if payload.contains("mkdir -p") && payload.contains("cargo") {
+    } else if payload.contains("sudo mkdir -p") && payload.contains("cargo") {
+        // The production cache-directory command always runs `sudo mkdir -p`
+        // over the cache paths; a requested command such as
+        // `mkdir -p build && cargo test` must stay the remote command.
         InvocationRole::CacheDirectories
     } else if payload.contains(command) {
         InvocationRole::RemoteCommand
@@ -106,10 +109,13 @@ fn position(roles: &[InvocationRole], wanted: &InvocationRole) -> Option<usize> 
     roles.iter().position(|role| role == wanted)
 }
 
-/// Reports whether any cache-directory call sits between mount and rsync.
+/// Reports whether every cache-directory call sits between mount and rsync.
 fn directories_are_ordered(roles: &[InvocationRole], mount: usize, rsync: usize) -> bool {
-    position(roles, &InvocationRole::CacheDirectories)
-        .is_none_or(|directories| mount < directories && directories < rsync)
+    roles
+        .iter()
+        .enumerate()
+        .filter(|(_, role)| **role == InvocationRole::CacheDirectories)
+        .all(|(index, _)| mount < index && index < rsync)
 }
 
 #[then("the cache volume is mounted before files are synced")]
@@ -228,12 +234,15 @@ fn cloud_init_checked_before_remote_command(
 #[then("the teardown detaches the configured cache")]
 fn teardown_detaches_cache(run_context_result: &RunContextResult) -> Result<(), StepError> {
     let run_context = context(run_context_result)?;
-    if run_context.backend.teardown_volume_id().as_deref() == Some("vol-12345") {
+    let expected = run_context.request.volume_id.as_deref().ok_or_else(|| {
+        StepError::Assertion(String::from("the scenario never configured a cache volume"))
+    })?;
+    let actual = run_context.backend.teardown_volume_id();
+    if actual.as_deref() == Some(expected) {
         Ok(())
     } else {
         Err(StepError::Assertion(format!(
-            "expected teardown to detach vol-12345, got {:?}",
-            run_context.backend.teardown_volume_id()
+            "expected teardown to detach {expected}, got {actual:?}"
         )))
     }
 }

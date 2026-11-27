@@ -249,10 +249,21 @@ const MOUNT_CASES: &[MountCase] = &[
         status: "query-failed",
         mounts: false,
     },
+    MountCase {
+        // findmnt reports "nothing mounted" while mountpoint says the path is
+        // still a mount point: mounting over it would hide the filesystem.
+        state: &[
+            ("signature-TYPE", "ext4\n"),
+            ("findmnt-exit", "1\n"),
+            ("mountpoint-exit", "0\n"),
+        ],
+        status: "query-failed",
+        mounts: false,
+    },
 ];
 
 #[rstest]
-fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6, 7)] index: usize) -> Result<()> {
+fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6, 7, 8)] index: usize) -> Result<()> {
     let case = MOUNT_CASES
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("mount case {index} is out of range"))?;

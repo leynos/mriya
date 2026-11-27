@@ -134,7 +134,7 @@ impl VolumeStatus {
             "snapshotting" => Self::Snapshotting,
             "locked" => Self::Locked,
             "updating" => Self::Updating,
-            other => Self::Unknown(other.to_owned()),
+            _ => Self::Unknown(value.to_owned()),
         }
     }
 
@@ -180,5 +180,28 @@ impl VolumeStatus {
 impl fmt::Display for VolumeStatus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the provider status mapping.
+    use super::VolumeStatus;
+
+    #[test]
+    fn known_statuses_match_case_insensitively() {
+        assert_eq!(
+            VolumeStatus::from_provider("Available"),
+            VolumeStatus::Available
+        );
+        assert_eq!(VolumeStatus::from_provider(" in_use "), VolumeStatus::InUse);
+    }
+
+    #[test]
+    fn an_unknown_status_keeps_its_original_spelling() {
+        assert_eq!(
+            VolumeStatus::from_provider("Future_State"),
+            VolumeStatus::Unknown(String::from("Future_State"))
+        );
     }
 }

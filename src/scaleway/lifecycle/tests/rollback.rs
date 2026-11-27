@@ -24,6 +24,8 @@ use super::{
         detached_server,
         gone,
         in_use_volume,
+        listed_server,
+        malformed_create,
         request_with_volume,
         stopped_server,
     },
@@ -68,6 +70,61 @@ async fn rollback_destroys_the_server_after_an_attach_rejection(
     assert_eq!(requests.len(), 5);
     assert!(at(&requests, 3).starts_with("DELETE /instance/v1/zones/zone/servers/id "));
     assert!(at(&requests, 4).starts_with("GET /instance/v1/zones/zone/servers?"));
+    Ok(())
+}
+
+/// Scenario: the create response cannot be parsed after the server exists.
+///
+/// Invariant: the server named by the request is found and deleted before the
+/// provider error is returned, so an ambiguous create leaves nothing billing.
+#[rstest]
+#[tokio::test]
+async fn ambiguous_create_removes_the_server_it_may_have_created(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![malformed_create(), listed_server(), deleted(), gone()],
+        async |backend| {
+            backend
+                .create_with_image_id(&base_request, "img-test")
+                .await
+        },
+    )
+    .await?;
+
+    let error = result.expect_err("an unparsable create response must fail");
+    assert!(
+        matches!(error, ScalewayBackendError::Provider { .. }),
+        "{error:?}"
+    );
+    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert!(
+        at(&requests, 0).starts_with("POST /instance/v1/zones/zone/servers "),
+        "{}",
+        at(&requests, 0)
+    );
+    let listing = request_url(at(&requests, 1))?;
+    assert_eq!(listing.path(), "/instance/v1/zones/zone/servers");
+    let name = listing
+        .query_pairs()
+        .find(|(key, _)| key == "name")
+        .map(|(_, value)| value.into_owned());
+    assert!(
+        name.is_some_and(|value| value.starts_with("mriya-")),
+        "the lookup must filter by the generated name: {listing}"
+    );
+    assert!(
+        at(&requests, 2).starts_with("DELETE /instance/v1/zones/zone/servers/id "),
+        "{}",
+        at(&requests, 2)
+    );
+    assert!(
+        at(&requests, 3).starts_with("GET /instance/v1/zones/zone/servers?"),
+        "{}",
+        at(&requests, 3)
+    );
     Ok(())
 }
 

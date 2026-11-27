@@ -15,7 +15,7 @@ use super::{
     InstanceSnapshot,
 };
 use crate::{
-    backend::{InstanceHandle, InstanceRequest},
+    backend::{Backend, InstanceHandle, InstanceRequest},
     scaleway::types::Zone,
 };
 
@@ -227,7 +227,7 @@ impl ScalewayBackend {
         let name = format!("mriya-{}", Uuid::new_v4().simple());
         let tags = Self::instance_tags(self.test_run_id.as_deref());
         let payload = CreateServerRequest {
-            name,
+            name: name.clone(),
             commercial_type: request.instance_type.clone(),
             image: image_id.to_owned(),
             project: request.project_id.clone(),
@@ -239,29 +239,43 @@ impl ScalewayBackend {
             organization: request.organisation_id.clone(),
         };
 
-        let response = super::HTTP_CLIENT
+        // A transport error, a failed body read or an unparsable success body
+        // all leave the outcome unknown: the server may exist. Reconcile it
+        // before reporting, so a retry does not leak a server.
+        let response = match super::HTTP_CLIENT
             .post(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(&payload)
             .send()
             .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        {
+            Ok(response) => response,
+            Err(err) => {
+                return self
+                    .fail_ambiguous_create(request, &name, err.to_string())
+                    .await;
+            }
+        };
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            Err(err) => {
+                return self
+                    .fail_ambiguous_create(request, &name, err.to_string())
+                    .await;
+            }
+        };
 
         if status.is_success() {
-            let parsed: CreateServerResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
+            let parsed: CreateServerResponse = match serde_json::from_slice(&body) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    return self
+                        .fail_ambiguous_create(request, &name, err.to_string())
+                        .await;
+                }
+            };
             return Ok(parsed.server);
         }
 
@@ -276,5 +290,46 @@ impl ScalewayBackend {
         }
 
         Err(ScalewayBackendError::Provider { message })
+    }
+
+    /// Reconciles a create whose outcome is unknown, then reports the failure.
+    ///
+    /// Every server carrying the generated name in the requested project and
+    /// zone is removed before the error is returned. The name is unique to
+    /// this call, so nothing created by another run can match.
+    async fn fail_ambiguous_create(
+        &self,
+        request: &InstanceRequest,
+        name: &str,
+        message: String,
+    ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
+        let error = ScalewayBackendError::Provider { message };
+        match self
+            .remove_servers_named(&request.zone, &request.project_id, name)
+            .await
+        {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(ScalewayBackendError::RollbackFailed {
+                original: Box::new(error),
+                cleanup: format!("the create outcome was unknown and cleanup failed: {cleanup}"),
+            }),
+        }
+    }
+
+    /// Deletes every server carrying `name` in `zone` and `project_id`.
+    async fn remove_servers_named(
+        &self,
+        zone: &str,
+        project_id: &str,
+        name: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        for server in self.find_instances_named(zone, project_id, name).await? {
+            let handle = InstanceHandle {
+                id: server.id,
+                zone: zone.to_owned(),
+            };
+            Backend::destroy(self, handle).await?;
+        }
+        Ok(())
     }
 }

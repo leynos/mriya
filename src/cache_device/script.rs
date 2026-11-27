@@ -302,6 +302,12 @@ pub fn mount_script(volume_id: &str, mount_path: &str, owner: &str) -> String {
             "  exit 0\n",
             "fi\n",
             "if [ -z \"$mriya_source\" ]; then\n",
+            // A failed query with no source could still be an occupied path;
+            // mounting over it would hide the existing filesystem.
+            "  if ! mriya_not_mounted \"$mriya_path\"; then\n",
+            "    echo \"{prefix}query-failed PATH=$mriya_path CODE=$mriya_source_code\"\n",
+            "    exit 0\n",
+            "  fi\n",
             "  if ! sudo mkdir -p \"$mriya_path\" >/dev/null 2>&1; then\n",
             "    echo \"{prefix}mount-failed PATH=$mriya_path DEVICE=$mriya_device\"\n",
             "    exit 0\n",

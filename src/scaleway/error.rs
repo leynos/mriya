@@ -238,11 +238,9 @@ impl From<ScalewayError> for ScalewayBackendError {
 
 impl From<BackendError> for ScalewayBackendError {
     fn from(value: BackendError) -> Self {
-        match value {
-            BackendError::Validation(field) => Self::Validation(field),
-            BackendError::VolumeIdNotUuid { value: id } => {
-                Self::Validation(format!("volume_id '{id}' is not a canonical UUID"))
-            }
+        match &value {
+            BackendError::Validation(field) => Self::Validation(field.clone()),
+            BackendError::VolumeIdNotUuid { .. } => Self::Validation(value.to_string()),
         }
     }
 }

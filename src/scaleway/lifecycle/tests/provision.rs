@@ -27,6 +27,22 @@ pub(super) fn created_server() -> Reply {
     }
 }
 
+/// A create response whose body cannot be parsed, leaving the outcome unknown.
+pub(super) fn malformed_create() -> Reply {
+    Reply {
+        status: 201,
+        body: String::from("not a server"),
+    }
+}
+
+/// A server listing carrying the server the ambiguous create may have made.
+pub(super) fn listed_server() -> Reply {
+    Reply {
+        status: 200,
+        body: include_str!("fixtures/listed-stopped-instance.json").to_owned(),
+    }
+}
+
 /// The Block Storage status before attachment.
 pub(super) fn available_volume() -> Reply {
     Reply {

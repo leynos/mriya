@@ -22,6 +22,7 @@ use crate::{
 enum PreflightCase {
     MissingZone,
     ProjectMismatch,
+    BlankProject,
     Legacy,
     Attached,
     Creating,
@@ -36,6 +37,7 @@ impl PreflightCase {
                 body: String::from(r#"{"type":"not_found","message":"no such volume"}"#),
             },
             Self::ProjectMismatch => with_project("other-project"),
+            Self::BlankProject => with_project(""),
             Self::Legacy => Reply {
                 status: 200,
                 body: include_str!("fixtures/block-volume-legacy.json").to_owned(),
@@ -60,6 +62,11 @@ impl PreflightCase {
                 expected_project_id: String::from("proj"),
                 actual_project_id: String::from("other-project"),
             },
+            Self::BlankProject => ScalewayBackendError::VolumeProjectMismatch {
+                volume_id: String::from(CACHE_ID),
+                expected_project_id: String::from("proj"),
+                actual_project_id: String::new(),
+            },
             Self::Legacy => ScalewayBackendError::VolumeLegacy {
                 volume_id: String::from(CACHE_ID),
             },
@@ -82,6 +89,7 @@ impl PreflightCase {
 #[rstest]
 #[case::missing_zone(PreflightCase::MissingZone)]
 #[case::project_mismatch(PreflightCase::ProjectMismatch)]
+#[case::blank_project(PreflightCase::BlankProject)]
 #[case::legacy(PreflightCase::Legacy)]
 #[case::attached(PreflightCase::Attached)]
 #[case::creating(PreflightCase::Creating)]
