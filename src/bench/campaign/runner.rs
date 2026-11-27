@@ -174,7 +174,15 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
     match teardown {
         Ok(report) if report.is_verified() => Ok(()),
         Ok(report) => {
-            let residual_ids = report.residual_ids;
+            // A report may give a reason without identifiers, because the
+            // driver could not list them. The attempt's own identifiers are
+            // then the only names an operator can act on, so they are used
+            // rather than recording a doubt that names nothing.
+            let residual_ids = if report.residual_ids.is_empty() {
+                records.resource_ids.clone()
+            } else {
+                report.residual_ids
+            };
             record_residual(
                 sink,
                 plan,

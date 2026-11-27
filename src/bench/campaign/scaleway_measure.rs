@@ -5,7 +5,10 @@
 //! job with separate rules, and keeping them apart makes each testable on its
 //! own.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Extra time allowed for teardown after an attempt's declared lifetime.
 const TEARDOWN_GRACE: Duration = Duration::from_secs(300);
@@ -27,7 +30,7 @@ use crate::{
         probe::PROBE_COMMAND,
         record::TreePin,
     },
-    sync::{StreamingCommandRunner, Syncer},
+    sync::{DeadlineCommandRunner, Syncer},
 };
 
 /// Everything one attempt measured, before it is turned into a record.
@@ -71,16 +74,6 @@ impl ScalewayDriver {
         let backend = self
             .backend(campaign_id, Some(lifecycle.clone()))
             .map_err(super::ports::AttemptFailure::without_resources)?;
-        let syncer =
-            Syncer::new(self.sync_config.clone(), StreamingCommandRunner).map_err(|err| {
-                super::ports::AttemptFailure::without_resources(format!("syncer: {err}"))
-            })?;
-        let observer = Arc::new(RecordingObserver::default());
-        let orchestrator = RunOrchestrator::new(backend, syncer)
-            .with_observer(Box::new(SharedObserver(observer.clone())))
-            .with_pre_workload_command(PROBE_COMMAND)
-            .with_post_workload_command(PROBE_COMMAND);
-
         let source =
             current_directory().map_err(super::ports::AttemptFailure::without_resources)?;
         // The pin is taken before the workload runs, so a checkout that moves
@@ -96,16 +89,34 @@ impl ScalewayDriver {
         let runtime = tokio::runtime::Runtime::new().map_err(|err| {
             super::ports::AttemptFailure::without_resources(format!("async runtime: {err}"))
         })?;
-        let started = std::time::Instant::now();
-        let attempt_output = run_bounded(
-            &runtime,
-            &AttemptCall {
-                orchestrator: &orchestrator,
-                request,
-                source: &source,
-                rendered: &rendered,
-                planned_lifetime_nanos: attempt.planned_lifetime_nanos,
-            },
+        // One absolute deadline covers provisioning, probes, synchronization
+        // and the workload: every remote command is killed once it passes, so
+        // preparation cannot buy the workload extra time. Only teardown gets
+        // the grace period beyond it.
+        let started = Instant::now();
+        let deadline = attempt_deadline(started, attempt.planned_lifetime_nanos)?;
+        let syncer = Syncer::new(
+            self.sync_config.clone(),
+            DeadlineCommandRunner::new(deadline),
+        )
+        .map_err(|err| super::ports::AttemptFailure::without_resources(format!("syncer: {err}")))?;
+        let observer = Arc::new(RecordingObserver::default());
+        let orchestrator = RunOrchestrator::new(backend, syncer)
+            .with_observer(Box::new(SharedObserver(observer.clone())))
+            .with_pre_workload_command(PROBE_COMMAND)
+            .with_post_workload_command(PROBE_COMMAND);
+        let attempt_output = self.bounded_output(
+            campaign_id,
+            run_bounded(
+                &runtime,
+                &AttemptCall {
+                    orchestrator: &orchestrator,
+                    request,
+                    source: &source,
+                    rendered: &rendered,
+                    deadline,
+                },
+            ),
             &lifecycle,
         )?;
         let total_nanos = elapsed_nanos(started.elapsed());
@@ -141,6 +152,20 @@ impl ScalewayDriver {
     }
 }
 
+/// Returns the absolute deadline an attempt must finish its work by.
+fn attempt_deadline(
+    started: Instant,
+    lifetime_nanos: u64,
+) -> Result<Instant, super::ports::AttemptFailure> {
+    started
+        .checked_add(Duration::from_nanos(lifetime_nanos))
+        .ok_or_else(|| {
+            super::ports::AttemptFailure::without_resources(
+                "the attempt's declared lifetime is too long to represent",
+            )
+        })
+}
+
 /// Adapts an `Arc<RecordingObserver>` to the orchestrator's boxed observer.
 pub(super) struct SharedObserver(Arc<RecordingObserver>);
 
@@ -148,18 +173,32 @@ impl RunObserver for SharedObserver {
     fn observe(&self, observation: Observation<'_>) { self.0.observe(observation); }
 }
 
+/// How a bounded attempt ended when it did not return an observed run.
+enum BoundedOutcome {
+    /// The attempt returned an error of its own.
+    Failed(String),
+    /// The attempt outlived its declared lifetime and did not tear down.
+    Expired,
+}
+
 /// Runs one attempt under its declared lifetime plus a teardown grace.
 ///
-/// The guest-side wrapper stops an overrunning workload; this outer bound
-/// catches a provisioning or probe hang, which the wrapper cannot. The grace
-/// lets the orchestrator's own teardown run after the workload deadline.
+/// The blocking runner stops every remote command at the attempt deadline, so
+/// the future returns and the orchestrator tears down. This outer bound is the
+/// backstop for a provider call that hangs; the grace lets the orchestrator's
+/// teardown run after the workload deadline.
 fn run_bounded(
     runtime: &tokio::runtime::Runtime,
     call: &AttemptCall<'_>,
-    lifecycle: &Arc<RecordingSink>,
-) -> Result<crate::ObservedRun, super::ports::AttemptFailure> {
-    let outer_limit =
-        Duration::from_nanos(call.planned_lifetime_nanos).saturating_add(TEARDOWN_GRACE);
+) -> Result<crate::ObservedRun, BoundedOutcome> {
+    // The deadline was validated when it was computed; a representation
+    // overflow here is impossible in practice, and dropping the grace is safer
+    // than panicking out of a measurement.
+    let outer_deadline = call
+        .deadline
+        .checked_add(TEARDOWN_GRACE)
+        .unwrap_or(call.deadline);
+    let outer_limit = outer_deadline.saturating_duration_since(Instant::now());
     match runtime.block_on(async {
         tokio::time::timeout(
             outer_limit,
@@ -168,32 +207,81 @@ fn run_bounded(
         )
         .await
     }) {
-        Ok(result) => result.map_err(|err| super::ports::AttemptFailure {
-            reason: format!("run failed: {err}"),
-            resource_ids: lifecycle.created_ids(),
-            allocation_uncertain: lifecycle.allocation_uncertain(),
-        }),
-        Err(_elapsed) => Err(super::ports::AttemptFailure {
-            reason: String::from(
-                "the attempt exceeded its declared lifetime before teardown completed, so its \
-                 resources must be reconciled",
-            ),
-            resource_ids: lifecycle.created_ids(),
-            allocation_uncertain: true,
-        }),
+        Ok(result) => result.map_err(|err| BoundedOutcome::Failed(format!("run failed: {err}"))),
+        Err(_elapsed) => Err(BoundedOutcome::Expired),
+    }
+}
+
+/// Describes a failure that kept the attempt's own known resources.
+fn attempt_failure(
+    reason: impl Into<String>,
+    lifecycle: &Arc<RecordingSink>,
+) -> super::ports::AttemptFailure {
+    super::ports::AttemptFailure {
+        reason: reason.into(),
+        resource_ids: lifecycle.created_ids(),
+        allocation_uncertain: lifecycle.allocation_uncertain(),
+    }
+}
+
+impl ScalewayDriver {
+    /// Maps a bounded attempt's outcome onto a failure the harness records.
+    fn bounded_output(
+        &self,
+        campaign_id: &str,
+        outcome: Result<crate::ObservedRun, BoundedOutcome>,
+        lifecycle: &Arc<RecordingSink>,
+    ) -> Result<crate::ObservedRun, super::ports::AttemptFailure> {
+        match outcome {
+            Ok(output) => Ok(output),
+            Err(BoundedOutcome::Failed(reason)) => Err(attempt_failure(reason, lifecycle)),
+            Err(BoundedOutcome::Expired) => Err(self.expired_attempt(campaign_id, lifecycle)),
+        }
+    }
+
+    /// Reconciles an attempt that outlived its lifetime before it failed.
+    ///
+    /// The orchestrator's own teardown did not run, so the campaign's tag is
+    /// used to find and delete whatever the attempt created. A successful
+    /// sweep verifies that nothing carrying the tag remains, which is the
+    /// strongest statement available without the instance handle.
+    fn expired_attempt(
+        &self,
+        campaign_id: &str,
+        lifecycle: &Arc<RecordingSink>,
+    ) -> super::ports::AttemptFailure {
+        match self.sweep(campaign_id) {
+            Ok(_swept) => super::ports::AttemptFailure {
+                reason: String::from(
+                    "the attempt exceeded its declared lifetime before teardown completed; a \
+                     reconciliation sweep then removed every campaign-tagged resource and \
+                     confirmed none remained",
+                ),
+                resource_ids: lifecycle.created_ids(),
+                allocation_uncertain: false,
+            },
+            Err(reason) => super::ports::AttemptFailure {
+                reason: format!(
+                    "the attempt exceeded its declared lifetime before teardown completed, and \
+                     the reconciliation sweep failed: {reason}"
+                ),
+                resource_ids: lifecycle.created_ids(),
+                allocation_uncertain: true,
+            },
+        }
     }
 }
 
 /// The inputs one bounded attempt call needs.
 struct AttemptCall<'a> {
     /// The orchestrator that runs the attempt.
-    orchestrator: &'a RunOrchestrator<ScalewayBackend, StreamingCommandRunner>,
+    orchestrator: &'a RunOrchestrator<ScalewayBackend, DeadlineCommandRunner>,
     /// The instance request to create.
     request: &'a InstanceRequest,
     /// The workspace to synchronize.
     source: &'a Utf8PathBuf,
     /// The rendered command to run.
     rendered: &'a str,
-    /// The attempt's declared lifetime.
-    planned_lifetime_nanos: u64,
+    /// Absolute time the attempt's work must finish by.
+    deadline: Instant,
 }

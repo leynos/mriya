@@ -68,9 +68,14 @@ cargo nextest run --workspace --all-targets --all-features
 ```
 
 Each command runs under
-`timeout --signal=TERM --kill-after=30 <declared lifetime in seconds>`, so an
-overrunning workload is stopped and torn down. The wrapper is part of the
-command vector the record pins, because it is part of what ran.
+`timeout --signal=TERM --kill-after=30 <declared lifetime in seconds>` on the
+guest, and the harness enforces the same lifetime as one absolute deadline on
+the host: every `ssh` or `rsync` invocation is killed when the deadline passes,
+so provisioning, probes, synchronization and the workload together cannot
+outlive the declared lifetime, and the guest wrapper is a backstop for the
+workload alone. Only teardown may run during the grace period after the
+deadline. The wrapper is part of the command vector the record pins, because it
+is part of what ran.
 
 The warm-incremental workload assumes a Rust library crate with a `src/lib.rs`.
 A different workload repository needs its own workload definitions and a new
@@ -176,6 +181,9 @@ A price sheet declares, per provider and product:
   that usage.
 - The price of retained storage, snapshots, and addresses, per unit time.
 - Any one-off start charge.
+- Any charge the sheet does not model, named in `unpriced_extras`, so a report
+  never omits it silently. Every report that uses that provider prints those
+  charges beside its totals, which are then labelled as incomplete.
 
 Chargeable lifetime is computed with integer ceiling arithmetic: billable units
 are the ceiling of the measured lifetime over the granularity, and the charged

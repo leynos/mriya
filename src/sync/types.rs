@@ -3,8 +3,9 @@
 use std::{
     ffi::OsString,
     io::{BufReader, Read, Write},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread,
+    time::{Duration, Instant},
 };
 
 use camino::Utf8PathBuf;
@@ -161,43 +162,119 @@ fn join_forwarder(
     }
 }
 
+/// How often a deadline-bounded wait checks whether its child has exited.
+const DEADLINE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Command runner that streams subprocess stdout/stderr while capturing them.
 #[derive(Clone, Debug, Default)]
 pub struct StreamingCommandRunner;
 
 impl CommandRunner for StreamingCommandRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| SyncError::Spawn {
-                program: program.to_owned(),
-                message: err.to_string(),
-            })?;
+        run_streaming(program, args, None)
+    }
+}
 
-        let stdout_handle = child
-            .stdout
-            .take()
-            .map(|stdout| forward_stream(stdout, false, program));
-        let stderr_handle = child
-            .stderr
-            .take()
-            .map(|stderr| forward_stream(stderr, true, program));
+/// Command runner that kills any child which outlives an absolute deadline.
+///
+/// The benchmark campaign uses this so a stalled `ssh` or `rsync` cannot hold
+/// an attempt open past the lifetime its operator declared. The bound is
+/// absolute rather than per call: every command the attempt runs shares the
+/// deadline, so preparation, probes, synchronization and the workload together
+/// cannot exceed it.
+#[derive(Clone, Debug)]
+pub struct DeadlineCommandRunner {
+    deadline: Instant,
+}
 
-        let status = child.wait().map_err(|err| SyncError::Spawn {
+impl DeadlineCommandRunner {
+    /// Creates a runner whose children must finish before `deadline`.
+    #[must_use]
+    pub const fn new(deadline: Instant) -> Self { Self { deadline } }
+}
+
+impl CommandRunner for DeadlineCommandRunner {
+    fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
+        run_streaming(program, args, Some(self.deadline))
+    }
+}
+
+/// Runs a child, forwarding its streams, and waits for it.
+///
+/// With a deadline, the child is killed once the deadline passes, so the wait
+/// cannot outlive the caller's budget even when the child never exits. The
+/// bound is checked before spawning as well, so a phase that has already spent
+/// its budget starts no process at all.
+fn run_streaming(
+    program: &str,
+    args: &[OsString],
+    deadline: Option<Instant>,
+) -> Result<CommandOutput, SyncError> {
+    if deadline.is_some_and(|limit| Instant::now() >= limit) {
+        return Err(SyncError::DeadlineExceeded {
             program: program.to_owned(),
-            message: err.to_string(),
-        })?;
+        });
+    }
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| spawn_error(program, &err))?;
 
-        let stdout = join_forwarder(stdout_handle, program, "stdout")?;
-        let stderr = join_forwarder(stderr_handle, program, "stderr")?;
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|stdout| forward_stream(stdout, false, program));
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|stderr| forward_stream(stderr, true, program));
 
-        Ok(CommandOutput {
-            code: status.code(),
-            stdout,
-            stderr,
-        })
+    let status = match deadline {
+        Some(limit) => wait_bounded(&mut child, limit, program)?,
+        None => child.wait().map_err(|err| spawn_error(program, &err))?,
+    };
+
+    let stdout = join_forwarder(stdout_handle, program, "stdout")?;
+    let stderr = join_forwarder(stderr_handle, program, "stderr")?;
+
+    Ok(CommandOutput {
+        code: status.code(),
+        stdout,
+        stderr,
+    })
+}
+
+/// Waits for `child`, killing it once `deadline` passes.
+///
+/// A child that exits between the status check and the kill is harmless: the
+/// deadline has already passed, so the caller would discard the result anyway.
+fn wait_bounded(
+    child: &mut Child,
+    deadline: Instant,
+    program: &str,
+) -> Result<ExitStatus, SyncError> {
+    loop {
+        if let Some(status) = child.try_wait().map_err(|err| spawn_error(program, &err))? {
+            return Ok(status);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(SyncError::DeadlineExceeded {
+                program: program.to_owned(),
+            });
+        }
+        thread::sleep((deadline - now).min(DEADLINE_POLL_INTERVAL));
+    }
+}
+
+/// Builds the error a failed spawn or wait reports.
+fn spawn_error(program: &str, err: &std::io::Error) -> SyncError {
+    SyncError::Spawn {
+        program: program.to_owned(),
+        message: err.to_string(),
     }
 }

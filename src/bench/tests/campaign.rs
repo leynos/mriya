@@ -162,6 +162,34 @@ fn an_unverified_teardown_records_the_residual_and_stops() {
 }
 
 #[test]
+fn a_reason_only_teardown_doubt_keeps_the_attempts_identifiers() {
+    // The driver could not list the resources, but the attempt already named
+    // one: a residual that names nothing would be unactionable.
+    let mut driver = ScriptedDriver::healthy(1);
+    driver.resource_ids = vec![String::from("vm-123")];
+    driver.teardowns = Mutex::new(VecDeque::from(vec![Ok(TeardownReport {
+        residual_ids: Vec::new(),
+        reason: String::from("the listing failed"),
+    })]));
+    let mut sink = MemorySink::default();
+    let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
+        .expect_err("a reason-only doubt stops the campaign");
+    assert!(
+        matches!(error, CampaignError::CleanupDoubt { ref residual_ids, .. } if residual_ids == &vec![String::from("vm-123")]),
+        "{error}"
+    );
+    let residual = sink
+        .records
+        .iter()
+        .find_map(|record| match record {
+            Record::Residual(residual) => Some(residual.clone()),
+            _ => None,
+        })
+        .expect("a residual record must be written");
+    assert_eq!(residual.resource_ids, vec![String::from("vm-123")]);
+}
+
+#[test]
 fn a_teardown_verification_error_is_also_a_cleanup_doubt() {
     let mut driver = ScriptedDriver::healthy(1);
     driver.teardowns = Mutex::new(VecDeque::from(vec![Err(String::from(
@@ -244,10 +272,19 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
     };
     let mut sink = MemorySink::default();
     run_campaign(&plan(1), Some("1"), &driver, &mut sink).expect("a failed attempt is still data");
+    let recorded = sink
+        .records
+        .iter()
+        .find_map(|entry| match entry {
+            Record::Run(run) => Some(run.as_ref()),
+            _ => None,
+        })
+        .expect("the run record must be written");
+    assert_eq!(recorded.schema, SCHEMA_VERSION);
     assert!(
-        sink.records
-            .iter()
-            .any(|entry| matches!(entry, Record::Run(run) if run.schema == SCHEMA_VERSION))
+        matches!(recorded.outcome, RunOutcome::Aborted { .. }),
+        "the harness must keep the aborted outcome: {:?}",
+        recorded.outcome
     );
 }
 

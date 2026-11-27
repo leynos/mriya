@@ -12,6 +12,8 @@
 //! make a record honest — a probe that cannot be read fails the attempt rather
 //! than producing a record with a guessed CPU count.
 
+use std::time::{Duration, Instant};
+
 use super::{
     AttemptRecords,
     CampaignDriver,
@@ -39,11 +41,17 @@ use crate::{
     },
     janitor::{DEFAULT_SCW_BIN, Janitor, JanitorConfig},
     scaleway::ScalewayBackend,
-    sync::SyncConfig,
+    sync::{DeadlineCommandRunner, SyncConfig},
 };
 
 /// An error the driver reports as a message, because the campaign stops anyway.
 pub type DriverResult<T> = Result<T, String>;
+
+/// Longest a sweep may take before its `scw` calls are killed.
+///
+/// A sweep is the campaign's only way to prove the account is clean, so it is
+/// bounded rather than allowed to hang a campaign that is trying to stop.
+const SWEEP_LIMIT: Duration = Duration::from_secs(600);
 
 /// The production driver.
 pub struct ScalewayDriver {
@@ -121,16 +129,19 @@ impl ScalewayDriver {
     }
 
     /// Runs the janitor under the campaign's own tag.
-    fn sweep(&self, campaign_id: &str) -> DriverResult<SweepReport> {
+    pub(super) fn sweep(&self, campaign_id: &str) -> DriverResult<SweepReport> {
         let config = JanitorConfig::new(
             self.config.default_project_id.clone(),
             campaign_id,
             self.scw_bin.clone(),
         )
         .map_err(|err| format!("janitor configuration: {err}"))?;
+        let deadline = Instant::now()
+            .checked_add(SWEEP_LIMIT)
+            .unwrap_or_else(Instant::now);
         // The janitor reports what it deleted and whether anything remains; a
         // successful sweep that found nothing is the only acceptable start.
-        match Janitor::with_process_runner(config).sweep() {
+        match Janitor::new(config, DeadlineCommandRunner::new(deadline)).sweep() {
             Ok(_) => Ok(SweepReport::default()),
             Err(err) => Err(err.to_string()),
         }

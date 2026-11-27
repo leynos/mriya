@@ -26,6 +26,7 @@ pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command}
 pub use types::{
     CommandOutput,
     CommandRunner,
+    DeadlineCommandRunner,
     ProcessCommandRunner,
     RemoteCommandOutput,
     StreamingCommandRunner,

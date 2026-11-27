@@ -440,12 +440,19 @@ must be trustworthy are the parts which are easiest to test:
 - `billing.rs` prices a record with integer ceiling arithmetic. It applies the
   provider's own granularity and minimum, converts a provider's currency
   through a declared rate, and never uses a float. A price sheet is a dated,
-  cited observation, not a permanent fact.
+  cited observation, not a permanent fact. A sheet that cannot model a charge a
+  provider bills names it in `unpriced_extras`, and the report prints it beside
+  the totals so an incomplete figure is labelled rather than silently
+  understated.
 - `report.rs` enforces the comparison rules: equal work only, cache and storage
   capability differences stated rather than assumed away, and CPU results never
   ranked against GPU ones.
 - `campaign.rs` is the paid harness. It is gated, fail-closed, and driven
-  entirely through injected collaborators.
+  entirely through injected collaborators. Every remote command of an attempt
+  shares one absolute deadline, enforced by `DeadlineCommandRunner`, which
+  kills a stalled `ssh` or `rsync`; only teardown may use the grace period. An
+  attempt that outlives its deadline is reconciled with a campaign-tagged sweep
+  before the campaign stops.
 
 Three observation seams connect the harness to the existing pipeline, and all
 three default to doing nothing:
