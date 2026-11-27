@@ -61,12 +61,20 @@ Required sync settings: `ssh_identity_file`.
 ## File sync semantics
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
-so only files not matched by `.gitignore` patterns are transferred. That filter
-reads per-directory `.gitignore` files only, so `.git/info/exclude` and
-`core.excludesFile` have no effect and a path ignored only through them still
-transfers. It also does not apply Git's `!` re-inclusion: a file re-included
-after an ignore rule is still excluded by the transfer and can be missing from
-the remote workspace.
+so only files not matched by `.gitignore` patterns are transferred. The filter
+is not a full implementation of Git's ignore rules, and four differences matter:
+
+- It reads per-directory `.gitignore` files only, so `.git/info/exclude` and
+  `core.excludesFile` have no effect and a path ignored only through them still
+  transfers.
+- It does not apply Git's `!` re-inclusion, so a file re-included after an
+  ignore rule is still excluded by the transfer and can be missing from the
+  remote workspace.
+- It does not match the zero-directory case of a `**/` pattern. A rule such as
+  `config/**/secrets.env` ignores `config/secrets.env` in Git, but rsync does
+  not match it there, so the file can transfer.
+- Its patterns are applied as transfer filters rather than as an ignore index,
+  so an untracked but unignored file still travels.
 
 An ignored path already present on the remote survives only when the receiving
 directory already holds the matching `.gitignore`. Rsync deletes during the
