@@ -1,0 +1,22 @@
+{
+  "server": {
+    "id": "srv-1",
+    "name": "mriya-test",
+    "state": "stopped",
+    "allowed_actions": ["poweron"],
+    "public_ip": {
+      "address": "192.0.2.10"
+    },
+    "volumes": {
+      "0": {
+        "id": "vol-root",
+        "name": "root",
+        "size": null,
+        "volume_type": "sbs_volume",
+        "boot": true,
+        "state": "available",
+        "zone": "fr-par-1"
+      }
+    }
+  }
+}

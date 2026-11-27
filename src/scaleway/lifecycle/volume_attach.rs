@@ -51,25 +51,36 @@ impl VolumePatchAction {
     /// );
     /// assert!(matches!(err, ScalewayBackendError::VolumeDetachFailed { .. }));
     /// ```
-    const fn into_error(
-        self,
-        volume_id: String,
-        instance_id: String,
-        message: String,
-    ) -> ScalewayBackendError {
+    fn into_error(self, rejection: PatchRejection) -> ScalewayBackendError {
         match self {
             Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
-                volume_id,
-                instance_id,
-                message,
+                volume_id: rejection.volume_id,
+                instance_id: rejection.instance_id,
+                status: rejection.status,
+                message: rejection.message,
             },
             Self::Detach => ScalewayBackendError::VolumeDetachFailed {
-                volume_id,
-                instance_id,
-                message,
+                volume_id: rejection.volume_id,
+                instance_id: rejection.instance_id,
+                status: rejection.status,
+                message: rejection.message,
             },
         }
     }
+}
+
+/// The provider's rejection of a volume PATCH, grouped so the mapping to an
+/// error stays a short call.
+#[derive(Clone, Debug)]
+pub(super) struct PatchRejection {
+    /// Volume the PATCH named.
+    pub(super) volume_id: String,
+    /// Instance the PATCH targeted.
+    pub(super) instance_id: String,
+    /// HTTP status the provider returned.
+    pub(super) status: u16,
+    /// Response body, carried through as the message.
+    pub(super) message: String,
 }
 
 /// Identifies the volume and direction of a PATCH so a failure can be
@@ -149,9 +160,9 @@ impl ScalewayBackend {
         &self,
         handle: &InstanceHandle,
         volume_id: &str,
-        root_volume_id: String,
+        root: &crate::boot_volume::RootVolume,
     ) -> Result<(), ScalewayBackendError> {
-        if root_volume_id.trim().is_empty() {
+        if root.id.trim().is_empty() {
             return Err(ScalewayBackendError::VolumeNotFound {
                 volume_id: String::from("0"),
                 zone: handle.zone.clone(),
@@ -160,22 +171,18 @@ impl ScalewayBackend {
 
         let mut volumes = HashMap::new();
 
-        // Preserve root volume at index "0"
+        // Preserve the root volume at index "0". The provider requires the
+        // volume type on this entry when the root is Block Storage, and
+        // rejects it for local storage, so the root's own type decides.
         volumes.insert(
             String::from("0"),
-            VolumeAttachment {
-                id: root_volume_id,
-                boot: true,
-            },
+            VolumeAttachment::boot_root(root.id.clone(), Some(root.volume_type)),
         );
 
-        // Add cache volume at index "1"
+        // Add cache volume at index "1".
         volumes.insert(
             String::from("1"),
-            VolumeAttachment {
-                id: volume_id.to_owned(),
-                boot: false,
-            },
+            VolumeAttachment::cache(volume_id.to_owned()),
         );
 
         let request = UpdateInstanceVolumesRequest { volumes };
@@ -230,9 +237,13 @@ impl ScalewayBackend {
             return Ok(());
         }
 
+        let status = response.status().as_u16();
         let error_text = response.text().await.unwrap_or_default();
-        Err(context
-            .action
-            .into_error(context.volume_id.to_owned(), handle.id.clone(), error_text))
+        Err(context.action.into_error(PatchRejection {
+            volume_id: context.volume_id.to_owned(),
+            instance_id: handle.id.clone(),
+            status,
+            message: error_text,
+        }))
     }
 }

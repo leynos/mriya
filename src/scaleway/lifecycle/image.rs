@@ -4,8 +4,79 @@ use std::future::Future;
 
 use scaleway_rs::{ScalewayImage, ScalewayListInstanceImagesBuilder};
 
-use super::super::{ScalewayBackend, ScalewayBackendError};
-use crate::backend::InstanceRequest;
+use super::super::{ImageStorageIncompatibleDetails, ScalewayBackend, ScalewayBackendError};
+use crate::{
+    backend::InstanceRequest,
+    boot_volume::{BootVolumeType, ImageStorage},
+};
+
+/// Maps an image's own root-volume type onto the storage kinds a boot plan can
+/// use.
+///
+/// Scaleway publishes six identifiers and only some can back a new boot
+/// volume. Anything else is reported by name rather than assumed compatible.
+///
+/// For example, `l_ssd` yields local only, `sbs_volume` and `sbs_snapshot`
+/// yield SBS only, and `unified` yields both.
+///
+/// # Errors
+///
+/// Returns the observed identifier in the error for `b_ssd`, `scratch`, and
+/// any unrecognized value.
+pub(in crate::scaleway) fn image_storage_from_type(
+    volume_type: &str,
+) -> Result<ImageStorage, String> {
+    match volume_type {
+        "l_ssd" => Ok(ImageStorage::new(true, false)),
+        "sbs_volume" | "sbs_snapshot" => Ok(ImageStorage::new(false, true)),
+        "unified" => Ok(ImageStorage::new(true, true)),
+        other => Err(other.to_owned()),
+    }
+}
+
+/// The image-selection inputs that do not come from a fetcher.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct ImageQuery<'a> {
+    /// The instance request being provisioned.
+    pub(in crate::scaleway) request: &'a InstanceRequest,
+    /// The storage kinds the instance type offers.
+    pub(in crate::scaleway) supported: ImageStorage,
+}
+
+impl<'a> ImageQuery<'a> {
+    /// Builds a query for `request` on an instance offering `supported`.
+    pub(in crate::scaleway) const fn new(
+        request: &'a InstanceRequest,
+        supported: ImageStorage,
+    ) -> Self {
+        Self { request, supported }
+    }
+}
+
+/// The image root facts a boot decision needs.
+///
+/// # Examples
+///
+/// ```ignore
+/// let root = ImageRoot {
+///     id: String::from("img-1"),
+///     size_bytes: 10_000_000_000,
+///     storage: ImageStorage::new(false, true),
+///     volume_type: String::from("sbs_snapshot"),
+/// };
+/// assert!(root.storage.sbs);
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::scaleway) struct ImageRoot {
+    /// Provider identifier of the selected image.
+    pub(crate) id: String,
+    /// Size of the image's own root volume, in bytes.
+    pub(crate) size_bytes: u64,
+    /// Storage kinds the image can be booted from.
+    pub(crate) storage: ImageStorage,
+    /// The identifier the provider reported, kept for error messages.
+    pub(crate) volume_type: String,
+}
 
 impl ScalewayBackend {
     /// Resolves the image to boot from, preferring the project's own images.
@@ -30,9 +101,10 @@ impl ScalewayBackend {
     pub(in crate::scaleway) async fn resolve_image_id(
         &self,
         request: &InstanceRequest,
-    ) -> Result<String, ScalewayBackendError> {
+        supported: ImageStorage,
+    ) -> Result<ImageRoot, ScalewayBackendError> {
         self.resolve_image_id_with(
-            request,
+            ImageQuery::new(request, supported),
             || async move {
                 if request.project_id.is_empty() {
                     Ok(Vec::new())
@@ -91,10 +163,10 @@ impl ScalewayBackend {
     /// ```
     pub(in crate::scaleway) async fn resolve_image_id_with<FutA, FutB, FetchA, FetchB>(
         &self,
-        request: &InstanceRequest,
+        query: ImageQuery<'_>,
         project_fetch: FetchA,
         public_fetch: FetchB,
-    ) -> Result<String, ScalewayBackendError>
+    ) -> Result<ImageRoot, ScalewayBackendError>
     where
         FetchA: FnOnce() -> FutA,
         FetchB: FnOnce() -> FutB,
@@ -109,7 +181,7 @@ impl ScalewayBackend {
             Vec::new()
         };
 
-        Self::select_image_from_sources(project_images, public_images, request)
+        Self::select_image_from_sources(project_images, public_images, query)
     }
 
     /// Picks the candidate with the latest `creation_date`.
@@ -139,7 +211,7 @@ impl ScalewayBackend {
     pub(in crate::scaleway) fn select_image_id(
         mut candidates: Vec<ScalewayImage>,
         request: &InstanceRequest,
-    ) -> Result<String, ScalewayBackendError> {
+    ) -> Result<ImageRoot, ScalewayBackendError> {
         if candidates.is_empty() {
             return Err(ScalewayBackendError::ImageNotFound {
                 label: request.image_label.clone(),
@@ -155,7 +227,39 @@ impl ScalewayBackend {
                 arch: request.architecture.clone(),
                 zone: request.zone.clone(),
             })?;
-        Ok(selected.id)
+        Self::image_root(selected, request)
+    }
+
+    /// Turns the selected image into the root facts a boot plan needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::ImageStorageIncompatible`] listing the
+    /// observed root identifier when the image cannot back any boot volume.
+    ///
+    /// For example, an `l_ssd` image yields local-only storage, while a
+    /// `scratch` image is refused by name.
+    fn image_root(
+        image: ScalewayImage,
+        request: &InstanceRequest,
+    ) -> Result<ImageRoot, ScalewayBackendError> {
+        let volume_type = image.root_volume.volume_type.clone();
+        match image_storage_from_type(&volume_type) {
+            Ok(storage) => Ok(ImageRoot {
+                id: image.id,
+                size_bytes: image.root_volume.size,
+                storage,
+                volume_type,
+            }),
+            Err(observed) => Err(ImageStorageIncompatibleDetails {
+                label: request.image_label.clone(),
+                arch: request.architecture.clone(),
+                zone: request.zone.clone(),
+                observed,
+                requested: request.boot_volume.volume_type,
+            }
+            .into()),
+        }
     }
 
     /// Filters then selects from the project images, or from the public images
@@ -181,26 +285,44 @@ impl ScalewayBackend {
     pub(in crate::scaleway) fn select_image_from_sources(
         project_images: Vec<ScalewayImage>,
         public_images: Vec<ScalewayImage>,
-        request: &InstanceRequest,
-    ) -> Result<String, ScalewayBackendError> {
+        query: ImageQuery<'_>,
+    ) -> Result<ImageRoot, ScalewayBackendError> {
+        let request = query.request;
         let primary = if project_images.is_empty() {
             public_images
         } else {
             project_images
         };
 
-        let candidates = Self::filter_images(primary, request);
+        // Architecture and availability are unconditional, so they are applied
+        // first; the storage filter then narrows to images that can back the
+        // requested boot volume, before "newest wins" chooses among them. The
+        // observed types are captured before the filter consumes the list.
+        let usable = Self::filter_images(primary, request);
+        let observed = Self::observed_root_types(&usable);
+        let compatible =
+            Self::filter_by_storage(usable, request.boot_volume.volume_type, query.supported);
 
-        Self::select_image_id(candidates, request)
+        if compatible.is_empty() && !observed.is_empty() {
+            return Err(ImageStorageIncompatibleDetails {
+                label: request.image_label.clone(),
+                arch: request.architecture.clone(),
+                zone: request.zone.clone(),
+                observed,
+                requested: request.boot_volume.volume_type,
+            }
+            .into());
+        }
+
+        Self::select_image_id(compatible, request)
     }
 
     /// Keeps images whose architecture matches the request and whose state is
     /// `available`.
     ///
-    /// # Examples
+    /// For example, wrong-architecture and non-available images are dropped:
     ///
     /// ```ignore
-    /// // Wrong architecture and non-available images are dropped.
     /// let kept = filter_images(
     ///     vec![
     ///         image("ok", "2026-01-01T00:00:00Z"),
@@ -210,7 +332,6 @@ impl ScalewayBackend {
     ///     &request,
     /// );
     /// assert_eq!(kept.len(), 1);
-    /// assert_eq!(kept[0].id, "ok");
     /// ```
     pub(in crate::scaleway) fn filter_images(
         images: Vec<ScalewayImage>,
@@ -221,5 +342,55 @@ impl ScalewayBackend {
             .filter(|image| image.arch == request.architecture)
             .filter(|image| image.state == "available")
             .collect()
+    }
+
+    /// Keeps images whose own root volume can back the boot storage this
+    /// request could use.
+    ///
+    /// When the profile names a type, only images that back it are kept. When
+    /// it names none, an image must back at least one storage kind the
+    /// instance type offers, so the newest candidate is one the resolver can
+    /// actually choose rather than one it must refuse.
+    ///
+    /// An image whose root type is not modelled is dropped either way: the
+    /// resolver cannot choose a storage kind it cannot name, so selecting such
+    /// an image would fail after losing to a usable one.
+    ///
+    /// For example, asking for a local boot volume drops an SBS-only image
+    /// even when that image is the newest, and an instance with no local
+    /// storage drops a local-only image when the profile names no type.
+    pub(in crate::scaleway) fn filter_by_storage(
+        images: Vec<ScalewayImage>,
+        requested: Option<BootVolumeType>,
+        supported: ImageStorage,
+    ) -> Vec<ScalewayImage> {
+        images
+            .into_iter()
+            .filter(|image| {
+                image_storage_from_type(&image.root_volume.volume_type).is_ok_and(|storage| {
+                    requested.map_or(
+                        (supported.local && storage.local) || (supported.sbs && storage.sbs),
+                        |wanted| storage.supports(wanted),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Lists the distinct root-volume types a candidate set reported.
+    ///
+    /// Sorted and deduplicated so the same candidate set always produces the
+    /// same wording, whichever order the provider returned it in.
+    ///
+    /// For example, two images reporting `sbs_snapshot` yield
+    /// `sbs_snapshot`, while a mixed pair yields `l_ssd, sbs_snapshot`.
+    fn observed_root_types(images: &[ScalewayImage]) -> String {
+        let mut observed: Vec<&str> = images
+            .iter()
+            .map(|image| image.root_volume.volume_type.as_str())
+            .collect();
+        observed.sort_unstable();
+        observed.dedup();
+        observed.join(", ")
     }
 }

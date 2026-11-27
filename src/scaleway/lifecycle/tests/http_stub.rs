@@ -18,6 +18,12 @@ use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
 
 pub(super) struct StubApi {
     pub(super) base_url: String,
+    /// Base URL for the Block Storage API on the same listener.
+    ///
+    /// Scripted replies are consumed in order, so a caller that reads a block
+    /// volume after the create response reaches the same stub without a second
+    /// listener.
+    pub(super) block_base_url: String,
     task: JoinHandle<Result<Vec<String>>>,
 }
 
@@ -52,6 +58,7 @@ impl StubApi {
         });
         Ok(Self {
             base_url: format!("http://{address}/instance/v1"),
+            block_base_url: format!("http://{address}/block/v1"),
             task,
         })
     }
@@ -86,6 +93,7 @@ where
 {
     let stub = StubApi::start(replies).await?;
     backend.instance_api_base.clone_from(&stub.base_url);
+    backend.block_api_base.clone_from(&stub.block_base_url);
     let result = call(&backend).await;
     Ok((result, stub.finish().await?))
 }

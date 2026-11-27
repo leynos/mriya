@@ -32,6 +32,14 @@ Feature: mriya init prepares a cache volume
     Then the init result is successful
     And the config is updated
 
+  Scenario: Reject an impossible boot-volume request before allocating cache
+    Given a ready init workflow
+    And the boot-volume preflight fails
+    When I prepare the cache volume
+    Then the init error kind is "provision"
+    And the boot-volume preflight ran before the cache allocation
+    And the volume is not created
+
   Scenario: Surface volume creation failures
     Given a ready init workflow
     And volume creation fails

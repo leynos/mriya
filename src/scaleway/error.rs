@@ -3,7 +3,11 @@
 use scaleway_rs::ScalewayError;
 use thiserror::Error;
 
-use crate::{backend::BackendError, config::ConfigError};
+use crate::{
+    backend::BackendError,
+    boot_volume::{BootVolumeMismatch, BootVolumeType},
+    config::ConfigError,
+};
 
 /// Errors raised by the Scaleway backend.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -23,6 +27,123 @@ pub enum ScalewayBackendError {
         arch: String,
         /// Zone used for the lookup.
         zone: String,
+    },
+    /// Raised when an image exists but its root volume cannot back the
+    /// requested boot-storage type.
+    ///
+    /// Boxed because the details are large and this error travels by value
+    /// through every backend result.
+    #[error(transparent)]
+    ImageStorageIncompatible(Box<ImageStorageIncompatibleDetails>),
+    /// Raised when the zone's product catalogue does not list the instance
+    /// type, so its storage constraints cannot be checked.
+    #[error("instance type '{instance_type}' is not listed in zone {zone}'s product catalogue")]
+    ProductCatalogueUnavailable {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Zone whose catalogue was read.
+        zone: String,
+    },
+    /// Raised when the instance type offers a different architecture.
+    #[error(
+        "instance type '{instance_type}' offers architecture '{offered_arch}', \
+         but the request asks for '{requested_arch}'"
+    )]
+    BootVolumeArchitectureMismatch {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Architecture the request asks for.
+        requested_arch: String,
+        /// Architecture the catalogue reports for the type.
+        offered_arch: String,
+    },
+    /// Raised when the requested storage type is not available for the
+    /// instance type or the image.
+    #[error(
+        "cannot use a {volume_type} boot volume on instance type \
+         '{instance_type}': {reason}"
+    )]
+    BootVolumeTypeUnavailable {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Storage type that cannot be used.
+        volume_type: BootVolumeType,
+        /// Why the combination is refused.
+        reason: String,
+    },
+    /// Raised when the requested size cannot hold the image.
+    #[error(
+        "boot volume of {size_bytes} bytes is smaller than the image's \
+         {image_size_bytes} byte root volume, which a {volume_type} boot disk \
+         on instance type '{instance_type}' must cover"
+    )]
+    BootVolumeBelowImageSize {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Storage type being planned.
+        volume_type: BootVolumeType,
+        /// Requested size in bytes.
+        size_bytes: u64,
+        /// Image root size in bytes.
+        image_size_bytes: u64,
+    },
+    /// Raised when the requested size falls outside the accepted range.
+    #[error(
+        "boot volume of {size_bytes} bytes is outside the {min_size}..={max_size} \
+         byte range instance type '{instance_type}' accepts for {volume_type}"
+    )]
+    BootVolumeSizeOutOfBounds {
+        /// Requested commercial type.
+        instance_type: String,
+        /// Storage type being planned.
+        volume_type: BootVolumeType,
+        /// Requested size in bytes.
+        size_bytes: u64,
+        /// Smallest accepted size in bytes.
+        min_size: u64,
+        /// Largest accepted size in bytes.
+        max_size: u64,
+    },
+    /// Raised when a computed size is not a multiple of the provider's
+    /// 512-byte increment.
+    #[error("boot volume size {size_bytes} is not a multiple of {alignment} bytes")]
+    BootVolumeSizeUnaligned {
+        /// Size that failed alignment.
+        size_bytes: u64,
+        /// Required increment in bytes.
+        alignment: u64,
+    },
+    /// Raised when converting a configured size fails.
+    #[error("invalid boot volume setting: {message}")]
+    BootVolumeInvalid {
+        /// Description of the conversion failure.
+        message: String,
+    },
+    /// Raised when the root volume the provider reported differs from the plan.
+    ///
+    /// Boxed for the same reason as [`Self::ImageStorageIncompatible`].
+    #[error(transparent)]
+    BootVolumeMismatch(Box<BootVolumeMismatch>),
+    /// Raised when reading an attached Block Storage volume fails.
+    #[error("failed to read Block Storage volume {volume_id} in zone {zone}: {message}")]
+    BlockVolumeReadFailed {
+        /// Volume identifier that could not be read.
+        volume_id: String,
+        /// Zone where the read was attempted.
+        zone: String,
+        /// Error message from the provider.
+        message: String,
+    },
+    /// Raised when a post-create step failed and the best-effort teardown also
+    /// failed, so both outcomes are reported rather than the second masking
+    /// the first.
+    #[error("{message}")]
+    CreateCleanupFailed {
+        /// The original failure, with the teardown note appended.
+        message: String,
+        /// The original failure, kept so callers can still classify it.
+        #[source]
+        source: Box<Self>,
     },
     /// Raised when the server type is not available in the selected zone.
     #[error("instance type '{instance_type}' not available in zone {zone}")]
@@ -67,22 +188,36 @@ pub enum ScalewayBackendError {
         message: String,
     },
     /// Raised when a volume cannot be attached to an instance.
-    #[error("failed to attach volume {volume_id} to instance {instance_id}: {message}")]
+    ///
+    /// The status is kept because it decides whether the change can have
+    /// applied: a client error means the provider rejected the request, while
+    /// a server error or a transport failure does not.
+    #[error(
+        "failed to attach volume {volume_id} to instance {instance_id} \
+         (status {status}): {message}"
+    )]
     VolumeAttachmentFailed {
         /// Volume identifier that could not be attached.
         volume_id: String,
         /// Instance identifier.
         instance_id: String,
+        /// HTTP status the provider returned.
+        status: u16,
         /// Error message from the provider.
         message: String,
     },
     /// Raised when a volume cannot be detached from an instance.
-    #[error("failed to detach volume {volume_id} from instance {instance_id}: {message}")]
+    #[error(
+        "failed to detach volume {volume_id} from instance {instance_id} \
+         (status {status}): {message}"
+    )]
     VolumeDetachFailed {
         /// Volume identifier that could not be detached.
         volume_id: String,
         /// Instance identifier.
         instance_id: String,
+        /// HTTP status the provider returned.
+        status: u16,
         /// Error message from the provider.
         message: String,
     },
@@ -104,6 +239,42 @@ pub enum ScalewayBackendError {
         /// Zone where lookup was attempted.
         zone: String,
     },
+}
+
+/// Details of an image whose root volume cannot back a boot volume.
+///
+/// Kept separate from the error enum so the enum stays small enough to travel
+/// by value; see `ScalewayBackendError::ImageStorageIncompatible`.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error(
+    "image '{label}' (arch {arch}) in zone {zone} has root volume type \
+     '{observed}', which cannot back {requested}",
+    requested = requested.map_or_else(
+        || String::from("any boot volume"),
+        |kind| format!("a {kind} boot volume"),
+    )
+)]
+pub struct ImageStorageIncompatibleDetails {
+    /// Image label passed by the caller.
+    pub label: String,
+    /// Architecture requested by the caller.
+    pub arch: String,
+    /// Zone used for the lookup.
+    pub zone: String,
+    /// Distinct root-volume types the candidate images reported.
+    pub observed: String,
+    /// Storage type the profile asked for, if any.
+    pub requested: Option<BootVolumeType>,
+}
+
+impl From<ImageStorageIncompatibleDetails> for ScalewayBackendError {
+    fn from(value: ImageStorageIncompatibleDetails) -> Self {
+        Self::ImageStorageIncompatible(Box::new(value))
+    }
+}
+
+impl From<BootVolumeMismatch> for ScalewayBackendError {
+    fn from(value: BootVolumeMismatch) -> Self { Self::BootVolumeMismatch(Box::new(value)) }
 }
 
 impl From<ScalewayError> for ScalewayBackendError {

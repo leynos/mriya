@@ -5,7 +5,7 @@ use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
 use super::{
-    test_doubles::MemoryConfigStore,
+    memory_config_store::MemoryConfigStore,
     test_helpers::{
         InitContext,
         InitContextResult,
@@ -46,6 +46,15 @@ fn formatter_fails(
 ) -> Result<InitContextResult, StepError> {
     let init_context = init_context_result?;
     init_context.runner.push_failure(code);
+    Ok(Ok(init_context))
+}
+
+#[given("the boot-volume preflight fails")]
+fn boot_volume_preflight_fails(
+    init_context_result: InitContextResult,
+) -> Result<InitContextResult, StepError> {
+    let init_context = init_context_result?;
+    init_context.backend.fail_preflight();
     Ok(Ok(init_context))
 }
 
@@ -238,6 +247,16 @@ fn instance_destroyed(init_context_result: &InitContextResult) -> Result<(), Ste
         |ctx| ctx.backend.destroy_calls(),
         |count| count > 0,
         "backend.destroy should be invoked",
+    )
+}
+
+#[then("the boot-volume preflight ran before the cache allocation")]
+fn preflight_ran_first(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.backend.preflight_calls(),
+        |count| count == 1,
+        "preflight should run exactly once",
     )
 }
 

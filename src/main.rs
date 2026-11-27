@@ -10,6 +10,7 @@ use std::{future::Future, pin::Pin};
 use std::{
     io::{self, Write},
     process,
+    sync::Arc,
 };
 
 use camino::Utf8PathBuf;
@@ -35,6 +36,7 @@ use mriya::{
     ScalewayBackend,
     ScalewayBackendError,
     ScalewayConfig,
+    StderrReporter,
     StreamingCommandRunner,
     SyncConfig,
     Syncer,
@@ -189,7 +191,8 @@ async fn run_command(args: RunCommand) -> Result<i32, CliError> {
     let source = Utf8PathBuf::from_path_buf(cwd)
         .map_err(|path| CliError::Config(path.display().to_string()))?;
 
-    let orchestrator = RunOrchestrator::new(backend, syncer);
+    let orchestrator = RunOrchestrator::new(backend, syncer)
+        .with_reporter(Arc::new(StderrReporter::new(io::stderr())));
     validate_command_args(&args.command)?;
     let remote_command = render_remote_command(&args.command);
     let output = orchestrator
@@ -230,7 +233,8 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
         InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
             .map_err(|err| CliError::Config(err.to_string()))?;
 
-    let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
+    let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new())
+        .with_reporter(Arc::new(StderrReporter::new(io::stderr())));
     let outcome = orchestrator.execute(&request).await?;
 
     writeln!(

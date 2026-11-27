@@ -8,7 +8,18 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use mriya::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest, backend::BackendFuture};
+use mriya::{
+    Backend,
+    BootVolumeAllocation,
+    BootVolumePlan,
+    BootVolumeType,
+    CompatibilityDefault,
+    InstanceHandle,
+    InstanceNetworking,
+    InstanceRequest,
+    RootVolume,
+    backend::BackendFuture,
+};
 use thiserror::Error;
 
 /// Test double for [`Backend`] that wraps shared [`State`] to record teardown
@@ -22,7 +33,9 @@ pub struct ScriptedBackend {
 #[derive(Debug, Default)]
 struct State {
     fail_on_destroy: bool,
+    preflight_calls: u32,
     destroy_calls: u32,
+    record_boot_volume: bool,
 }
 
 impl ScriptedBackend {
@@ -37,6 +50,22 @@ impl ScriptedBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .fail_on_destroy = true;
+    }
+
+    /// Makes `create` record a boot allocation, so a test can prove the report
+    /// carries a populated record rather than only its absence.
+    pub fn record_boot_volume(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_boot_volume = true;
+    }
+
+    pub fn preflight_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .preflight_calls
     }
 
     pub fn destroy_calls(&self) -> u32 {
@@ -59,14 +88,44 @@ pub enum ScriptedBackendError {
 impl Backend for ScriptedBackend {
     type Error = ScriptedBackendError;
 
+    /// Reports a fixed local plan, which is enough for the run scenarios: none
+    /// of them constrain storage, and the plan's exact values are asserted by
+    /// the backend's own tests.
+    fn preflight<'a>(
+        &'a self,
+        _request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
+        Box::pin(async move {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .preflight_calls += 1;
+            Ok(scripted_plan())
+        })
+    }
+
     fn create<'a>(
         &'a self,
         _request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
+            let record = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .record_boot_volume;
+            let plan = scripted_plan();
             Ok(InstanceHandle {
                 id: String::from("scripted-id"),
                 zone: String::from("test-zone"),
+                boot_volume: record.then(|| BootVolumeAllocation {
+                    plan,
+                    root: RootVolume {
+                        id: String::from("vol-root"),
+                        volume_type: plan.volume_type,
+                        size_bytes: plan.size_bytes,
+                    },
+                }),
             })
         })
     }
@@ -96,4 +155,13 @@ impl Backend for ScriptedBackend {
             Ok(())
         })
     }
+}
+
+/// The plan the run double reports and records.
+pub fn scripted_plan() -> BootVolumePlan {
+    BootVolumePlan::new(
+        BootVolumeType::Local,
+        20_000_000_000,
+        CompatibilityDefault::default(),
+    )
 }

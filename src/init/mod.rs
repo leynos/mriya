@@ -1,69 +1,27 @@
 //! Volume initialization orchestration for `mriya init`.
 
-use std::{ffi::OsString, fmt::Display};
+use std::{fmt::Display, sync::Arc};
 
 use camino::Utf8PathBuf;
 use helpers::{format_command, volume_name_for_project, volume_size_bytes};
-use ortho_config::OrthoConfig;
-use serde::Deserialize;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
     config::ScalewayConfig,
     config_store::{ConfigStoreError, ConfigWriter},
+    provisioning::ProvisioningReporter,
     sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
     teardown::append_teardown_note,
     volume::{VolumeBackend, VolumeHandle, VolumeRequest},
 };
 
+mod config;
 mod error;
 
 mod helpers;
 
+pub use config::InitConfig;
 pub use error::{InitConfigError, InitError, InitRequestError};
-
-/// Init-specific configuration values layered via `OrthoConfig`.
-#[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
-#[ortho_config(
-    prefix = "MRIYA_INIT",
-    discovery(
-        app_name = "mriya",
-        env_var = "MRIYA_CONFIG_PATH",
-        config_file_name = "mriya.toml",
-        dotfile_name = ".mriya.toml",
-        project_file_name = "mriya.toml"
-    )
-)]
-pub struct InitConfig {
-    /// Size of the cache volume in gigabytes.
-    #[ortho_config(default = 20)]
-    pub volume_size_gb: u32,
-}
-
-impl InitConfig {
-    /// Loads init configuration without parsing CLI arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InitConfigError::Parse`] when merging sources fails.
-    pub fn load_without_cli_args() -> Result<Self, InitConfigError> {
-        Self::load_from_iter([OsString::from("mriya")])
-            .map_err(|err| InitConfigError::Parse(err.to_string()))
-    }
-
-    /// Validates init configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InitConfigError::InvalidVolumeSize`] when the configured
-    /// volume size is zero.
-    pub const fn validate(&self) -> Result<(), InitConfigError> {
-        if self.volume_size_gb == 0 {
-            return Err(InitConfigError::InvalidVolumeSize);
-        }
-        Ok(())
-    }
-}
 
 /// Inputs required to prepare a cache volume.
 #[derive(Clone, Debug)]
@@ -104,6 +62,7 @@ impl InitRequest {
             .project_id(&scaleway.default_project_id)
             .organisation_id(scaleway.default_organization_id.clone())
             .architecture(&scaleway.default_architecture)
+            .boot_volume(scaleway.resolve_boot_volume()?)
             .cloud_init_user_data(None)
             .build()
             .map_err(|err| InitRequestError::RequestBuild(err.to_string()))?;
@@ -150,6 +109,8 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     syncer: Syncer<R>,
     /// Records the new volume ID in the configuration file.
     config_writer: W,
+    /// Optional sink for the boot plan and the created allocation.
+    reporter: Option<Arc<dyn ProvisioningReporter>>,
 }
 
 impl<B, R, W> InitOrchestrator<B, R, W>
@@ -166,7 +127,20 @@ where
             backend,
             syncer,
             config_writer,
+            reporter: None,
         }
+    }
+
+    /// Installs a reporter for the boot plan and the created allocation.
+    ///
+    /// The reported boot disk is the helper instance's, not the cache volume
+    /// this command formats. For example, wiring a
+    /// [`crate::provisioning::StderrReporter`] makes `mriya init` state the
+    /// helper's boot disk before it creates the cache volume.
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Arc<dyn ProvisioningReporter>) -> Self {
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Executes the cache volume preparation workflow.
@@ -177,6 +151,19 @@ where
     /// configuration updates fail.
     pub async fn execute(&self, request: &InitRequest) -> Result<InitOutcome, InitError<B::Error>> {
         self.ensure_configurable(request)?;
+
+        // Reject an impossible boot-storage combination before creating the
+        // cache volume, so a preflight refusal costs no volume. A failure
+        // after the volume exists leaves it in place: deleting volumes is
+        // ownership-aware cleanup, tracked in issue #154.
+        let plan = self
+            .backend
+            .preflight(&request.instance_request)
+            .await
+            .map_err(InitError::Provision)?;
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.plan_resolved(&plan);
+        }
 
         let volume = self
             .backend
@@ -249,6 +236,13 @@ where
             .create(&instance_request)
             .await
             .map_err(InitError::Provision)?;
+
+        // The instance is billing from here, so its allocation is reported
+        // before readiness checks. The cache line is the volume this run is
+        // preparing, taken from the request rather than the boot record.
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.instance_created(&handle, instance_request.volume_id.as_deref());
+        }
 
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
         Ok((handle, networking))

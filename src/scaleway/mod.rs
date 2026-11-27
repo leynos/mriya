@@ -7,12 +7,11 @@ mod volume;
 
 use std::time::Duration;
 
-use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
-use types::{Action, Zone};
 
 use crate::{
     backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest},
+    boot_volume::BootVolumePlan,
     config::ScalewayConfig,
     janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
     volume::{VolumeBackend, VolumeHandle, VolumeRequest},
@@ -25,7 +24,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Overall budget for each readiness or teardown wait (five minutes).
 const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
-pub use error::ScalewayBackendError;
+pub use error::{ImageStorageIncompatibleDetails, ScalewayBackendError};
 
 /// Backend that provisions instances through the Scaleway Instances API.
 #[derive(Clone)]
@@ -36,6 +35,9 @@ pub struct ScalewayBackend {
     /// Base URL for the Instances API calls made by direct HTTP request.
     /// Overridable within the crate so tests can target a loopback server.
     instance_api_base: String,
+    /// Base URL for the Block Storage API, used to read an SBS root volume's
+    /// size. Overridable within the crate for the same reason.
+    block_api_base: String,
     /// Validated configuration; supplies the secret key and default request
     /// values.
     config: ScalewayConfig,
@@ -110,6 +112,7 @@ impl ScalewayBackend {
         Ok(Self {
             api: ScalewayApi::new(&config.secret_key),
             instance_api_base: lifecycle::SCALEWAY_INSTANCE_API_BASE.to_owned(),
+            block_api_base: lifecycle::SCALEWAY_BLOCK_API_BASE.to_owned(),
             config,
             test_run_id,
             ssh_port: DEFAULT_SSH_PORT,
@@ -174,6 +177,8 @@ impl ScalewayBackend {
             return Err(ScalewayBackendError::VolumeAttachmentFailed {
                 volume_id: cache_volume_id.trim().to_owned(),
                 instance_id: handle.id.clone(),
+                // No request was made: the identifier was refused locally.
+                status: 0,
                 message: String::from("refuse to attach root volume as cache volume"),
             });
         }
@@ -249,52 +254,46 @@ impl ScalewayBackend {
 impl Backend for ScalewayBackend {
     type Error = ScalewayBackendError;
 
+    fn preflight<'a>(
+        &'a self,
+        request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
+        Box::pin(async move { self.resolve_boot_plan(request).await })
+    }
+
     fn create<'a>(
         &'a self,
         request: &'a InstanceRequest,
     ) -> BackendFuture<'a, InstanceHandle, Self::Error> {
         Box::pin(async move {
-            request.validate()?;
-            let image_id = self.resolve_image_id(request).await?;
+            // Resolve once: the plan and the image ID must come from the same
+            // reading of the catalogue, or a preflight and its create could
+            // disagree about the disk.
+            let resolved = self.resolve_plan_and_image(request).await?;
+            let plan = resolved.plan;
 
-            let server = self.create_instance_stopped(request, &image_id).await?;
-
+            let server = self
+                .create_instance_stopped(request, &resolved.image_id, &plan)
+                .await?;
             let handle = InstanceHandle {
                 id: server.id.clone(),
                 zone: request.zone.clone(),
+                boot_volume: None,
             };
 
-            // Attach cache volume before powering on (instance is stopped)
-            if let Some(ref volume_id) = request.volume_id {
-                let root_volume_id = server
-                    .volumes
-                    .volumes
-                    .get("0")
-                    .map(|v| v.id.clone())
-                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
-                        volume_id: String::from("0"),
-                        zone: request.zone.clone(),
-                    })?;
-                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
-                self.attach_volume(&handle, volume_id, root_volume_id)
-                    .await?;
+            // Everything after the POST can fail, and a failure here would
+            // otherwise leave a billing server behind. Each step destroys it
+            // best-effort before returning the original reason.
+            let created = lifecycle::CreatedInstance {
+                request,
+                server: &server,
+                plan: &plan,
+                handle,
+            };
+            match self.finish_created_server(created).await {
+                Ok(finished) => Ok(finished),
+                Err(failure) => Err(self.clean_up_after_failed_create(failure).await),
             }
-
-            let snapshot = InstanceSnapshot {
-                id: server.id.into(),
-                state: server.state.into(),
-                allowed_actions: server
-                    .allowed_actions
-                    .into_iter()
-                    .map(Action::from)
-                    .collect(),
-                public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
-            };
-
-            let zone = Zone::from(request.zone.as_str());
-            self.power_on_if_needed(&zone, &snapshot).await?;
-
-            Ok(handle)
         })
     }
 

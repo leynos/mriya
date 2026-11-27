@@ -17,9 +17,19 @@ use super::{
 };
 use crate::{
     backend::InstanceHandle,
+    boot_volume::{BootVolumeType, RootVolume},
     scaleway::{ScalewayBackend, ScalewayBackendError},
     volume::{VolumeHandle, VolumeRequest},
 };
+
+/// A local root volume, the historical case.
+fn local_root() -> RootVolume {
+    RootVolume {
+        id: String::from("vol-root"),
+        volume_type: BootVolumeType::Local,
+        size_bytes: 10_000_000_000,
+    }
+}
 
 /// A provider response confirming a volume patch.
 fn patched() -> Reply {
@@ -83,7 +93,7 @@ async fn attach_volume_patches_root_and_cache_indices(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![patched()], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("vol-root"))
+            .attach_volume(&handle, "vol-cache", &local_root())
             .await
     })
     .await?;
@@ -118,7 +128,15 @@ async fn attach_volume_rejects_a_missing_root_volume(
 ) -> Result<()> {
     let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
         backend
-            .attach_volume(&handle, "vol-cache", String::from("   "))
+            .attach_volume(
+                &handle,
+                "vol-cache",
+                &RootVolume {
+                    id: String::from("   "),
+                    volume_type: BootVolumeType::Local,
+                    size_bytes: 1,
+                },
+            )
             .await
     })
     .await?;
@@ -154,7 +172,7 @@ impl Rejection {
         match self {
             Self::Attach => {
                 backend
-                    .attach_volume(handle, "vol-cache", String::from("vol-root"))
+                    .attach_volume(handle, "vol-cache", &local_root())
                     .await
             }
             Self::Detach => backend.detach_volume(handle, "vol-cache").await,
@@ -180,11 +198,13 @@ impl Rejection {
             Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
                 volume_id: String::from("vol-cache"),
                 instance_id: String::from("id"),
+                status: 404,
                 message: rejected().body,
             },
             Self::Detach => ScalewayBackendError::VolumeDetachFailed {
                 volume_id: String::from("vol-cache"),
                 instance_id: String::from("id"),
+                status: 404,
                 message: rejected().body,
             },
             Self::Create => ScalewayBackendError::VolumeCreateFailed {

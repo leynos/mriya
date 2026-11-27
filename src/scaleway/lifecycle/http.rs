@@ -11,9 +11,10 @@
 //! pure selection cases instead.
 
 use reqwest::{RequestBuilder, Response};
-use scaleway_rs::{ScalewayApiError, ScalewayError, ScalewayInstance};
+use scaleway_rs::{ScalewayApiError, ScalewayError};
 use serde::Deserialize;
 
+use super::create::CreatedServer;
 use crate::{
     backend::InstanceHandle,
     scaleway::{ScalewayBackend, ScalewayBackendError, types::Zone},
@@ -21,33 +22,33 @@ use crate::{
 
 /// Response page from the list-servers call.
 ///
+/// Servers are decoded with the same minimal model creation uses, because the
+/// SDK's `ScalewayInstance` requires a non-optional size on every volume entry
+/// and the provider reports a null size for an attached Block Storage volume.
+///
 /// # Examples
 ///
 /// ```ignore
-/// // Schematic: page 1 carries one server and page 2 is empty, which ends
-/// // pagination. A real `ScalewayInstance` has about thirty required fields
-/// // with no serde defaults, so abbreviated JSON is not decodable; the tests
-/// // use `src/scaleway/lifecycle/tests/fixtures/detach-instance.json` as a
-/// // complete server.
-/// {"servers": [{ ... }]}   // page 1: one server
-/// {"servers": []}          // page 2: empty, so polling stops
+/// // Page 1 carries one server and page 2 is empty, which ends pagination.
+/// {"servers": [{"id": "srv-1", "state": "running"}]}
+/// {"servers": []}
 /// ```
 #[derive(Deserialize)]
 struct ListInstancesResponse {
     /// Instances on this page; an empty list marks the end of pagination.
-    servers: Vec<ScalewayInstance>,
+    servers: Vec<CreatedServer>,
 }
 
 #[derive(Deserialize)]
 struct GetInstanceResponse {
-    server: ScalewayInstance,
+    server: CreatedServer,
 }
 
 /// Adds request context when a transport or response-body operation fails.
 ///
 /// For example, a connection timeout becomes a provider error prefixed
 /// `Request:`.
-fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
+pub(super) fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
     ScalewayBackendError::Provider {
         message: format!("Request: {error}"),
     }
@@ -57,7 +58,9 @@ fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
 ///
 /// For example, a 403 `{"type":"denied","message":"no access"}` response
 /// becomes a provider error with the message `Api: denied - no access`.
-async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
+pub(super) async fn checked_response(
+    request: RequestBuilder,
+) -> Result<Response, ScalewayBackendError> {
     // Retain the per-request budget if the shared client fell back to an
     // unconfigured client after its builder failed.
     let response = request
@@ -85,7 +88,7 @@ impl ScalewayBackend {
     pub(in crate::scaleway) async fn get_instance(
         &self,
         handle: &InstanceHandle,
-    ) -> Result<ScalewayInstance, ScalewayBackendError> {
+    ) -> Result<CreatedServer, ScalewayBackendError> {
         let url = format!(
             "{}/zones/{}/servers/{}",
             self.instance_api_base, handle.zone, handle.id,
@@ -110,7 +113,7 @@ impl ScalewayBackend {
     pub(in crate::scaleway) async fn list_instance(
         &self,
         handle: &InstanceHandle,
-    ) -> Result<Option<ScalewayInstance>, ScalewayBackendError> {
+    ) -> Result<Option<CreatedServer>, ScalewayBackendError> {
         let url = format!("{}/zones/{}/servers", self.instance_api_base, handle.zone);
         let mut page = 1_u64;
         let mut last_server = None;

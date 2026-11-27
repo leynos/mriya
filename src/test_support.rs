@@ -213,3 +213,97 @@ pub fn json_volumes(volumes: &[(&str, &str, &[&str])]) -> String {
         volumes.len()
     )
 }
+
+/// Reporter that records every fact it is given, in call order.
+///
+/// Used by the orchestration tests to assert what a run or init reports
+/// without capturing a process stream. One ordered history is kept so a test
+/// can prove the plan is reported before the allocation; separate per-kind
+/// vectors would let the wrong order pass.
+#[derive(Clone, Debug, Default)]
+pub struct RecordingReporter {
+    events: std::sync::Arc<std::sync::Mutex<Vec<ReportEvent>>>,
+}
+
+/// One reporter callback, in the order it happened.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReportEvent {
+    /// A resolved boot plan was reported.
+    Plan(crate::boot_volume::BootVolumePlan),
+    /// A created instance was reported.
+    Allocation(ReportedAllocation),
+}
+
+/// One `instance_created` report, reduced to what the assertions read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportedAllocation {
+    /// The boot record the handle carried, or `None` when it had none.
+    pub boot_volume: Option<String>,
+    /// The cache volume identifier the request named.
+    pub cache_volume_id: Option<String>,
+}
+
+impl RecordingReporter {
+    /// Creates a reporter with nothing recorded.
+    #[must_use]
+    pub fn new() -> Self { Self::default() }
+
+    /// Returns every event recorded so far, in call order.
+    #[must_use]
+    pub fn events(&self) -> Vec<ReportEvent> {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns the plans recorded so far, in call order.
+    #[must_use]
+    pub fn plans(&self) -> Vec<crate::boot_volume::BootVolumePlan> {
+        self.events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ReportEvent::Plan(plan) => Some(plan),
+                ReportEvent::Allocation(_) => None,
+            })
+            .collect()
+    }
+
+    /// Returns the allocations recorded so far, in call order.
+    #[must_use]
+    pub fn allocations(&self) -> Vec<ReportedAllocation> {
+        self.events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ReportEvent::Plan(_) => None,
+                ReportEvent::Allocation(allocation) => Some(allocation),
+            })
+            .collect()
+    }
+}
+
+impl crate::provisioning::ProvisioningReporter for RecordingReporter {
+    fn plan_resolved(&self, plan: &crate::boot_volume::BootVolumePlan) {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(ReportEvent::Plan(*plan));
+    }
+
+    fn instance_created(
+        &self,
+        handle: &crate::backend::InstanceHandle,
+        cache_volume_id: Option<&str>,
+    ) {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(ReportEvent::Allocation(ReportedAllocation {
+                boot_volume: handle
+                    .boot_volume
+                    .as_ref()
+                    .map(|allocation| allocation.root.id.clone()),
+                cache_volume_id: cache_volume_id.map(str::to_owned),
+            }));
+    }
+}

@@ -5,11 +5,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use camino::Utf8PathBuf;
 use mriya::{
     Backend,
-    ConfigStoreError,
-    ConfigWriter,
+    BootVolumePlan,
+    BootVolumeType,
+    CompatibilityDefault,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
@@ -28,6 +28,7 @@ pub struct ScriptedVolumeBackend {
 
 #[derive(Clone, Copy, Debug)]
 enum FailureMode {
+    Preflight,
     CreateVolume,
     Provision,
     Wait,
@@ -36,19 +37,20 @@ enum FailureMode {
 }
 
 impl FailureMode {
-    const fn flag(self) -> u8 {
+    const fn flag(self) -> u16 {
         match self {
-            Self::CreateVolume => 0b00001,
-            Self::Provision => 0b00010,
-            Self::Wait => 0b00100,
-            Self::Detach => 0b01000,
-            Self::Destroy => 0b10000,
+            Self::Preflight => 0b00_0001,
+            Self::CreateVolume => 0b00_0010,
+            Self::Provision => 0b00_0100,
+            Self::Wait => 0b00_1000,
+            Self::Detach => 0b01_0000,
+            Self::Destroy => 0b10_0000,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Failures(u8);
+struct Failures(u16);
 
 impl Failures {
     const fn set(&mut self, mode: FailureMode) { self.0 |= mode.flag(); }
@@ -59,6 +61,7 @@ impl Failures {
 #[derive(Debug, Default)]
 struct State {
     failures: Failures,
+    preflight_calls: u32,
     create_volume_calls: u32,
     destroy_calls: u32,
 }
@@ -75,6 +78,14 @@ impl ScriptedVolumeBackend {
         Self {
             state: Arc::new(Mutex::new(State::default())),
         }
+    }
+
+    pub fn fail_preflight(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .failures
+            .set(FailureMode::Preflight);
     }
 
     pub fn fail_create_volume(&self) {
@@ -115,6 +126,13 @@ impl ScriptedVolumeBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .failures
             .set(FailureMode::Destroy);
+    }
+
+    pub fn preflight_calls(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .preflight_calls
     }
 
     pub fn create_volume_calls(&self) -> u32 {
@@ -170,6 +188,8 @@ impl ScriptedVolumeBackend {
 /// Errors raised by the scripted backend to model failure points.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ScriptedVolumeBackendError {
+    #[error("preflight failure")]
+    Preflight,
     #[error("volume create failure")]
     VolumeCreate,
     #[error("provision failure")]
@@ -187,6 +207,32 @@ pub enum ScriptedVolumeBackendError {
 impl Backend for ScriptedVolumeBackend {
     type Error = ScriptedVolumeBackendError;
 
+    /// Reports a fixed local plan. The init scenarios care about ordering and
+    /// failure classification, not storage details, so one plan serves them
+    /// all; the backend's own tests assert resolution.
+    fn preflight<'a>(
+        &'a self,
+        _request: &'a InstanceRequest,
+    ) -> BackendFuture<'a, BootVolumePlan, Self::Error> {
+        self.run_operation(
+            OperationSpec {
+                context: "preflight",
+                failure_mode: FailureMode::Preflight,
+                error: ScriptedVolumeBackendError::Preflight,
+            },
+            |state| {
+                state.preflight_calls += 1;
+            },
+            || {
+                BootVolumePlan::new(
+                    BootVolumeType::Local,
+                    20_000_000_000,
+                    CompatibilityDefault::default(),
+                )
+            },
+        )
+    }
+
     fn create<'a>(
         &'a self,
         _request: &'a InstanceRequest,
@@ -201,6 +247,7 @@ impl Backend for ScriptedVolumeBackend {
             || InstanceHandle {
                 id: String::from("instance-123"),
                 zone: String::from("test-zone"),
+                boot_volume: None,
             },
         )
     }
@@ -273,79 +320,5 @@ impl VolumeBackend for ScriptedVolumeBackend {
             |_| {},
             || (),
         )
-    }
-}
-
-/// In-memory config store for behavioural tests.
-#[derive(Clone, Debug)]
-pub struct MemoryConfigStore {
-    state: Arc<Mutex<ConfigState>>,
-}
-
-#[derive(Debug, Default)]
-struct ConfigState {
-    existing_volume_id: Option<String>,
-    write_calls: u32,
-}
-
-impl MemoryConfigStore {
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(ConfigState::default())),
-        }
-    }
-
-    pub fn with_existing(volume_id: &str) -> Self {
-        let store = Self::new();
-        store
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .existing_volume_id = Some(volume_id.to_owned());
-        store
-    }
-
-    pub fn write_calls(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .write_calls
-    }
-
-    fn lock_state(
-        &self,
-        context: &str,
-    ) -> Result<std::sync::MutexGuard<'_, ConfigState>, ConfigStoreError> {
-        self.state.lock().map_err(|err| ConfigStoreError::Io {
-            path: Utf8PathBuf::from("in-memory"),
-            message: format!("lock poisoned in {context}: {err}"),
-        })
-    }
-}
-
-impl ConfigWriter for MemoryConfigStore {
-    fn current_volume_id(&self) -> Result<Option<String>, ConfigStoreError> {
-        Ok(self
-            .lock_state("current_volume_id")?
-            .existing_volume_id
-            .clone())
-    }
-
-    fn write_volume_id(
-        &self,
-        volume_id: &str,
-        force: bool,
-    ) -> Result<Utf8PathBuf, ConfigStoreError> {
-        let mut state = self.lock_state("write_volume_id")?;
-        if let Some(existing) = state.existing_volume_id.as_ref()
-            && !force
-        {
-            return Err(ConfigStoreError::VolumeAlreadyConfigured {
-                volume_id: existing.clone(),
-            });
-        }
-        state.existing_volume_id = Some(volume_id.to_owned());
-        state.write_calls += 1;
-        Ok(Utf8PathBuf::from("mriya.toml"))
     }
 }

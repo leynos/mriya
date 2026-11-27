@@ -133,6 +133,24 @@ fn dump_request(args: &RunCommand, stdout: &mut impl Write) -> Result<i32, CliEr
     writeln!(stdout, "image_label={}", request.image_label).ok();
     writeln!(
         stdout,
+        "boot_volume_type={}",
+        request.boot_volume.volume_type.map_or_else(
+            || String::from("unset"),
+            |kind| kind.provider_id().to_owned()
+        )
+    )
+    .ok();
+    writeln!(
+        stdout,
+        "boot_volume_size_gb={}",
+        request
+            .boot_volume
+            .size_gb
+            .map_or_else(|| String::from("unset"), |size| size.to_string())
+    )
+    .ok();
+    writeln!(
+        stdout,
         "cloud_init_user_data_present={}",
         request.cloud_init_user_data.is_some()
     )

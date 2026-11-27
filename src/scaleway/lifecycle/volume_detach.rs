@@ -47,11 +47,17 @@ impl ScalewayBackend {
     ) -> Result<(), ScalewayBackendError> {
         let instance = self.get_instance(handle).await?;
 
-        let root_volume_id = instance
+        let root = instance
             .volumes
-            .volumes
-            .get("0")
-            .map(|volume| volume.id.clone())
+            .as_ref()
+            .and_then(|volumes| volumes.get("0"))
+            .map(|volume| {
+                let volume_type = volume
+                    .volume_type
+                    .as_deref()
+                    .and_then(|value| value.parse::<crate::boot_volume::BootVolumeType>().ok());
+                (volume.id.clone(), volume_type)
+            })
             .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
                 volume_id: String::from("0"),
                 zone: handle.zone.clone(),
@@ -60,10 +66,7 @@ impl ScalewayBackend {
         let mut volumes = HashMap::new();
         volumes.insert(
             String::from("0"),
-            VolumeAttachment {
-                id: root_volume_id,
-                boot: true,
-            },
+            VolumeAttachment::boot_root(root.0, root.1),
         );
 
         let request = UpdateInstanceVolumesRequest { volumes };

@@ -7,23 +7,22 @@
 
 use std::{
     fmt::Display,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use camino::Utf8Path;
 use shell_escape::unix::escape;
-use thiserror::Error;
 use tokio::time::sleep;
+
+mod error;
+
+pub use error::RunError;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
-    sync::{
-        CommandRunner,
-        RemoteCommandOutput,
-        SyncError,
-        Syncer,
-        create_cache_directories_command,
-    },
+    provisioning::ProvisioningReporter,
+    sync::{CommandRunner, RemoteCommandOutput, Syncer, create_cache_directories_command},
     teardown::append_teardown_note,
 };
 
@@ -31,62 +30,6 @@ use crate::{
 const CLOUD_INIT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Total time to wait for cloud-init to finish (ten minutes).
 const CLOUD_INIT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Errors surfaced while performing a remote run.
-#[derive(Debug, Error)]
-pub enum RunError<BackendError>
-where
-    BackendError: std::error::Error + 'static,
-{
-    /// Raised when provisioning a new instance fails.
-    #[error("failed to create instance: {0}")]
-    Provision(#[source] BackendError),
-    /// Raised when the instance does not become reachable over SSH.
-    #[error("instance did not become ready: {message}")]
-    Wait {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Provider-specific error.
-        #[source]
-        source: BackendError,
-    },
-    /// Raised when cloud-init provisioning does not complete.
-    #[error("instance provisioning did not complete: {message}")]
-    Provisioning {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when cloud-init provisioning does not complete before the timeout.
-    #[error("instance provisioning did not complete: {message}")]
-    ProvisioningTimeout {
-        /// Human-readable description of the failure.
-        message: String,
-    },
-    /// Raised when workspace synchronization fails.
-    #[error("workspace sync failed: {message}")]
-    Sync {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when the remote command fails to start.
-    #[error("remote command failed to start: {message}")]
-    Remote {
-        /// Human-readable description of the failure.
-        message: String,
-        /// Underlying synchronization error.
-        #[source]
-        source: SyncError,
-    },
-    /// Raised when teardown fails after the primary operation succeeded.
-    #[error("failed to destroy instance: {0}")]
-    Teardown(#[source] BackendError),
-}
 
 /// Executes the remote run flow using the provided backend and syncer.
 #[derive(Debug)]
@@ -99,6 +42,9 @@ pub struct RunOrchestrator<B, R: CommandRunner> {
     cloud_init_poll_interval: Duration,
     /// Time allowed for cloud-init before a `ProvisioningTimeout` error.
     cloud_init_wait_timeout: Duration,
+    /// Optional sink for the boot and cache allocation facts. Absent means
+    /// nothing is reported.
+    reporter: Option<Arc<dyn ProvisioningReporter>>,
 }
 
 impl<B, R> RunOrchestrator<B, R>
@@ -115,7 +61,21 @@ where
             syncer,
             cloud_init_poll_interval: CLOUD_INIT_POLL_INTERVAL,
             cloud_init_wait_timeout: CLOUD_INIT_WAIT_TIMEOUT,
+            reporter: None,
         }
+    }
+
+    /// Installs a reporter for the boot and cache allocation facts.
+    ///
+    /// Without one the orchestrator reports nothing, which keeps an embedder
+    /// that owns its own output silent.
+    ///
+    /// For example, `with_reporter(Arc::new(StderrReporter::new(io::stderr())))`
+    /// makes each run print its allocation before readiness checks start.
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Arc<dyn ProvisioningReporter>) -> Self {
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Overrides the cloud-init polling interval.
@@ -157,6 +117,7 @@ where
             .create(request)
             .await
             .map_err(RunError::Provision)?;
+        self.report_created(&handle, request);
         let networking = self.wait_for_ready_or_destroy(&handle).await?;
 
         self.mount_volume_if_needed(&handle, &networking, request)
@@ -179,6 +140,21 @@ where
             .map_err(RunError::Teardown)?;
 
         Ok(output)
+    }
+
+    /// Reports the created instance and the request's cache setting, when a
+    /// reporter is installed.
+    ///
+    /// Reporting happens before readiness checks because the instance is
+    /// billing from this point. The cache value is the request's own, never
+    /// the boot record's, so the two lines cannot be confused.
+    ///
+    /// For example, a request naming `vol-cache` reports that identifier while
+    /// a request naming none reports nothing.
+    fn report_created(&self, handle: &InstanceHandle, request: &InstanceRequest) {
+        if let Some(reporter) = self.reporter.as_deref() {
+            reporter.instance_created(handle, request.volume_id.as_deref());
+        }
     }
 
     /// Waits for the backend to report SSH readiness, destroying the instance

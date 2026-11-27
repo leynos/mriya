@@ -40,6 +40,8 @@ fn valid_config() -> ScalewayConfig {
         default_image: String::from("ubuntu-22-04"),
         default_architecture: String::from("x86_64"),
         default_volume_id: None,
+        boot_volume_type: None,
+        boot_volume_size_gb: None,
         cloud_init_user_data: None,
         cloud_init_user_data_file: None,
     }
