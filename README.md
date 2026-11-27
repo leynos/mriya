@@ -95,8 +95,9 @@ Implemented but **not currently functional against Scaleway**:
   April 2025, so treat it as expected to fail until
   [issue #153](https://github.com/leynos/mriya/issues/153) lands. Attaching an
   already-created `sbs_volume` is also expected to fail for a related reason.
-  The [user guide](docs/users-guide.md#use-an-existing-volume) gives the
-  details and the current workaround.
+  No volume type has verified support today. The
+  [user guide](docs/users-guide.md#use-an-existing-volume) gives the details,
+  the unverified existing-volume procedure, and the limits that apply to it.
 
 Planned, not implemented:
 
