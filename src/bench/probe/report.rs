@@ -32,7 +32,7 @@ pub const PROBE_COMMAND: &str = concat!(
     "printf 'cache_mounted=1\\n'; ",
     "printf 'cache_bytes=%s\\n' \"$(du -sb \"$cache\" | cut -f1)\"; ",
     "printf 'cache_total_bytes=%s\\n' \"$(df -B1 --output=size \"$cache\" | tail -n 1)\"; ",
-    "printf 'cache_entries=%s\\n' \"$(find \"$cache\" -mindepth 1 -maxdepth 1 | wc -l)\"; ",
+    "printf 'cache_entries=%s\\n' \"$(find \"$cache\" -mindepth 1 -maxdepth 1 ! -name lost+found | wc -l)\"; ",
     "else printf 'cache_mounted=0\\ncache_bytes=0\\ncache_total_bytes=0\\ncache_entries=0\\n'; fi; ",
     "printf 'rustc=%s\\n' \"$(rustc --version 2>/dev/null || echo unknown)\"; ",
     "printf 'cargo=%s\\n' \"$(cargo --version 2>/dev/null || echo unknown)\""

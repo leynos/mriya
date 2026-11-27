@@ -56,7 +56,10 @@ pub(super) fn workload_command(workload_id: &str) -> DriverResult<Vec<String>> {
             "touch src/lib.rs && ",
             "cargo test --workspace --all-features --no-run"
         ),
-        "test-execution" => "cargo nextest run --workspace --all-targets --all-features",
+        "test-execution" => concat!(
+            "cargo nextest run --workspace --all-targets --all-features ",
+            "--test-threads=8"
+        ),
         other => {
             return Err(format!(
                 "unknown workload {other:?}; the protocol defines cold-build, warm-incremental, \

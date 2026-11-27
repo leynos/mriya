@@ -21,6 +21,7 @@ fn a_zero_exchange_rate_is_refused_rather_than_making_everything_free() {
     let text = r#"
 [sheet]
 currency = "EUR"
+retrieved = "2026-11-26"
 
 [fx.USD]
 micros_per_unit = 0
@@ -28,6 +29,7 @@ source = "https://example.test/fx"
 
 [providers.x]
 currency = "USD"
+source = "https://example.test/x"
 
 [providers.x.products.p]
 price_per_hour_micros = 36000
@@ -51,9 +53,11 @@ fn a_provider_quoting_in_an_undeclared_currency_is_refused() {
     let text = r#"
 [sheet]
 currency = "EUR"
+retrieved = "2026-11-26"
 
 [providers.x]
 currency = "USD"
+source = "https://example.test/x"
 
 [providers.x.products.p]
 price_per_hour_micros = 100
@@ -70,6 +74,7 @@ fn a_declared_conversion_rate_makes_cross_currency_pricing_auditable() {
     let text = r#"
 [sheet]
 currency = "EUR"
+retrieved = "2026-11-26"
 
 [fx.USD]
 micros_per_unit = 920000
@@ -77,6 +82,7 @@ source = "https://example.test/fx"
 
 [providers.x]
 currency = "USD"
+source = "https://example.test/x"
 
 [providers.x.products.p]
 price_per_hour_micros = 36000
@@ -144,5 +150,35 @@ fn a_billed_lifetime_is_not_rounded_twice(
         breakdown.chargeable_nanos,
         expected_seconds * NANOS_PER_SECOND,
         "{why}"
+    );
+}
+
+#[test]
+fn a_sheet_without_a_retrieval_date_is_refused() {
+    let error = load_price_sheet("[sheet]\ncurrency = \"EUR\"\n")
+        .expect_err("a rate without a date cannot be re-checked");
+    assert!(
+        matches!(error, PriceSheetError::MissingRetrievalDate),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_rate_without_a_source_is_refused() {
+    let text = r#"
+[sheet]
+currency = "EUR"
+retrieved = "2026-11-26"
+
+[providers.x]
+
+[providers.x.products.p]
+price_per_hour_micros = 1
+granularity_seconds = 1
+"#;
+    let error = load_price_sheet(text).expect_err("a rate without a source cannot be re-checked");
+    assert!(
+        matches!(error, PriceSheetError::MissingSource(_)),
+        "{error}"
     );
 }

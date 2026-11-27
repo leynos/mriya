@@ -51,6 +51,7 @@ pub const OPT_IN_VALUE: &str = "1";
 
 /// Tag that decides how a line is read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecordKind {
     /// The first line of a campaign file: what is being measured and where.
@@ -84,6 +85,7 @@ impl fmt::Display for RecordKind {
 
 /// The first line of a campaign file: what is measured, and by what rules.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CampaignHeader {
     /// Schema version this record was written with.
     pub schema: u32,
@@ -101,6 +103,7 @@ pub struct CampaignHeader {
 
 /// The limits an operator declares before any paid run may start.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CampaignLimits {
     /// Most money the campaign may spend, in micro-units.
     pub max_spend_micros: u64,
@@ -139,6 +142,7 @@ impl CampaignLimits {
 /// Writing one of these stops the campaign. It names every identifier the
 /// janitor could not confirm deleted, so an operator can clean up by hand.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResidualRecord {
     /// Schema version this record was written with.
     pub schema: u32,

@@ -228,7 +228,7 @@ fn retained_storage(
         return Vec::new();
     }
     vec![RetainedStorageRecord {
-        class: String::from("standard-one-zone"),
+        class: String::from("block-ssd"),
         bytes: probe.cache_total_bytes,
         held_nanos,
     }]

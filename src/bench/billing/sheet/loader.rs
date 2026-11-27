@@ -123,13 +123,19 @@ struct RawPlan {
     /// Monthly price, in micro-units.
     #[serde(default)]
     monthly_price_micros: u64,
-    /// Included compute hours per period.
+    /// Included compute hours per period, in hours of `baseline_product`.
     #[serde(default)]
     included_compute_hours: u64,
+    /// The product the included hours are measured in.
+    #[serde(default = "default_baseline_product")]
+    baseline_product: String,
     /// Resources that start without a start charge.
     #[serde(default)]
     included_starts: u64,
 }
+
+/// Returns the product a plan's included hours are measured in by default.
+fn default_baseline_product() -> String { String::from("default") }
 
 /// Returns the default month length a sheet uses when it does not say.
 const fn default_month_seconds() -> u64 { DEFAULT_MONTH_SECONDS }
@@ -177,6 +183,21 @@ pub fn load_price_sheet(text: &str) -> Result<PriceSheet, PriceSheetError> {
         .ok_or(PriceSheetError::MissingCurrency)?
         .to_owned();
 
+    let trimmed_retrieved = sheet.retrieved.trim();
+    if trimmed_retrieved.is_empty() {
+        return Err(PriceSheetError::MissingRetrievalDate);
+    }
+    let retrieved = trimmed_retrieved.to_owned();
+    for (name, provider) in &raw.providers {
+        if provider.source.trim().is_empty() {
+            return Err(PriceSheetError::MissingSource(format!("provider {name:?}")));
+        }
+    }
+    for (code, rate) in &raw.fx {
+        if rate.source.trim().is_empty() {
+            return Err(PriceSheetError::MissingSource(format!("[fx.{code}]")));
+        }
+    }
     let providers = raw
         .providers
         .into_iter()
@@ -198,7 +219,7 @@ pub fn load_price_sheet(text: &str) -> Result<PriceSheet, PriceSheetError> {
 
     Ok(PriceSheet {
         currency,
-        retrieved: sheet.retrieved,
+        retrieved,
         month_seconds: sheet.month_seconds,
         providers,
         fx,
@@ -265,6 +286,7 @@ impl RawPlan {
             name: self.name,
             monthly_price_micros: self.monthly_price_micros,
             included_compute_nanos: self.included_compute_hours.saturating_mul(NANOS_PER_HOUR),
+            baseline_product: self.baseline_product,
             included_starts: self.included_starts,
         }
     }

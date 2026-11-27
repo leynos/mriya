@@ -5,7 +5,10 @@
 //! job with separate rules, and keeping them apart makes each testable on its
 //! own.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+/// Extra time allowed for teardown after an attempt's declared lifetime.
+const TEARDOWN_GRACE: Duration = Duration::from_secs(300);
 
 use camino::Utf8PathBuf;
 
@@ -16,6 +19,7 @@ use super::{
 };
 use crate::{
     RunOrchestrator,
+    ScalewayBackend,
     backend::InstanceRequest,
     bench::{
         lifecycle::RecordingSink,
@@ -93,16 +97,17 @@ impl ScalewayDriver {
             super::ports::AttemptFailure::without_resources(format!("async runtime: {err}"))
         })?;
         let started = std::time::Instant::now();
-        let attempt_output = runtime
-            .block_on(async {
-                orchestrator
-                    .execute_observed(request, &source, &rendered)
-                    .await
-            })
-            .map_err(|err| super::ports::AttemptFailure {
-                reason: format!("run failed: {err}"),
-                resource_ids: lifecycle.created_ids(),
-            })?;
+        let attempt_output = run_bounded(
+            &runtime,
+            &AttemptCall {
+                orchestrator: &orchestrator,
+                request,
+                source: &source,
+                rendered: &rendered,
+                planned_lifetime_nanos: attempt.planned_lifetime_nanos,
+            },
+            &lifecycle,
+        )?;
         let total_nanos = elapsed_nanos(started.elapsed());
         // The run completed and its teardown was verified, so a later failure
         // leaves nothing behind and is reported without resource identifiers.
@@ -121,6 +126,7 @@ impl ScalewayDriver {
                      the code that was measured",
                 ),
                 resource_ids: lifecycle.created_ids(),
+                allocation_uncertain: lifecycle.allocation_uncertain(),
             });
         }
         Ok(Measurement {
@@ -140,4 +146,54 @@ pub(super) struct SharedObserver(Arc<RecordingObserver>);
 
 impl RunObserver for SharedObserver {
     fn observe(&self, observation: Observation<'_>) { self.0.observe(observation); }
+}
+
+/// Runs one attempt under its declared lifetime plus a teardown grace.
+///
+/// The guest-side wrapper stops an overrunning workload; this outer bound
+/// catches a provisioning or probe hang, which the wrapper cannot. The grace
+/// lets the orchestrator's own teardown run after the workload deadline.
+fn run_bounded(
+    runtime: &tokio::runtime::Runtime,
+    call: &AttemptCall<'_>,
+    lifecycle: &Arc<RecordingSink>,
+) -> Result<crate::ObservedRun, super::ports::AttemptFailure> {
+    let outer_limit =
+        Duration::from_nanos(call.planned_lifetime_nanos).saturating_add(TEARDOWN_GRACE);
+    match runtime.block_on(async {
+        tokio::time::timeout(
+            outer_limit,
+            call.orchestrator
+                .execute_observed(call.request, call.source, call.rendered),
+        )
+        .await
+    }) {
+        Ok(result) => result.map_err(|err| super::ports::AttemptFailure {
+            reason: format!("run failed: {err}"),
+            resource_ids: lifecycle.created_ids(),
+            allocation_uncertain: lifecycle.allocation_uncertain(),
+        }),
+        Err(_elapsed) => Err(super::ports::AttemptFailure {
+            reason: String::from(
+                "the attempt exceeded its declared lifetime before teardown completed, so its \
+                 resources must be reconciled",
+            ),
+            resource_ids: lifecycle.created_ids(),
+            allocation_uncertain: true,
+        }),
+    }
+}
+
+/// The inputs one bounded attempt call needs.
+struct AttemptCall<'a> {
+    /// The orchestrator that runs the attempt.
+    orchestrator: &'a RunOrchestrator<ScalewayBackend, StreamingCommandRunner>,
+    /// The instance request to create.
+    request: &'a InstanceRequest,
+    /// The workspace to synchronize.
+    source: &'a Utf8PathBuf,
+    /// The rendered command to run.
+    rendered: &'a str,
+    /// The attempt's declared lifetime.
+    planned_lifetime_nanos: u64,
 }

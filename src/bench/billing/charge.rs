@@ -237,6 +237,7 @@ pub struct CostBreakdown {
 ///     r#"
 /// [sheet]
 /// currency = "USD"
+/// retrieved = "2026-11-26"
 ///
 /// [providers.scaleway]
 /// source = "https://www.scaleway.com/en/docs/billing/faq/"
@@ -259,8 +260,13 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
     let provider = rules_for(sheet, &usage.provider)?;
     let product = product_for(provider, usage)?;
     let rate = sheet.rate(&provider.currency)?;
+    let minimum_nanos = product
+        .minimum_seconds
+        .saturating_mul(super::NANOS_PER_SECOND);
     let chargeable = match usage.billed_nanos {
-        Some(billed) if billed >= usage.measured_nanos => billed,
+        // A recorded billed figure is not rounded to the granularity again, but
+        // a provider still bills at least its minimum, so the floor applies.
+        Some(billed) if billed >= usage.measured_nanos => billed.max(minimum_nanos),
         Some(_) => return Err(ChargeError::BilledBelowMeasured),
         None => chargeable_nanos(
             usage.measured_nanos,

@@ -41,10 +41,10 @@ impl CampaignLock {
             Dir::open_ambient_dir(&directory_path, ambient_authority()).map_err(|err| {
                 CampaignError::InvalidPlan(format!("cannot open {directory_path}: {err}"))
             })?;
-        let name = format!("mriya-bench-{}.lock", sanitise(campaign_id));
+        let name = format!("mriya-bench-{}.lock", sanitize(campaign_id));
         let mut options = OpenOptions::new();
         options.create_new(true).write(true);
-        let mut file = directory
+        let file = directory
             .as_ref()
             .open_with(&name, &options)
             .map_err(|err| match err.kind() {
@@ -56,12 +56,14 @@ impl CampaignLock {
                     directory_path.join(&name)
                 )),
             })?;
-        // The identifier is written so an operator who finds the file knows
-        // what it belongs to.
-        writeln!(file, "campaign={campaign_id}").map_err(|err| {
+        // The guard is built before the contents are written, so a write
+        // failure removes the lock instead of leaving an orphan that blocks
+        // every later attempt.
+        let guard = Self { directory, name };
+        writeln!(&file, "campaign={campaign_id}").map_err(|err| {
             CampaignError::InvalidPlan(format!("cannot write the campaign lock: {err}"))
         })?;
-        Ok(Self { directory, name })
+        Ok(guard)
     }
 }
 
@@ -83,7 +85,7 @@ fn runtime_directory() -> Utf8PathBuf {
 }
 
 /// Reduces a campaign identifier to characters safe in a file name.
-fn sanitise(campaign_id: &str) -> String {
+fn sanitize(campaign_id: &str) -> String {
     campaign_id
         .chars()
         .map(|character| {

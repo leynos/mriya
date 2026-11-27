@@ -245,7 +245,16 @@ from `make test` or CI.
   attribution, separate groups per cache class, a zero-exchange-rate refusal, a
   single rounding of a billed lifetime, a bounded hook contract, and the
   documentation and test corrections the review named.
-- [ ] CodeRabbit re-review cleared and draft pull request opened.
+- [x] 2026-11-27: Second CodeRabbit review produced 30 findings. All were
+  addressed: a campaign lock guard built before its contents are written,
+  unique attempt identities enforced by the plan and the validator, phase
+  references checked against runs, a whole-attempt deadline with a teardown
+  grace, allocation uncertainty carried into the residual, the plan allowance
+  valued in money and weighted by product rate, retained storage priced as
+  Block Storage, per-provider subscription attribution across all workloads,
+  toolchain comparability, structured subscription errors, and the remaining
+  documentation and test corrections.
+- [ ] CodeRabbit final review cleared and draft pull request opened.
 
 ## Surprises & Discoveries
 

@@ -30,8 +30,14 @@ pub struct PlanRule {
     pub name: String,
     /// Monthly price of the plan, in micro-units.
     pub monthly_price_micros: u64,
-    /// Compute time the plan includes per period, in nanoseconds.
+    /// Compute time the plan includes per period, in nanoseconds, expressed in
+    /// hours of `baseline_product`.
     pub included_compute_nanos: u64,
+    /// The product whose hourly rate the included time is measured in.
+    ///
+    /// A plan grants money's worth of machine time, not raw hours: an hour of a
+    /// product that costs twice the baseline consumes twice the allowance.
+    pub baseline_product: String,
     /// Resources the plan lets start without a start charge, per period.
     pub included_starts: u64,
 }
@@ -67,11 +73,12 @@ impl PriceSheet {
     ///
     /// # Parameters
     ///
-    /// - `text`: a TOML document with `[sheet]`, `[providers.*]` and `[fx.*]`.
+    /// - `currency`: the currency code to look up.
     ///
     /// # Returns
     ///
-    /// The validated sheet, with every rate still in its provider's currency.
+    /// How many micro-units of the sheet currency one whole unit of `currency`
+    /// is worth.
     ///
     /// # Examples
     ///
@@ -82,6 +89,7 @@ impl PriceSheet {
     ///     r#"
     /// [sheet]
     /// currency = "EUR"
+    /// retrieved = "2026-11-26"
     ///
     /// [fx.USD]
     /// micros_per_unit = 920000
@@ -163,6 +171,10 @@ pub enum PriceSheetError {
     },
     /// The sheet declares no currency, so its prices have no unit.
     MissingCurrency,
+    /// The sheet does not say when its rates were read.
+    MissingRetrievalDate,
+    /// A provider or conversion rate does not say where it came from.
+    MissingSource(String),
     /// A provider quotes in a currency the sheet cannot convert.
     UnknownCurrency(String),
     /// A declared conversion rate is zero, which would make every charge free.
@@ -191,6 +203,13 @@ impl fmt::Display for PriceSheetError {
             Self::MissingCurrency => {
                 formatter.write_str("price sheet declares no currency, so its prices have no unit")
             }
+            Self::MissingRetrievalDate => formatter.write_str(
+                "price sheet does not say when its rates were read; set retrieved in [sheet]",
+            ),
+            Self::MissingSource(what) => write!(
+                formatter,
+                "price sheet has no source for {what}; a rate without a source cannot be re-checked"
+            ),
             Self::UnknownCurrency(code) => write!(
                 formatter,
                 "price sheet cannot convert {code:?}: declare it under [fx.{code}] with \

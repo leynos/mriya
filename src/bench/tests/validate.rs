@@ -17,6 +17,7 @@ use super::{
         validate::{Complaint, format_complaints, validate_str},
     },
     fixture,
+    support::run_with,
 };
 
 /// Returns the complaint messages as one string, so a case can assert on the
@@ -323,4 +324,51 @@ fn run_with_zero_allocation() -> RunRecord {
     run.allocation.disk_bytes = 0;
     run.concurrency.effective_workers = 0;
     run
+}
+
+#[test]
+fn two_runs_with_the_same_identifier_are_refused() {
+    let a = run_with(|_| {});
+    let b = run_with(|_| {});
+    let text = campaign_text(vec![a, b]);
+    let complaints = validate_str(&text).expect_err("duplicate run identifiers are ambiguous");
+    assert!(
+        messages(&complaints).contains("is already used"),
+        "{}",
+        messages(&complaints)
+    );
+}
+
+#[test]
+fn a_phase_that_names_no_run_is_refused() {
+    let run = run_with(|_| {});
+    let mut text = campaign_text(vec![run]);
+    text.push_str(concat!(
+        r#"{"schema":1,"kind":"phase","campaign_id":"example-2026-11-26","#,
+        r#""run_id":"no-such-run","workload_id":"cold-build","repetition":1,"#,
+        r#""phase":"sync","segment":1,"duration_nanos":1,"status":"ok"}"#,
+        "\n",
+    ));
+    let complaints = validate_str(&text).expect_err("a phase must belong to a run");
+    assert!(
+        messages(&complaints).contains("no run record describes"),
+        "{}",
+        messages(&complaints)
+    );
+}
+
+/// Builds campaign text from runs without rewriting their identifiers, so a
+/// test can construct the duplicate this validator must reject.
+fn campaign_text(runs: Vec<RunRecord>) -> String {
+    let mut text = fixture("valid-campaign.jsonl")
+        .lines()
+        .next()
+        .expect("the fixture has a header")
+        .to_owned();
+    text.push('\n');
+    for run in runs {
+        text.push_str(&to_line(&Record::Run(Box::new(run))).expect("the run serializes"));
+        text.push('\n');
+    }
+    text
 }

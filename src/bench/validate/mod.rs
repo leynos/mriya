@@ -183,6 +183,7 @@ pub fn validate_str(text: &str) -> Result<Campaign, Vec<Complaint>> {
         &mut complaints,
     );
     check_runs(&buckets.runs, &mut complaints);
+    check_phase_references(&buckets.runs, &buckets.phases, &mut complaints);
 
     if let Some(single) = header
         && complaints.is_empty()
@@ -239,6 +240,49 @@ fn judge_headers(
                 lines: many.iter().map(|(line, _)| *line).collect(),
             });
             None
+        }
+    }
+}
+
+/// Requires every phase to belong to a run, with matching workload and
+/// repetition.
+///
+/// A phase that names no run cannot be attributed, and a phase whose workload
+/// or repetition disagrees with its run would be summarized under one attempt
+/// while claiming another.
+fn check_phase_references(
+    runs: &[(usize, RunRecord)],
+    phases: &[(usize, super::record::PhaseRecord)],
+    complaints: &mut Vec<Complaint>,
+) {
+    let by_id: std::collections::BTreeMap<&str, &RunRecord> = runs
+        .iter()
+        .map(|(_, run)| (run.run_id.as_str(), run))
+        .collect();
+    for (line, phase) in phases {
+        let Some(run) = by_id.get(phase.run_id.as_str()) else {
+            complaints.push(Complaint::Incoherent {
+                line: *line,
+                message: format!(
+                    "phase names run {:?}, which no run record describes",
+                    phase.run_id
+                ),
+            });
+            continue;
+        };
+        if run.workload_id != phase.workload_id || run.repetition != phase.repetition {
+            complaints.push(Complaint::Incoherent {
+                line: *line,
+                message: format!(
+                    "phase for run {:?} names workload {:?} repetition {}, but the run is {:?} \
+                     repetition {}",
+                    phase.run_id,
+                    phase.workload_id,
+                    phase.repetition,
+                    run.workload_id,
+                    run.repetition
+                ),
+            });
         }
     }
 }

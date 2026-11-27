@@ -45,16 +45,22 @@ impl CostBreakdown {
     /// 64-bit count, which means the campaign is larger than the sheet's units
     /// can express rather than that any single gate was mispriced.
     pub fn accumulate(&self, totals: &mut Totals) -> Result<(), ChargeError> {
-        totals.chargeable_nanos = checked_add(totals.chargeable_nanos, self.chargeable_nanos)?;
-        totals.compute_micros = checked_add(totals.compute_micros, self.compute_micros)?;
-        totals.start_micros = checked_add(totals.start_micros, self.start_micros)?;
-        totals.storage_micros = checked_add(totals.storage_micros, self.storage_micros)?;
-        totals.subscription_micros =
-            checked_add(totals.subscription_micros, self.subscription_micros)?;
-        totals.absorbed_nanos = checked_add(totals.absorbed_nanos, self.absorbed_nanos)?;
-        totals.marginal_micros = checked_add(totals.marginal_micros, self.marginal_micros)?;
-        totals.total_account_micros =
-            checked_add(totals.total_account_micros, self.total_account_micros)?;
+        // Stage the whole update, so a failure part-way leaves the caller's
+        // running totals exactly as they were.
+        let staged = Totals {
+            chargeable_nanos: checked_add(totals.chargeable_nanos, self.chargeable_nanos)?,
+            compute_micros: checked_add(totals.compute_micros, self.compute_micros)?,
+            start_micros: checked_add(totals.start_micros, self.start_micros)?,
+            storage_micros: checked_add(totals.storage_micros, self.storage_micros)?,
+            subscription_micros: checked_add(totals.subscription_micros, self.subscription_micros)?,
+            absorbed_nanos: checked_add(totals.absorbed_nanos, self.absorbed_nanos)?,
+            marginal_micros: checked_add(totals.marginal_micros, self.marginal_micros)?,
+            total_account_micros: checked_add(
+                totals.total_account_micros,
+                self.total_account_micros,
+            )?,
+        };
+        *totals = staged;
         Ok(())
     }
 }

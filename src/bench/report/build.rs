@@ -11,7 +11,7 @@ use super::{
     BenchmarkReport,
     ReportError,
     WorkloadResult,
-    subscription::{attribute_subscription, remote_execution_phases},
+    subscription::{PlanAllowances, attribute_subscription, remote_execution_phases},
 };
 
 /// The provider, product, cache class and role a group is keyed by.
@@ -21,53 +21,6 @@ use crate::bench::{
     record::{CacheState, RunOutcome, RunRecord, RunRole},
     validate::Campaign,
 };
-
-/// Tracks how much of each provider plan's included compute remains.
-struct PlanAllowances {
-    /// Remaining included nanoseconds per provider.
-    remaining: BTreeMap<String, u64>,
-    /// Starts already used per provider.
-    starts_used: BTreeMap<String, u64>,
-}
-
-impl PlanAllowances {
-    /// Reads each provider's plan from the sheet.
-    fn new(sheet: &PriceSheet, runs: &[(usize, RunRecord)]) -> Self {
-        let mut remaining = BTreeMap::new();
-        for (_, run) in runs {
-            if let Some(provider) = sheet.providers.get(&run.provider.provider)
-                && let Some(plan) = provider.plan.as_ref()
-            {
-                remaining
-                    .entry(run.provider.provider.clone())
-                    .or_insert(plan.included_compute_nanos);
-            }
-        }
-        Self {
-            remaining,
-            starts_used: BTreeMap::new(),
-        }
-    }
-
-    /// Returns the allowance left for `provider`.
-    fn allowance(&self, provider: &str) -> u64 {
-        self.remaining.get(provider).copied().unwrap_or(0)
-    }
-
-    /// Returns how many starts had been used before this gate.
-    fn starts_used(&self, provider: &str) -> u64 {
-        self.starts_used.get(provider).copied().unwrap_or(0)
-    }
-
-    /// Consumes `nanos` of allowance and one start.
-    fn consume(&mut self, provider: &str, nanos: u64) {
-        if let Some(remaining) = self.remaining.get_mut(provider) {
-            *remaining = remaining.saturating_sub(nanos);
-        }
-        let starts = self.starts_used.entry(provider.to_owned()).or_insert(0);
-        *starts = starts.saturating_add(1);
-    }
-}
 
 /// Prices one run, consuming plan allowance as it goes.
 fn price_run(
@@ -111,11 +64,23 @@ fn price_run(
                 .collect(),
         );
     }
+    // The allowance is expressed in nanoseconds of *this* product, so a
+    // product costing twice the plan's baseline absorbs twice the credit.
+    let product = sheet
+        .providers
+        .get(&run.provider.provider)
+        .and_then(|provider| provider.products.get(&run.provider.product))
+        .ok_or_else(|| {
+            ReportError::Billing(format!(
+                "price sheet has no product {:?} for provider {:?}",
+                run.provider.product, run.provider.provider
+            ))
+        })?;
     let usage = priced
-        .with_plan_allowance(allowance.allowance(&run.provider.provider))
+        .with_plan_allowance(allowance.allowance_nanos(&run.provider.provider, product))
         .with_starts_used(allowance.starts_used(&run.provider.provider));
     let breakdown = charge(sheet, &usage).map_err(|err| ReportError::Billing(err.to_string()))?;
-    allowance.consume(&run.provider.provider, breakdown.absorbed_nanos);
+    allowance.consume(&run.provider.provider, product, breakdown.absorbed_nanos);
     Ok(breakdown)
 }
 
@@ -305,35 +270,45 @@ pub fn build_report(
     // after the per-run loop is what keeps the two figures distinct: the
     // marginal totals say what the gates cost, and the account total says what
     // the campaign adds to the bill.
-    let subscriptions =
-        super::provider_subscriptions(campaign, sheet).map_err(ReportError::Billing)?;
+    let subscriptions = super::provider_subscriptions(campaign, sheet)
+        .map_err(|err| ReportError::Billing(err.to_string()))?;
     let subscription_micros: u64 = subscriptions.values().copied().sum();
     totals.subscription_micros = subscription_micros;
     totals.total_account_micros = totals
         .total_account_micros
         .saturating_add(subscription_micros);
 
+    // Attribute the subscriptions once across the whole campaign, then group
+    // the results by workload. Attributing per workload would charge each
+    // provider's plan once for every workload it appears in.
+    let mut flat: Vec<(String, WorkloadResult)> = grouped
+        .into_iter()
+        .flat_map(|(workload_id, groups)| {
+            groups
+                .into_values()
+                .map(move |group| (workload_id.clone(), group.finish()))
+        })
+        .collect();
+    attribute_subscription(&mut flat, &subscriptions);
+
     let by_workload = super::rules::attempts_by_workload(campaign);
-    let mut workloads = BTreeMap::new();
+    let mut workloads: BTreeMap<String, Vec<WorkloadResult>> = BTreeMap::new();
     let mut capability_notes = Vec::new();
     let mut comparability_problems = Vec::new();
-    for (workload_id, groups) in grouped {
+    for (workload_id, result) in flat {
+        workloads.entry(workload_id).or_default().push(result);
+    }
+    for (workload_id, results) in &workloads {
         let attempts = by_workload
             .get(workload_id.as_str())
             .cloned()
             .unwrap_or_default();
-        let results: Vec<WorkloadResult> = groups
-            .into_values()
-            .map(GroupBuilder::finish)
-            .collect::<Vec<_>>();
-        let attributed = attribute_subscription(results, &subscriptions);
         let mut notes = super::rules::DifferenceNotes {
             capability: &mut capability_notes,
             comparability: &mut comparability_problems,
         };
-        super::rules::note_differences(&workload_id, &attributed, &attempts, &mut notes);
-        super::rules::note_repetition_shortfall(&attributed, &mut capability_notes);
-        workloads.insert(workload_id, attributed);
+        super::rules::note_differences(workload_id, results, &attempts, &mut notes);
+        super::rules::note_repetition_shortfall(results, &mut capability_notes);
     }
 
     Ok(BenchmarkReport {

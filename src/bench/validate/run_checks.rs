@@ -15,9 +15,21 @@ pub(super) fn check_runs(runs: &[(usize, RunRecord)], complaints: &mut Vec<Compl
     if runs.is_empty() {
         complaints.push(Complaint::NoRuns);
     }
+    let mut seen: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for (line, run) in runs {
         report_missing_pins(*line, run, complaints);
         report_incoherence(*line, run, complaints);
+        if !run.run_id.trim().is_empty()
+            && let Some(first) = seen.insert(run.run_id.as_str(), *line)
+        {
+            complaints.push(Complaint::Incoherent {
+                line: *line,
+                message: format!(
+                    "run identifier {:?} is already used by the record on line {first}",
+                    run.run_id
+                ),
+            });
+        }
     }
 }
 

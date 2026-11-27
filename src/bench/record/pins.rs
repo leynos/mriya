@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// The source tree a workload ran against.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TreePin {
     /// Repository remote the tree came from.
     pub remote: String,
@@ -32,6 +33,7 @@ pub struct TreePin {
 /// These are measured from the guest, not copied from the provider's product
 /// page, because a product name does not determine what was handed over.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Allocation {
     /// Logical CPUs the guest reported.
     pub cpu_count: u32,
@@ -97,6 +99,7 @@ impl GuestArchitecture {
 /// A build system that ignores its worker setting still records the setting, so
 /// the report can show the difference rather than crediting the backend for it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Concurrency {
     /// Worker count the operator asked the workload to use.
     pub intended_workers: u32,
@@ -135,6 +138,7 @@ impl fmt::Display for CacheState {
 
 /// What the attempt observed about its cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CacheObservation {
     /// The cache class the attempt started from.
     pub state: CacheState,
@@ -148,6 +152,7 @@ pub struct CacheObservation {
 
 /// The provider and product a run used.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderProduct {
     /// Provider name, for example `scaleway`.
     pub provider: String,
@@ -159,6 +164,7 @@ pub struct ProviderProduct {
 
 /// Accelerator details, present exactly on a GPU experiment.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GpuSpec {
     /// Accelerator model name.
     pub model: String,

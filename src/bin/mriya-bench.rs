@@ -247,8 +247,18 @@ fn require_empty(path: &str) -> Result<(), String> {
     let Ok((directory, name)) = parent_handle(path) else {
         return Ok(());
     };
-    let Ok(existing) = directory.read_to_string(&name) else {
-        return Ok(());
+    // A missing file is fine. Any other read failure is not: a file whose
+    // contents cannot be decoded must not be appended to, because neither the
+    // validator nor the report could read the result.
+    let existing = match directory.read_to_string(&name) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(format!(
+                "cannot inspect {path}: {err}; pass a new path rather than appending to a file \
+                 that cannot be read"
+            ));
+        }
     };
     if existing.trim().is_empty() {
         return Ok(());

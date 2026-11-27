@@ -15,6 +15,7 @@ mod plan;
 mod probe;
 mod record;
 mod report;
+mod report_groups;
 mod support;
 mod validate;
 

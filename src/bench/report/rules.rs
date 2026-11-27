@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::WorkloadResult;
 use crate::bench::{
-    billing::{PriceSheet, convert_micros},
+    billing::{PriceSheet, PriceSheetError, convert_micros},
     record::{CacheState, GuestArchitecture, RunRecord, WorkloadClass},
     validate::Campaign,
 };
@@ -132,6 +132,22 @@ fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut
             "{workload_id}: attempts mixed dirty and clean trees, which are not comparable"
         ));
     }
+    let toolchains: BTreeSet<(&str, &str, &str, &str)> = attempts
+        .iter()
+        .map(|run| {
+            (
+                run.toolchain.compiler.as_str(),
+                run.toolchain.compiler_version.as_str(),
+                run.toolchain.package_manager.as_str(),
+                run.toolchain.package_manager_version.as_str(),
+            )
+        })
+        .collect();
+    if toolchains.len() > 1 {
+        problems.push(format!(
+            "{workload_id}: attempts used different toolchains, so they are not equal work"
+        ));
+    }
     let architectures: BTreeSet<GuestArchitecture> = attempts
         .iter()
         .map(|run| run.allocation.guest_architecture)
@@ -192,16 +208,20 @@ fn describe_cache_classes(classes: &BTreeSet<CacheState>) -> String {
 ///     fx: BTreeMap::new(),
 /// };
 /// assert_eq!(campaign_subscription_micros(&campaign, &sheet)?, 0);
-/// # Ok::<(), String>(())
+/// # Ok::<(), mriya::bench::billing::PriceSheetError>(())
 /// ```
 pub fn campaign_subscription_micros(
     campaign: &Campaign,
     sheet: &PriceSheet,
-) -> Result<u64, String> {
-    Ok(provider_subscriptions(campaign, sheet)?
-        .values()
-        .copied()
-        .sum())
+) -> Result<u64, PriceSheetError> {
+    let charges = provider_subscriptions(campaign, sheet)?;
+    let mut total = 0_u64;
+    for charge in charges.values() {
+        total = total
+            .checked_add(*charge)
+            .ok_or(PriceSheetError::Overflow)?;
+    }
+    Ok(total)
 }
 
 /// Returns each provider's own subscription charge, in the sheet's currency.
@@ -216,7 +236,7 @@ pub fn campaign_subscription_micros(
 pub fn provider_subscriptions(
     campaign: &Campaign,
     sheet: &PriceSheet,
-) -> Result<BTreeMap<String, u64>, String> {
+) -> Result<BTreeMap<String, u64>, PriceSheetError> {
     let providers: BTreeSet<&str> = campaign
         .runs
         .iter()
@@ -230,9 +250,8 @@ pub fn provider_subscriptions(
         let Some(plan) = rules.plan.as_ref() else {
             continue;
         };
-        let rate = sheet.rate(&rules.currency).map_err(|err| err.to_string())?;
-        let converted =
-            convert_micros(plan.monthly_price_micros, rate).map_err(|err| err.to_string())?;
+        let rate = sheet.rate(&rules.currency)?;
+        let converted = convert_micros(plan.monthly_price_micros, rate)?;
         charges.insert(provider.to_owned(), converted);
     }
     Ok(charges)

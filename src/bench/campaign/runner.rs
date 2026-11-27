@@ -116,14 +116,21 @@ where
     let _lock = super::CampaignLock::acquire(&plan.campaign_id)?;
 
     sink.append(&Record::Header(Box::new(plan.header())))
-        .map_err(CampaignError::RecordWriteFailed)?;
+        .map_err(|message| CampaignError::RecordWriteFailed {
+            message,
+            residual: None,
+        })?;
     pre_sweep(plan, driver, sink)?;
 
     for attempt in &plan.attempts {
         run_one_attempt(plan, attempt, driver, sink)?;
     }
 
-    sink.flush().map_err(CampaignError::RecordWriteFailed)
+    sink.flush()
+        .map_err(|message| CampaignError::RecordWriteFailed {
+            message,
+            residual: None,
+        })
 }
 
 /// Runs one attempt, records it, and verifies its teardown.
@@ -138,31 +145,19 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
 ) -> Result<(), CampaignError> {
     let records = match driver.run_attempt(&plan.campaign_id, attempt) {
         Ok(records) => records,
-        Err(failure) => {
-            // An attempt that failed may have allocated before it failed. The
-            // identifiers it reported are recorded, and the campaign stops:
-            // continuing would allocate on top of an unknown residue.
-            record_residual(
-                sink,
-                plan,
-                ResidualDetail {
-                    provider: attempt.provider.clone(),
-                    resource_ids: failure.resource_ids.clone(),
-                    reason: format!(
-                        "the attempt for {} did not complete, so its resources could not be \
-                         verified gone: {}",
-                        attempt.workload_id, failure.reason
-                    ),
-                },
-            )?;
-            return Err(CampaignError::AttemptFailed(failure.reason));
-        }
+        Err(failure) => return abandon_attempt(plan, attempt, failure, sink),
     };
     sink.append(&Record::Run(Box::new(records.run.clone())))
-        .map_err(CampaignError::RecordWriteFailed)?;
+        .map_err(|message| CampaignError::RecordWriteFailed {
+            message,
+            residual: None,
+        })?;
     for phase in &records.phases {
         sink.append(&Record::Phase(Box::new(phase.clone())))
-            .map_err(CampaignError::RecordWriteFailed)?;
+            .map_err(|message| CampaignError::RecordWriteFailed {
+                message,
+                residual: None,
+            })?;
     }
     match driver.verify_teardown(&plan.campaign_id, attempt, &records.run) {
         Ok(report) if report.is_verified() => Ok(()),
@@ -202,6 +197,36 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
             })
         }
     }
+}
+
+/// Records a failed attempt as a cleanup doubt and stops the campaign.
+fn abandon_attempt<S: RecordSink>(
+    plan: &CampaignPlan,
+    attempt: &PlannedAttempt,
+    failure: super::ports::AttemptFailure,
+    sink: &mut S,
+) -> Result<(), CampaignError> {
+    record_residual(
+        sink,
+        plan,
+        ResidualDetail {
+            provider: attempt.provider.clone(),
+            resource_ids: failure.resource_ids.clone(),
+            reason: format!(
+                "the attempt for {} did not complete, so its resources could not be verified \
+                 gone: {}{}",
+                attempt.workload_id,
+                failure.reason,
+                if failure.allocation_uncertain {
+                    " (a create may have produced a resource whose identifier is unknown; list \
+                     the provider's resources in the target zone)"
+                } else {
+                    ""
+                }
+            ),
+        },
+    )?;
+    Err(CampaignError::AttemptFailed(failure.reason))
 }
 
 /// Runs the pre-sweep, stopping the campaign when it finds anything.
@@ -259,6 +284,12 @@ fn record_residual<S: RecordSink>(
     plan: &CampaignPlan,
     detail: ResidualDetail,
 ) -> Result<(), CampaignError> {
+    // Captured before the detail moves into the record: if the record cannot be
+    // persisted, the error must still name what the operator has to clean up.
+    let named = format!(
+        "provider {:?} resources {:?}: {}",
+        detail.provider, detail.resource_ids, detail.reason
+    );
     let record = ResidualRecord {
         schema: SCHEMA_VERSION,
         kind: RecordKind::ResidualResource,
@@ -268,9 +299,16 @@ fn record_residual<S: RecordSink>(
         reason: detail.reason,
     };
     sink.append(&Record::Residual(Box::new(record)))
-        .map_err(CampaignError::RecordWriteFailed)?;
+        .map_err(|message| CampaignError::RecordWriteFailed {
+            message,
+            residual: Some(named.clone()),
+        })?;
     // A residual record is the evidence an operator acts on after a failure, so
     // it is flushed before the campaign returns, not left in a buffer that a
     // dropped writer may never empty.
-    sink.flush().map_err(CampaignError::RecordWriteFailed)
+    sink.flush()
+        .map_err(|message| CampaignError::RecordWriteFailed {
+            message,
+            residual: None,
+        })
 }

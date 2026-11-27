@@ -143,10 +143,20 @@ impl ScalewayBackend {
                 serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
                     message: err.to_string(),
                 })?;
-            return Ok(VolumeHandle {
+            let handle = VolumeHandle {
                 id: parsed.volume.id,
                 zone: parsed.volume.zone,
+            };
+            // A volume is a billed resource like any other, so the benchmark
+            // sink must hear about it; otherwise a retained cache volume is
+            // invisible to a campaign's residual record.
+            self.notify_lifecycle(&crate::bench::lifecycle::LifecycleEvent::ResourceCreated {
+                provider: String::from(super::super::backend_impl::PROVIDER_NAME),
+                resource_id: handle.id.clone(),
+                location: request.zone.clone(),
+                product: String::from("block-storage"),
             });
+            return Ok(handle);
         }
 
         let message = String::from_utf8_lossy(&body).into_owned();

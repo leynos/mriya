@@ -115,6 +115,7 @@ pub fn sheet_with_plan(product: ProductRule, included_starts: u64) -> PriceSheet
         name: String::from("fixture plan"),
         monthly_price_micros: 0,
         included_compute_nanos: 0,
+        baseline_product: String::from("p"),
         included_starts,
     };
     if let Some(provider) = sheet.providers.get_mut("prov") {
@@ -188,7 +189,10 @@ pub fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
         .to_owned();
     let mut text = header_line;
     text.push('\n');
-    for run in runs {
+    for (index, mut run) in runs.into_iter().enumerate() {
+        // Each attempt needs its own identity, or the validator reports the
+        // duplicates this helper would otherwise build.
+        run.run_id = format!("{}/run-{index}", run.campaign_id);
         let record = Record::Run(Box::new(run));
         text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
         text.push('\n');

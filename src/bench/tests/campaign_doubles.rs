@@ -31,6 +31,8 @@ pub struct ScriptedDriver {
     pub runs: Mutex<VecDeque<Result<RunRecord, AttemptFailure>>>,
     /// What each teardown check returns.
     pub teardowns: Mutex<VecDeque<Result<TeardownReport, String>>>,
+    /// How many attempts this driver has produced, for run identifiers.
+    pub attempts_run: std::sync::atomic::AtomicU64,
 }
 
 impl ScriptedDriver {
@@ -45,6 +47,7 @@ impl ScriptedDriver {
             sweep: Ok(SweepReport::default()),
             runs: Mutex::new(attempts.into()),
             teardowns: Mutex::new((0..runs).map(|_| Ok(TeardownReport::verified())).collect()),
+            attempts_run: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -87,7 +90,10 @@ impl CampaignDriver for ScriptedDriver {
             .unwrap_or_else(|| Err(AttemptFailure::without_resources("no scripted run left")))?;
         // The scripted record belongs to whichever campaign asked for it.
         run.campaign_id = campaign_id.to_owned();
-        run.run_id = format!("{campaign_id}/run");
+        let sequence = self
+            .attempts_run
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run.run_id = format!("{campaign_id}/run-{sequence}");
         Ok(AttemptRecords {
             run,
             phases: Vec::new(),
@@ -138,8 +144,11 @@ impl RecordSink for FailingSink {
 /// parallel — nextest runs each in its own process — do not contend for the
 /// campaign lock.
 pub fn plan(attempts: usize) -> CampaignPlan {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     CampaignPlan {
-        campaign_id: format!("test-campaign-{}", std::process::id()),
+        campaign_id: format!("test-campaign-{}-{sequence}", std::process::id()),
         limits: CampaignLimits {
             max_spend_micros: 1_000_000,
             max_attempts: 10,

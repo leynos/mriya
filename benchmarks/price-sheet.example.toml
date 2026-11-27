@@ -33,9 +33,9 @@ month_seconds = 2592000
 # Source: Scaleway virtual instance pricing,
 #   https://www.scaleway.com/en/pricing/virtual-instances/
 #   DEV1-S is EUR 0.00898 per hour.
-# Source: Scaleway Block Storage pricing is quoted per GB per month; the rate
-#   below is the Standard One Zone figure announced for 1 June 2026,
-#   https://www.scaleway.com/en/blog/a-transparent-update-on-scaleway-pricing/
+# Source: Scaleway Block Storage pricing is quoted per GB-hour;
+#   https://www.scaleway.com/en/pricing/block-storage/ read 2026-11-27, rate
+#   EUR 0.000118 per GB-hour for Block SSD, converted with the sheet's month.
 # ---------------------------------------------------------------------------
 [providers.scaleway]
 display_name = "Scaleway"
@@ -53,8 +53,11 @@ granularity_seconds = 3600
 minimum_seconds = 3600
 start_charge_micros = 0
 
-[providers.scaleway.storage.standard-one-zone]
-price_per_gb_month_micros = 8000
+[providers.scaleway.storage.block-ssd]
+# Scaleway Block Storage SSD, quoted per GB-hour and converted with the sheet's
+# 30-day month: EUR 0.000118/GB-hour * 720 hours = EUR 0.08496/GB-month.
+# Source: https://www.scaleway.com/en/pricing/block-storage/ read 2026-11-27.
+price_per_gb_month_micros = 84960
 granularity_seconds = 3600
 minimum_seconds = 3600
 
@@ -143,7 +146,10 @@ start_charge_micros = 30000
 [providers.boat.plan]
 name = "USD 20 plan"
 monthly_price_micros = 20000000
+# 555 hours of `default`, whose hourly rate values the allowance. A product that
+# costs twice as much consumes the allowance twice as fast.
 included_compute_hours = 555
+baseline_product = "default"
 # Boat's start allowance is a rate limit (12 per minute, 60 per hour, 200 per
 # day), not a single period total, so this sheet does not model it and charges
 # every start. That overstates Boat's cost, which is the safe direction for a

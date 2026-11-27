@@ -17,6 +17,7 @@ use super::{CacheObservation, Concurrency, GpuSpec, ProviderProduct, RecordKind,
 /// no phase timings: those are separate phase records so a partially written
 /// file still yields the phases that completed.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunRecord {
     /// Schema version this record was written with.
     pub schema: u32,
@@ -67,6 +68,7 @@ pub struct RunRecord {
 
 /// Storage a record declares as held beyond the attempt.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetainedStorageRecord {
     /// Storage class name within the provider's price sheet.
     pub class: String,
@@ -91,6 +93,7 @@ pub enum RunRole {
 
 /// Whether an experiment measured a processor or an accelerator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkloadClass {
     /// Central processing unit work.
@@ -101,6 +104,7 @@ pub enum WorkloadClass {
 
 /// The compiler, runtime, and package manager that performed the work.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolchainPin {
     /// Compiler or runtime name, for example `rustc`.
     pub compiler: String,
@@ -114,6 +118,7 @@ pub struct ToolchainPin {
 
 /// A measured span of time in nanoseconds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lifetime {
     /// Total wall-clock time from create request to verified teardown.
     pub total_nanos: u64,
@@ -129,6 +134,7 @@ pub struct Lifetime {
 
 /// How an attempt ended.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(tag = "result", rename_all = "kebab-case")]
 pub enum RunOutcome {
     /// The command completed with the recorded status.
@@ -222,6 +228,7 @@ impl fmt::Display for PhaseKind {
 /// a `segment` counting from one. A reader sums the segments of a phase to get
 /// that phase's cost, and can still see that the wait was split.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhaseRecord {
     /// Schema version this record was written with.
     pub schema: u32,
@@ -247,6 +254,7 @@ pub struct PhaseRecord {
 
 /// The outcome of one phase.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "kebab-case")]
 pub enum PhaseStatus {
     /// The phase reached its success condition.

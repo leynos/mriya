@@ -95,6 +95,13 @@ impl CampaignPlan {
     /// assert!(plan.validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<(), CampaignError> {
+        self.check_identity()?;
+        self.check_limits()?;
+        self.check_attempts()
+    }
+
+    /// Requires a campaign identifier and at least one provider and attempt.
+    fn check_identity(&self) -> Result<(), CampaignError> {
         if self.campaign_id.trim().is_empty() {
             return Err(CampaignError::InvalidPlan(String::from(
                 "the campaign needs an identifier",
@@ -110,14 +117,11 @@ impl CampaignPlan {
                 "the campaign must declare the providers it compares",
             )));
         }
-        for attempt in &self.attempts {
-            if !self.providers.iter().any(|name| name == &attempt.provider) {
-                return Err(CampaignError::InvalidPlan(format!(
-                    "attempt for {} targets provider {:?}, which the campaign does not declare",
-                    attempt.workload_id, attempt.provider
-                )));
-            }
-        }
+        Ok(())
+    }
+
+    /// Requires every limit to be positive and to cover the listed attempts.
+    fn check_limits(&self) -> Result<(), CampaignError> {
         if self.limits.declares_a_zero() {
             return Err(CampaignError::InvalidPlan(String::from(
                 "every limit must be greater than zero",
@@ -132,6 +136,27 @@ impl CampaignPlan {
         }
         let mut estimated = 0_u64;
         for attempt in &self.attempts {
+            estimated = estimated.saturating_add(attempt.estimated_micros);
+        }
+        if estimated > self.limits.max_spend_micros {
+            return Err(CampaignError::InvalidPlan(format!(
+                "the plan estimates {estimated} micro-units but the budget is {}",
+                self.limits.max_spend_micros
+            )));
+        }
+        Ok(())
+    }
+
+    /// Requires each attempt to be distinct and within the lifetime limit.
+    fn check_attempts(&self) -> Result<(), CampaignError> {
+        let mut identities = std::collections::BTreeSet::new();
+        for attempt in &self.attempts {
+            if !self.providers.iter().any(|name| name == &attempt.provider) {
+                return Err(CampaignError::InvalidPlan(format!(
+                    "attempt for {} targets provider {:?}, which the campaign does not declare",
+                    attempt.workload_id, attempt.provider
+                )));
+            }
             if attempt.repetition == 0 {
                 return Err(CampaignError::InvalidPlan(format!(
                     "attempt for {} has repetition zero; repetitions start at one",
@@ -144,13 +169,19 @@ impl CampaignPlan {
                     attempt.workload_id
                 )));
             }
-            estimated = estimated.saturating_add(attempt.estimated_micros);
-        }
-        if estimated > self.limits.max_spend_micros {
-            return Err(CampaignError::InvalidPlan(format!(
-                "the plan estimates {estimated} micro-units but the budget is {}",
-                self.limits.max_spend_micros
-            )));
+            let identity = (
+                attempt.provider.clone(),
+                attempt.product.clone(),
+                attempt.workload_id.clone(),
+                attempt.repetition,
+            );
+            if !identities.insert(identity) {
+                return Err(CampaignError::InvalidPlan(format!(
+                    "two attempts share provider {:?}, product {:?}, workload {:?} and \
+                     repetition {}",
+                    attempt.provider, attempt.product, attempt.workload_id, attempt.repetition
+                )));
+            }
         }
         Ok(())
     }

@@ -40,6 +40,7 @@ impl From<PriceSheetError> for ChargeError {
     fn from(source: PriceSheetError) -> Self {
         match source {
             PriceSheetError::ZeroGranularity => Self::ZeroGranularity,
+            PriceSheetError::Overflow => Self::Overflow,
             other => Self::MissingRule(other),
         }
     }

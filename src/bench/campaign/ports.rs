@@ -74,6 +74,13 @@ pub struct AttemptFailure {
     /// teardown was verified before the failure. Non-empty identifiers are
     /// written into a residual record so an operator can act on them.
     pub resource_ids: Vec<String>,
+    /// Whether a create may have produced a resource whose identifier is
+    /// unknown.
+    ///
+    /// This is not the same as an empty identifier list: it tells the operator
+    /// to list the provider's resources in the target zone, because the harness
+    /// cannot name what may exist.
+    pub allocation_uncertain: bool,
 }
 
 impl AttemptFailure {
@@ -83,6 +90,7 @@ impl AttemptFailure {
         Self {
             reason: reason.into(),
             resource_ids: Vec::new(),
+            allocation_uncertain: false,
         }
     }
 }
@@ -204,7 +212,15 @@ pub enum CampaignError {
         reason: String,
     },
     /// A record could not be written.
-    RecordWriteFailed(String),
+    RecordWriteFailed {
+        /// What the writer reported.
+        message: String,
+        /// What the lost record was about, when it was a residual record.
+        ///
+        /// A failed cleanup whose residual cannot be persisted must still tell
+        /// an operator which resources to look for.
+        residual: Option<String>,
+    },
 }
 
 impl fmt::Display for CampaignError {
@@ -235,9 +251,14 @@ impl fmt::Display for CampaignError {
                 "cleanup could not be verified, campaign stopped; residual resources {residual_ids:?}: \
                  {reason}"
             ),
-            Self::RecordWriteFailed(message) => {
-                write!(formatter, "a record could not be written: {message}")
-            }
+            Self::RecordWriteFailed { message, residual } => match residual {
+                Some(named) => write!(
+                    formatter,
+                    "a residual record could not be written, but the resources it names are \
+                     {named}: {message}"
+                ),
+                None => write!(formatter, "a record could not be written: {message}"),
+            },
         }
     }
 }

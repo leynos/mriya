@@ -188,7 +188,7 @@ fn a_record_that_cannot_be_written_stops_the_campaign() {
     let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
         .expect_err("a campaign whose evidence cannot be written must stop");
     assert!(
-        matches!(error, CampaignError::RecordWriteFailed(_)),
+        matches!(error, CampaignError::RecordWriteFailed { .. }),
         "{error}"
     );
     assert!(
@@ -239,6 +239,7 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
         sweep: Ok(SweepReport::default()),
         runs: Mutex::new(VecDeque::from(vec![Ok(record)])),
         teardowns: Mutex::new(VecDeque::from(vec![Ok(TeardownReport::verified())])),
+        attempts_run: std::sync::atomic::AtomicU64::new(0),
     };
     let mut sink = MemorySink::default();
     run_campaign(&plan(1), Some("1"), &driver, &mut sink).expect("a failed attempt is still data");
@@ -256,6 +257,7 @@ fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
     driver.runs = Mutex::new(VecDeque::from(vec![Err(AttemptFailure {
         reason: String::from("the teardown did not confirm the instance is gone"),
         resource_ids: vec![String::from("srv-1")],
+        allocation_uncertain: false,
     })]));
     let mut sink = MemorySink::default();
     let error = run_campaign(&plan(2), Some("1"), &driver, &mut sink)

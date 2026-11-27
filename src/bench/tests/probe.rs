@@ -94,7 +94,7 @@ fn parse_mount_status_reads_the_exit_status(#[case] output: &str, #[case] expect
 
 #[test]
 fn a_not_mounted_cache_is_absent_even_if_the_size_probe_says_otherwise() {
-    let observation = cache_from("1\n", "4096\n").expect("a cache observation");
+    let observation = cache_from("1\n", "4096\n", "1\n").expect("a cache observation");
     assert_eq!(observation.state, CacheState::Absent);
     assert_eq!(observation.size_bytes, 0);
     assert!(!observation.mounted);
@@ -102,14 +102,14 @@ fn a_not_mounted_cache_is_absent_even_if_the_size_probe_says_otherwise() {
 
 #[test]
 fn a_mounted_empty_cache_is_empty_rather_than_warm() {
-    let observation = cache_from("0\n", "0\n").expect("a cache observation");
+    let observation = cache_from("0\n", "0\n", "0\n").expect("a cache observation");
     assert_eq!(observation.state, CacheState::Empty);
     assert!(observation.mounted);
 }
 
 #[test]
 fn a_mounted_populated_cache_is_warm() {
-    let observation = cache_from("0\n", "4096\n").expect("a cache observation");
+    let observation = cache_from("0\n", "4096\n", "3\n").expect("a cache observation");
     assert_eq!(observation.state, CacheState::Warm);
     assert_eq!(observation.size_bytes, 4096);
 }

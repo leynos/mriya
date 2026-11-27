@@ -132,6 +132,22 @@ impl RecordingSink {
             .clone()
     }
 
+    /// Returns whether the sink saw a create whose outcome was uncertain.
+    ///
+    /// An uncertain allocation means a resource may exist without any
+    /// identifier reaching the harness, which an operator has to reconcile
+    /// differently from a known residual.
+    ///
+    /// # Panics
+    ///
+    /// Panics for the reason [`RecordingSink::events`] gives.
+    #[must_use]
+    pub fn allocation_uncertain(&self) -> bool {
+        self.events()
+            .iter()
+            .any(|event| matches!(event, LifecycleEvent::AllocationUncertain { .. }))
+    }
+
     /// Returns the identifiers of resources the sink saw created.
     ///
     /// # Panics

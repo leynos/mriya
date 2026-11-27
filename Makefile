@@ -137,19 +137,19 @@ BENCH_RESULTS ?= benchmarks/results.jsonl
 
 bench-validate: check-build-tools ## Check a benchmark campaign file without spending
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
-		$(CARGO) run --quiet --bin mriya-bench -- validate $(BENCH_RECORDS)
+		$(CARGO) run --quiet --bin mriya-bench -- validate "$(BENCH_RECORDS)"
 
 bench-report: check-build-tools ## Price a benchmark campaign against a dated price sheet
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
-		$(CARGO) run --quiet --bin mriya-bench -- report $(BENCH_RECORDS) \
-		--price-sheet $(BENCH_PRICE_SHEET)
+		$(CARGO) run --quiet --bin mriya-bench -- report "$(BENCH_RECORDS)" \
+		--price-sheet "$(BENCH_PRICE_SHEET)"
 
 bench-campaign: check-build-tools ## Run a PAID benchmark campaign (requires explicit opt-in and limits)
 	@test -n "$(BENCH_CAMPAIGN)" || \
 		(echo "set BENCH_CAMPAIGN to a campaign file; see benchmarks/campaign.example.toml" && exit 1)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
 		$(CARGO) run --quiet --bin mriya-bench -- run \
-		--campaign $(BENCH_CAMPAIGN) --out $(BENCH_RESULTS)
+		--campaign "$(BENCH_CAMPAIGN)" --out "$(BENCH_RESULTS)"
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
 	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor
