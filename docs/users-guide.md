@@ -81,10 +81,13 @@ the provided command over SSH. Output streams live to the local terminal using
 the system `ssh` client and the configured `rsync` binary. When teardown
 succeeds, the CLI exits with the remote command's status code; a teardown
 failure exits with the teardown error instead. Two less common cases are
-different. A remote command killed by a signal is reported by OpenSSH as exit
-status 255, and Mriya returns 255 unchanged. If the local `ssh` process itself
-ends without an exit status — for example, because a signal terminates it —
-Mriya exits with code 1 and reports the missing status.
+different. When a remote command is killed by a signal, the status depends on
+how the remote shell ran it: with the default cache-routing preamble the shell
+forks and reports 128 plus the signal number (143 for `SIGTERM`, 139 for
+`SIGSEGV`), and Mriya returns that unchanged; when the shell instead replaces
+itself with the command, OpenSSH reports 255, and Mriya returns 255. If the
+local `ssh` process itself ends without an exit status — for example, because a
+signal terminates it — Mriya exits with code 1 and reports the missing status.
 
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:

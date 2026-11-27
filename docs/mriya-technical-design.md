@@ -223,8 +223,9 @@ provisioning) that will guide subsequent optimizations.
 - Preserve remote exit codes verbatim in `mriya run`; when the local `ssh`
   process ends without a status (for example, because a signal terminates it),
   exit with code 1 and surface the missing status to the user. A remote command
-  killed by a signal is reported by OpenSSH as status 255 and is returned
-  unchanged.
+  killed by a signal is reported as 128 plus the signal number when the remote
+  shell forks (as it does with the default cache-routing preamble), and as 255
+  when the shell replaces itself with the command; both are returned unchanged.
 - Load Scaleway and sync configuration via `ortho-config` defaults, config
   files, and environment variables without consuming unrelated CLI flags from
   `mriya run` itself.
