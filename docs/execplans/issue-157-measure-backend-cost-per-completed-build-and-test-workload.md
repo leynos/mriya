@@ -280,9 +280,17 @@ from `make test` or CI.
   reported as uncertain allocations, bounded forwarder cleanup, the Block
   Storage comment and source, and upper-bound labelling for a windowed start
   allowance.
-- [x] 2026-11-27: `make test` passes on the final tree: 695 tests and the
+- [x] 2026-11-27: `make test` passes on the final tree: 696 tests and the
   doctests.
-- [ ] Draft pull request opened.
+- [x] 2026-11-27: Draft pull request #283 opened and linked to the Lody
+  session.
+- [x] 2026-11-27: Rebased onto `origin/main` at `c903234` from the exclusive
+  boundary `200563a`, with no conflicts. The two new `main` commits bump the
+  nightly toolchain to 2026-11-26 and the shared GitHub Actions, and introduce
+  no shared helper or pattern the benchmark needs. All 20 branch commits
+  replayed unchanged (`range-diff` reports `=` throughout), and
+  `make check-fmt`, `make typecheck`, `make test` (696 tests plus doctests) and
+  `make lint` pass on the rebased result.
 
 ## Surprises & Discoveries
 
@@ -362,6 +370,10 @@ from `make test` or CI.
   port is shared with future adapters.
 - Keep the paid route out of every aggregate Make goal, because a default goal
   that can spend money is a hazard regardless of how it is guarded.
+- Rebase onto `main` rather than merging it: the branch is linear and shares
+  its whole base with `main`, so a replay keeps the reviewed commit series and
+  leaves no merge commit to explain. Recovery refs preserve the pre-rebase
+  head, boundary and target until the rebased branch is accepted.
 
 ## Outcomes & Retrospective
 
