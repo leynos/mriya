@@ -123,6 +123,26 @@ fn a_cache_whose_listing_failed_is_a_probe_error_rather_than_an_empty_cache() {
 }
 
 #[test]
+fn an_unrecognized_cache_mounted_value_is_a_probe_error() {
+    let report = concat!(
+        "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\n",
+        "cache_mounted=unreadable\ncache_bytes=0\ncache_total_bytes=0\ncache_entries=0\n",
+        "rustc=rustc 1.93.0\ncargo=cargo 1.93.0\n",
+    );
+    let error = parse_probe_report(report).expect_err("only 0 and 1 are valid");
+    assert!(
+        matches!(
+            error,
+            ProbeError::NotANumber {
+                probe: "cache_mounted",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_combined_probe_report_rejects_an_unreadable_cache_listing() {
     let report = concat!(
         "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\n",

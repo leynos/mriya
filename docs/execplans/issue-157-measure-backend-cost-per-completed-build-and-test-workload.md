@@ -270,9 +270,19 @@ from `make test` or CI.
   exclude, plan-baseline validation, zero-granularity rejection on the billed
   path, residual identifiers for a reason-only doubt, warm-ups excluded from
   comparability, and the remaining documentation, ordering, and test fixes.
-- [x] 2026-11-27: `make test` passes on the final tree: 674 nextest tests and
-  the doctests.
-- [ ] Confirmation CodeRabbit review cleared and draft pull request opened.
+- [x] 2026-11-27: Confirmation CodeRabbit review produced 14 findings (and one
+  unverified finding). All verified findings were addressed: per-attempt
+  flushing, no residual record for a resource-free failure, collision-resistant
+  lock names, untracked files included in the tree pin, warm-ups excluded from
+  the repetition warning, `cache_mounted` validation, execution statistics
+  restricted to measured phases, exact plan allowance accounting, teardown
+  excluded from the enclosing phase, definite provider rejections no longer
+  reported as uncertain allocations, bounded forwarder cleanup, the Block
+  Storage comment and source, and upper-bound labelling for a windowed start
+  allowance.
+- [x] 2026-11-27: `make test` passes on the final tree: 695 tests and the
+  doctests.
+- [ ] Draft pull request opened.
 
 ## Surprises & Discoveries
 

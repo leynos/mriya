@@ -137,7 +137,18 @@ pub fn parse_probe_report(output: &str) -> Result<ProbeReport, ProbeError> {
         cpu_count: parse_u32("cpu", facts.required("cpu")?)?,
         memory_bytes: parse_unsigned("mem", facts.required("mem")?)?,
         disk_bytes: parse_unsigned("disk", facts.required("disk")?)?,
-        cache_mounted: facts.required("cache_mounted")?.trim() == "1",
+        cache_mounted: match facts.required("cache_mounted")?.trim() {
+            // Only the two documented answers are accepted; anything else is
+            // a probe failure rather than an implied "not mounted".
+            "0" => false,
+            "1" => true,
+            found => {
+                return Err(ProbeError::NotANumber {
+                    probe: "cache_mounted",
+                    found: truncate(found),
+                });
+            }
+        },
         cache_bytes: parse_unsigned("cache_bytes", facts.required("cache_bytes")?)?,
         cache_total_bytes: parse_unsigned(
             "cache_total_bytes",
