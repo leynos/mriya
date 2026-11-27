@@ -79,11 +79,17 @@ fn parse(text: &str) -> Result<Vec<Fence>, String> {
     while let Some((index, line)) = lines.next() {
         let line_number = index + 1;
         if let Some(id) = marker_id(line, line_number, &mut ids)? {
-            pending = Some(id);
+            if let Some(orphan) = pending.replace(id) {
+                return Err(format!("example {orphan} has a marker but no fence"));
+            }
             continue;
         }
         let Some(opening) = delimiter(line) else {
-            pending = pending.filter(|_| line.trim().is_empty());
+            if !line.trim().is_empty()
+                && let Some(orphan) = pending.take()
+            {
+                return Err(format!("example {orphan} has a marker but no fence"));
+            }
             continue;
         };
         let trimmed = line.trim_start();

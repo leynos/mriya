@@ -187,10 +187,14 @@ impl ScalewayBackend {
                 Some(_) => {}
             }
 
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            sleep(self.poll_interval.min(remaining)).await;
             if Instant::now() >= deadline {
                 break;
             }
-            sleep(self.poll_interval).await;
         }
 
         Err(ScalewayBackendError::Timeout {
@@ -242,12 +246,13 @@ impl ScalewayBackend {
         // A transport error, a failed body read or an unparsable success body
         // all leave the outcome unknown: the server may exist. Reconcile it
         // before reporting, so a retry does not leak a server.
-        let response = match super::HTTP_CLIENT
-            .post(&url)
-            .header("X-Auth-Token", &self.config.secret_key)
-            .json(&payload)
-            .send()
-            .await
+        let response = match super::http::send_raw(
+            super::HTTP_CLIENT
+                .post(&url)
+                .header("X-Auth-Token", &self.config.secret_key)
+                .json(&payload),
+        )
+        .await
         {
             Ok(response) => response,
             Err(err) => {
@@ -279,14 +284,37 @@ impl ScalewayBackend {
             return Ok(parsed.server);
         }
 
-        let message = String::from_utf8_lossy(&body).into_owned();
-        if let Ok(api_err) = serde_json::from_slice::<scaleway_rs::ScalewayApiError>(&body)
+        self.create_failure(request, &name, (&status, &body)).await
+    }
+
+    /// Maps a non-success create response to its typed error.
+    async fn create_failure(
+        &self,
+        request: &InstanceRequest,
+        name: &str,
+        response: (&reqwest::StatusCode, &[u8]),
+    ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
+        let (status, body) = response;
+        let message = String::from_utf8_lossy(body).into_owned();
+        if let Ok(api_err) = serde_json::from_slice::<scaleway_rs::ScalewayApiError>(body)
             && Self::is_instance_type_error(&api_err, request)
         {
             return Err(ScalewayBackendError::InstanceTypeUnavailable {
                 instance_type: request.instance_type.clone(),
                 zone: request.zone.clone(),
             });
+        }
+
+        // A 5xx can follow a server that was created before the gateway
+        // failed, so it is ambiguous; a 4xx is a definite rejection.
+        if status.is_server_error() {
+            return self
+                .fail_ambiguous_create(
+                    request,
+                    name,
+                    format!("create returned {status}: {message}"),
+                )
+                .await;
         }
 
         Err(ScalewayBackendError::Provider { message })
@@ -323,9 +351,9 @@ impl ScalewayBackend {
         project_id: &str,
         name: &str,
     ) -> Result<(), ScalewayBackendError> {
-        for server in self.find_instances_named(zone, project_id, name).await? {
+        for id in self.find_instances_named(zone, project_id, name).await? {
             let handle = InstanceHandle {
-                id: server.id,
+                id,
                 zone: zone.to_owned(),
             };
             Backend::destroy(self, handle).await?;

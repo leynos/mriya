@@ -38,6 +38,25 @@ struct ListInstancesResponse {
     servers: Vec<ScalewayInstance>,
 }
 
+/// Identity-only server projection used for create reconciliation.
+///
+/// The full SDK type requires every unrelated field to decode, so a single
+/// unexpected value could hide a server that must be removed.
+#[derive(Deserialize)]
+struct ServerIdentity {
+    /// Provider server identifier.
+    id: String,
+    /// Generated server name, used for an exact-match check.
+    name: String,
+}
+
+/// Page of identity-only server records.
+#[derive(Deserialize)]
+struct ListServerIdentities {
+    /// Servers on this page.
+    servers: Vec<ServerIdentity>,
+}
+
 #[derive(Deserialize)]
 struct GetInstanceResponse {
     server: ScalewayInstance,
@@ -160,7 +179,7 @@ impl ScalewayBackend {
         zone: &str,
         project_id: &str,
         name: &str,
-    ) -> Result<Vec<ScalewayInstance>, ScalewayBackendError> {
+    ) -> Result<Vec<String>, ScalewayBackendError> {
         let url = format!("{}/zones/{zone}/servers", self.instance_api_base);
         let mut found = Vec::new();
         let mut page = 1_u64;
@@ -174,7 +193,7 @@ impl ScalewayBackend {
             )
             .await?;
             let result = response
-                .json::<ListInstancesResponse>()
+                .json::<ListServerIdentities>()
                 .await
                 .map_err(|error| request_error(&error))?;
             if result.servers.is_empty() {
@@ -187,7 +206,8 @@ impl ScalewayBackend {
                 result
                     .servers
                     .into_iter()
-                    .filter(|server| server.name == name),
+                    .filter(|server| server.name == name)
+                    .map(|server| server.id),
             );
             page += 1;
         }

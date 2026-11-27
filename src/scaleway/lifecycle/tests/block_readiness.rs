@@ -135,6 +135,7 @@ async fn wait_for_volume_status_fails_on_the_error_state() -> Result<()> {
         ScalewayBackendError::VolumeUnavailable {
             volume_id: String::from("11111111-1111-1111-1111-111111111111"),
             status: String::from("error"),
+            guidance: String::from("inspect the provider failure before retrying"),
         }
     );
     Ok(())

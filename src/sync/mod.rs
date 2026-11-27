@@ -11,6 +11,7 @@ use crate::backend::InstanceNetworking;
 
 mod config;
 mod remote_command;
+mod ssh;
 mod types;
 mod util;
 
@@ -126,98 +127,6 @@ impl<R: CommandRunner> Syncer<R> {
         self.config.remote_destination(networking)
     }
 
-    /// Executes `remote_command` over SSH and returns the remote exit code.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any failure to spawn or execute the SSH command from the
-    /// configured [`CommandRunner`].
-    ///
-    /// # Security
-    ///
-    /// `remote_command` is not escaped; only the working directory component is
-    /// shell-escaped. Ensure any caller-provided arguments are validated or
-    /// quoted upstream.
-    pub fn run_remote(
-        &self,
-        networking: &InstanceNetworking,
-        remote_command: &str,
-    ) -> Result<RemoteCommandOutput, SyncError> {
-        self.run_remote_with_cache(networking, remote_command, &CacheRouting::Unconfigured)
-    }
-
-    /// Executes `remote_command` over SSH with the requested cache routing.
-    ///
-    /// A caller that attached a configured cache passes
-    /// [`CacheRouting::Required`] with the device it verified. The preamble
-    /// then fails closed when the path's source is no longer that device, so
-    /// build output cannot be silently redirected onto the root filesystem. A
-    /// run without a configured cache keeps the guarded historical preamble.
-    ///
-    /// # Parameters
-    ///
-    /// - `networking`: public address and SSH port of the instance.
-    /// - `remote_command`: command to execute after the optional cache prefix.
-    /// - `routing`: whether the command requires a verified cache mount.
-    ///
-    /// # Returns
-    ///
-    /// The remote exit code and captured streams.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any failure to spawn or execute the SSH command.
-    ///
-    /// # Security
-    ///
-    /// `remote_command` is not escaped; only the working directory component is
-    /// shell-escaped. Ensure any caller-provided arguments are validated or
-    /// quoted upstream.
-    pub fn run_remote_with_cache(
-        &self,
-        networking: &InstanceNetworking,
-        remote_command: &str,
-        routing: &CacheRouting,
-    ) -> Result<RemoteCommandOutput, SyncError> {
-        let remote_cmd_wrapped = self.build_remote_command(remote_command, routing);
-        self.execute_ssh(networking, &remote_cmd_wrapped)
-    }
-
-    /// Executes `remote_command` over SSH without applying the working
-    /// directory prefix or cache routing preamble.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any failure to spawn or execute the SSH command from the
-    /// configured [`CommandRunner`].
-    ///
-    /// # Security
-    ///
-    /// `remote_command` is passed verbatim to the SSH client. Ensure any
-    /// caller-provided arguments are validated or quoted upstream.
-    pub fn run_remote_raw(
-        &self,
-        networking: &InstanceNetworking,
-        remote_command: &str,
-    ) -> Result<RemoteCommandOutput, SyncError> {
-        self.execute_ssh(networking, remote_command)
-    }
-
-    fn execute_ssh(
-        &self,
-        networking: &InstanceNetworking,
-        command: &str,
-    ) -> Result<RemoteCommandOutput, SyncError> {
-        let args = self.build_ssh_args(networking, command, &DefaultEnv)?;
-        let output = self.runner.run(&self.config.ssh_bin, &args)?;
-
-        Ok(RemoteCommandOutput {
-            exit_code: output.code,
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })
-    }
-
     fn build_rsync_args(
         &self,
         source: &Utf8Path,
@@ -232,11 +141,26 @@ impl<R: CommandRunner> Syncer<R> {
         let mut args = vec![
             OsString::from("-az"),
             OsString::from("--delete"),
-            OsString::from("--one-file-system"),
             OsString::from("--filter=:- .gitignore"),
             OsString::from("--exclude"),
             OsString::from(".git/"),
         ];
+        // A cache mounted inside the workspace must not be descended into or
+        // have its entries deleted, but the rest of the project must still
+        // transfer normally.
+        let workspace = format!("{}/", self.config.remote_path.trim_end_matches('/'));
+        if let Some(relative) = self
+            .config
+            .volume_mount_path
+            .strip_prefix(&workspace)
+            .filter(|relative| !relative.is_empty())
+        {
+            args.push(OsString::from("--exclude"));
+            args.push(OsString::from(format!(
+                "/{}",
+                relative.trim_end_matches('/')
+            )));
+        }
 
         match destination {
             SyncDestination::Remote {

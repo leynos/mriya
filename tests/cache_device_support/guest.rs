@@ -226,7 +226,13 @@ impl<'a> StateFile<'a> {
             | Self::SignatureType(value)
             | Self::SignaturePartitionTable(value)
             | Self::SignatureUuid(value)
-            | Self::ChownExit(value) => format!("{value}\n"),
+            | Self::ChownExit(value) => {
+                if value.ends_with('\n') {
+                    (*value).to_owned()
+                } else {
+                    format!("{value}\n")
+                }
+            }
         }
     }
 }

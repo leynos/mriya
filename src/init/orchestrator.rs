@@ -105,7 +105,16 @@ where
         {
             Ok(path) => path,
             Err(error) => {
-                return Err(self.rollback(&volume, None, InitError::Config(error)).await);
+                let init_error = InitError::Config(error);
+                // A configuration that was renamed but not flushed may already
+                // name the new volume, so deleting it would leave a stale ID.
+                if matches!(
+                    init_error,
+                    InitError::Config(ConfigStoreError::NotDurable { .. })
+                ) {
+                    return Err(init_error);
+                }
+                return Err(self.rollback(&volume, None, init_error).await);
             }
         };
 

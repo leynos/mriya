@@ -174,6 +174,7 @@ impl ScalewayBackend {
             return Err(ScalewayBackendError::VolumeUnavailable {
                 volume_id: target.volume_id.to_owned(),
                 status: state.status.to_string(),
+                guidance: String::from("wait until it is 'available' before using it as a cache"),
             });
         }
         Ok(())
@@ -309,22 +310,28 @@ fn check_attached(
 
 /// Builds a runnable command, or a lookup instruction, for the attachment.
 fn detach_hint(state: &crate::volume::VolumeState, target: &PreflightTarget<'_>) -> String {
-    state
+    if let Some(reference) = state
         .references
         .iter()
         .find(|reference| reference.resource_type.contains("server"))
-        .map_or_else(
-            || {
-                format!(
-                    "find the attaching server with `scw instance server list zone={}` and detach volume {}",
-                    target.zone, target.volume_id
-                )
-            },
-            |reference| {
-                format!(
-                    "detach it with `scw instance server detach-volume server-id={} volume-id={} zone={}`",
-                    reference.resource_id, target.volume_id, target.zone
-                )
-            },
-        )
+    {
+        return format!(
+            "detach it with `scw instance server detach-volume server-id={} volume-id={} zone={}`",
+            reference.resource_id, target.volume_id, target.zone
+        );
+    }
+    state.references.first().map_or_else(
+        || {
+            format!(
+                "find the attaching resource with `scw block volume get {} zone={}`",
+                target.volume_id, target.zone
+            )
+        },
+        |reference| {
+            format!(
+                "volume {} is attached to {}:{} in zone {}; inspect that resource to detach it",
+                target.volume_id, reference.resource_type, reference.resource_id, target.zone
+            )
+        },
+    )
 }

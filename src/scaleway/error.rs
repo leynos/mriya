@@ -145,14 +145,14 @@ pub enum ScalewayBackendError {
         recovery: String,
     },
     /// Raised when a volume exists but is not in the `available` status.
-    #[error(
-        "volume {volume_id} is in status '{status}'; wait until it is 'available' before using it as a cache"
-    )]
+    #[error("volume {volume_id} is in status '{status}'; {guidance}")]
     VolumeUnavailable {
         /// Volume identifier that was not ready.
         volume_id: String,
         /// Status observed when the volume was rejected.
         status: String,
+        /// Recovery instruction appropriate to the status.
+        guidance: String,
     },
     /// Raised when a volume never reaches the expected status.
     #[error(

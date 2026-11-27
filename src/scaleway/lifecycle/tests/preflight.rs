@@ -80,6 +80,7 @@ impl PreflightCase {
             Self::Creating => ScalewayBackendError::VolumeUnavailable {
                 volume_id: String::from(CACHE_ID),
                 status: String::from("creating"),
+                guidance: String::from("wait until it is 'available' before using it as a cache"),
             },
         }
     }

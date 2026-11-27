@@ -248,7 +248,7 @@ pub fn parse_report(stdout: &str) -> Result<CacheDeviceReport, CacheDeviceParseE
         .rev()
         .find_map(|candidate| candidate.trim_start().strip_prefix(PATH_PREFIX))
     {
-        fields.insert(String::from("PATH"), path.trim_end().to_owned());
+        fields.insert(String::from("PATH"), path.to_owned());
     }
 
     Ok(CacheDeviceReport {
@@ -327,6 +327,16 @@ mod path_tests {
         ))
         .expect("status line parses");
         assert_eq!(report.path(), Some("/srv/build cache"));
+    }
+
+    #[test]
+    fn the_path_line_preserves_a_trailing_space() {
+        let report = parse_report(concat!(
+            "MRIYA_CACHE_PATH=/srv/cache \n",
+            "MRIYA_CACHE_STATUS=verified DEVICE=/dev/sdb\n",
+        ))
+        .expect("status line parses");
+        assert_eq!(report.path(), Some("/srv/cache "));
     }
 
     #[test]

@@ -234,6 +234,11 @@ To enable the cache volume:
 - `sbs_5k` (default) — up to 5,000 IOPS.
 - `sbs_15k` — up to 15,000 IOPS.
 
+Scaleway requires an instance with at least 3 GiB/s of block bandwidth to use
+`sbs_15k`. `mriya init` does not check the configured formatter instance type
+against that requirement, so choose an instance type that meets it before
+selecting the tier.
+
 Select the tier with `MRIYA_INIT_VOLUME_TIER` or `[init].volume_tier` in
 `mriya.toml`:
 

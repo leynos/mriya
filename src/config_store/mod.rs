@@ -5,6 +5,7 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 use ortho_config::{ConfigDiscovery, toml};
 use thiserror::Error;
 
+mod access;
 mod read;
 mod write;
 
@@ -78,6 +79,14 @@ pub enum ConfigStoreError {
     )]
     GroupChanged {
         /// Configuration path whose group would change.
+        path: Utf8PathBuf,
+    },
+    /// Raised when the written configuration could not be flushed to disk.
+    #[error(
+        "the configuration at {path} was written but could not be flushed to disk; verify it before relying on the new volume ID"
+    )]
+    NotDurable {
+        /// Configuration path that may not be durable.
         path: Utf8PathBuf,
     },
     /// Raised when native ACLs cannot be preserved on this platform.

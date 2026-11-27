@@ -156,6 +156,20 @@ pub(super) struct VolumePollSettings {
     pub(super) wait_timeout: Duration,
 }
 
+/// Builds the error for a status that can never become `available`.
+fn terminal_volume_error(volume_id: &str, status: &VolumeStatus) -> Option<ScalewayBackendError> {
+    let guidance = match status {
+        VolumeStatus::Deleted => "create a replacement volume; this one cannot become available",
+        VolumeStatus::Error => "inspect the provider failure before retrying",
+        _ => return None,
+    };
+    Some(ScalewayBackendError::VolumeUnavailable {
+        volume_id: volume_id.to_owned(),
+        status: status.to_string(),
+        guidance: String::from(guidance),
+    })
+}
+
 /// Polls `fetch` until the volume reports `expected` or a terminal state.
 ///
 /// Keeping the loop separate from the HTTP call lets unit tests drive the
@@ -188,11 +202,8 @@ where
         if state.status == *expected {
             return Ok(state);
         }
-        if matches!(state.status, VolumeStatus::Error | VolumeStatus::Deleted) {
-            return Err(ScalewayBackendError::VolumeUnavailable {
-                volume_id: volume_id.to_owned(),
-                status: state.status.to_string(),
-            });
+        if let Some(error) = terminal_volume_error(volume_id, &state.status) {
+            return Err(error);
         }
 
         last_status = state.status.to_string();

@@ -61,12 +61,18 @@ fn last_arg(invocation: &CommandInvocation) -> Option<String> {
 /// Matching the payload rather than "anything that is not the mount" is what
 /// makes the ordering assertions meaningful: a run that skipped the remote
 /// command would otherwise still produce an `OtherSsh` tail and pass.
+/// Reports whether this invocation runs SSH, directly or through `timeout`.
+fn is_ssh_invocation(invocation: &CommandInvocation, ssh_bin: &str) -> bool {
+    invocation.program == ssh_bin
+        || (invocation.program == "timeout" && invocation.args.iter().any(|arg| arg == ssh_bin))
+}
+
 pub(super) fn classify_invocation(
     invocation: &CommandInvocation,
     ssh_bin: &str,
     command: &str,
 ) -> InvocationRole {
-    if invocation.program != ssh_bin {
+    if !is_ssh_invocation(invocation, ssh_bin) {
         return InvocationRole::Rsync;
     }
     let Some(payload) = last_arg(invocation) else {
@@ -82,14 +88,21 @@ pub(super) fn classify_invocation(
         InvocationRole::Mount
     } else if payload.contains("MRIYA_CACHE_STATUS=unmounted") {
         InvocationRole::Unmount
-    } else if payload.contains("sudo mkdir -p") && payload.contains("cargo") {
-        // The production cache-directory command always runs `sudo mkdir -p`
-        // over the cache paths; a requested command such as
-        // `mkdir -p build && cargo test` must stay the remote command.
+    } else if is_cache_directory_payload(&payload) {
         InvocationRole::CacheDirectories
     } else {
         InvocationRole::OtherSsh
     }
+}
+
+/// Reports whether `payload` is the automatic cache-directory command.
+///
+/// The production command names cache subdirectories that no ordinary build
+/// command uses; a requested command such as `mkdir -p /mriya/cargo` is
+/// matched as the remote command first and never reaches this check.
+fn is_cache_directory_payload(payload: &str) -> bool {
+    payload.contains("sudo mkdir -p")
+        && (payload.contains("/rustup") || payload.contains("/pnpm/store"))
 }
 
 /// Classifies every recorded invocation for the scenario's requested command.
@@ -224,7 +237,7 @@ fn cloud_init_checked_before_remote_command(
         .runner
         .invocations()
         .into_iter()
-        .filter(|invocation| invocation.program == ssh_bin)
+        .filter(|invocation| is_ssh_invocation(invocation, ssh_bin))
         .collect::<Vec<_>>();
 
     let cloud_init_index = ssh_invocations.iter().position(is_cloud_init_check);

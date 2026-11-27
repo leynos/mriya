@@ -146,6 +146,10 @@ where
         networking: &InstanceNetworking,
         volume_id: &str,
     ) -> Result<String, RunError<B::Error>> {
+        let context = StepContext {
+            instance,
+            networking,
+        };
         let config = self.syncer.config();
         let mount_path = config.volume_mount_path.clone();
         let script = cache_device::mount_script(volume_id, &mount_path, &config.ssh_user);
@@ -153,13 +157,8 @@ where
         let output = match self.syncer.run_remote_raw(networking, &script) {
             Ok(output) => output,
             Err(err) => {
-                let message = self
-                    .teardown_with_note(instance, Some(networking), &err)
-                    .await;
-                return Err(RunError::CacheMount {
-                    message,
-                    source: Some(err),
-                });
+                let message = err.to_string();
+                return Err(self.cache_failure(context, message, Some(err)).await);
             }
         };
 
@@ -167,13 +166,7 @@ where
             Ok(report) => report,
             Err(error) => {
                 let failure = format!("cache mount script produced no usable status: {error}");
-                let message = self
-                    .teardown_with_note(instance, Some(networking), &failure)
-                    .await;
-                return Err(RunError::CacheMount {
-                    message,
-                    source: None,
-                });
+                return Err(self.cache_failure(context, failure, None).await);
             }
         };
 
@@ -182,24 +175,12 @@ where
                 "cache volume {volume_id} was not verified: {}",
                 report.describe()
             );
-            let message = self
-                .teardown_with_note(instance, Some(networking), &failure)
-                .await;
-            return Err(RunError::CacheMount {
-                message,
-                source: None,
-            });
+            return Err(self.cache_failure(context, failure, None).await);
         }
         let Some(device) = report.device() else {
             let failure =
                 format!("cache volume {volume_id} was verified without reporting a device");
-            let message = self
-                .teardown_with_note(instance, Some(networking), &failure)
-                .await;
-            return Err(RunError::CacheMount {
-                message,
-                source: None,
-            });
+            return Err(self.cache_failure(context, failure, None).await);
         };
         let verified_device = device.to_owned();
 
@@ -208,19 +189,30 @@ where
                 path: &mount_path,
                 device: &verified_device,
             };
-            self.create_cache_directories(instance, networking, &target)
-                .await?;
+            self.create_cache_directories(context, &target).await?;
         }
 
         Ok(verified_device)
+    }
+
+    /// Tears down after a cache failure and returns the typed error.
+    async fn cache_failure(
+        &self,
+        context: StepContext<'_>,
+        failure: String,
+        source: Option<crate::sync::SyncError>,
+    ) -> RunError<B::Error> {
+        let message = self
+            .teardown_with_note(context.instance, Some(context.networking), &failure)
+            .await;
+        RunError::CacheMount { message, source }
     }
 
     /// Creates the cache subdirectories and requires the remote command to
     /// succeed.
     async fn create_cache_directories(
         &self,
-        instance: ProvisionedInstance<'_>,
-        networking: &InstanceNetworking,
+        context: StepContext<'_>,
         target: &MountTarget<'_>,
     ) -> Result<(), RunError<B::Error>> {
         let MountTarget { path, device } = *target;
@@ -237,16 +229,11 @@ where
             device = escape(device.into()),
             create = create_cache_directories_command(path)
         );
-        let output = match self.syncer.run_remote_raw(networking, &command) {
+        let output = match self.syncer.run_remote_raw(context.networking, &command) {
             Ok(output) => output,
             Err(err) => {
-                let message = self
-                    .teardown_with_note(instance, Some(networking), &err)
-                    .await;
-                return Err(RunError::CacheMount {
-                    message,
-                    source: Some(err),
-                });
+                let message = err.to_string();
+                return Err(self.cache_failure(context, message, Some(err)).await);
             }
         };
         if output.exit_code == Some(0) {
@@ -258,13 +245,7 @@ where
             output.exit_code,
             output.stderr.trim()
         );
-        let message = self
-            .teardown_with_note(instance, Some(networking), &failure)
-            .await;
-        Err(RunError::CacheMount {
-            message,
-            source: None,
-        })
+        Err(self.cache_failure(context, failure, None).await)
     }
 
     /// Polls for cloud-init's `boot-finished` marker until it appears or the
@@ -290,18 +271,22 @@ where
             let budget_seconds = remaining.as_secs().max(1);
             let command =
                 format!("timeout {budget_seconds} sudo test -f {cloud_init_finished_marker}");
-            let finished = match self.syncer.run_remote(context.networking, &command) {
-                Ok(output) => matches!(output.exit_code, Some(0)),
-                Err(err) => {
-                    let message = self
-                        .teardown_with_note(context.instance, Some(context.networking), &err)
-                        .await;
-                    return Err(RunError::Provisioning {
-                        message,
-                        source: err,
-                    });
-                }
-            };
+            let finished =
+                match self
+                    .syncer
+                    .run_remote_with_timeout(context.networking, &command, remaining)
+                {
+                    Ok(output) => matches!(output.exit_code, Some(0)),
+                    Err(err) => {
+                        let message = self
+                            .teardown_with_note(context.instance, Some(context.networking), &err)
+                            .await;
+                        return Err(RunError::Provisioning {
+                            message,
+                            source: err,
+                        });
+                    }
+                };
 
             if finished {
                 return Ok(());

@@ -58,6 +58,17 @@ pub(super) fn read_config_if_present(path: &Utf8Path) -> Result<Option<String>, 
             path: parent.to_path_buf(),
             message: err.to_string(),
         })?;
+    // A link can point outside the confined directory, in which case the read
+    // fails generically; report the link itself so the user knows to point the
+    // configuration path at the real file.
+    if dir
+        .symlink_metadata(file_name)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(ConfigStoreError::Symlinked {
+            path: path.to_path_buf(),
+        });
+    }
     match dir.read_to_string(file_name) {
         Ok(contents) => Ok(Some(contents)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
