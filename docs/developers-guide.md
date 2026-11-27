@@ -446,7 +446,6 @@ without changing behaviour, and each publishes only what its parent needs:
   these functions therefore means editing that list too, or its mutants start
   surviving as unrecorded gaps rather than recorded exceptions.
 
-<<<<<<< HEAD
 ## Lint baseline
 
 The authoritative lint configuration lives in two files; this section does not
