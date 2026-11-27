@@ -49,31 +49,54 @@ fn refusal(
     resolve(request, product, image).expect_err("the request should have been refused")
 }
 
-/// Asserts that `error` reports `size_bytes` as out of bounds.
-fn assert_out_of_bounds(error: &ScalewayBackendError, size_bytes: u64) {
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::BootVolumeSizeOutOfBounds {
-                size_bytes: observed,
-                ..
-            } if *observed == size_bytes
-        ),
-        "expected an out-of-bounds refusal for {size_bytes} bytes, got {error:?}"
-    );
+/// The rule a refusal names, reduced to the values the tests compare.
+///
+/// Classifying once keeps every case to one assertion, and keeps the
+/// comparison tables readable without a helper per error variant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Refusal {
+    /// The size fell outside the accepted range.
+    OutOfBounds {
+        /// The size that was refused, in bytes.
+        size_bytes: u64,
+    },
+    /// The storage type is not available for this instance type or image.
+    TypeUnavailable {
+        /// The storage type that was refused.
+        volume_type: BootVolumeType,
+    },
+    /// Any other refusal, named by its rendered message.
+    Other(String),
 }
 
-/// Asserts that `error` reports `volume_type` as unavailable.
-fn assert_type_unavailable(error: &ScalewayBackendError, volume_type: BootVolumeType) {
-    assert!(
-        matches!(
-            error,
-            ScalewayBackendError::BootVolumeTypeUnavailable {
-                volume_type: observed,
-                ..
-            } if *observed == volume_type
-        ),
-        "expected a type-unavailable refusal for {volume_type}, got {error:?}"
+impl Refusal {
+    /// Classifies `error`.
+    ///
+    /// For example, a bounds refusal yields
+    /// [`Refusal::OutOfBounds`] carrying the refused size.
+    fn of(error: &ScalewayBackendError) -> Self {
+        match error {
+            ScalewayBackendError::BootVolumeSizeOutOfBounds { size_bytes, .. } => {
+                Self::OutOfBounds {
+                    size_bytes: *size_bytes,
+                }
+            }
+            ScalewayBackendError::BootVolumeTypeUnavailable { volume_type, .. } => {
+                Self::TypeUnavailable {
+                    volume_type: *volume_type,
+                }
+            }
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+/// Asserts that `error` is the refusal described by `expected`.
+fn assert_refusal(error: &ScalewayBackendError, expected: &Refusal) {
+    assert_eq!(
+        Refusal::of(error),
+        *expected,
+        "unexpected refusal: {error:?}"
     );
 }
 
@@ -97,28 +120,45 @@ fn explicit_plan_inside_bounds_is_accepted(
     );
 }
 
-/// A size above the instance type's range is refused, naming the range.
-#[test]
-fn explicit_size_above_the_range_is_refused() {
-    let error = refusal(
-        request(BootVolumeType::Local, 41),
-        &dual_product(),
-        local_image(),
-    );
+/// Each refusal row states one rule and the refusal it must name.
+///
+/// The rows share a shape — a request, a catalogue entry, an image, and the
+/// expected refusal — so they are one table rather than four near-identical
+/// tests. A rule that fires for the wrong case fails its own row.
+#[rstest]
+#[case::above_range(
+    request(BootVolumeType::Local, 41),
+    dual_product(),
+    local_image(),
+    Refusal::OutOfBounds { size_bytes: 41_000_000_000 },
+)]
+#[case::below_range(
+    request(BootVolumeType::Local, 19),
+    dual_product(),
+    local_image(),
+    Refusal::OutOfBounds { size_bytes: 19_000_000_000 },
+)]
+#[case::no_local_storage(
+    request(BootVolumeType::Local, 20),
+    product("x86_64", general_range(), None, Some(true)),
+    local_image(),
+    Refusal::TypeUnavailable { volume_type: BootVolumeType::Local },
+)]
+#[case::no_block_storage(
+    request(BootVolumeType::Sbs, 20),
+    product("x86_64", general_range(), Some(local_range()), Some(false)),
+    sbs_image(),
+    Refusal::TypeUnavailable { volume_type: BootVolumeType::Sbs },
+)]
+fn a_refused_request_names_its_rule(
+    #[case] request: BootVolumeRequest,
+    #[case] product: crate::scaleway::lifecycle::products::ProductServerType,
+    #[case] image: crate::scaleway::lifecycle::boot_plan::ImageFacts<'static>,
+    #[case] expected: Refusal,
+) {
+    let error = refusal(request, &product, image);
 
-    assert_out_of_bounds(&error, 41_000_000_000);
-}
-
-/// A size below the instance type's range is refused.
-#[test]
-fn explicit_size_below_the_range_is_refused() {
-    let error = refusal(
-        request(BootVolumeType::Local, 19),
-        &dual_product(),
-        local_image(),
-    );
-
-    assert_out_of_bounds(&error, 19_000_000_000);
+    assert_refusal(&error, &expected);
 }
 
 /// A size smaller than the image cannot hold the operating system, even when
@@ -146,21 +186,6 @@ fn explicit_size_below_the_image_is_refused() {
     );
 }
 
-/// Requesting local storage on a type that offers none is refused, even when
-/// the size would otherwise fit.
-#[test]
-fn local_request_on_a_type_without_local_storage_is_refused() {
-    let catalogue = product("x86_64", general_range(), None, Some(true));
-
-    let error = refusal(
-        request(BootVolumeType::Local, 20),
-        &catalogue,
-        local_image(),
-    );
-
-    assert_type_unavailable(&error, BootVolumeType::Local);
-}
-
 /// Requesting local storage on an SBS-only image is refused, naming the image's
 /// own type.
 #[test]
@@ -175,16 +200,6 @@ fn local_request_on_an_sbs_image_is_refused() {
         panic!("expected a type-unavailable error, got {error:?}");
     };
     assert!(reason.contains("sbs_snapshot"), "{reason}");
-}
-
-/// Requesting Block Storage on a type that advertises none is refused.
-#[test]
-fn sbs_request_on_a_type_without_block_storage_is_refused() {
-    let catalogue = product("x86_64", general_range(), Some(local_range()), Some(false));
-
-    let error = refusal(request(BootVolumeType::Sbs, 20), &catalogue, sbs_image());
-
-    assert_type_unavailable(&error, BootVolumeType::Sbs);
 }
 
 /// A Block Storage size below the provider's own minimum is refused even when
@@ -204,7 +219,12 @@ fn sbs_size_below_the_provider_minimum_is_refused() {
 
     let error = refusal(request(BootVolumeType::Sbs, 4), &catalogue, tiny_image);
 
-    assert_out_of_bounds(&error, 4_000_000_000);
+    assert_refusal(
+        &error,
+        &Refusal::OutOfBounds {
+            size_bytes: 4_000_000_000,
+        },
+    );
 }
 
 /// A plan records the resolved settings so a report can render them.
