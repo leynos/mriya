@@ -202,10 +202,11 @@ modules:
 - `src/config_store/tests.rs`: six store tests, including one table choosing
   the recorded volume ID across root, legacy, blank, and blank-with-legacy
   files, and one proving a non-TOML selection is refused with its format named.
-- `src/init/tests.rs`: tests proving a resolved volume ID requires `--force`
-  unless the request records it, that the request carries the configured ID
-  separately from the environment provenance, and that a blank resolved value
-  records nothing while a blank environment value is refused.
+- `src/init/tests.rs`: tests proving a usable resolved volume ID is refused
+  without `--force`, that the request carries the configured ID separately from
+  the environment provenance, that a blank resolved value records nothing, and
+  that a blank or environment-supplied ID is refused by the orchestrator even
+  with `--force`.
 - `src/main_request_tests.rs`: one test proving a real `mriya run` override
   equal to its documented default beats a different configured value.
 
