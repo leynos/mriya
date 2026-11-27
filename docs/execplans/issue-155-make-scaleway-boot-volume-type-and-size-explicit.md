@@ -228,7 +228,11 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   check's case execution. Committed as `3fcb528`.
 - [x] Decode only the requested catalogue entry, so one unfamiliar sibling
   entry cannot fail a valid lookup. Committed as `433f5fd`.
-- [ ] Commit gates and CodeRabbit review, then push and open the draft PR.
+- [x] Commit gates and CodeRabbit review, then push and open the draft PR.
+  Four CodeRabbit rounds ran with the deterministic gates green before each;
+  the material findings are fixed and the two declined suggestions have reasons
+  in the Decision Log. CodeScene's new-code gate, CI, and the release dry run
+  pass. Draft PR: <https://github.com/leynos/mriya/pull/281>.
 
 ## Surprises & Discoveries
 
@@ -353,7 +357,36 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
 
 ## Outcomes & Retrospective
 
-To be completed.
+Delivered: explicit boot-volume selection end to end.
+
+- A profile can name `l_ssd` or `sbs_volume` and a decimal-GB capacity, or
+  accept a documented compatibility default that is recorded and printed.
+- The plan is validated against the zone catalogue and the image before any
+  billable resource exists, and the create request sends it explicitly.
+- The reported root volume is read back and compared with the plan; the handle
+  records the real identifier, type, and size.
+- Boot and cache allocations are reported on separate lines.
+- A failed create cleans up the server, keeping it only when the cache might
+  still be attached, and says so.
+- Documentation states the units, the policy, the validation rules, and the
+  values that remain unverified.
+- `make scaleway-boot-test` runs the opt-in live check.
+
+Lessons:
+
+- The SDK's instance model was unusable for this feature twice over (no `boot`
+  flag, non-optional volume size); a local minimal model was less code, not
+  more.
+- CodeScene's duplication biomarker scores a *file*, so repeated test shapes
+  are worth folding into parameterized tables even when each test reads well
+  alone.
+- Review rounds kept finding failure paths around billable resources. Ordering
+  verification before attachment, and classifying attachment failures by HTTP
+  status rather than by a racy read-back, removed the whole class.
+
+Not done here, by design: ownership-aware boot-volume and cache-volume cleanup
+(issue #154), the Block Storage cache migration (#153), and the repository-wide
+document-example loader the style guide describes.
 
 ## Revision note
 
