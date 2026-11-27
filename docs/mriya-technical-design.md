@@ -220,9 +220,12 @@ provisioning) that will guide subsequent optimizations.
 
 - Keep the system `ssh` client for MVP and stream stdout/stderr via a
   streaming command runner so local output mirrors the remote console.
-- Preserve remote exit codes verbatim in `mriya run`; when SSH reports no
-  status (for example, a signal terminates the process), exit with code 1 and
-  surface the missing status to the user.
+- Preserve remote exit codes verbatim in `mriya run`; when the local `ssh`
+  process ends without a status (for example, because a signal terminates it),
+  exit with code 1 and surface the missing status to the user. A remote command
+  killed by a signal is reported as 128 plus the signal number when the remote
+  shell forks (as it does with the default cache-routing preamble), and as 255
+  when the shell replaces itself with the command; both are returned unchanged.
 - Load Scaleway and sync configuration via `ortho-config` defaults, config
   files, and environment variables without consuming unrelated CLI flags from
   `mriya run` itself.
@@ -247,15 +250,47 @@ provisioning) that will guide subsequent optimizations.
   a 5-minute polling deadline, and requires a `running` state with a parseable
   public IP.
 - **Teardown verification:** Destruction calls the Instances API delete
-  endpoint then polls until the server disappears, failing the integration test
-  if any residual resource remains. Integration coverage provisions the
-  smallest shape (`DEV1-S`) to keep cost and blast radius low.
+  endpoint then polls until the server stops being listed, failing the
+  integration test if the server is still listed at the deadline. Volumes and
+  IP addresses are not inventoried; see the status notes below. Integration
+  coverage provisions the smallest shape (`DEV1-S`) to keep cost and blast
+  radius low.
 - **Environment boundary:** Process-environment reads go through
   `mockable::Env`, injected at each boundary and defaulting to `DefaultEnv` at
   the entry points. The decision is recorded in
   [ADR 002](adrs/adr-0002-environment-access.md); its guiding rule is that a
   value the program cannot decode is an error naming the file it was needed
   for, not a silent pass-through.
+
+#### Status notes (26 November 2026)
+
+- **Volume creation contract:** Cache volumes are still created by posting to
+  the Instances API volume endpoint with the hard-coded `b_ssd` type, and the
+  format command assumes the `scsi-0SCW_BSSD_` device prefix. Scaleway's
+  changelog records the removal of new Block Storage creation through the
+  Instances API on 30 April 2025, so this path rests on a retired creation
+  contract. Attachment remains at the documented server boundary, but the
+  payload carries only the volume identifier and boot flag. The Instances API
+  expects a `volume_type` for an existing `sbs_volume`, so attaching one is
+  expected to be rejected until that field is added. Migration is tracked in
+  [issue #153](https://github.com/leynos/mriya/issues/153).
+- **Boot storage is implicit:** the create-server body carries no `volumes`
+  object, so the boot-volume type and size are provider defaults that Mriya
+  neither chooses nor reports. A live inspection reported a 10 GB SBS root
+  volume with 5.9 GB free after boot. Making the choice explicit is tracked in
+  [issue #155](https://github.com/leynos/mriya/issues/155).
+- **Teardown is server disappearance only:** `destroy` sends the delete request
+  and polls until the instance stops being listed. It does not inventory
+  attached storage or public IP addresses, and a failure after the create
+  request succeeds but before `create` returns a handle — volume validation,
+  attachment, or power-on — leaves a server that nothing tracked. That server
+  is normally still stopped, but a power-on whose response times out can leave
+  it running. Both gaps are tracked in
+  [issue #154](https://github.com/leynos/mriya/issues/154).
+- **Volume size is binary:** `[init].volume_size_gb` is multiplied by 1024³ in
+  `src/init/helpers.rs`, so the configured number counts gibibytes (GiB), not
+  decimal gigabytes. The `_gb` and `_GB` identifiers keep their current
+  spelling for compatibility.
 
 ### Scaleway HTTP boundary decision (15 October 2026)
 
@@ -505,9 +540,12 @@ differences:
   Scaleway and AWS allocate elastic IPs or volumes that might need cleaning up
   if not automatically removed with the VM. The MVP simply deletes the VM and
   assumes the provider cleans attached resources (Scaleway by default deletes
-  the attached root volume with the instance). In the future, our trait might
-  need to handle explicit cleanup of things like volumes or floating IPs if
-  they were allocated separately.
+  the attached root volume with the instance). That assumption did not hold in
+  a later live inspection, which found an SBS root volume surviving server
+  deletion; see the status notes and
+  [issue #154](https://github.com/leynos/mriya/issues/154). In the future, our
+  trait might need to handle explicit cleanup of things like volumes or
+  floating IPs if they were allocated separately.
 
 **Evolving the Trait:** We anticipate adding more capabilities to the Backend
 trait as Mriya gains features (volumes, snapshots, etc.). Initially, we keep it
@@ -1143,12 +1181,13 @@ the connection which should terminate the remote shell).
 - For `wait_for_ssh`, we’ll cap how long we wait (maybe 2 minutes), after which
   we consider the VM initialization failed and destroy it.
 
-**Ctrl+C Handling:** We intercept SIGINT/SIGTERM on the Mriya process. If the
-user cancels, we want to **terminate the remote job and destroy the VM**. With
-the SSH library, if we drop the session, the remote process will terminate (as
-its controlling session ended). We then proceed to call `destroy_vm`. We should
-do this carefully to avoid leaving the VM if the process is killed forcibly.
-(We might not catch SIGKILL of course, but for Ctrl+C we can handle.)
+**Ctrl+C Handling (planned for v1.0, not implemented in the MVP):** We
+intercept SIGINT/SIGTERM on the Mriya process. If the user cancels, we want to
+**terminate the remote job and destroy the VM**. With the SSH library, if we
+drop the session, the remote process will terminate (as its controlling session
+ended). We then proceed to call `destroy_vm`. We should do this carefully to
+avoid leaving the VM if the process is killed forcibly. (We might not catch
+SIGKILL of course, but for Ctrl+C we can handle.)
 
 We will likely use the `ctrlc` crate to register a handler that triggers a
 graceful shutdown sequence.
@@ -1501,11 +1540,20 @@ pair. We give flexibility:
   keep the private part temporarily. This might be a future security
   enhancement.
 
-**Cloud Resource Cleanup on Failure:** Failures can happen at any step – we
-ensure that we don’t leak resources:
+**Cloud Resource Cleanup on Failure:** Failures can happen at any step – the
+design aims not to leak resources, subject to the limits recorded in the status
+notes:
 
-- If VM creation fails (API error or no quota), we propagate that error and
-  nothing needs cleanup (no VM was created).
+- If VM creation is **known** not to have happened (an API error that names the
+  cause, or no quota before the request was accepted), we propagate that error
+  and nothing needs cleanup. Two cases fall outside that: a request whose
+  response timed out, where the client saw a failure but the provider may
+  already have created the server, and a request that succeeded but was
+  followed by a volume or power-on failure. Both can leave a server behind,
+  stopped unless a timed-out power-on left it running. See the status notes
+  under
+  [Implementation status (October 2026)](#implementation-status-october-2026)
+  and [issue #154](https://github.com/leynos/mriya/issues/154).
 
 - If VM created but we fail to SSH (maybe cloud-init misconfigured the key, or
   network issue), Mriya will **destroy the VM** and report the error. We will
@@ -1595,9 +1643,10 @@ and kills the job, we rely on our earlier point about catching kill signals –
 we may not catch a forced kill from a CI system, but hopefully CI will allow a
 grace period with SIGTERM first.
 
-**Example Failure Scenario Walk-through:** Consider the scenario: user runs
-`mriya test` and nothing happens for a while, then they hit Ctrl+C. Mriya’s
-signal handler triggers:
+**Example Failure Scenario Walk-through (planned; the MVP has no signal
+handler, so Ctrl+C currently exits without a delete):** Consider the scenario:
+user runs `mriya test` and nothing happens for a while, then they hit Ctrl+C.
+Once the v1.0 signal handling lands, Mriya’s signal handler will trigger:
 
 - If VM was already created, we log “Cancelling… destroying instance” to
   inform user.

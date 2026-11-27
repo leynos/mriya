@@ -17,7 +17,9 @@ prefix:
 - `SCW_DEFAULT_PROJECT_ID` (required) — project to bill instances to.
 - `SCW_DEFAULT_ORGANIZATION_ID` (optional) — only needed for org-scoped calls.
 - `SCW_DEFAULT_ZONE` — defaults to `fr-par-1`.
-- `SCW_DEFAULT_INSTANCE_TYPE` — defaults to `DEV1-S` (smallest, cheapest).
+- `SCW_DEFAULT_INSTANCE_TYPE` — defaults to `DEV1-S`. The default is a
+  starting point, not a cost guarantee; see
+  [Cost and resource lifetime](#cost-and-resource-lifetime).
 - `SCW_DEFAULT_IMAGE` — defaults to `Ubuntu 24.04 Noble Numbat`.
 - `SCW_DEFAULT_ARCHITECTURE` — defaults to `x86_64`.
 - `SCW_CLOUD_INIT_USER_DATA` — optional cloud-init user-data content.
@@ -58,26 +60,58 @@ Required sync settings: `ssh_identity_file`.
 
 ## File sync semantics
 
-Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
-so only files not matched by `.gitignore` patterns are transferred. Ignored
-cache paths such as `target/` are **not** deleted remotely, which keeps
-pre-existing build outputs available for incremental runs. The `.git` directory
-is excluded from transfer.
+Mriya syncs the working tree with
+`rsync -az --delete --filter=":- .gitignore"`, so `.gitignore` patterns act as
+transfer filters. The filter is not a full implementation of Git's ignore
+rules, and five differences matter:
+
+- It reads per-directory `.gitignore` files only, so `.git/info/exclude` and
+  `core.excludesFile` have no effect and a path ignored only through them still
+  transfers.
+- It does not apply Git's `!` re-inclusion, so a file re-included after an
+  ignore rule is still excluded by the transfer and can be missing from the
+  remote workspace.
+- It does not match the zero-directory case of a `**/` pattern. A rule such as
+  `config/**/secrets.env` ignores `config/secrets.env` in Git, but rsync does
+  not match it there, so the file can transfer.
+- It treats a backslash as an escape only when the pattern also contains a
+  wildcard. Git reads `\#secret` as the literal name `#secret` and ignores that
+  file, while rsync compares `\#secret` literally, finds no match, and
+  transfers the file.
+- Its patterns are applied as transfer filters rather than as an ignore index,
+  so an untracked but unignored file still travels.
+
+An ignored path already present on the remote survives only when the receiving
+directory already holds the matching `.gitignore`. Rsync deletes during the
+transfer by default, before the per-directory filter file is updated, so a
+fresh remote that has no `.gitignore` yet can lose a pre-existing `target/`
+before the filter that protects it arrives. Once both sides hold the same
+`.gitignore`, ignored cache paths are preserved within that VM. Persisting
+build outputs *across* runs also needs the cache volume, because each run uses
+a fresh VM. The `.git` directory is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
-remote exit code. If `cargo test` fails remotely with exit status 101, the
-local process will also exit 101. Commands run via `sync_and_run` automatically
-`cd` into `MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to
-prefix their commands with a directory change.
+remote exit code when teardown succeeds. If `cargo test` fails remotely with
+exit status 101, the local process will also exit 101. If teardown then fails,
+the run exits with the teardown error and the remote status is not carried
+through. Commands run via `sync_and_run` automatically `cd` into
+`MRIYA_SYNC_REMOTE_PATH` before execution, so callers do not need to prefix
+their commands with a directory change.
 
 ## Run a command remotely
 
 Use `mriya run -- <command>` to provision a VM, sync the working tree, and run
 the provided command over SSH. Output streams live to the local terminal using
-the system `ssh` client and the configured `rsync` binary. The CLI exits with
-the remote command's status code; when the remote process terminates without a
-status (for example, due to a signal), Mriya exits with code 1 and reports the
-missing status.
+the system `ssh` client and the configured `rsync` binary. When teardown
+succeeds, the CLI exits with the remote command's status code; a teardown
+failure exits with the teardown error instead. Two less common cases are
+different. When a remote command is killed by a signal, the status depends on
+how the remote shell ran it: with the default cache-routing preamble the shell
+forks and reports 128 plus the signal number (143 for `SIGTERM`, 139 for
+`SIGSEGV`), and Mriya returns that unchanged; when the shell instead replaces
+itself with the command, OpenSSH reports 255, and Mriya returns 255. If the
+local `ssh` process itself ends without an exit status — for example, because a
+signal terminates it — Mriya exits with code 1 and reports the missing status.
 
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
@@ -87,9 +121,21 @@ mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo te
 ```
 
 The Scaleway backend validates that the instance type exists in the selected
-zone during provisioning, and resolves image labels for the selected
-architecture. Unsupported values yield provider-specific errors (for example,
-unknown instance types).
+zone from the provider's response to the create-server request; there is no
+preflight availability check before the request is sent. Image labels are
+resolved for the selected architecture and zone:
+
+1. Mriya queries project-scoped images with the requested label and
+   architecture as provider-side filters. Any result from that query is used.
+2. Only when that query returns nothing — whether the project has no images at
+   all or none match the label and architecture — does Mriya query public
+   images the same way. The two result sets are never merged.
+3. Candidates are filtered to images the provider reports as `available`, and
+   the newest by creation date is chosen. If none remain, resolution fails with
+   an image-not-found error.
+
+Unsupported values yield provider-specific errors (for example, unknown
+instance types).
 
 ## Cloud-init provisioning
 
@@ -185,81 +231,178 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 ## Persistent cache volume
 
 Mriya can attach a Block Storage volume to the ephemeral VM for caching build
-artefacts between runs. When configured, the volume is attached before the
-instance starts and mounted at `/mriya`. Place build caches (such as Cargo's
-target directory) on this volume to persist compiled dependencies across runs.
+artefacts between runs. When configured, Mriya attaches the volume to the newly
+created, stopped server and then powers it on; after boot it attempts to mount
+the volume at `/mriya`. Place build caches (such as Cargo's target directory)
+on this volume to persist compiled dependencies across runs.
 
-To enable the cache volume:
+> Important: `mriya init` is expected to fail against Scaleway today. It calls
+> the Instances API volume endpoint with the `b_ssd` type, and Scaleway's
+> [changelog](https://www.scaleway.com/en/docs/changelog/) states that creating
+> new block volumes through the Instances API has been impossible since
+> 30 April 2025. There is no recorded live success for `mriya init`. The
+> migration is tracked in
+> [issue #153](https://github.com/leynos/mriya/issues/153).
 
-1. Run `mriya init` to create and format a Block Storage volume in the
-   configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` to replace an existing configured volume ID. If any
-   step after provisioning fails — including the instance read it performs
-   before detaching the volume — the command destroys the formatter instance
-   before reporting the error, so a failed run does not leave a VM billing.
-2. (Optional) override the volume ID explicitly via configuration:
+### Use an existing volume
 
-   ```bash
-   export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
-   ```
+> Important: attachment sends only the volume ID and boot flag, but the
+> Instances API expects a `volume_type` alongside the ID for an existing
+> `sbs_volume`. Mriya does not send one, so attaching an `sbs_volume` is
+> expected to be rejected, and the rejection happens after the server already
+> exists, leaving it behind. The procedure below is therefore usable only for
+> storage whose type the current payload already matches. Follow
+> [issue #153](https://github.com/leynos/mriya/issues/153) for the migration
+> that adds the field, and read
+> [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified)
+> before relying on it.
 
-   Or in `mriya.toml`:
+An existing, formatted volume can be configured without running `mriya init`.
+The steps are:
 
-   ```toml
-   [scaleway]
-   default_volume_id = "11111111-2222-3333-4444-555555555555"
-   ```
+1. Start from a Block Storage volume in the same availability zone as the
+   instances. No volume type has verified support for this path: the attachment
+   payload sends no `volume_type`, Mriya's own creation code has only ever
+   asked for `b_ssd`, and an `sbs_volume` is expected to be rejected as the
+   warning above explains. If the volume has no filesystem yet, attach it to a
+   temporary instance and run `sudo mkfs.ext4 -F <device>` there, naming the
+   device; Scaleway's
+   [mount-a-volume guide](https://www.scaleway.com/en/docs/block-storage/how-to/mount-a-volume/)
+   covers identifying it. Formatting erases the volume, so confirm the device
+   name before running the command. `mriya init` would run the same
+   `mkfs.ext4 -F` invocation, but its creation step does not currently succeed.
+   Detach the volume from any other server before recording its ID, because a
+   volume can be attached to only one instance at a time. Then delete the
+   temporary instance, and check that its boot volume and any public IP it held
+   are gone too; a leftover instance, volume, or address stays billable. Mriya
+   does not check the filesystem or the attachment state: an unformatted volume
+   fails to mount silently (the mount discards its error), and cache routing is
+   then skipped, so builds write to the root disk instead.
+2. Record its ID in configuration, either by exporting
+   `SCW_DEFAULT_VOLUME_ID` with the volume's UUID as its value, or by setting
+   `default_volume_id` under `[scaleway]` in `mriya.toml`.
+3. Run the build command on the remote host, for example
+   `mriya run -- cargo build`.
 
-3. Configure the build tool to use the mounted volume. For Cargo:
+The scripted request tests assert the current attachment payload, so they
+cannot detect the missing field; the limitation above is a reading of the
+provider's schema, not an observed live rejection.
 
-   ```bash
-   mriya run -- cargo build
-   ```
+### Create and format a volume with `mriya init`
 
-When the volume is mounted successfully, Mriya:
+`mriya init` is intended to create and format a volume in the configured zone
+and write the new volume ID into `mriya.toml`, but its creation call does not
+currently succeed against Scaleway, as described above. Use
+`mriya init --force` to replace an existing configured volume ID. Once the
+formatter instance handle exists, any later failure — including the instance
+read it performs before detaching the volume — makes the command attempt to
+destroy that instance before reporting the error, and adds a note when the
+teardown also fails. A teardown failure leaves the server's final state
+unknown: the delete may have succeeded before the poll failed, or the server
+may still exist and be billable, so check the provider console. A failure
+during instance creation itself, after the server request succeeds but before a
+handle is returned, has no handle to destroy. `mriya init` never deletes the
+volume it created either: a failed run can leave an unrecorded volume that only
+manual cleanup removes, because the janitor sweeps only resources carrying a
+`mriya-test-run-<id>` tag.
 
-1. Creates cache subdirectories under the mount point so toolchains can write
-   immediately (`cargo`, `rustup`, `target`, `go/pkg/mod`, `go/build-cache`,
-   `pip/cache`, `npm/cache`, `yarn/cache`, `pnpm/store`).
-2. Exports environment variables in the remote session to route common language
-   caches to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
+Mriya attempts the mount at the configured path, `/mriya` by default, and keeps
+going when it fails. If the mount fails — for example, because the volume has
+no filesystem — the run continues without the cache, which allows graceful
+degradation for first-time setups.
+
+The mount is followed by two independent steps, each with its own setting:
+
+1. When `MRIYA_SYNC_CREATE_CACHE_DIRECTORIES` is enabled (the default), Mriya
+   attempts to create cache subdirectories under the mount point (`cargo`,
+   `rustup`, `target`, `go/pkg/mod`, `go/build-cache`, `pip/cache`, `npm/cache`,
+   `yarn/cache`, `pnpm/store`). Creation is attempted only: it runs under the
+   same mount-point guard, discards errors, and tolerates a read-only or full
+   filesystem, so a toolchain must still cope with a missing directory. The
+   directories are created with `sudo mkdir -p`, and Mriya never changes their
+   ownership, so they belong to `root`.
+2. When `MRIYA_SYNC_ROUTE_BUILD_CACHES` is enabled (the default), Mriya exports
+   environment variables in the remote session to route common language caches
+   to the volume. These include `CARGO_HOME`, `RUSTUP_HOME`, and
    `CARGO_TARGET_DIR` (Rust/Cargo); `GOMODCACHE` and `GOCACHE` (Go);
    `PIP_CACHE_DIR` (Python/pip); `npm_config_cache`, `YARN_CACHE_FOLDER`, and
-   `PNPM_STORE_PATH` (Node tooling).
+   `PNPM_STORE_PATH` (Node tooling). The exports happen only when the
+   configured path **is** a mount point at run time: the remote command tests
+   it with `mountpoint -q` before exporting anything. An earlier mount can
+   satisfy that test, and a path that is not a mount point exports nothing.
 
-If mounting fails (for example, when the volume has no filesystem), the run
-continues without the cache — this allows graceful degradation for first-time
-setups.
+Because the mount point and the cache subdirectories are root-owned, a non-root
+`ssh_user` cannot necessarily write to them. The default `ssh_user` is `root`,
+where this does not arise, but the example configuration above sets `ubuntu`;
+with that setting a cache-routed build can fail with a permission error. Either
+keep the SSH user as `root`, give the chosen user write access to the mount
+point **and** to each cache subdirectory, or set
+`MRIYA_SYNC_ROUTE_BUILD_CACHES=false` and place caches manually. Making only
+the mount point writable is not enough, because the subdirectories are created
+separately and keep root ownership.
+
+### Volume size units
 
 `mriya init` uses a temporary formatter instance and runs `mkfs.ext4` against
-the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
-`mriya.toml`:
+the new volume. `MRIYA_INIT_VOLUME_SIZE_GB` and `[init].volume_size_gb` default
+to `20`, and Mriya multiplies that number by 1024³ (1,073,741,824). The default
+is therefore **20 GiB**, or 21,474,836,480 bytes — not 20 decimal gigabytes.
+The configured number is always a count of gibibytes.
+
+Zero is rejected at validation time. `mriya init` has no size flag, so the size
+comes from configuration or the environment only.
+
+The example below is illustrative: it requests 50 GiB, or 53,687,091,200 bytes.
 
 ```toml
 [init]
 volume_size_gb = 50
 ```
 
+The `volume_size_gb` and `MRIYA_INIT_VOLUME_SIZE_GB` identifiers keep their
+current spelling. A future rename must retain both as accepted aliases, because
+they are part of the configuration surface users already have on disk.
+
 **Requirements:**
 
 - The volume must exist in the same zone as the instance.
 - The volume should be formatted with a filesystem (ext4 recommended) before
-  first use. `mriya init` formats the volume automatically.
-- Only one instance can attach a given volume at a time.
+  first use. The creation path that `mriya init` would run formats it
+  automatically, but that path does not currently succeed against Scaleway;
+  format the volume through the provider instead.
+- Only one instance can attach a given volume at a time. Mriya has no lock,
+  queue, or retry around this: two concurrent runs that share a volume will
+  contend, and the loser's attachment is rejected after its server has already
+  been created, leaving that stopped server behind. Run one `mriya run` per
+  cache volume at a time.
 
 ## What the Scaleway backend does now
 
-- Resolves the freshest public image matching `SCW_DEFAULT_IMAGE` and
-  architecture in the chosen zone.
-- Ensures the requested instance type is available before provisioning.
+- Resolves an image by label, architecture, and zone using the order described
+  under [Run a command remotely](#run-a-command-remotely): the project-scoped
+  query applies the label and architecture as provider filters, and the public
+  query runs only when that query returns nothing, whether the project has no
+  images or none match; among the candidates, the newest available match wins.
 - Creates an instance with a routed public IPv4 address and tags `mriya` and
-  `ephemeral`.
-- Attaches a Block Storage volume if `SCW_DEFAULT_VOLUME_ID` is configured,
-  then mounts it to `/mriya` after the instance boots.
-- Polls every five seconds (up to five minutes) until the instance is running
-  and reachable via SSH on port 22.
-- Destroys the instance and polls until the API no longer lists it, failing if
-  any residual resource remains.
+  `ephemeral`. The instance type is validated from the provider's create-server
+  response rather than by a preflight check.
+- Creates the server first and, when `SCW_DEFAULT_VOLUME_ID` is configured,
+  attaches the cache volume to that stopped server before powering it on. An
+  attachment failure at this point is the pre-handle case described under
+  [Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
+  After boot, the volume is mounted to `/mriya`. The mount is attempted, not
+  guaranteed; see [Persistent cache volume](#persistent-cache-volume).
+- Polls every five seconds until the instance is running with a public IP, then
+  probes TCP port 22. Each of those two waits has its own 300-second budget, so
+  the combined readiness phase can run for about ten minutes.
+- Sends a delete request for the instance and polls until the API no longer
+  lists it, failing when the server is still listed at the deadline.
+
+Teardown verification stops at server disappearance. Mriya does not inventory
+attached storage or public IP addresses, and a failure between a successful
+create request and the returned handle leaves a server that it cannot destroy.
+See
+[Cleanup: what is and is not verified](#cleanup-what-is-and-is-not-verified).
 
 Each API request to read or list instances, create a server or volume, power an
 instance on, attach or detach a volume, or delete an instance has a 30-second
@@ -271,11 +414,27 @@ retrying, as the request may have reached Scaleway even though its response did
 not arrive. Image lookup is the exception: it goes through the Scaleway SDK,
 which applies no such bound.
 
+The two 300-second readiness deadlines and the 600-second cloud-init deadline
+are polling settings, not guarantees about how long a run takes or how long it
+is billed. Each deadline is checked before an attempt starts, not while one is
+in flight, so a wait can overrun its budget by the length of the attempt that
+was already running: up to 30 seconds for the public-IP phase, whose attempt is
+a provider lookup bounded by the request timeout, and up to 2 seconds for the
+SSH phase, whose attempt is a single connection bounded by its own timeout.
+
 ## Running the integration check
 
-The behavioural suite provisions a real DEV1-S instance to prove create → wait
-→ destroy works end to end and that teardown leaves no residue. Ensure the
-`SCW_*` variables are set, then run:
+The live suite is gated on the `MRIYA_RUN_SCALEWAY_TESTS` environment variable,
+not on the Make target. Unless that variable is `1`, `true`, or `yes`, the two
+live test binaries skip every scenario, so an unconfigured run provisions
+nothing. Setting the variable in a bare `cargo test` also creates real,
+billable resources, but only `make scaleway-test` generates a test-run ID and
+runs the janitor sweep around the tests.
+
+Other tests in the suite do use the network stack, but only against loopback
+servers and local files: the Scaleway request tests point the backend at a stub
+HTTP server on the loopback interface, and the sync tests copy files locally.
+No test contacts a cloud provider unless the live suite is enabled.
 
 ```bash
 make scaleway-test
@@ -283,13 +442,256 @@ make scaleway-test
 
 The target:
 
-- Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the Scaleway behavioural suite.
-- Generates `MRIYA_TEST_RUN_ID` via `uuidgen` and tags created instances.
-- Runs `mriya-janitor` before and after tests so leaked instances are cleaned
-  up even when the test command fails.
+- Requires `uuidgen` and `scw` on `PATH`, failing early when either is absent.
+- Generates `MRIYA_TEST_RUN_ID` via `uuidgen`, so every created instance and
+  volume carries a `mriya-test-run-<id>` tag.
+- Runs `mriya-janitor` before the tests, and again from a shell `EXIT` trap so
+  the sweep still happens when the test command fails.
+- Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the live suite.
 
-The underlying `cargo test` uses `--test-threads=1` to keep only one instance
-alive at a time.
+The live suite has two behaviours worth knowing before reading a pass as
+broader evidence than it is:
+
+- A missing fixture skips the scenario instead of failing it. Absent
+  credentials, or a provider response reporting `permissions_denied`, produce a
+  skip with the reason, so an unconfigured checkout reports success without
+  provisioning anything.
+- Lifecycle verification checks that the server disappears from the provider's
+  listing. It does not check volumes or IP addresses. See
+  [issue #154](https://github.com/leynos/mriya/issues/154).
+
+The underlying `cargo test` uses `--test-threads=1`, which serializes scenarios
+within that one invocation. It is not a lock: nothing prevents a second
+`make scaleway-test`, or a concurrent `mriya run` that shares a cache volume,
+from running at the same time.
+
+The janitor sweeps only resources whose tag matches the current test run. It
+deletes tagged servers with `with-volumes=none`, then tagged Block Storage
+volumes, and re-lists both to confirm the sweep is clean; IP addresses are not
+listed or checked.
+
+## Cost and resource lifetime
+
+A Mriya run bills for the lifetime of the resources it creates, not for the
+duration of the remote command. A two-minute test still pays for provisioning,
+boot, sync, and teardown, and providers meter each resource class separately
+with their own minimum billing period. Treat any estimate built by summing
+command runtimes as a lower bound that is usually far too low.
+
+### What a run creates
+
+From the moment the create-server request is accepted, a run can involve:
+
+- A compute instance, from creation through deletion. Whether the stopped
+  interval before power-on is billed depends on the provider and on which
+  billing event applies; see
+  [Billing minima and granularity](#billing-minima-and-granularity). The sync
+  and cloud-init waits that follow power-on are always inside the billed
+  interval.
+- A root (boot) volume whose type and size Mriya does not choose. See
+  [Root storage is implicit](#root-storage-is-implicit).
+- A public IP address. Mriya requests a dynamic, routed address, but it does
+  not select the billing class the provider allocates, so the applicable rule
+  is whatever applies to that allocation.
+- Optionally, a retained cache volume, billed from its creation until it is
+  deleted — across every run, and while no run is active.
+- For `mriya init`, a short-lived formatter instance plus the new volume.
+
+Setup and teardown count. The remote command is only one stage of a longer
+sequence: create the stopped server, attach the cache volume, power on, wait
+for a public IP and SSH, mount, sync, wait for cloud-init, run the command,
+request deletion, and poll for the server to disappear. The readiness and
+cloud-init deadlines are polling budgets, not durations to budget for.
+
+### Billing minima and granularity
+
+Scaleway's Billing FAQ[^1] states that each resource is billed separately for a
+minimum of 60 minutes, and that each uninterrupted period between a start and a
+stop billing event counts as a separate resource. Two distinct five-minute runs
+are therefore two separately metered resources, not ten minutes of one. That
+minimum applies to every resource class the Billing FAQ lists — compute,
+volumes, snapshots, and both IP classes — not only to compute.
+
+The charge interval is separate from the minimum, and it differs by resource
+class. The Instances FAQ[^2] describes CPU instances as billed per hour of
+uptime and GPU instances per minute, except RENDER-S, which is billed per hour.
+Block Storage has its own interval: the Block Storage FAQ[^3] bills volumes by
+the hour, based on the provisioned size rather than the data stored. A volume
+retained for 61 minutes on a per-minute GPU instance is therefore billed as two
+storage hours even though the compute side is metered per minute.
+
+The Billing FAQ and the Instance pricing guide[^4] disagree on when instance
+billing starts: the FAQ says power-on, the pricing guide says creation. Confirm
+current terms before relying on either for a specific product, and do not
+assume another provider uses the same minimum, the same granularity, or the
+same start event.
+
+### Root storage is implicit
+
+The create-server request carries no boot-volume type or size, so the provider
+decides both. This has two cost consequences:
+
+- The billed capacity is not a capacity the operator selected, because neither
+  setting is expressed in configuration.
+- The storage tier is not necessarily the one the instance type suggests. A live
+  inspection recorded in
+  [issue #155](https://github.com/leynos/mriya/issues/155) found a 10 GB SBS
+  root volume, with 5.9 GB free after boot, on an instance type that also
+  offers local storage.
+
+Root volumes are billed as storage for as long as they exist. The investigation
+recorded in [issue #154](https://github.com/leynos/mriya/issues/154) observed
+an SBS root volume surviving server deletion and remaining billable. Making
+boot storage explicit is tracked in
+[issue #155](https://github.com/leynos/mriya/issues/155); ownership-aware
+deletion is tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
+
+### Cache storage is retained and billed
+
+A cache volume is billed from creation until deletion, whether or not a run is
+active and whether or not it is attached. Its cost is the capacity times the
+storage rate times the **billed** hours. Those hours keep the per-resource
+minimum but use the storage granularity rather than the compute one: a volume
+kept for ten minutes is still billed for at least `M`, and on an hourly storage
+granularity a 61-minute retention is billed as two hours. Beyond that, a cache
+retained for a week costs far more than the runs that used it.
+
+Two failure modes extend that lifetime unexpectedly:
+
+- `mriya init` never deletes the volume it creates. If a later step fails, the
+  volume exists with no configuration entry pointing at it, and nothing sweeps
+  it unless it carries a test-run tag.
+- `mriya init --force` replaces the configured ID with a new volume. The
+  previously configured volume is not deleted, so both are billed until the old
+  one is removed by hand.
+
+### IP addresses
+
+Mriya requests a dynamic, routed public IPv4 address, but it does not choose
+the billing class the provider allocates to it. The IP billing page[^5] bills
+flexible IPs separately from the resource they are attached to, from
+reservation until deletion, whether or not they are attached. The Billing FAQ
+instead ties dynamic-IP billing to association with a running instance. Because
+Mriya does not assert which type it receives, treat the address as potentially
+billable beyond the server's own lifetime and check the allocation after a run.
+Do not assume the assigned type from the request.
+
+### Worked example: ten short jobs at the per-run minimum
+
+The symbols below let a reader substitute a provider's published rates without
+this guide hard-coding a price:
+
+- `N` — number of runs.
+- `s` — setup time per run, covering every stage between the create request and
+  the command: create, attach, power on, reach SSH, mount, sync, and wait for
+  cloud-init. A run without cloud-init contributes nothing for that stage.
+- `c` — remote command duration.
+- `t` — teardown time per run: delete request plus polling.
+- `M` — the provider's minimum billing period per resource, in minutes.
+- `g_compute` — the compute billing granularity, in minutes. It is one hour for
+  Scaleway CPU instances and one minute for GPU instances, except RENDER-S.
+- `g_storage` — the storage billing granularity, in minutes. It is one hour for
+  Scaleway Block Storage.
+- `R_vm` — the instance-type rate per billed hour.
+- `R_storage` — the storage rate per gibibyte-hour, as published by the
+  provider. If a provider publishes its rate per decimal gigabyte instead,
+  convert the GiB capacity to that definition before multiplying, or the
+  estimate will be off by the 1024³ / 10⁹ ratio.
+
+`M`, both granularities, `s`, `c`, and `t` are all in minutes, so the billed
+duration must be divided by 60 before an hourly rate is applied. Per-run billed
+compute, in minutes, is `max(M, ceil((s + c + t) / g_compute) * g_compute)`;
+total compute cost is `N * (per-run billed compute) / 60 * R_vm`. That form
+assumes the creation-time billing event, so it charges the whole of `s`,
+including the interval before power-on. It is the conservative estimate. Under
+the power-on event, exclude the pre-power-on part of `s` from the sum before
+applying the formula, and the remaining interval is what the minimum and
+granularity act on.
+
+Root storage and cache storage use a separate `billed_hours`, which is
+`max(M, ceil(retained_minutes / g_storage) * g_storage) / 60`. Storage keeps
+the per-resource minimum but uses its own granularity, so a per-minute compute
+instance does not make storage per-minute:
+
+- Per-run root storage is `capacity_GiB * billed_hours * R_storage` over that
+  run's own root volume.
+- A cache volume is `capacity_GiB * billed_hours * R_storage` over its whole
+  lifetime, which usually spans many runs.
+- The `mriya init` formatter instance is a run of its own for compute purposes.
+
+Take ten runs of a two-minute command with three minutes of setup and three
+minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
+lifetime cover 20 minutes of command time. With `M = 60` minutes and
+`g_compute = g_storage = 60` minutes, each run is billed as one hour: the
+per-run billed compute is `max(60, ceil((3 + 2 + 3) / 60) * 60)`, which is 60
+minutes, and the total compute cost is `10 * 60 / 60 * R_vm`, which is
+`10 * R_vm`.
+
+So 20 minutes of command time costs 10 instance-hours of compute — ten times
+`R_vm` — before storage or IP charges are added. Halving the command time
+barely changes the total, because the minimum dominates; halving the number of
+runs halves it. This example uses the Scaleway CPU-instance terms described
+above, as of the cited review dates. It does not apply to every provider or
+product, and it quotes no price.
+
+### Quoting a price
+
+Any price stated in a Mriya discussion, issue, or document must name:
+
+- the product and instance type;
+- the location or zone;
+- the currency;
+- whether tax is included;
+- the date the price was read;
+- whether the figure is an estimate or a measured charge.
+
+Prefer a formula and a dated link over a hard-coded number. A price without
+those fields is unusable six months later and misleading immediately.
+
+### Cleanup: what is and is not verified
+
+Whenever provisioning has returned a server handle, Mriya sends a delete
+request for that server after the run and polls until the provider stops
+listing it. That is the extent of the guarantee:
+
+- The delete is **attempted** whenever the workflow reaches teardown with a
+  server handle, and a teardown failure is reported rather than swallowed.
+  Mriya does not handle `SIGINT` or `SIGTERM`, so an interrupted process —
+  including Ctrl+C during a run — exits without sending the delete at all. The
+  roadmap lists that handling as unfinished; until it lands, treat an
+  interrupted run as leaving a server behind.
+- Verification covers server disappearance only. Attached storage and public IP
+  addresses are not inventoried, so a residual volume or address will not be
+  reported by Mriya. See
+  [issue #154](https://github.com/leynos/mriya/issues/154).
+- If provisioning fails after the create request succeeded but before a handle
+  was returned — volume validation, attachment, or power-on — no handle exists
+  to delete, and the server is left behind. It is normally still stopped, but a
+  power-on whose response times out can leave it running.
+- A failed `mriya init` leaves its created volume unrecorded; see
+  [Cache storage is retained and billed](#cache-storage-is-retained-and-billed).
+- The janitor used by the live test suite is tag-scoped to a single test run
+  and does not cover resources created outside it.
+
+Do not rely on Mriya as a cost control. Check the provider console for retained
+resources periodically, including after runs that reported success, because a
+root volume can outlive its server silently. Delete cache volumes that are no
+longer needed.
+
+### Concurrency
+
+Only one instance can attach a given Block Storage volume at a time, and the
+volume must be in the same availability zone as the instance; Scaleway's Block
+Storage attach guide[^6] states both constraints. This is a provider rule, so
+it applies to every client, not just Mriya.
+
+Mriya enforces nothing on top of it. There is no lock, queue, or retry around
+the attachment. Two runs sharing a cache volume contend, and the losing run's
+attachment is rejected after its server already exists, leaving a stopped
+server that Mriya cannot destroy because it never received a handle. Serialize
+runs that share a volume. When runs must overlap, give each its own volume: the
+volume has to be in the instance's zone, so moving one run to another zone
+requires a separate volume there rather than making the shared one attachable.
 
 ## Building from source
 
@@ -357,3 +759,26 @@ you need to tell those two cases apart or report the cause; the error type
 implements `std::error::Error`, so `?` propagates it in a program whose error
 type accepts it. Everything to change when upgrading a dependent is listed in
 [Migrating to 0.2.0](migration-0.2.0.md).
+
+[^1]: Scaleway, "Billing FAQ",
+    <https://www.scaleway.com/en/docs/billing/faq/>, reviewed 9 September 2025.
+
+[^2]: Scaleway, "Instances FAQ",
+    <https://www.scaleway.com/en/docs/instances/faq/>, reviewed 19 December
+    2025.
+
+[^3]: Scaleway, "Block Storage FAQ",
+    <https://www.scaleway.com/en/docs/block-storage/faq/>, reviewed 17 September
+    2025.
+
+[^4]: Scaleway, "Understanding Scaleway Instance pricing",
+    <https://www.scaleway.com/en/docs/instances/reference-content/understanding-instance-pricing/>,
+    reviewed 19 August 2025.
+
+[^5]: Scaleway, "Understanding billing for Scaleway IP addresses",
+    <https://www.scaleway.com/en/docs/ipam/reference-content/understanding-ip-billing/>,
+    reviewed 4 November 2025.
+
+[^6]: Scaleway, "How to attach a Block Storage volume to an Instance",
+    <https://www.scaleway.com/en/docs/block-storage/how-to/attach-a-volume/>,
+    reviewed 21 October 2025.
