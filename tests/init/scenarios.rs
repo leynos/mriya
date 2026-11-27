@@ -34,9 +34,33 @@ fn scenario_existing_volume_forced(init_context_result: InitContextResult) {
 
 #[scenario(
     path = "tests/features/init.feature",
+    name = "Never delete a volume that was already configured"
+)]
+fn scenario_existing_volume_never_deleted(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}
+
+#[scenario(
+    path = "tests/features/init.feature",
+    name = "Warn when an environment volume ID overrides the new file value"
+)]
+fn scenario_environment_override_warning(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}
+
+#[scenario(
+    path = "tests/features/init.feature",
     name = "Surface volume creation failures"
 )]
 fn scenario_volume_create_failure(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}
+
+#[scenario(
+    path = "tests/features/init.feature",
+    name = "Surface volume readiness failures and delete the owned volume"
+)]
+fn scenario_volume_ready_failure(init_context_result: InitContextResult) {
     drop(init_context_result);
 }
 
@@ -54,9 +78,15 @@ fn scenario_wait_failure(init_context_result: InitContextResult) { drop(init_con
 
 #[scenario(
     path = "tests/features/init.feature",
-    name = "Surface detachment failures and still teardown"
+    name = "Surface ordered-teardown failures after formatting"
 )]
 fn scenario_detach_failure(init_context_result: InitContextResult) { drop(init_context_result); }
+
+#[scenario(
+    path = "tests/features/init.feature",
+    name = "Report the retained volume when rollback deletion fails"
+)]
+fn scenario_retained_volume(init_context_result: InitContextResult) { drop(init_context_result); }
 
 #[scenario(
     path = "tests/features/init.feature",

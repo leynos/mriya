@@ -10,7 +10,7 @@ use mriya::{
 use rstest::fixture;
 use thiserror::Error;
 
-use super::test_doubles::{MemoryConfigStore, ScriptedVolumeBackend};
+use super::{config_store_double::MemoryConfigStore, test_doubles::ScriptedVolumeBackend};
 use crate::{
     size_constants::BYTES_PER_GB,
     sync_config::sync_config,
@@ -46,7 +46,10 @@ pub struct InitFailure {
 
 #[derive(Clone, Debug)]
 pub enum InitResult {
-    Success,
+    Success {
+        /// Warning the orchestrator asked the caller to show.
+        warning: Option<String>,
+    },
     Failure(InitFailure),
 }
 
@@ -86,6 +89,8 @@ fn build_init_context() -> Result<InitContext, InitTestError> {
             volume,
             instance_request,
             overwrite_existing_volume_id: false,
+            effective_volume_id: None,
+            environment_volume_id: None,
         },
         config_store: MemoryConfigStore::new(),
         outcome: None,

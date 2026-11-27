@@ -1,11 +1,15 @@
 //! Persistent configuration file updates for Mriya.
 
-use std::io;
-
 use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use ortho_config::{ConfigDiscovery, toml};
 use thiserror::Error;
+
+mod read;
+mod write;
+
+use read::{parse_toml, read_config, read_config_if_present, read_volume_id, split_config_path};
+use write::write_config;
 
 /// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
@@ -21,6 +25,8 @@ const PROJECT_FILE_NAME: &str = "mriya.toml";
 const SCALEWAY_SECTION: &str = "scaleway";
 /// Key within the table that records the cache volume ID.
 const VOLUME_KEY: &str = "default_volume_id";
+/// Lock file that serializes the read-check-publish sequence.
+const LOCK_FILE: &str = ".mriya-config.lock";
 
 /// Errors raised while updating the configuration file.
 #[derive(Debug, Error)]
@@ -58,6 +64,53 @@ pub enum ConfigStoreError {
     )]
     VolumeAlreadyConfigured {
         /// Volume identifier already present in configuration.
+        volume_id: String,
+    },
+    /// Raised when replacing the file would change its owner.
+    #[error("refusing to replace {path}: the update would change the file's owner")]
+    OwnershipChanged {
+        /// Configuration path whose owner would change.
+        path: Utf8PathBuf,
+    },
+    /// Raised when replacing the file would change its group and drop access.
+    #[error(
+        "refusing to replace {path}: the update would change the file's group and drop existing group access"
+    )]
+    GroupChanged {
+        /// Configuration path whose group would change.
+        path: Utf8PathBuf,
+    },
+    /// Raised when native ACLs cannot be preserved on this platform.
+    #[error(
+        "refusing to replace {path}: ACLs cannot be preserved here while the file grants group or other access"
+    )]
+    AccessControlUnsupported {
+        /// Configuration path whose ACLs would be lost.
+        path: Utf8PathBuf,
+    },
+    /// Raised when the configuration path is a symbolic link.
+    #[error(
+        "refusing to update {path}: it is a symbolic link; point the discovery path at the real file"
+    )]
+    Symlinked {
+        /// Configuration path that is a symbolic link.
+        path: Utf8PathBuf,
+    },
+    /// Raised when a volume ID is in effect from a source other than the file
+    /// or the environment.
+    #[error(
+        "volume ID {volume_id} is already in effect; unset it or rerun with --force to create and record a new volume"
+    )]
+    VolumeIdInEffect {
+        /// Volume identifier already in effect.
+        volume_id: String,
+    },
+    /// Raised when the environment supplies an effective volume ID.
+    #[error(
+        "SCW_DEFAULT_VOLUME_ID={volume_id} is already in effect and overrides mriya.toml; unset it or rerun with --force to create and record a new volume"
+    )]
+    EffectiveVolumeConfigured {
+        /// Volume identifier supplied by the environment.
         volume_id: String,
     },
 }
@@ -120,7 +173,7 @@ impl ConfigStore {
     fn resolve_target(&self) -> Result<ConfigTarget, ConfigStoreError> {
         let candidates = self.discovery.utf8_candidates();
         for candidate in &candidates {
-            if path_exists(candidate)? {
+            if read::path_exists(candidate)? {
                 return Ok(ConfigTarget {
                     path: candidate.clone(),
                     exists: true,
@@ -160,11 +213,24 @@ impl ConfigWriter for ConfigStore {
         force: bool,
     ) -> Result<Utf8PathBuf, ConfigStoreError> {
         let target = self.resolve_target()?;
-        let contents = if target.exists {
-            read_config(&target.path)?
-        } else {
-            String::new()
-        };
+        let (parent, _) = split_config_path(&target.path)?;
+        Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
+            ConfigStoreError::Io {
+                path: parent.to_path_buf(),
+                message: err.to_string(),
+            }
+        })?;
+        let dir = Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| {
+            ConfigStoreError::Io {
+                path: parent.to_path_buf(),
+                message: err.to_string(),
+            }
+        })?;
+        let _lock = lock_config(&dir, &target.path)?;
+        // Another writer may have published the file since discovery, so the
+        // decision is made from the state read under the lock. Only a typed
+        // `NotFound` is treated as an empty document.
+        let contents = read_config_if_present(&target.path)?.unwrap_or_default();
 
         let mut value = parse_toml(&target.path, &contents)?;
         if let Some(existing) = read_volume_id(&target.path, &value)?
@@ -191,113 +257,27 @@ struct ConfigTarget {
     exists: bool,
 }
 
-/// Splits `path` into its directory (`.` when there is none) and file name.
+/// Takes the exclusive configuration lock for this update.
 ///
-/// Capability-based filesystem access opens the directory first and then
-/// refers to the file by name.
-///
-/// # Errors
-///
-/// Returns `InvalidStructure` when `path` has no file name.
-fn split_config_path(path: &Utf8Path) -> Result<(&Utf8Path, &str), ConfigStoreError> {
-    let parent = path.parent().unwrap_or_else(|| Utf8Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration file path is missing a filename"),
-        })?;
-    Ok((parent, file_name))
-}
-
-/// Reports whether `path` exists, treating a missing parent directory as
-/// absence rather than an error.
-fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
-    let (parent, file_name) = split_config_path(path)?;
-
-    match Dir::open_ambient_dir(parent, ambient_authority()) {
-        Ok(dir) => dir
-            .try_exists(file_name)
-            .map_err(|err| ConfigStoreError::Io {
-                path: path.to_path_buf(),
-                message: err.to_string(),
-            }),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        }),
-    }
-}
-
-/// Reads the whole configuration file as text.
-fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
-    let (parent, file_name) = split_config_path(path)?;
-
-    let dir =
-        Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        })?;
-
-    dir.read_to_string(file_name)
+/// The lock is held from the read that checks for an existing ID through the
+/// rename that publishes the new one, so two unforced runs cannot both pass
+/// the check. The lock is released when the returned file is dropped.
+fn lock_config(dir: &Dir, path: &Utf8Path) -> Result<cap_std::fs_utf8::File, ConfigStoreError> {
+    let mut options = cap_std::fs_utf8::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    let file = dir
+        .open_with(LOCK_FILE, &options)
         .map_err(|err| ConfigStoreError::Io {
             path: path.to_path_buf(),
             message: err.to_string(),
-        })
-}
-
-/// Parses `contents` as TOML, treating blank content as an empty table so a
-/// new file can be created from scratch.
-fn parse_toml(path: &Utf8Path, contents: &str) -> Result<toml::Value, ConfigStoreError> {
-    if contents.trim().is_empty() {
-        return Ok(toml::Value::Table(toml::value::Table::new()));
-    }
-
-    toml::from_str(contents).map_err(|err| ConfigStoreError::Parse {
-        path: path.to_path_buf(),
-        message: err.to_string(),
-    })
-}
-
-/// Extracts `scaleway.default_volume_id`, trimmed, from the parsed document.
-///
-/// Returns `None` when the section or key is absent.
-///
-/// # Errors
-///
-/// Returns `InvalidStructure` when the root or section is not a table or
-/// the key is not a string.
-fn read_volume_id(
-    path: &Utf8Path,
-    value: &toml::Value,
-) -> Result<Option<String>, ConfigStoreError> {
-    let table = value
-        .as_table()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration root is not a table"),
         })?;
-
-    let Some(section) = table.get(SCALEWAY_SECTION) else {
-        return Ok(None);
-    };
-
-    let section_table = section
-        .as_table()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive).map_err(|err| {
+        ConfigStoreError::Io {
             path: path.to_path_buf(),
-            message: format!("[{SCALEWAY_SECTION}] must be a table"),
-        })?;
-
-    section_table.get(VOLUME_KEY).map_or(Ok(None), |raw| {
-        raw.as_str()
-            .map(|id| Some(id.trim().to_owned()))
-            .ok_or_else(|| ConfigStoreError::InvalidStructure {
-                path: path.to_path_buf(),
-                message: format!("{SCALEWAY_SECTION}.{VOLUME_KEY} must be a string"),
-            })
-    })
+            message: err.to_string(),
+        }
+    })?;
+    Ok(file)
 }
 
 /// Sets `scaleway.default_volume_id` (trimmed) in `value`, creating the
@@ -335,36 +315,6 @@ fn write_volume_id_value(
         toml::Value::String(volume_id.trim().to_owned()),
     );
     Ok(())
-}
-
-/// Renders `value` and writes it over the file, creating parent directories.
-///
-/// The whole document is re-rendered, so comments and formatting in an
-/// existing file are not preserved. The write is not atomic.
-fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreError> {
-    let (parent, file_name) = split_config_path(path)?;
-    Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
-        ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        }
-    })?;
-    let dir =
-        Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {
-            path: parent.to_path_buf(),
-            message: err.to_string(),
-        })?;
-
-    let rendered = toml::to_string_pretty(value).map_err(|err| ConfigStoreError::Parse {
-        path: path.to_path_buf(),
-        message: err.to_string(),
-    })?;
-
-    dir.write(file_name, rendered)
-        .map_err(|err| ConfigStoreError::Io {
-            path: path.to_path_buf(),
-            message: err.to_string(),
-        })
 }
 
 #[cfg(test)]

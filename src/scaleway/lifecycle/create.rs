@@ -4,14 +4,20 @@
 //! The creation request sets `stopped: true` so the payload is available when
 //! the instance is powered on.
 
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use super::{
     super::{ScalewayBackend, ScalewayBackendError},
     InstanceSnapshot,
 };
-use crate::{backend::InstanceRequest, scaleway::types::Zone};
+use crate::{
+    backend::{Backend, InstanceHandle, InstanceRequest},
+    scaleway::types::Zone,
+};
 
 /// JSON body for the create-server call.
 ///
@@ -124,6 +130,75 @@ impl ScalewayBackend {
         })
     }
 
+    /// Powers the instance off unless it is already stopped, then waits for
+    /// the `stopped` state.
+    ///
+    /// Scaleway only permits volume detachment while the server is stopped, so
+    /// teardown calls this before detaching the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider error when the power-off action is rejected, and
+    /// [`ScalewayBackendError::Timeout`] when the server never reports
+    /// `stopped`. A server that has already disappeared counts as stopped.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // The companion instance is running after formatting; this stops it
+    /// // before the cache is detached.
+    /// backend.power_off_if_needed(&handle).await?;
+    /// ```
+    pub(in crate::scaleway) async fn power_off_if_needed(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        let Some(snapshot) = self.fetch_instance(handle).await? else {
+            return Ok(());
+        };
+
+        match snapshot.state.as_str() {
+            "stopped" => return Ok(()),
+            "stopping" => return self.wait_for_stopped(handle).await,
+            _ => {
+                let zone = Zone::from(handle.zone.as_str());
+                self.power_off_instance(&zone, &handle.id).await?;
+            }
+        }
+
+        self.wait_for_stopped(handle).await
+    }
+
+    /// Polls until the instance reports `stopped` or disappears.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalewayBackendError::Timeout`] when the deadline elapses
+    /// before the server reports `stopped`.
+    pub(in crate::scaleway) async fn wait_for_stopped(
+        &self,
+        handle: &InstanceHandle,
+    ) -> Result<(), ScalewayBackendError> {
+        let deadline = Instant::now() + self.wait_timeout;
+        loop {
+            match self.fetch_instance(handle).await? {
+                None => return Ok(()),
+                Some(snapshot) if snapshot.state.as_str() == "stopped" => return Ok(()),
+                Some(_) => {}
+            }
+
+            if Instant::now() >= deadline {
+                break;
+            }
+            sleep(self.poll_interval).await;
+        }
+
+        Err(ScalewayBackendError::Timeout {
+            action: String::from("wait_for_stopped"),
+            instance_id: handle.id.clone(),
+        })
+    }
+
     /// Creates a Scaleway instance in a stopped state so optional cloud-init
     /// user-data can be supplied before first boot.
     ///
@@ -152,7 +227,7 @@ impl ScalewayBackend {
         let name = format!("mriya-{}", Uuid::new_v4().simple());
         let tags = Self::instance_tags(self.test_run_id.as_deref());
         let payload = CreateServerRequest {
-            name,
+            name: name.clone(),
             commercial_type: request.instance_type.clone(),
             image: image_id.to_owned(),
             project: request.project_id.clone(),
@@ -164,29 +239,43 @@ impl ScalewayBackend {
             organization: request.organisation_id.clone(),
         };
 
-        let response = super::HTTP_CLIENT
+        // A transport error, a failed body read or an unparsable success body
+        // all leave the outcome unknown: the server may exist. Reconcile it
+        // before reporting, so a retry does not leak a server.
+        let response = match super::HTTP_CLIENT
             .post(&url)
             .header("X-Auth-Token", &self.config.secret_key)
             .json(&payload)
             .send()
             .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        {
+            Ok(response) => response,
+            Err(err) => {
+                return self
+                    .fail_ambiguous_create(request, &name, err.to_string())
+                    .await;
+            }
+        };
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            Err(err) => {
+                return self
+                    .fail_ambiguous_create(request, &name, err.to_string())
+                    .await;
+            }
+        };
 
         if status.is_success() {
-            let parsed: CreateServerResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
+            let parsed: CreateServerResponse = match serde_json::from_slice(&body) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    return self
+                        .fail_ambiguous_create(request, &name, err.to_string())
+                        .await;
+                }
+            };
             return Ok(parsed.server);
         }
 
@@ -201,5 +290,46 @@ impl ScalewayBackend {
         }
 
         Err(ScalewayBackendError::Provider { message })
+    }
+
+    /// Reconciles a create whose outcome is unknown, then reports the failure.
+    ///
+    /// Every server carrying the generated name in the requested project and
+    /// zone is removed before the error is returned. The name is unique to
+    /// this call, so nothing created by another run can match.
+    async fn fail_ambiguous_create(
+        &self,
+        request: &InstanceRequest,
+        name: &str,
+        message: String,
+    ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
+        let error = ScalewayBackendError::Provider { message };
+        match self
+            .remove_servers_named(&request.zone, &request.project_id, name)
+            .await
+        {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(ScalewayBackendError::RollbackFailed {
+                original: Box::new(error),
+                cleanup: format!("the create outcome was unknown and cleanup failed: {cleanup}"),
+            }),
+        }
+    }
+
+    /// Deletes every server carrying `name` in `zone` and `project_id`.
+    async fn remove_servers_named(
+        &self,
+        zone: &str,
+        project_id: &str,
+        name: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        for server in self.find_instances_named(zone, project_id, name).await? {
+            let handle = InstanceHandle {
+                id: server.id,
+                zone: zone.to_owned(),
+            };
+            Backend::destroy(self, handle).await?;
+        }
+        Ok(())
     }
 }

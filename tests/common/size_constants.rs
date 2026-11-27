@@ -9,5 +9,5 @@
 //! mod size_constants;
 //! ```
 
-/// Byte count for a single gibibyte.
-pub const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+/// Byte count for a single decimal gigabyte, the unit Block Storage uses.
+pub const BYTES_PER_GB: u64 = 1_000_000_000;

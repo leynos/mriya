@@ -2,9 +2,12 @@
 
 use std::{sync::LazyLock, time::Duration};
 
+mod block_volume;
 mod create;
 mod http;
 mod image;
+mod provision;
+mod teardown;
 mod volume_attach;
 mod volume_create;
 mod volume_detach;
@@ -12,11 +15,14 @@ mod wait;
 
 use crate::scaleway::types::{Action, InstanceId, InstanceState};
 
-/// Per-request timeout for direct HTTP calls to the Instances API.
+/// Per-request timeout for direct HTTP calls to the Scaleway APIs.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Production base URL for the Instances API, used as the default for
 /// `ScalewayBackend::instance_api_base`.
 pub(super) const SCALEWAY_INSTANCE_API_BASE: &str = "https://api.scaleway.com/instance/v1";
+/// Production base URL for the Block Storage v1 API, used as the default for
+/// `ScalewayBackend::block_api_base`.
+pub(super) const SCALEWAY_BLOCK_API_BASE: &str = "https://api.scaleway.com/block/v1";
 
 /// Shared HTTP client for direct Instances API calls.
 ///

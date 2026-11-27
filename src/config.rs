@@ -28,34 +28,55 @@ const SCALEWAY_SECTION: &str = "scaleway";
 pub struct ScalewayConfig {
     /// Access key assigned to the Scaleway application. While not required for
     /// API calls, it is captured to support future audit logging.
+    #[serde(default)]
     pub access_key: Option<String>,
     /// Secret key used for authentication. This value is required.
     pub secret_key: String,
     /// Organization identifier used by some Scaleway endpoints.
+    #[serde(default)]
     pub default_organization_id: Option<String>,
     /// Project identifier used for billing and resource scoping.
     pub default_project_id: String,
     /// Preferred availability zone. Defaults to `fr-par-1`.
     #[ortho_config(default = "fr-par-1".to_owned())]
+    #[serde(default = "default_zone")]
     pub default_zone: String,
     /// Commercial type for new instances. Defaults to `DEV1-S` to minimize
     /// cost during integration tests.
     #[ortho_config(default = "DEV1-S".to_owned())]
+    #[serde(default = "default_instance_type")]
     pub default_instance_type: String,
     /// Human-friendly image label (for example `Ubuntu 24.04 Noble Numbat`).
     #[ortho_config(default = "Ubuntu 24.04 Noble Numbat".to_owned())]
+    #[serde(default = "default_image")]
     pub default_image: String,
     /// CPU architecture used to select the correct image variant.
     #[ortho_config(default = "x86_64".to_owned())]
+    #[serde(default = "default_architecture")]
     pub default_architecture: String,
     /// Optional Block Storage volume ID to attach for persistent caching.
     /// The volume must exist in the same zone as the instance.
+    #[serde(default)]
     pub default_volume_id: Option<String>,
     /// Optional cloud-init user-data payload (cloud-config YAML or script).
+    #[serde(default)]
     pub cloud_init_user_data: Option<String>,
     /// Optional path to a file containing cloud-init user-data.
+    #[serde(default)]
     pub cloud_init_user_data_file: Option<String>,
 }
+
+/// Default availability zone, matching the `ortho_config` default.
+fn default_zone() -> String { String::from("fr-par-1") }
+
+/// Default commercial type, matching the `ortho_config` default.
+fn default_instance_type() -> String { String::from("DEV1-S") }
+
+/// Default image label, matching the `ortho_config` default.
+fn default_image() -> String { String::from("Ubuntu 24.04 Noble Numbat") }
+
+/// Default architecture, matching the `ortho_config` default.
+fn default_architecture() -> String { String::from("x86_64") }
 
 /// Metadata for a configuration field, used to generate actionable error messages.
 struct FieldMetadata {

@@ -1,44 +1,35 @@
-//! Block Storage volume detachment helpers for the Scaleway backend.
+//! Volume detachment through the dedicated Instances endpoint.
+//!
+//! Detachment names one volume, so the provider keeps the root entry without a
+//! client-side rebuild of the volume map. The returned map is verified (cache
+//! gone, root present) and the Block Storage status must reach `available`
+//! before the caller deletes the server; otherwise the provider would delete
+//! the still-attached cache volume with the server.
 
-use std::collections::HashMap;
-
-use super::{
-    super::{
-        ScalewayBackend,
-        ScalewayBackendError,
-        volume::{UpdateInstanceVolumesRequest, VolumeAttachment},
-    },
-    volume_attach::VolumePatchContext,
+use super::super::{
+    ScalewayBackend,
+    ScalewayBackendError,
+    volume::{DetachServerVolumeRequest, ServerVolumesResponse, expected_map, verify_detached},
 };
-use crate::backend::InstanceHandle;
+use crate::{backend::InstanceHandle, volume::VolumeStatus};
 
 impl ScalewayBackend {
-    /// Detaches a volume from the instance while preserving the root volume.
-    ///
-    /// The instance is re-read first so the replacement payload keeps whatever
-    /// the provider currently reports at index `"0"`. Reading through the
-    /// backend's own HTTP boundary, rather than the SDK helper, lets callers
-    /// substitute a loopback API.
+    /// Detaches a volume from a stopped instance and waits for `available`.
     ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::VolumeNotFound`] when the instance
-    /// reports no root volume, and [`ScalewayBackendError::VolumeDetachFailed`]
-    /// when the API rejects the detachment request. A request that fails before
-    /// producing a response, such as a connection error, returns
-    /// [`ScalewayBackendError::Provider`] instead, so a caller must not assume
-    /// every failure carries the detach variant.
+    /// Returns [`ScalewayBackendError::VolumeDetachFailed`] when the API rejects
+    /// the request or the returned map violates the contract, and any lookup or
+    /// timeout error from the status wait.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// // The instance read is preserved; a rejected PATCH reports both ids.
-    /// let err = backend.detach_volume(&handle, "vol-cache").await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeDetachFailed { .. }));
-    ///
-    /// // An instance reporting no volume at index "0" is rejected up front.
-    /// let err = backend.detach_volume(&handle, "vol-cache").await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeNotFound { .. }));
+    /// backend.detach_volume(&handle, "vol-cache").await?;
+    /// assert_eq!(
+    ///     backend.get_volume(&handle.zone, "vol-cache").await?.status,
+    ///     VolumeStatus::Available
+    /// );
     /// ```
     pub(in crate::scaleway) async fn detach_volume(
         &self,
@@ -46,28 +37,53 @@ impl ScalewayBackend {
         volume_id: &str,
     ) -> Result<(), ScalewayBackendError> {
         let instance = self.get_instance(handle).await?;
+        let mut expected = expected_map(&instance.volumes.volumes);
+        expected.retain(|_, entry| entry.id != volume_id);
 
-        let root_volume_id = instance
-            .volumes
-            .volumes
-            .get("0")
-            .map(|volume| volume.id.clone())
-            .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
-                volume_id: String::from("0"),
-                zone: handle.zone.clone(),
+        let url = format!(
+            "{}/zones/{}/servers/{}/detach-volume",
+            self.instance_api_base, handle.zone, handle.id
+        );
+        let payload = DetachServerVolumeRequest { volume_id };
+
+        let response = super::http::send_raw(
+            super::HTTP_CLIENT
+                .post(&url)
+                .header("X-Auth-Token", &self.config.secret_key)
+                .json(&payload),
+        )
+        .await?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| ScalewayBackendError::Provider {
+                message: err.to_string(),
             })?;
 
-        let mut volumes = HashMap::new();
-        volumes.insert(
-            String::from("0"),
-            VolumeAttachment {
-                id: root_volume_id,
-                boot: true,
-            },
-        );
+        if !status.is_success() {
+            return Err(ScalewayBackendError::VolumeDetachFailed {
+                volume_id: volume_id.to_owned(),
+                instance_id: handle.id.clone(),
+                message: body,
+            });
+        }
 
-        let request = UpdateInstanceVolumesRequest { volumes };
-        self.patch_instance_volumes(handle, &request, VolumePatchContext::detach(volume_id))
-            .await
+        let parsed: ServerVolumesResponse =
+            serde_json::from_str(&body).map_err(|err| ScalewayBackendError::Provider {
+                message: format!("detach-volume response was not a server object: {err}"),
+            })?;
+        verify_detached(&parsed.server.volumes, volume_id, &expected).map_err(|message| {
+            ScalewayBackendError::VolumeDetachFailed {
+                volume_id: volume_id.to_owned(),
+                instance_id: handle.id.clone(),
+                message,
+            }
+        })?;
+
+        self.wait_for_volume_status(&handle.zone, volume_id, VolumeStatus::Available)
+            .await?;
+        Ok(())
     }
 }

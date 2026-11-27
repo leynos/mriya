@@ -32,6 +32,25 @@ names the variable rather than assuming the default:
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
 
+## Init and volume errors are typed
+
+`InitError::Format` and `InitError::Teardown` are removed. A downstream `match`
+on either must map to the replacement variants:
+
+- `InitError::Format` becomes `FormatFailed`, `FormatDeviceNotFound`,
+  `FormatDeviceAmbiguous`, `FormatRootDisk`, `FormatRootUnknown` or
+  `FormatSignaturePresent`, depending on the refusal the cache-device script
+  reported.
+- `InitError::Teardown` becomes `FormatterTeardown` when the formatter could
+  not be stopped or detached, or `TeardownAfterDetach` when the formatter was
+  detached and only its destruction failed.
+
+`InitError::Volume`, `InitError::Provision` and `InitError::Detach` now box
+their backend payload, so a pattern that binds the error must dereference the
+box or match with `..`. `ScalewayBackendError` similarly gains a
+`VolumeRequest` variant that carries the typed `VolumeRequestError` instead of
+a formatted string, and `VolumeAlreadyAttached` gains a `recovery` field.
+
 ## What did not change
 
 - macOS and Windows keep their platform linker; the preflight skips the linker

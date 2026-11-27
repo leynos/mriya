@@ -47,9 +47,32 @@ struct GetInstanceResponse {
 ///
 /// For example, a connection timeout becomes a provider error prefixed
 /// `Request:`.
-fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
+pub(super) fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
     ScalewayBackendError::Provider {
         message: format!("Request: {error}"),
+    }
+}
+
+/// Sends a request with the shared client and the per-request budget.
+///
+/// The timeout is applied here rather than only on the client because the
+/// shared client falls back to an unconfigured one when its builder fails.
+pub(super) async fn send_raw(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
+    request
+        .timeout(super::HTTP_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| request_error(&error))
+}
+
+/// Converts a client-error response into the SDK-shaped provider error.
+///
+/// For example, a 403 `{"type":"denied","message":"no access"}` response
+/// becomes a provider error with the message `Api: denied - no access`.
+pub(super) async fn api_error(response: Response) -> ScalewayBackendError {
+    match response.json::<ScalewayApiError>().await {
+        Ok(error) => ScalewayError::Api(error).into(),
+        Err(error) => request_error(&error),
     }
 }
 
@@ -57,20 +80,12 @@ fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
 ///
 /// For example, a 403 `{"type":"denied","message":"no access"}` response
 /// becomes a provider error with the message `Api: denied - no access`.
-async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
-    // Retain the per-request budget if the shared client fell back to an
-    // unconfigured client after its builder failed.
-    let response = request
-        .timeout(super::HTTP_TIMEOUT)
-        .send()
-        .await
-        .map_err(|error| request_error(&error))?;
+pub(super) async fn checked_response(
+    request: RequestBuilder,
+) -> Result<Response, ScalewayBackendError> {
+    let response = send_raw(request).await?;
     if response.status().is_client_error() {
-        let error = response
-            .json::<ScalewayApiError>()
-            .await
-            .map_err(|error| request_error(&error))?;
-        return Err(ScalewayError::Api(error).into());
+        return Err(api_error(response).await);
     }
     response
         .error_for_status()
@@ -135,6 +150,49 @@ impl ScalewayBackend {
         }
     }
 
+    /// Lists servers whose name matches `name` exactly.
+    ///
+    /// Scaleway filters by `name` and `project` server-side. The caller uses
+    /// this only to reconcile a create whose outcome is unknown, so every
+    /// returned server is one the provider says carries the generated name.
+    pub(in crate::scaleway) async fn find_instances_named(
+        &self,
+        zone: &str,
+        project_id: &str,
+        name: &str,
+    ) -> Result<Vec<ScalewayInstance>, ScalewayBackendError> {
+        let url = format!("{}/zones/{zone}/servers", self.instance_api_base);
+        let mut found = Vec::new();
+        let mut page = 1_u64;
+        loop {
+            let response = checked_response(
+                super::HTTP_CLIENT
+                    .get(&url)
+                    .header("X-Auth-Token", &self.config.secret_key)
+                    .query(&[("name", name), ("project", project_id), ("per_page", "50")])
+                    .query(&[("page", page)]),
+            )
+            .await?;
+            let result = response
+                .json::<ListInstancesResponse>()
+                .await
+                .map_err(|error| request_error(&error))?;
+            if result.servers.is_empty() {
+                return Ok(found);
+            }
+            // Scaleway's name filter is a partial match (`server1` also matches
+            // `server100`), and these servers are deleted, so only an exact
+            // name is a candidate.
+            found.extend(
+                result
+                    .servers
+                    .into_iter()
+                    .filter(|server| server.name == name),
+            );
+            page += 1;
+        }
+    }
+
     /// Deletes an instance before the caller polls for its disappearance.
     ///
     /// For example, a successful 204 response returns `Ok(())`; a provider
@@ -165,6 +223,32 @@ impl ScalewayBackend {
         zone: &Zone,
         instance_id: &str,
     ) -> Result<(), ScalewayBackendError> {
+        self.send_server_action(zone, instance_id, "poweron").await
+    }
+
+    /// Issues a power-off action through the same substitutable HTTP boundary.
+    ///
+    /// Detaching a Block Storage volume requires a stopped server, so teardown
+    /// powers the instance off before it detaches the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider error when the action is rejected.
+    pub(in crate::scaleway) async fn power_off_instance(
+        &self,
+        zone: &Zone,
+        instance_id: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        self.send_server_action(zone, instance_id, "poweroff").await
+    }
+
+    /// Sends one server action and checks the response.
+    async fn send_server_action(
+        &self,
+        zone: &Zone,
+        instance_id: &str,
+        action: &str,
+    ) -> Result<(), ScalewayBackendError> {
         let url = format!(
             "{}/zones/{}/servers/{instance_id}/action",
             self.instance_api_base,
@@ -174,7 +258,7 @@ impl ScalewayBackend {
             super::HTTP_CLIENT
                 .post(&url)
                 .header("X-Auth-Token", &self.config.secret_key)
-                .json(&serde_json::json!({"action": "poweron"})),
+                .json(&serde_json::json!({ "action": action })),
         )
         .await?;
         Ok(())

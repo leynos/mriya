@@ -1,0 +1,24 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "name": "mriya-cache",
+  "type": "sbs_5k",
+  "size": 20000000000,
+  "project_id": "proj",
+  "created_at": "2026-11-01T10:00:00.000000Z",
+  "updated_at": "2026-11-01T10:05:00.000000Z",
+  "references": [
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "product_resource_type": "instance_server",
+      "product_resource_id": "server-id",
+      "created_at": "2026-11-01T10:05:00.000000Z",
+      "type": "exclusive",
+      "status": "attached"
+    }
+  ],
+  "parent_snapshot_id": null,
+  "status": "in_use",
+  "tags": ["mriya", "cache"],
+  "specs": {"perf_iops": 5000, "class": "sbs"},
+  "zone": "zone"
+}

@@ -5,6 +5,7 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod cache_device;
 pub mod cloud_init;
 pub mod config;
 pub mod config_store;
@@ -28,7 +29,7 @@ pub use backend::{
 };
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};
-pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest};
+pub use init::{InitConfig, InitError, InitOptions, InitOrchestrator, InitOutcome, InitRequest};
 pub use janitor::{
     Janitor,
     JanitorConfig,
@@ -51,4 +52,13 @@ pub use sync::{
     SyncError,
     Syncer,
 };
-pub use volume::{VolumeBackend, VolumeHandle, VolumeRequest};
+pub use volume::{
+    TeardownFailure,
+    TeardownStage,
+    VolumeBackend,
+    VolumeHandle,
+    VolumeRequest,
+    VolumeState,
+    VolumeStatus,
+    VolumeTier,
+};

@@ -1,238 +1,108 @@
-//! Block Storage volume attachment helpers for the Scaleway backend.
-
-use std::collections::HashMap;
+//! Volume attachment through the dedicated Instances endpoint.
+//!
+//! The request names one volume and its provider type, so the provider keeps
+//! the rest of the server's volume map. After the response is parsed, the
+//! returned map is checked against the map from create time: the root entry and
+//! every unrelated entry must survive, and the cache entry must be present with
+//! `volume_type: sbs_volume`. Creation then waits for the Block Storage status
+//! `in_use` so the caller never assumes a successful attach too early.
 
 use super::super::{
     ScalewayBackend,
     ScalewayBackendError,
-    volume::{UpdateInstanceVolumesRequest, VolumeAttachment},
+    volume::{
+        AttachServerVolumeRequest,
+        ExpectedVolumeMap,
+        ServerVolumesResponse,
+        verify_attached,
+    },
 };
-use crate::backend::InstanceHandle;
-
-/// Direction of a volume PATCH, used to choose the matching error variant.
-///
-/// The action-specific variants describe only a *non-success HTTP response*.
-/// A request that never produced a response, such as a connection failure or
-/// an elapsed timeout, yields `ScalewayBackendError::Provider` instead, because
-/// there is no status for the action to describe. See
-/// `patch_instance_volumes` for the exact mapping.
-#[derive(Copy, Clone, Debug)]
-pub(super) enum VolumePatchAction {
-    /// The PATCH adds a volume; a rejected response maps to
-    /// `VolumeAttachmentFailed`.
-    Attach,
-    /// The PATCH removes a volume; a rejected response maps to
-    /// `VolumeDetachFailed`.
-    Detach,
-}
-
-impl VolumePatchAction {
-    /// Builds the error variant matching this action from the failure details.
-    ///
-    /// Retains the volume and instance identifiers so the reported failure
-    /// names both without the caller having to reconstruct them, and carries
-    /// the provider's response body as `message`.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let err = VolumePatchAction::Attach.into_error(
-    ///     String::from("vol-1"),
-    ///     String::from("srv-1"),
-    ///     String::from("{\"message\":\"conflict\"}"),
-    /// );
-    /// assert!(matches!(err, ScalewayBackendError::VolumeAttachmentFailed { .. }));
-    ///
-    /// // The same details map to the detach variant for the other direction.
-    /// let err = VolumePatchAction::Detach.into_error(
-    ///     String::from("vol-1"),
-    ///     String::from("srv-1"),
-    ///     String::from("{\"message\":\"conflict\"}"),
-    /// );
-    /// assert!(matches!(err, ScalewayBackendError::VolumeDetachFailed { .. }));
-    /// ```
-    const fn into_error(
-        self,
-        volume_id: String,
-        instance_id: String,
-        message: String,
-    ) -> ScalewayBackendError {
-        match self {
-            Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
-                volume_id,
-                instance_id,
-                message,
-            },
-            Self::Detach => ScalewayBackendError::VolumeDetachFailed {
-                volume_id,
-                instance_id,
-                message,
-            },
-        }
-    }
-}
-
-/// Identifies the volume and direction of a PATCH so a failure can be
-/// reported as an attach or detach error.
-///
-/// # Examples
-///
-/// ```ignore
-/// // The context records which direction the PATCH takes.
-/// let attach = VolumePatchContext::attach("vol-1");
-/// assert_eq!(attach.action, VolumePatchAction::Attach);
-/// let detach = VolumePatchContext::detach("vol-1");
-/// assert_eq!(detach.action, VolumePatchAction::Detach);
-/// ```
-#[derive(Copy, Clone, Debug)]
-pub(super) struct VolumePatchContext<'a> {
-    /// Identifier of the volume being attached or detached.
-    volume_id: &'a str,
-    /// Whether the PATCH attaches or detaches the volume.
-    action: VolumePatchAction,
-}
-
-impl<'a> VolumePatchContext<'a> {
-    /// Context for attaching `volume_id`.
-    pub(super) const fn attach(volume_id: &'a str) -> Self {
-        Self {
-            volume_id,
-            action: VolumePatchAction::Attach,
-        }
-    }
-
-    /// Context for detaching `volume_id`.
-    pub(super) const fn detach(volume_id: &'a str) -> Self {
-        Self {
-            volume_id,
-            action: VolumePatchAction::Detach,
-        }
-    }
-}
+use crate::{backend::InstanceHandle, volume::VolumeStatus};
 
 impl ScalewayBackend {
-    /// Attaches a volume to a stopped instance.
-    ///
-    /// The volume must be in the same zone as the instance. The attachment
-    /// uses a direct HTTP PATCH call since the `scaleway-rs` crate does not
-    /// expose volume management in its instance builder.
+    /// Attaches a volume to a stopped instance and waits for `in_use`.
     ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] when the API
-    /// rejects the attachment request. A request that fails before producing a
-    /// response, such as a connection error, returns
-    /// [`ScalewayBackendError::Provider`] instead, so a caller must not assume
-    /// every failure carries the attachment variant. Returns
-    /// [`ScalewayBackendError::VolumeNotFound`] only when `root_volume_id` is
-    /// blank; that check runs before any request is made.
-    ///
-    /// A non-blank root volume identifier is always sent, so the literal
-    /// `"0"` is *not* rejected here. Volume indices and volume identifiers are
-    /// different things: `"0"` is the map key the PATCH uses, and a provider
-    /// identifier incidentally equal to `"0"` would be forwarded unchanged.
+    /// Returns [`ScalewayBackendError::VolumeAttachmentFailed`] only for a 4xx
+    /// rejection, which proves nothing was attached. Any other non-success
+    /// status, an unparsable body or a map that violates the contract means the
+    /// volume may be attached, so those return
+    /// [`ScalewayBackendError::VolumeAttachmentUnverified`] and the caller must
+    /// detach before destroying the server. Lookup and timeout errors from the
+    /// status wait propagate unchanged.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// // A blank root volume is rejected before any request is sent.
-    /// let err = backend
-    ///     .attach_volume(&handle, "vol-1", String::from("  "))
-    ///     .await
-    ///     .unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeNotFound { .. }));
-    ///
-    /// // A well-formed root volume PATCHes index "0" and "1" onto the instance.
-    /// backend.attach_volume(&handle, "vol-1", String::from("root-1")).await?;
+    /// let expected = expected_map(&server.volumes.volumes);
+    /// backend.attach_volume(&handle, "vol-cache", &expected).await?;
     /// ```
     pub(in crate::scaleway) async fn attach_volume(
         &self,
         handle: &InstanceHandle,
         volume_id: &str,
-        root_volume_id: String,
-    ) -> Result<(), ScalewayBackendError> {
-        if root_volume_id.trim().is_empty() {
-            return Err(ScalewayBackendError::VolumeNotFound {
-                volume_id: String::from("0"),
-                zone: handle.zone.clone(),
-            });
-        }
-
-        let mut volumes = HashMap::new();
-
-        // Preserve root volume at index "0"
-        volumes.insert(
-            String::from("0"),
-            VolumeAttachment {
-                id: root_volume_id,
-                boot: true,
-            },
-        );
-
-        // Add cache volume at index "1"
-        volumes.insert(
-            String::from("1"),
-            VolumeAttachment {
-                id: volume_id.to_owned(),
-                boot: false,
-            },
-        );
-
-        let request = UpdateInstanceVolumesRequest { volumes };
-        self.patch_instance_volumes(handle, &request, VolumePatchContext::attach(volume_id))
-            .await
-    }
-
-    /// Sends a PATCH request to update instance volumes.
-    ///
-    /// # Errors
-    ///
-    /// A request that fails to send, such as a connection error or an elapsed
-    /// timeout, returns [`ScalewayBackendError::Provider`]. Only a response
-    /// with a non-success status reaches `VolumePatchAction::into_error`, which
-    /// is why the action-specific variants describe rejected responses and not
-    /// every PATCH failure.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let context = VolumePatchContext::attach("vol-1");
-    /// // A 2xx response resolves to `Ok`.
-    /// backend.patch_instance_volumes(&handle, &request, context).await?;
-    ///
-    /// // A rejected response carries the provider body in the error message.
-    /// let err = backend.patch_instance_volumes(&handle, &request, context).await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeAttachmentFailed { .. }));
-    /// ```
-    pub(super) async fn patch_instance_volumes(
-        &self,
-        handle: &InstanceHandle,
-        request: &UpdateInstanceVolumesRequest,
-        context: VolumePatchContext<'_>,
+        expected: &ExpectedVolumeMap,
     ) -> Result<(), ScalewayBackendError> {
         let url = format!(
-            "{}/zones/{}/servers/{}",
+            "{}/zones/{}/servers/{}/attach-volume",
             self.instance_api_base, handle.zone, handle.id
         );
+        let payload = AttachServerVolumeRequest::new(volume_id);
 
-        let response = super::HTTP_CLIENT
-            .patch(&url)
-            .header("X-Auth-Token", &self.config.secret_key)
-            .json(request)
-            .timeout(super::HTTP_TIMEOUT)
-            .send()
+        let response = super::http::send_raw(
+            super::HTTP_CLIENT
+                .post(&url)
+                .header("X-Auth-Token", &self.config.secret_key)
+                .json(&payload),
+        )
+        .await?;
+
+        let status = response.status();
+        let body = response
+            .text()
             .await
             .map_err(|err| ScalewayBackendError::Provider {
                 message: err.to_string(),
             })?;
 
-        if response.status().is_success() {
-            return Ok(());
+        if !status.is_success() {
+            // A 4xx rejection proves the request was refused before it took
+            // effect. A 5xx or gateway status does not: the provider may have
+            // attached the volume before the failure, so that case must stay
+            // detachable.
+            return Err(if status.is_client_error() {
+                ScalewayBackendError::VolumeAttachmentFailed {
+                    volume_id: volume_id.to_owned(),
+                    instance_id: handle.id.clone(),
+                    message: body,
+                }
+            } else {
+                ScalewayBackendError::VolumeAttachmentUnverified {
+                    volume_id: volume_id.to_owned(),
+                    instance_id: handle.id.clone(),
+                    message: format!("attach-volume returned {status}: {body}"),
+                }
+            });
         }
 
-        let error_text = response.text().await.unwrap_or_default();
-        Err(context
-            .action
-            .into_error(context.volume_id.to_owned(), handle.id.clone(), error_text))
+        let parsed: ServerVolumesResponse = serde_json::from_str(&body).map_err(|err| {
+            ScalewayBackendError::VolumeAttachmentUnverified {
+                volume_id: volume_id.to_owned(),
+                instance_id: handle.id.clone(),
+                message: format!("attach-volume response was not a server object: {err}"),
+            }
+        })?;
+        verify_attached(&parsed.server.volumes, volume_id, expected).map_err(|message| {
+            ScalewayBackendError::VolumeAttachmentUnverified {
+                volume_id: volume_id.to_owned(),
+                instance_id: handle.id.clone(),
+                message,
+            }
+        })?;
+
+        self.wait_for_volume_status(&handle.zone, volume_id, VolumeStatus::InUse)
+            .await?;
+        Ok(())
     }
 }

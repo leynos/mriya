@@ -1,6 +1,9 @@
 //! Shared fixtures for run BDD scenarios.
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use camino::Utf8PathBuf;
 use mriya::{
@@ -26,6 +29,8 @@ pub struct RunContext {
     pub cloud_init_poll_interval_override: Option<Duration>,
     pub cloud_init_wait_timeout_override: Option<Duration>,
     pub outcome: Option<RunResult>,
+    /// Shared ordering log for runner calls and backend lifecycle events.
+    pub event_log: Arc<Mutex<Vec<String>>>,
     /// The command the scenario asked the orchestrator to run remotely.
     ///
     /// Steps assert against this instead of matching a literal, so a scenario
@@ -41,6 +46,7 @@ pub enum RunFailureKind {
     Provisioning,
     ProvisioningTimeout,
     Sync,
+    CacheMount,
     Remote,
     Teardown,
 }
@@ -78,15 +84,17 @@ pub fn build_run_context() -> RunContextResult {
         RunTestError::Workspace(format!("non-utf8 tempdir path: {}", path.display()))
     })?;
 
+    let event_log = Arc::new(Mutex::new(Vec::new()));
     Ok(RunContext {
-        backend: ScriptedBackend::new(),
-        runner: ScriptedRunner::new(),
+        backend: ScriptedBackend::with_event_log(Arc::clone(&event_log)),
+        runner: ScriptedRunner::with_event_log(Arc::clone(&event_log)),
         sync_config: sync_config(),
         request: request()?,
         source,
         cloud_init_poll_interval_override: None,
         cloud_init_wait_timeout_override: None,
         outcome: None,
+        event_log,
         requested_command: None,
         source_tmp: std::sync::Arc::new(tmp_dir),
     })

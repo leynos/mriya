@@ -165,26 +165,34 @@ provisioning) that will guide subsequent optimizations.
   users can override the rsync/ssh binaries, SSH user, and remote path without
   changing code.
 
-### Volume attachment decision (December 2025)
+### Volume attachment decision (November 2026)
 
-- Implement volume attachment as an optional configuration
-  (`SCW_DEFAULT_VOLUME_ID` or `default_volume_id` in `mriya.toml`) that
-  attaches a pre-existing Block Storage volume to the instance before power-on.
-- Use a direct HTTP PATCH call to the Scaleway API for volume attachment since
-  the `scaleway-rs` crate v0.1.9 does not expose volume management in its
-  instance builder. The request updates the server's volumes map, preserving
-  the root volume at index "0" and adding the cache volume at index "1".
-- Mount the volume after SSH becomes available using
-  `sudo mkdir -p /mriya && sudo mount /dev/vdb /mriya 2>/dev/null || true`. The
-  `|| true` ensures graceful degradation if the volume lacks a filesystem or
-  mounting fails for other reasons.
-- Device path `/dev/vdb` is used because Scaleway assigns block devices
-  sequentially: root at `/dev/vda`, first additional volume at `/dev/vdb`.
-- Add `volume_mount_path` to `SyncConfig` (default `/mriya`) to allow
-  customization of where the cache volume is mounted.
-- Volume ID flows through the configuration layer (`ScalewayConfig`) to
-  `InstanceRequest` and is processed during the create flow, before the
-  instance is powered on.
+- Create, look up, poll and delete cache volumes through the Block Storage v1
+  API (`/block/v1/zones/{zone}/volumes`). Scaleway removed new Block Storage
+  creation from the Instances API on 30 April 2025, and the Instances contract
+  now answers `b_ssd volumes are no longer supported`.
+- Gate creation on `GET /block/v1/zones/{zone}/volume-types` so a tier the
+  zone does not stock fails before allocating anything.
+- Attach and detach through the dedicated Instances endpoints
+  (`/servers/{id}/attach-volume` and `/servers/{id}/detach-volume`) with
+  `volume_type: sbs_volume`. Each request names one volume, so the provider
+  keeps the rest of the map; Mriya still verifies that the root and every
+  unrelated entry survive.
+- Validate a configured volume before the server POST: same zone, same
+  project, not legacy, not attached, and in the `available` status. A post-POST
+  failure rolls back the server, detaching the cache first.
+- Treat a configured cache as required. Identify the guest disk by its
+  `volume-<uuid>` serial with vendor `SCW` and model `sbs`, refuse the root
+  disk and its ancestors, and verify the mount source with `findmnt` before
+  routing build caches.
+- Detach before deleting a server. Scaleway deletes every volume attached to a
+  server when the server is deleted, so teardown unmounts, stops, detaches,
+  waits for `available`, and only then deletes. A failed detach retains the
+  server and reports both IDs with a recovery command.
+- Refuse legacy `b_ssd` volumes with a pointer to
+  `docs/cache-volume-migration.md`; never reformat or reinterpret them.
+- Device names such as `/dev/vdb` are not stable. The earlier assumption that
+  the root disk is `/dev/vda` and the cache is `/dev/vdb` is removed.
 
 ### Cache routing decision (December 2025)
 
@@ -830,21 +838,29 @@ setup required for caching.
   we might add `volume_id = "<uuid>"` under the profile or under a per-project
   config section. This ties the volume to the project.
 
-#### Volume init decisions (December 2025)
+#### Volume init decisions (November 2026)
 
-- Document `mriya init` as a once-per-project step; rerunning is reserved for
-  replacing the cache volume with `--force`.
+- Document `mriya init` as a once-per-project step; rerunning replaces the
+  cache volume only with `--force`.
 - Use OrthoConfig discovery with `mriya.toml` (overridable via
   `MRIYA_CONFIG_PATH`) so `mriya init` updates the same configuration file
   consumed by `mriya run`.
-- Provision a short-lived formatter instance and run
-  `mkfs.ext4 -F /dev/disk/by-id/scsi-0SCW_BSSD_<volume-id>` over SSH. User
-  cloud-init is not passed through to avoid unintended side effects during
-  formatting.
-- Default the volume size to 20 GB, configurable via
-  `MRIYA_INIT_VOLUME_SIZE_GB` or `[init].volume_size_gb`.
-- If a volume ID is already configured, `mriya init` fails unless `--force` is
-  supplied to overwrite the existing value.
+- Create the Block Storage volume first, wait for `available`, then provision a
+  short-lived formatter with the volume attached. Format through the generated
+  cache-device script, which resolves the serial, guards the root disk, refuses
+  an existing signature, writes an ext4 filesystem labelled `mriya-cache`, and
+  flushes with `sync`.
+- Default the size to 20 decimal GB with a 5 GB minimum, configurable via
+  `MRIYA_INIT_VOLUME_SIZE_GB` or `[init].volume_size_gb`. Default the tier to
+  `sbs_5k`, with `sbs_15k` accepted, via `MRIYA_INIT_VOLUME_TIER` or
+  `[init].volume_tier`.
+- If an effective volume ID is already configured (in the file or through
+  `SCW_DEFAULT_VOLUME_ID`), fail unless `--force` is supplied. With `--force`,
+  warn when the environment ID will still override the newly written file value.
+- On failure after the volume exists, tear the formatter down and delete only
+  the volume this run created. Report a failed deletion with the volume ID and
+  the `scw block volume delete` command for recovery.
+- User cloud-init is not passed through to the formatter.
 
 **Mounting Convention:** We decide on a standard mount point (like `/mnt/mriya`
 or `/home`). For Scaleway, perhaps we mount at `/mnt/mriya` and then in

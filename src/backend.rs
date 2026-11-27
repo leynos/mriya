@@ -42,22 +42,37 @@ impl InstanceRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`BackendError::Validation`] when any string field is empty.
+    /// Returns [`BackendError::Validation`] when a required string field is
+    /// empty or `cloud_init_user_data` is not valid, and
+    /// [`BackendError::VolumeIdNotUuid`] when `volume_id` is present but is not
+    /// a canonical hyphenated UUID. Match the UUID variant when the distinction
+    /// matters to the caller; both are rejected before any provider request.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mriya::InstanceRequest;
+    ///
+    /// let request = InstanceRequest::builder()
+    ///     .image_label("ubuntu")
+    ///     .instance_type("DEV1-S")
+    ///     .zone("fr-par-1")
+    ///     .project_id("project")
+    ///     .architecture("x86_64")
+    ///     .volume_id(Some(String::from("not-a-uuid")))
+    ///     .build();
+    /// assert!(request.is_err());
+    /// ```
     pub fn validate(&self) -> Result<(), BackendError> {
-        if self.image_label.is_empty() {
-            return Err(BackendError::Validation("image_label".to_owned()));
+        if let Some(field) = self.first_missing_field() {
+            return Err(BackendError::Validation(field.to_owned()));
         }
-        if self.instance_type.is_empty() {
-            return Err(BackendError::Validation("instance_type".to_owned()));
-        }
-        if self.zone.is_empty() {
-            return Err(BackendError::Validation("zone".to_owned()));
-        }
-        if self.project_id.is_empty() {
-            return Err(BackendError::Validation("project_id".to_owned()));
-        }
-        if self.architecture.is_empty() {
-            return Err(BackendError::Validation("architecture".to_owned()));
+        if let Some(volume_id) = self.volume_id.as_deref()
+            && !is_canonical_uuid(volume_id)
+        {
+            return Err(BackendError::VolumeIdNotUuid {
+                value: volume_id.to_owned(),
+            });
         }
         if let Some(payload) = self.cloud_init_user_data.as_deref()
             && cloud_init::validate_payload(payload).is_err()
@@ -68,6 +83,54 @@ impl InstanceRequest {
         }
         Ok(())
     }
+
+    /// Returns the first required string field that is empty, if any.
+    ///
+    /// # Returns
+    ///
+    /// The field name used in [`BackendError::Validation`], or `None` when all
+    /// required fields are present.
+    fn first_missing_field(&self) -> Option<&'static str> {
+        [
+            ("image_label", self.image_label.as_str()),
+            ("instance_type", self.instance_type.as_str()),
+            ("zone", self.zone.as_str()),
+            ("project_id", self.project_id.as_str()),
+            ("architecture", self.architecture.as_str()),
+        ]
+        .into_iter()
+        .find(|(_, value)| value.is_empty())
+        .map(|(field, _)| field)
+    }
+}
+
+/// Reports whether `value` is a canonical hyphenated UUID.
+///
+/// Block Storage identifiers are UUIDs, and the value is later interpolated
+/// into a guest shell command, so the shape is checked before it travels.
+///
+/// # Examples
+///
+/// ```
+/// use mriya::backend::is_canonical_uuid;
+///
+/// assert!(is_canonical_uuid("11111111-2222-3333-4444-555555555555"));
+/// assert!(!is_canonical_uuid("11111111222233334444555555555555"));
+/// assert!(!is_canonical_uuid(
+///     "11111111-2222-3333-4444-55555555555; rm -rf /"
+/// ));
+/// ```
+#[must_use]
+pub fn is_canonical_uuid(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() == 36
+        && value
+            .chars()
+            .enumerate()
+            .all(|(index, character)| match index {
+                8 | 13 | 18 | 23 => character == '-',
+                _ => character.is_ascii_hexdigit(),
+            })
 }
 
 /// Builder for [`InstanceRequest`] that defers trimming and validation to
@@ -198,6 +261,14 @@ pub enum BackendError {
     /// Raised when a request is missing a required field.
     #[error("missing or empty field: {0}")]
     Validation(String),
+    /// Raised when a volume identifier is not a canonical UUID.
+    #[error(
+        "volume_id '{value}' is not a canonical UUID; use the hyphenated identifier returned by `mriya init` or listed by `scw block volume list`"
+    )]
+    VolumeIdNotUuid {
+        /// Identifier that failed validation.
+        value: String,
+    },
 }
 
 /// Future returned by backend operations.

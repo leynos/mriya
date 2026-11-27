@@ -22,6 +22,13 @@ const CACHE_ROUTING_VARS: &[&str] = &[
     "PNPM_STORE_PATH=",
 ];
 
+/// Builds the routing for a run whose cache was verified at `/dev/sdb`.
+fn required_cache() -> CacheRouting {
+    CacheRouting::Required {
+        device: String::from("/dev/sdb"),
+    }
+}
+
 fn run_remote_with_fake_output(
     cfg: SyncConfig,
     networking: &InstanceNetworking,
@@ -110,10 +117,10 @@ fn build_remote_command_routes_cargo_caches_when_volume_is_mounted(base_config: 
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(base_config, runner).expect("config should validate");
 
-    let command = syncer.build_remote_command("cargo test");
+    let command = syncer.build_remote_command("cargo test", &required_cache());
     assert!(
-        command.contains("mountpoint -q /mriya"),
-        "expected mountpoint guard, got: {command}"
+        command.contains("--mountpoint /mriya"),
+        "expected the source check, got: {command}"
     );
     for required in [
         "export CARGO_HOME=/mriya/cargo",
@@ -143,7 +150,7 @@ fn run_remote_invokes_ssh_with_wrapped_command(
     let syncer = Syncer::new(base_config, runner.clone()).expect("config should validate");
 
     let remote_command = "echo ok";
-    let expected_wrapped = syncer.build_remote_command(remote_command);
+    let expected_wrapped = syncer.build_remote_command(remote_command, &CacheRouting::Unconfigured);
     let _ = syncer
         .run_remote(&networking, remote_command)
         .expect("run_remote should succeed");
@@ -171,6 +178,54 @@ fn run_remote_invokes_ssh_with_wrapped_command(
 }
 
 #[rstest]
+fn build_remote_command_keeps_the_guarded_preamble_without_a_cache(base_config: SyncConfig) {
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(base_config, runner).expect("config should validate");
+
+    let command = syncer.build_remote_command("cargo test", &CacheRouting::Unconfigured);
+    assert!(
+        command.contains("if mountpoint -q /mriya 2>/dev/null; then "),
+        "expected the historical guarded preamble, got: {command}"
+    );
+    assert!(
+        !command.contains("exit 1"),
+        "an unconfigured cache must not fail the command, got: {command}"
+    );
+    for var in CACHE_ROUTING_VARS {
+        assert!(
+            command.contains(var),
+            "expected cache routing var '{var}' inside the guard, got: {command}"
+        );
+    }
+}
+
+#[rstest]
+fn build_remote_command_fails_closed_for_a_required_cache(base_config: SyncConfig) {
+    let runner = ScriptedRunner::new();
+    let syncer = Syncer::new(base_config, runner).expect("config should validate");
+
+    let command = syncer.build_remote_command("cargo test", &required_cache());
+    assert!(
+        command.contains(
+            "if [ \"$(findmnt -no SOURCE --mountpoint /mriya 2>/dev/null)\" != /dev/sdb ]; then "
+        ),
+        "expected a source comparison against the verified device, got: {command}"
+    );
+    assert!(
+        command.contains("refusing to run"),
+        "expected the refusal to explain itself, got: {command}"
+    );
+    assert!(
+        command.contains("exit 1; fi; "),
+        "expected the preamble to stop the command, got: {command}"
+    );
+    assert!(
+        !command.contains("mountpoint -q /mriya"),
+        "a verified cache needs the source check, not the weak mountpoint guard: {command}"
+    );
+}
+
+#[rstest]
 fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
     let cfg = SyncConfig {
         route_build_caches: false,
@@ -178,7 +233,7 @@ fn build_remote_command_can_disable_cache_routing(base_config: SyncConfig) {
     };
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    let command = syncer.build_remote_command("cargo test");
+    let command = syncer.build_remote_command("cargo test", &required_cache());
     for var in CACHE_ROUTING_VARS {
         assert!(
             !command.contains(var),
@@ -195,9 +250,9 @@ fn build_remote_command_escapes_volume_mount_path_with_spaces(base_config: SyncC
     };
     let runner = ScriptedRunner::new();
     let syncer = Syncer::new(cfg, runner).expect("config should validate");
-    let command = syncer.build_remote_command("cargo test");
+    let command = syncer.build_remote_command("cargo test", &required_cache());
     assert!(
-        command.contains("mountpoint -q '/mnt/mriya cache'"),
+        command.contains("--mountpoint '/mnt/mriya cache'"),
         "expected mount path to be shell escaped, got: {command}"
     );
     assert!(
@@ -214,7 +269,7 @@ fn build_ssh_args_uses_wrapped_command_verbatim(
     let runner = ScriptedRunner::new();
     runner.push_success();
     let syncer = Syncer::new(base_config, runner).expect("config should validate");
-    let wrapped = syncer.build_remote_command("echo ok");
+    let wrapped = syncer.build_remote_command("echo ok", &required_cache());
     let env = crate::test_helpers::mock_env(&[("HOME", "/home/tester")]);
     let args = syncer
         .build_ssh_args(&networking, &wrapped, &env)

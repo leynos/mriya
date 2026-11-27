@@ -22,7 +22,7 @@ pub use config::{
     SyncConfigLoadError,
     SyncError,
 };
-pub use remote_command::{CACHE_SUBDIRECTORIES, create_cache_directories_command};
+pub use remote_command::{CACHE_SUBDIRECTORIES, CacheRouting, create_cache_directories_command};
 pub use types::{
     CommandOutput,
     CommandRunner,
@@ -143,7 +143,43 @@ impl<R: CommandRunner> Syncer<R> {
         networking: &InstanceNetworking,
         remote_command: &str,
     ) -> Result<RemoteCommandOutput, SyncError> {
-        let remote_cmd_wrapped = self.build_remote_command(remote_command);
+        self.run_remote_with_cache(networking, remote_command, &CacheRouting::Unconfigured)
+    }
+
+    /// Executes `remote_command` over SSH with the requested cache routing.
+    ///
+    /// A caller that attached a configured cache passes
+    /// [`CacheRouting::Required`] with the device it verified. The preamble
+    /// then fails closed when the path's source is no longer that device, so
+    /// build output cannot be silently redirected onto the root filesystem. A
+    /// run without a configured cache keeps the guarded historical preamble.
+    ///
+    /// # Parameters
+    ///
+    /// - `networking`: public address and SSH port of the instance.
+    /// - `remote_command`: command to execute after the optional cache prefix.
+    /// - `routing`: whether the command requires a verified cache mount.
+    ///
+    /// # Returns
+    ///
+    /// The remote exit code and captured streams.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any failure to spawn or execute the SSH command.
+    ///
+    /// # Security
+    ///
+    /// `remote_command` is not escaped; only the working directory component is
+    /// shell-escaped. Ensure any caller-provided arguments are validated or
+    /// quoted upstream.
+    pub fn run_remote_with_cache(
+        &self,
+        networking: &InstanceNetworking,
+        remote_command: &str,
+        routing: &CacheRouting,
+    ) -> Result<RemoteCommandOutput, SyncError> {
+        let remote_cmd_wrapped = self.build_remote_command(remote_command, routing);
         self.execute_ssh(networking, &remote_cmd_wrapped)
     }
 
@@ -196,6 +232,7 @@ impl<R: CommandRunner> Syncer<R> {
         let mut args = vec![
             OsString::from("-az"),
             OsString::from("--delete"),
+            OsString::from("--one-file-system"),
             OsString::from("--filter=:- .gitignore"),
             OsString::from("--exclude"),
             OsString::from(".git/"),
@@ -277,6 +314,18 @@ impl<R: CommandRunner> Syncer<R> {
             args.push(OsString::from("BatchMode=yes"));
         }
 
+        // Bound an unresponsive peer: a dead session is noticed within three
+        // keepalive intervals instead of hanging the readiness or cloud-init
+        // probe past its deadline.
+        for option in [
+            String::from("ConnectTimeout=15"),
+            String::from("ServerAliveInterval=15"),
+            String::from("ServerAliveCountMax=3"),
+        ] {
+            args.push(OsString::from("-o"));
+            args.push(OsString::from(option));
+        }
+
         if !self.config.ssh_strict_host_key_checking {
             args.push(OsString::from("-o"));
             args.push(OsString::from("StrictHostKeyChecking=no"));
@@ -313,8 +362,8 @@ impl<R: CommandRunner> Syncer<R> {
         Ok(format!("{} {}", self.config.ssh_bin, opts))
     }
 
-    fn build_remote_command(&self, remote_command: &str) -> String {
-        remote_command::build_remote_command(&self.config, remote_command)
+    fn build_remote_command(&self, remote_command: &str, routing: &CacheRouting) -> String {
+        remote_command::build_remote_command(&self.config, remote_command, routing)
     }
 }
 

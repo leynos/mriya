@@ -31,6 +31,7 @@ to override discovery.
 
 Example `mriya.toml`:
 
+<!-- tested-example: users-guide-config-file -->
 ```toml
 [scaleway]
 secret_key = "scw-secret-key-here"
@@ -46,6 +47,7 @@ ssh_user = "ubuntu"
 Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
+<!-- tested-example: users-guide-validation-error -->
 ```text
 missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
 ```
@@ -82,6 +84,7 @@ missing status.
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
 
+<!-- tested-example: users-guide-instance-override -->
 ```bash
 mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo test
 ```
@@ -99,19 +102,22 @@ first-boot provisioning before the remote command starts.
 
 Provide user-data either inline or via a local file:
 
+<!-- tested-example: users-guide-cloud-init-file -->
 ```bash
 mriya run --cloud-init-file ./cloud-init.yml -- jq --version
 ```
 
 Or inline (handy for short scripts):
 
+<!-- tested-example: users-guide-cloud-init-inline -->
 ```bash
-mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
+mriya run --cloud-init $'#!/bin/sh\necho ready' -- sh -lc 'echo ok'
 ```
 
 A file path starting with `~/` is expanded through `HOME` before the file is
 read:
 
+<!-- tested-example: users-guide-cloud-init-tilde -->
 ```bash
 mriya run --cloud-init-file '~/cloud-init.yml' -- jq --version
 ```
@@ -185,26 +191,30 @@ Sync settings use `ortho-config` layering with the `MRIYA_SYNC_` prefix:
 ## Persistent cache volume
 
 Mriya can attach a Block Storage volume to the ephemeral VM for caching build
-artefacts between runs. When configured, the volume is attached before the
-instance starts and mounted at `/mriya`. Place build caches (such as Cargo's
-target directory) on this volume to persist compiled dependencies across runs.
+artefacts between runs. The volume is created and managed through the Block
+Storage API (`/block/v1/zones/{zone}/volumes`), while attachment and detachment
+use the Instances API's dedicated `attach-volume` and `detach-volume` endpoints
+with the `sbs_volume` type. Scaleway retired new Block Storage creation through
+the Instances API on 30 April 2025.
 
 To enable the cache volume:
 
-1. Run `mriya init` to create and format a Block Storage volume in the
-   configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` to replace an existing configured volume ID. If any
-   step after provisioning fails — including the instance read it performs
-   before detaching the volume — the command destroys the formatter instance
-   before reporting the error, so a failed run does not leave a VM billing.
+1. Run `mriya init` to create and format a volume in the configured zone. The
+   command creates the volume, waits for the documented `available` state,
+   attaches it to a stopped formatter VM, formats it, detaches it, waits for
+   `available`, destroys the formatter, and writes the new volume ID into
+   `mriya.toml`. Use `mriya init --force` to replace an existing configured
+   volume ID.
 2. (Optional) override the volume ID explicitly via configuration:
 
+   <!-- tested-example: users-guide-explicit-volume-env -->
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
    ```
 
    Or in `mriya.toml`:
 
+   <!-- tested-example: users-guide-explicit-volume-file -->
    ```toml
    [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
@@ -212,11 +222,60 @@ To enable the cache volume:
 
 3. Configure the build tool to use the mounted volume. For Cargo:
 
+   <!-- tested-example: users-guide-cargo-build -->
    ```bash
    mriya run -- cargo build
    ```
 
-When the volume is mounted successfully, Mriya:
+### Storage tier, size and location
+
+`mriya init` creates a Block Storage volume in one of two performance tiers:
+
+- `sbs_5k` (default) — up to 5,000 IOPS.
+- `sbs_15k` — up to 15,000 IOPS.
+
+Select the tier with `MRIYA_INIT_VOLUME_TIER` or `[init].volume_tier` in
+`mriya.toml`:
+
+<!-- tested-example: users-guide-init-tier -->
+```toml
+[init]
+volume_size_gb = 20
+volume_tier = "sbs_5k"
+```
+
+Sizes are decimal gigabytes (1 GB = 1,000,000,000 bytes), matching the
+provider's granularity. The minimum is 5 GB. The volume must be in the same
+Availability Zone as the instance and in the configured project; `mriya init`
+and `mriya run` fail before creating a server when either requirement is not
+met.
+
+A configured volume that uses the retired `b_ssd` class is refused with a
+pointer to [Migrating a legacy cache volume](cache-volume-migration.md). Mriya
+never formats or reinterprets a legacy volume.
+
+### Device identification
+
+Scaleway does not guarantee that `/dev/vdb` is the cache disk. The VM may see
+the root disk as `/dev/sda`, and device names can change across boots. Mriya
+therefore finds the disk whose SCSI serial is `volume-<uuid>`, with vendor
+`SCW` and model `sbs`, and refuses to act when no disk or more than one disk
+matches.
+
+Formatting and mounting also guard the root disk: the resolved device is
+refused if it is the root disk, the root device, or an ancestor of either. A
+format is refused when the device already carries a filesystem signature, and a
+mount is refused unless the filesystem is ext4.
+
+### Verified mounting and teardown
+
+When a volume is configured, a verified mount is required. Mriya mounts the
+device, then checks with `findmnt` that the mount path's source is that device.
+Only then does it export build-cache paths into the remote session. If any step
+fails, the run fails and tears the VM down rather than silently writing build
+output to the root filesystem.
+
+When the volume is mounted, Mriya:
 
 1. Creates cache subdirectories under the mount point so toolchains can write
    immediately (`cargo`, `rustup`, `target`, `go/pkg/mod`, `go/build-cache`,
@@ -227,14 +286,21 @@ When the volume is mounted successfully, Mriya:
    `PIP_CACHE_DIR` (Python/pip); `npm_config_cache`, `YARN_CACHE_FOLDER`, and
    `PNPM_STORE_PATH` (Node tooling).
 
-If mounting fails (for example, when the volume has no filesystem), the run
-continues without the cache — this allows graceful degradation for first-time
-setups.
+Every teardown flushes and unmounts the cache, stops the VM, detaches the
+volume, waits for the volume to become `available`, and only then deletes the
+server. Scaleway deletes every volume still attached when a server is deleted,
+so the detach is what preserves the cache. If the detach fails, Mriya keeps the
+server and reports both IDs with a recovery command:
 
-`mriya init` uses a temporary formatter instance and runs `mkfs.ext4` against
-the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
-`mriya.toml`:
+<!-- tested-example: users-guide-detach-recovery -->
+```text
+scw instance server detach-volume server-id=<instance> \
+  volume-id=<volume> zone=<zone>
+```
 
+Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in `mriya.toml`:
+
+<!-- tested-example: users-guide-init-size -->
 ```toml
 [init]
 volume_size_gb = 50
@@ -242,10 +308,15 @@ volume_size_gb = 50
 
 **Requirements:**
 
-- The volume must exist in the same zone as the instance.
-- The volume should be formatted with a filesystem (ext4 recommended) before
-  first use. `mriya init` formats the volume automatically.
+- The volume must exist in the same zone and project as the instance.
+- The volume must be formatted with ext4 before first use. `mriya init`
+  formats the new volume automatically and refuses a device that already has a
+  signature.
 - Only one instance can attach a given volume at a time.
+
+The current list prices for the two tiers, and the difference between API
+compatibility and storage cost, are documented in
+[Migrating a legacy cache volume](cache-volume-migration.md#compatibility-and-price-are-different-questions).
 
 ## What the Scaleway backend does now
 
@@ -254,8 +325,10 @@ volume_size_gb = 50
 - Ensures the requested instance type is available before provisioning.
 - Creates an instance with a routed public IPv4 address and tags `mriya` and
   `ephemeral`.
-- Attaches a Block Storage volume if `SCW_DEFAULT_VOLUME_ID` is configured,
-  then mounts it to `/mriya` after the instance boots.
+- Attaches a Block Storage volume with `volume_type: sbs_volume` if
+  `SCW_DEFAULT_VOLUME_ID` is configured, waits for the volume to report
+  `in_use`, then mounts it to `/mriya` after the instance boots. A configured
+  cache is required: an unverified mount fails the run and tears the VM down.
 - Polls every five seconds (up to five minutes) until the instance is running
   and reachable via SSH on port 22.
 - Destroys the instance and polls until the API no longer lists it, failing if
@@ -277,6 +350,7 @@ The behavioural suite provisions a real DEV1-S instance to prove create → wait
 → destroy works end to end and that teardown leaves no residue. Ensure the
 `SCW_*` variables are set, then run:
 
+<!-- tested-example: users-guide-scaleway-test -->
 ```bash
 make scaleway-test
 ```
@@ -285,8 +359,12 @@ The target:
 
 - Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the Scaleway behavioural suite.
 - Generates `MRIYA_TEST_RUN_ID` via `uuidgen` and tags created instances.
-- Runs `mriya-janitor` before and after tests so leaked instances are cleaned
-  up even when the test command fails.
+- Runs `mriya-janitor` before and after tests so leaked instances and volumes
+  are cleaned up even when the test command fails.
+- Runs `tests/scaleway_cache_volume.rs`, which writes a sentinel on the first
+  VM, reads it and writes a second sentinel on the second VM, and reads the
+  second sentinel on the third VM. It checks that each server is gone and the
+  volume is available after every teardown, then deletes the volume.
 
 The underlying `cargo test` uses `--test-threads=1` to keep only one instance
 alive at a time.
@@ -311,6 +389,7 @@ prefix's `bin` first on `PATH`, so every Make target uses the pinned release; a
 bare `cargo build` outside Make needs the same directory on `PATH`. The example
 reads the variable the Makefile reads, so it follows an override:
 
+<!-- tested-example: users-guide-build-tools-path -->
 ```bash
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
@@ -320,6 +399,7 @@ assigns its own `RUSTFLAGS`, which displaces the configuration's flags, so a
 shipped artefact keeps the platform linker. To build with the platform linker
 directly, assign an empty `RUSTFLAGS`:
 
+<!-- tested-example: users-guide-release-linker -->
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
@@ -332,6 +412,7 @@ entry point that reads the environment has two forms: the default one reads the
 real process environment, and a `_with_env` counterpart takes any
 `mockable::Env` so your own tests can inject a value.
 
+<!-- tested-example: users-guide-library-usage -->
 ```rust
 use mriya::sync::{expand_tilde, expand_tilde_with_home, home_from_env};
 use mockable::{DefaultEnv, Env};

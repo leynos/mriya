@@ -1,4 +1,9 @@
 //! Scaleway backend implementation of the instance lifecycle.
+//!
+//! Server operations use the Instances API, including the dedicated
+//! `attach-volume` and `detach-volume` endpoints. Cache volumes are created,
+//! read, polled and deleted through the Block Storage v1 API, because Scaleway
+//! retired new Block Storage creation through the Instances API in April 2025.
 
 mod error;
 mod lifecycle;
@@ -7,15 +12,20 @@ mod volume;
 
 use std::time::Duration;
 
-use lifecycle::InstanceSnapshot;
 use scaleway_rs::ScalewayApi;
-use types::{Action, Zone};
 
 use crate::{
     backend::{Backend, BackendFuture, InstanceHandle, InstanceNetworking, InstanceRequest},
     config::ScalewayConfig,
     janitor::{TEST_RUN_ID_ENV, TEST_RUN_TAG_PREFIX},
-    volume::{VolumeBackend, VolumeHandle, VolumeRequest},
+    volume::{
+        TeardownFailure,
+        VolumeBackend,
+        VolumeHandle,
+        VolumeRequest,
+        VolumeState,
+        VolumeStatus,
+    },
 };
 
 /// Port assumed for SSH readiness probes and the returned networking details.
@@ -27,15 +37,18 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub use error::ScalewayBackendError;
 
-/// Backend that provisions instances through the Scaleway Instances API.
+/// Backend that provisions instances through the Scaleway Instances API and
+/// manages cache volumes through the Block Storage API.
 #[derive(Clone)]
 pub struct ScalewayBackend {
-    /// SDK client used for image lookups; instance, volume, and user-data calls
-    /// bypass it and use direct HTTP requests.
+    /// SDK client used for image lookups; every other call is direct HTTP.
     api: ScalewayApi,
     /// Base URL for the Instances API calls made by direct HTTP request.
     /// Overridable within the crate so tests can target a loopback server.
     instance_api_base: String,
+    /// Base URL for the Block Storage v1 API. Overridable within the crate so
+    /// loopback tests can serve both APIs from one listener.
+    block_api_base: String,
     /// Validated configuration; supplies the secret key and default request
     /// values.
     config: ScalewayConfig,
@@ -110,6 +123,7 @@ impl ScalewayBackend {
         Ok(Self {
             api: ScalewayApi::new(&config.secret_key),
             instance_api_base: lifecycle::SCALEWAY_INSTANCE_API_BASE.to_owned(),
+            block_api_base: lifecycle::SCALEWAY_BLOCK_API_BASE.to_owned(),
             config,
             test_run_id,
             ssh_port: DEFAULT_SSH_PORT,
@@ -146,39 +160,6 @@ impl ScalewayBackend {
         self.config
             .as_request_with_env(env)
             .map_err(ScalewayBackendError::from)
-    }
-
-    /// Rejects a cache volume that is the instance's root volume.
-    ///
-    /// IDs are compared after trimming whitespace. Attaching the root volume
-    /// again as the cache volume would corrupt the volume map, so the request
-    /// fails with `VolumeAttachmentFailed` instead.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// // Padding around the identifier is ignored when comparing.
-    /// let err =
-    ///     ScalewayBackend::validate_cache_volume_id(" vol-1 ", "vol-1", &handle).unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeAttachmentFailed { .. }));
-    ///
-    /// // Two different volumes pass, so the PATCH may proceed.
-    /// ScalewayBackend::validate_cache_volume_id("vol-cache", "vol-1", &handle)?;
-    /// ```
-    fn validate_cache_volume_id(
-        cache_volume_id: &str,
-        root_volume_id: &str,
-        handle: &InstanceHandle,
-    ) -> Result<(), ScalewayBackendError> {
-        if cache_volume_id.trim() == root_volume_id.trim() {
-            return Err(ScalewayBackendError::VolumeAttachmentFailed {
-                volume_id: cache_volume_id.trim().to_owned(),
-                instance_id: handle.id.clone(),
-                message: String::from("refuse to attach root volume as cache volume"),
-            });
-        }
-
-        Ok(())
     }
 
     /// Appends the test-run tag to `base_tags` when `test_run_id` is non-blank.
@@ -256,45 +237,7 @@ impl Backend for ScalewayBackend {
         Box::pin(async move {
             request.validate()?;
             let image_id = self.resolve_image_id(request).await?;
-
-            let server = self.create_instance_stopped(request, &image_id).await?;
-
-            let handle = InstanceHandle {
-                id: server.id.clone(),
-                zone: request.zone.clone(),
-            };
-
-            // Attach cache volume before powering on (instance is stopped)
-            if let Some(ref volume_id) = request.volume_id {
-                let root_volume_id = server
-                    .volumes
-                    .volumes
-                    .get("0")
-                    .map(|v| v.id.clone())
-                    .ok_or_else(|| ScalewayBackendError::VolumeNotFound {
-                        volume_id: String::from("0"),
-                        zone: request.zone.clone(),
-                    })?;
-                Self::validate_cache_volume_id(volume_id, &root_volume_id, &handle)?;
-                self.attach_volume(&handle, volume_id, root_volume_id)
-                    .await?;
-            }
-
-            let snapshot = InstanceSnapshot {
-                id: server.id.into(),
-                state: server.state.into(),
-                allowed_actions: server
-                    .allowed_actions
-                    .into_iter()
-                    .map(Action::from)
-                    .collect(),
-                public_ip: server.public_ip.as_ref().map(|ip| ip.address.clone()),
-            };
-
-            let zone = Zone::from(request.zone.as_str());
-            self.power_on_if_needed(&zone, &snapshot).await?;
-
-            Ok(handle)
+            self.create_with_image_id(request, &image_id).await
         })
     }
 
@@ -325,12 +268,53 @@ impl VolumeBackend for ScalewayBackend {
         Box::pin(async move { Self::create_volume(self, request).await })
     }
 
+    fn get_volume<'a>(
+        &'a self,
+        zone: &'a str,
+        volume_id: &'a str,
+    ) -> BackendFuture<'a, VolumeState, Self::Error> {
+        Box::pin(async move { Self::get_volume(self, zone, volume_id).await })
+    }
+
+    fn wait_for_volume_status<'a>(
+        &'a self,
+        zone: &'a str,
+        volume_id: &'a str,
+        status: VolumeStatus,
+    ) -> BackendFuture<'a, VolumeState, Self::Error> {
+        Box::pin(async move { Self::wait_for_volume_status(self, zone, volume_id, status).await })
+    }
+
+    fn delete_volume<'a>(&'a self, handle: &'a VolumeHandle) -> BackendFuture<'a, (), Self::Error> {
+        Box::pin(async move { Self::delete_volume(self, handle).await })
+    }
+
+    fn attach_volume<'a>(
+        &'a self,
+        handle: &'a InstanceHandle,
+        volume_id: &'a str,
+    ) -> BackendFuture<'a, (), Self::Error> {
+        Box::pin(async move {
+            let instance = self.get_instance(handle).await?;
+            let expected = volume::expected_map(&instance.volumes.volumes);
+            Self::attach_volume(self, handle, volume_id, &expected).await
+        })
+    }
+
     fn detach_volume<'a>(
         &'a self,
         handle: &'a InstanceHandle,
         volume_id: &'a str,
     ) -> BackendFuture<'a, (), Self::Error> {
         Box::pin(async move { Self::detach_volume(self, handle, volume_id).await })
+    }
+
+    fn teardown<'a>(
+        &'a self,
+        handle: &'a InstanceHandle,
+        volume_id: Option<&'a str>,
+    ) -> BackendFuture<'a, (), TeardownFailure<Self::Error>> {
+        Box::pin(async move { Self::teardown_instance(self, handle, volume_id).await })
     }
 }
 

@@ -1,19 +1,14 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::{InitError, InitOrchestrator, sync::Syncer};
+use mriya::{InitOrchestrator, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
 use super::{
-    test_doubles::MemoryConfigStore,
-    test_helpers::{
-        InitContext,
-        InitContextResult,
-        InitFailure,
-        InitFailureKind,
-        InitResult,
-        InitTestError,
-    },
+    config_store_double::MemoryConfigStore,
+    doubles_support::LifecycleEvent,
+    failure_kind::{map_failure_kind, parse_failure_kind},
+    test_helpers::{InitContext, InitContextResult, InitFailure, InitResult, InitTestError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +30,11 @@ fn formatter_succeeds(
     init_context_result: InitContextResult,
 ) -> Result<InitContextResult, StepError> {
     let init_context = init_context_result?;
-    init_context.runner.push_success();
+    init_context.runner.push_output(
+        Some(0),
+        "MRIYA_CACHE_STATUS=formatted DEVICE=/dev/sdb\n",
+        "",
+    );
     Ok(Ok(init_context))
 }
 
@@ -55,6 +54,24 @@ fn volume_creation_fails(
 ) -> Result<InitContextResult, StepError> {
     let init_context = init_context_result?;
     init_context.backend.fail_create_volume();
+    Ok(Ok(init_context))
+}
+
+#[given("volume readiness fails")]
+fn volume_readiness_fails(
+    init_context_result: InitContextResult,
+) -> Result<InitContextResult, StepError> {
+    let init_context = init_context_result?;
+    init_context.backend.fail_volume_ready();
+    Ok(Ok(init_context))
+}
+
+#[given("volume deletion fails")]
+fn volume_deletion_fails(
+    init_context_result: InitContextResult,
+) -> Result<InitContextResult, StepError> {
+    let init_context = init_context_result?;
+    init_context.backend.fail_delete_volume();
     Ok(Ok(init_context))
 }
 
@@ -101,6 +118,18 @@ fn config_contains_volume_id(
     Ok(Ok(init_context))
 }
 
+#[given("an environment volume ID \"{volume_id}\" is effective")]
+fn environment_volume_id(
+    init_context_result: InitContextResult,
+    volume_id: String,
+) -> Result<InitContextResult, StepError> {
+    let mut init_context = init_context_result?;
+    let override_id = volume_id.trim().to_owned();
+    init_context.request.effective_volume_id = Some(override_id.clone());
+    init_context.request.environment_volume_id = Some(override_id);
+    Ok(Ok(init_context))
+}
+
 #[given("force overwrite is enabled")]
 fn force_overwrite_enabled(
     init_context_result: InitContextResult,
@@ -131,7 +160,9 @@ fn prepare_volume(init_context_result: InitContextResult) -> Result<InitContextR
     let request_clone = request.clone();
     let result = runtime.block_on(async move { orchestrator.execute(&request_clone).await });
     let outcome = match result {
-        Ok(_) => InitResult::Success,
+        Ok(outcome) => InitResult::Success {
+            warning: outcome.warning,
+        },
         Err(err) => InitResult::Failure(InitFailure {
             kind: map_failure_kind(&err),
             message: err.to_string(),
@@ -154,7 +185,7 @@ fn init_success(init_context_result: &InitContextResult) -> Result<(), StepError
         .as_ref()
         .map_err(|err| StepError::Assertion(err.to_string()))?;
     match init_context.outcome {
-        Some(InitResult::Success) => Ok(()),
+        Some(InitResult::Success { .. }) => Ok(()),
         Some(InitResult::Failure(ref failure)) => Err(StepError::Assertion(format!(
             "expected success, got failure: {}",
             failure.message
@@ -168,7 +199,8 @@ fn init_error_kind(init_context_result: &InitContextResult, kind: String) -> Res
     let init_context = init_context_result
         .as_ref()
         .map_err(|err| StepError::Assertion(err.to_string()))?;
-    let expected = parse_failure_kind(&kind)?;
+    let expected = parse_failure_kind(&kind)
+        .ok_or_else(|| StepError::Assertion(format!("unknown failure kind: {kind}")))?;
     let Some(InitResult::Failure(failure)) = &init_context.outcome else {
         return Err(StepError::Assertion(String::from(
             "expected failure outcome",
@@ -194,12 +226,12 @@ fn volume_formatted(init_context_result: &InitContextResult) -> Result<(), StepE
         .first()
         .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
     let command = invocation.command_string();
-    let expected_path = "/dev/disk/by-id/scsi-0SCW_BSSD_vol-123";
-    if command.contains("mkfs.ext4") && command.contains(expected_path) {
+    let expected_serial = "volume-vol-123";
+    if command.contains("mkfs.ext4") && command.contains(expected_serial) {
         Ok(())
     } else {
         Err(StepError::Assertion(format!(
-            "expected mkfs.ext4 command for {expected_path}, got: {command}"
+            "expected mkfs.ext4 command for {expected_serial}, got: {command}"
         )))
     }
 }
@@ -251,31 +283,115 @@ fn volume_not_created(init_context_result: &InitContextResult) -> Result<(), Ste
     )
 }
 
-const fn map_failure_kind(
-    err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
-) -> InitFailureKind {
-    match err {
-        InitError::Config(_) => InitFailureKind::Config,
-        InitError::Volume(_) => InitFailureKind::Volume,
-        InitError::Provision(_) => InitFailureKind::Provision,
-        InitError::Wait { .. } => InitFailureKind::Wait,
-        InitError::Format { .. } => InitFailureKind::Format,
-        InitError::Detach { .. } => InitFailureKind::Detach,
-        InitError::Teardown(_) => InitFailureKind::Teardown,
+#[then("the init warning names the environment override")]
+fn init_warning_names_environment(
+    init_context_result: &InitContextResult,
+) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let expected = init_context
+        .request
+        .environment_volume_id
+        .as_deref()
+        .map_or_else(String::new, |id| format!("SCW_DEFAULT_VOLUME_ID={id}"));
+    match &init_context.outcome {
+        Some(InitResult::Success {
+            warning: Some(warning),
+        }) if !expected.is_empty() && warning.contains(&expected) => Ok(()),
+        other => Err(StepError::Assertion(format!(
+            "expected a warning naming {expected}, got {other:?}"
+        ))),
     }
 }
 
-fn parse_failure_kind(kind: &str) -> Result<InitFailureKind, StepError> {
-    match kind {
-        "config" => Ok(InitFailureKind::Config),
-        "volume" => Ok(InitFailureKind::Volume),
-        "provision" => Ok(InitFailureKind::Provision),
-        "wait" => Ok(InitFailureKind::Wait),
-        "format" => Ok(InitFailureKind::Format),
-        "detach" => Ok(InitFailureKind::Detach),
-        "teardown" => Ok(InitFailureKind::Teardown),
+#[then("the init error names the retained volume")]
+fn init_error_names_retained_volume(
+    init_context_result: &InitContextResult,
+) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let Some(InitResult::Failure(failure)) = &init_context.outcome else {
+        return Err(StepError::Assertion(String::from(
+            "expected a failure outcome",
+        )));
+    };
+    for expected in ["vol-123", "scw block volume delete"] {
+        if !failure.message.contains(expected) {
+            return Err(StepError::Assertion(format!(
+                "`{expected}` should appear in the retained-volume error: {}",
+                failure.message
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[then("the formatter is torn down")]
+fn formatter_torn_down(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    let attempted = init_context.backend.teardown_calls() > 0;
+    if attempted && events.contains(&LifecycleEvent::TeardownCompleted) {
+        Ok(())
+    } else {
+        Err(StepError::Assertion(format!(
+            "the ordered teardown should complete; calls: {}, events: {events:?}",
+            init_context.backend.teardown_calls()
+        )))
+    }
+}
+
+#[then("the new volume is waited for before attachment")]
+fn new_volume_waited_for(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    let ready = events
+        .iter()
+        .position(|event| *event == LifecycleEvent::VolumeReady);
+    let created = events
+        .iter()
+        .position(|event| *event == LifecycleEvent::InstanceCreated);
+    match (ready, created) {
+        (Some(ready_index), Some(created_index)) if ready_index < created_index => Ok(()),
+        (None, _) => Err(StepError::Assertion(String::from(
+            "the new volume was never polled until available",
+        ))),
+        (_, None) => Err(StepError::Assertion(String::from(
+            "the formatter instance was never created",
+        ))),
         _ => Err(StepError::Assertion(format!(
-            "unknown failure kind: {kind}"
+            "the volume must reach available before attachment; events: {events:?}"
         ))),
     }
+}
+
+#[then("the owned volume is deleted")]
+fn owned_volume_deleted(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    if events.contains(&LifecycleEvent::VolumeDeleted) {
+        Ok(())
+    } else {
+        Err(StepError::Assertion(format!(
+            "rollback should delete the volume this run created; events: {events:?}"
+        )))
+    }
+}
+
+#[then("no volume is deleted")]
+fn no_volume_deleted(init_context_result: &InitContextResult) -> Result<(), StepError> {
+    assert_counter_condition(
+        init_context_result,
+        |ctx| ctx.backend.delete_volume_calls(),
+        |count| count == 0,
+        "a pre-existing volume must never be deleted",
+    )
 }

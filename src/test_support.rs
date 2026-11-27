@@ -1,6 +1,9 @@
 //! Test support utilities shared across unit and integration tests.
 
-use std::ffi::OsString;
+use std::{
+    ffi::OsString,
+    sync::{Arc, Mutex},
+};
 
 /// Scripted command runner that returns pre-seeded outputs in FIFO order.
 ///
@@ -14,6 +17,8 @@ pub struct ScriptedRunner {
     invocations: std::rc::Rc<std::cell::RefCell<Vec<CommandInvocation>>>,
     /// Error to return from the next call to the named program, if any.
     next_error: std::rc::Rc<std::cell::RefCell<Option<ScopedError>>>,
+    /// Optional shared log recording each call by role, for ordering tests.
+    event_log: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 /// An error armed for a specific program.
@@ -32,6 +37,11 @@ pub struct CommandInvocation {
     pub program: String,
     /// Arguments passed to the program.
     pub args: Vec<OsString>,
+    /// Exit code the scripted runner returned, or `None` when the fake
+    /// produced no status.
+    pub exit_code: Option<i32>,
+    /// Standard output the scripted runner returned.
+    pub stdout: String,
 }
 
 impl CommandInvocation {
@@ -53,6 +63,43 @@ impl ScriptedRunner {
     /// Creates a new runner with no queued responses.
     #[must_use]
     pub fn new() -> Self { Self::default() }
+
+    /// Creates a runner that also appends each call to a shared event log.
+    ///
+    /// The log records the call's role, such as `rsync` or `unmount`, so a
+    /// scenario can assert ordering against a backend event log.
+    #[must_use]
+    pub fn with_event_log(event_log: Arc<Mutex<Vec<String>>>) -> Self {
+        Self {
+            event_log: Some(event_log),
+            ..Self::default()
+        }
+    }
+
+    /// Records one call in the shared event log when one is attached.
+    fn record_event(&self, program: &str, args: &[std::ffi::OsString]) {
+        let Some(log) = &self.event_log else {
+            return;
+        };
+        let role = args
+            .last()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .map_or_else(
+                || program.to_owned(),
+                |payload| {
+                    if payload.contains("umount") {
+                        String::from("unmount")
+                    } else if payload.contains("mount -o defaults") {
+                        String::from("mount")
+                    } else {
+                        program.to_owned()
+                    }
+                },
+            );
+        if let Ok(mut events) = log.lock() {
+            events.push(role);
+        }
+    }
 
     /// Returns a snapshot of all invocations recorded so far.
     #[must_use]
@@ -144,9 +191,14 @@ impl crate::sync::CommandRunner for ScriptedRunner {
         program: &str,
         args: &[std::ffi::OsString],
     ) -> Result<crate::sync::CommandOutput, crate::sync::SyncError> {
+        self.record_event(program, args);
+        // Record the attempt before any early return, so a failure path still
+        // shows which command was tried.
         self.invocations.borrow_mut().push(CommandInvocation {
             program: program.to_owned(),
             args: args.to_vec(),
+            exit_code: None,
+            stdout: String::new(),
         });
 
         let error_to_return = {
@@ -163,13 +215,17 @@ impl crate::sync::CommandRunner for ScriptedRunner {
             return Err(error);
         }
 
-        self.responses
-            .borrow_mut()
-            .pop_front()
-            .ok_or_else(|| crate::sync::SyncError::Spawn {
+        let response = self.responses.borrow_mut().pop_front().ok_or_else(|| {
+            crate::sync::SyncError::Spawn {
                 program: program.to_owned(),
                 message: String::from("no scripted response available"),
-            })
+            }
+        })?;
+        if let Some(recorded) = self.invocations.borrow_mut().last_mut() {
+            recorded.exit_code = response.code;
+            recorded.stdout.clone_from(&response.stdout);
+        }
+        Ok(response)
     }
 }
 

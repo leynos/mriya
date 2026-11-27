@@ -1,24 +1,8 @@
-//! Helper utilities for init configuration and formatting.
+//! Helper utilities for init configuration.
 
-/// Bytes in one gigabyte as used for volume sizes (binary, 1024^3).
-const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
-/// Device path prefix under which Scaleway exposes an attached Block Storage
-/// volume; the volume ID completes it.
-const DISK_BY_ID_PREFIX: &str = "/dev/disk/by-id/scsi-0SCW_BSSD_";
+use crate::volume::BYTES_PER_GB;
 
-/// Builds the remote command that formats the volume as ext4.
-///
-/// The `-F` flag forces formatting without prompting. For example, `abc`
-/// yields `sudo mkfs.ext4 -F /dev/disk/by-id/scsi-0SCW_BSSD_abc`.
-pub(super) fn format_command(volume_id: &str) -> String {
-    format!(
-        "sudo mkfs.ext4 -F {}{}",
-        DISK_BY_ID_PREFIX,
-        volume_id.trim()
-    )
-}
-
-/// Converts a size in gigabytes to bytes, or `None` on overflow.
+/// Converts a size in decimal gigabytes to bytes, or `None` on overflow.
 pub(super) fn volume_size_bytes(size_gb: u32) -> Option<u64> {
     u64::from(size_gb).checked_mul(BYTES_PER_GB)
 }
@@ -75,12 +59,12 @@ mod tests {
     /// Guards the exact byte conversion so the expected value cannot mutate
     /// together with the conversion constant.
     #[test]
-    fn volume_size_bytes_converts_gb() {
+    fn volume_size_bytes_converts_decimal_gb() {
         let bytes = volume_size_bytes(2).expect("size bytes");
         // Assert the literal value: comparing against `2 * BYTES_PER_GB`
         // mutates together with the constant under test, making the
-        // assertion tautological. Kills the survivor tracked in #56.
-        assert_eq!(bytes, 2_147_483_648);
+        // assertion tautological.
+        assert_eq!(bytes, 2_000_000_000);
     }
 
     #[rstest]

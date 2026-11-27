@@ -30,14 +30,23 @@ Feature: Remote execution via mriya run
     And the cache volume is mounted before files are synced
     And the instance is destroyed
 
-  Scenario: Continue execution when volume mount fails
+  Scenario: Fail and tear down when the configured cache cannot be verified
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
     And the mount command fails
+    When I orchestrate a remote run for "cargo build"
+    Then the run error kind is "cache-mount"
+    And the instance is destroyed
+
+  Scenario: Unmount and detach the cache before destroying the VM
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the mount command succeeds
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the run result exit code is "0"
-    And files are still synced and the remote command still runs after the failed mount
+    And the cache is unmounted before teardown
+    And the teardown detaches the configured cache
     And the instance is destroyed
 
   Scenario: Route Cargo caches to the mounted cache volume
@@ -97,6 +106,16 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the mount command creates cache subdirectories
+    And the instance is destroyed
+
+  Scenario: Fail and tear down when cache directories cannot be created
+    Given a ready backend and sync pipeline
+    And a volume ID "vol-12345" is configured
+    And the mount command succeeds
+    And cache directory creation fails
+    And the scripted runner returns exit code "0"
+    When I orchestrate a remote run for "cargo build"
+    Then the run error kind is "cache-mount"
     And the instance is destroyed
 
   Scenario: Allow disabling cache directory creation
