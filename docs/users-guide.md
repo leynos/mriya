@@ -510,15 +510,21 @@ minimum of 60 minutes, and that each uninterrupted period between a start and a
 stop billing event counts as a separate resource. Two distinct five-minute runs
 are therefore two separately metered resources, not ten minutes of one. That
 minimum applies to every resource class the Billing FAQ lists — compute,
-volumes, snapshots, and both IP classes — not only to compute. The Instances
-FAQ[^2] describes CPU instances as billed per hour of uptime and GPU instances
-per minute, except RENDER-S, which is billed per hour.
+volumes, snapshots, and both IP classes — not only to compute.
 
-The two pages disagree on when instance billing starts: the Billing FAQ says it
-starts at power-on, while the Instance pricing guide[^3] says it starts when
-the instance is created. Confirm current terms before relying on either for a
-specific product, and do not assume another provider uses the same minimum, the
-same granularity, or the same start event.
+The charge interval is separate from the minimum, and it differs by resource
+class. The Instances FAQ[^2] describes CPU instances as billed per hour of
+uptime and GPU instances per minute, except RENDER-S, which is billed per hour.
+Block Storage has its own interval: the Block Storage FAQ[^3] bills volumes by
+the hour, based on the provisioned size rather than the data stored. A volume
+retained for 61 minutes on a per-minute GPU instance is therefore billed as two
+storage hours even though the compute side is metered per minute.
+
+The Billing FAQ and the Instance pricing guide[^4] disagree on when instance
+billing starts: the FAQ says power-on, the pricing guide says creation. Confirm
+current terms before relying on either for a specific product, and do not
+assume another provider uses the same minimum, the same granularity, or the
+same start event.
 
 ### Root storage is implicit
 
@@ -544,10 +550,10 @@ deletion is tracked in [issue #154](https://github.com/leynos/mriya/issues/154).
 
 A cache volume is billed from creation until deletion, whether or not a run is
 active and whether or not it is attached. Its cost is the capacity times the
-storage rate times the **billed** hours, and the billed hours are subject to
-the same per-resource minimum and granularity as compute: a volume kept for ten
-minutes is still billed as one period of at least `M`, so a freshly created
-cache costs the same as one retained for the full minimum. Beyond that, a cache
+storage rate times the **billed** hours. Those hours keep the per-resource
+minimum but use the storage granularity rather than the compute one: a volume
+kept for ten minutes is still billed for at least `M`, and on an hourly storage
+granularity a 61-minute retention is billed as two hours. Beyond that, a cache
 retained for a week costs far more than the runs that used it.
 
 Two failure modes extend that lifetime unexpectedly:
@@ -562,7 +568,7 @@ Two failure modes extend that lifetime unexpectedly:
 ### IP addresses
 
 Mriya requests a dynamic, routed public IPv4 address, but it does not choose
-the billing class the provider allocates to it. The IP billing page[^4] bills
+the billing class the provider allocates to it. The IP billing page[^5] bills
 flexible IPs separately from the resource they are attached to, from
 reservation until deletion, whether or not they are attached. The Billing FAQ
 instead ties dynamic-IP billing to association with a running instance. Because
@@ -582,24 +588,30 @@ this guide hard-coding a price:
 - `c` — remote command duration.
 - `t` — teardown time per run: delete request plus polling.
 - `M` — the provider's minimum billing period per resource, in minutes.
-- `g` — the provider's billing granularity, in minutes.
+- `g_compute` — the compute billing granularity, in minutes. It is one hour for
+  Scaleway CPU instances and one minute for GPU instances, except RENDER-S.
+- `g_storage` — the storage billing granularity, in minutes. It is one hour for
+  Scaleway Block Storage.
 - `R_vm` — the instance-type rate per billed hour.
 - `R_storage` — the storage rate per gibibyte-hour, as published by the
   provider. If a provider publishes its rate per decimal gigabyte instead,
   convert the GiB capacity to that definition before multiplying, or the
   estimate will be off by the 1024³ / 10⁹ ratio.
 
-`M`, `g`, `s`, `c`, and `t` are all in minutes, so the billed duration must be
-divided by 60 before an hourly rate is applied. Per-run billed compute, in
-minutes, is `max(M, ceil((s + c + t) / g) * g)`; total compute cost is
-`N * (per-run billed compute) / 60 * R_vm`. That form assumes the creation-time
-billing event, so it charges the whole of `s`, including the interval before
-power-on. It is the conservative estimate. Under the power-on event, exclude
-the pre-power-on part of `s` from the sum before applying the formula, and the
-remaining interval is what the minimum and granularity act on.
+`M`, both granularities, `s`, `c`, and `t` are all in minutes, so the billed
+duration must be divided by 60 before an hourly rate is applied. Per-run billed
+compute, in minutes, is `max(M, ceil((s + c + t) / g_compute) * g_compute)`;
+total compute cost is `N * (per-run billed compute) / 60 * R_vm`. That form
+assumes the creation-time billing event, so it charges the whole of `s`,
+including the interval before power-on. It is the conservative estimate. Under
+the power-on event, exclude the pre-power-on part of `s` from the sum before
+applying the formula, and the remaining interval is what the minimum and
+granularity act on.
 
-Root storage, cache storage, and IP charges use a separate `billed_hours`,
-which is `max(M, ceil(retained_minutes / g) * g) / 60`:
+Root storage and cache storage use a separate `billed_hours`, which is
+`max(M, ceil(retained_minutes / g_storage) * g_storage) / 60`. Storage keeps
+the per-resource minimum but uses its own granularity, so a per-minute compute
+instance does not make storage per-minute:
 
 - Per-run root storage is `capacity_GiB * billed_hours * R_storage` over that
   run's own root volume.
@@ -609,10 +621,11 @@ which is `max(M, ceil(retained_minutes / g) * g) / 60`:
 
 Take ten runs of a two-minute command with three minutes of setup and three
 minutes of teardown. Each run measures eight minutes, so 80 minutes of measured
-lifetime cover 20 minutes of command time. With `M = 60` minutes and `g = 60`
-minutes, each run is billed as one hour: the per-run billed compute is
-`max(60, ceil((3 + 2 + 3) / 60) * 60)`, which is 60 minutes, and the total
-compute cost is `10 * 60 / 60 * R_vm`, which is `10 * R_vm`.
+lifetime cover 20 minutes of command time. With `M = 60` minutes and
+`g_compute = g_storage = 60` minutes, each run is billed as one hour: the
+per-run billed compute is `max(60, ceil((3 + 2 + 3) / 60) * 60)`, which is 60
+minutes, and the total compute cost is `10 * 60 / 60 * R_vm`, which is
+`10 * R_vm`.
 
 So 20 minutes of command time costs 10 instance-hours of compute — ten times
 `R_vm` — before storage or IP charges are added. Halving the command time
@@ -669,7 +682,7 @@ longer needed.
 
 Only one instance can attach a given Block Storage volume at a time, and the
 volume must be in the same availability zone as the instance; Scaleway's Block
-Storage attach guide[^5] states both constraints. This is a provider rule, so
+Storage attach guide[^6] states both constraints. This is a provider rule, so
 it applies to every client, not just Mriya.
 
 Mriya enforces nothing on top of it. There is no lock, queue, or retry around
@@ -754,14 +767,18 @@ type accepts it. Everything to change when upgrading a dependent is listed in
     <https://www.scaleway.com/en/docs/instances/faq/>, reviewed 19 December
     2025.
 
-[^3]: Scaleway, "Understanding Scaleway Instance pricing",
+[^3]: Scaleway, "Block Storage FAQ",
+    <https://www.scaleway.com/en/docs/block-storage/faq/>, reviewed 17 September
+    2025.
+
+[^4]: Scaleway, "Understanding Scaleway Instance pricing",
     <https://www.scaleway.com/en/docs/instances/reference-content/understanding-instance-pricing/>,
     reviewed 19 August 2025.
 
-[^4]: Scaleway, "Understanding billing for Scaleway IP addresses",
+[^5]: Scaleway, "Understanding billing for Scaleway IP addresses",
     <https://www.scaleway.com/en/docs/ipam/reference-content/understanding-ip-billing/>,
     reviewed 4 November 2025.
 
-[^5]: Scaleway, "How to attach a Block Storage volume to an Instance",
+[^6]: Scaleway, "How to attach a Block Storage volume to an Instance",
     <https://www.scaleway.com/en/docs/block-storage/how-to/attach-a-volume/>,
     reviewed 21 October 2025.
