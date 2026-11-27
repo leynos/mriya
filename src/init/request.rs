@@ -81,6 +81,43 @@ pub fn environment_volume_id(
     Ok(found)
 }
 
+/// The loaded configuration an init request is built from.
+#[derive(Clone, Copy)]
+pub struct InitRequestInputs<'a> {
+    /// Scaleway configuration resolved from defaults, files, and environment.
+    pub scaleway: &'a ScalewayConfig,
+    /// Init-specific configuration.
+    pub init_config: &'a InitConfig,
+    /// Project name used for the volume name.
+    pub project_name: &'a str,
+    /// Whether a configured volume ID may be replaced.
+    pub overwrite_existing_volume_id: bool,
+}
+
+/// Builds the init request the binary would use for a loaded configuration.
+///
+/// This is the composition root's whole decision: the request is built from
+/// configuration, and the environment's own volume ID is recorded so a forced
+/// run cannot silently replace a value only the environment controls.
+///
+/// # Errors
+///
+/// Returns [`InitRequestError`] when the configuration is invalid or the
+/// environment supplies an unusable volume ID.
+pub fn request_from_loaded_config(
+    inputs: InitRequestInputs<'_>,
+    env: &dyn ortho_config::ScanEnvSource,
+) -> Result<InitRequest, InitRequestError> {
+    let environment_volume_id = environment_volume_id(env)?;
+    InitRequest::from_config(
+        inputs.scaleway,
+        inputs.init_config,
+        inputs.project_name,
+        inputs.overwrite_existing_volume_id,
+    )
+    .map(|request| request.with_environment_volume_id(environment_volume_id))
+}
+
 impl InitRequest {
     /// Builds an init request from configuration and the project name.
     ///

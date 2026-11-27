@@ -23,7 +23,13 @@ pub use error::{InitConfigError, InitError, InitRequestError};
 
 mod request;
 
-pub use request::{InitRequest, VOLUME_ID_ENV_VAR, environment_volume_id};
+pub use request::{
+    InitRequest,
+    InitRequestInputs,
+    VOLUME_ID_ENV_VAR,
+    environment_volume_id,
+    request_from_loaded_config,
+};
 
 /// Init-specific configuration values layered via `OrthoConfig`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]

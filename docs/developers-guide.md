@@ -297,7 +297,13 @@ Production code reads environment *variables* through `mockable::Env`, never
 through `std::env`: `DefaultEnv` is the real process environment, and `MockEnv`
 is what the tests use, available only under the dev-dependency's `mock`
 feature. The one exception is not a variable: `std::env::current_dir` has no
-`Env` equivalent and `main.rs` still calls it. Two accessors matter:
+`Env` equivalent and `main.rs` still calls it. A second exception is a scan
+rather than a named read: `mriya init` must detect any spelling of
+`SCW_DEFAULT_VOLUME_ID` that the loader would apply, and the loader matches
+keys case-insensitively. `mockable` offers no enumeration, so that check uses
+`ortho_config::process_scan_env_source`, the same boundary the loader scans,
+and tests inject an `ortho_config::MapEnv` instead. Every named variable read
+stays on `mockable::Env`. Two accessors matter:
 
 - `string` reports a variable as `None` when it is absent or not valid
   Unicode. Code that only wants a value when one is usable, such as the

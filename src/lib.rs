@@ -34,8 +34,10 @@ pub use init::{
     InitOrchestrator,
     InitOutcome,
     InitRequest,
+    InitRequestInputs,
     VOLUME_ID_ENV_VAR,
     environment_volume_id,
+    request_from_loaded_config,
 };
 pub use janitor::{
     Janitor,
