@@ -296,17 +296,9 @@ impl ScalewayBackend {
     ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
         let (status, body) = response;
         let message = String::from_utf8_lossy(body).into_owned();
-        if let Ok(api_err) = serde_json::from_slice::<scaleway_rs::ScalewayApiError>(body)
-            && Self::is_instance_type_error(&api_err, request)
-        {
-            return Err(ScalewayBackendError::InstanceTypeUnavailable {
-                instance_type: request.instance_type.clone(),
-                zone: request.zone.clone(),
-            });
-        }
-
         // A 5xx can follow a server that was created before the gateway
-        // failed, so it is ambiguous; a 4xx is a definite rejection.
+        // failed, so it is ambiguous and must be reconciled before any
+        // classification of its body; a 4xx is a definite rejection.
         if status.is_server_error() {
             return self
                 .fail_ambiguous_create(
@@ -315,6 +307,14 @@ impl ScalewayBackend {
                     format!("create returned {status}: {message}"),
                 )
                 .await;
+        }
+        if let Ok(api_err) = serde_json::from_slice::<scaleway_rs::ScalewayApiError>(body)
+            && Self::is_instance_type_error(&api_err, request)
+        {
+            return Err(ScalewayBackendError::InstanceTypeUnavailable {
+                instance_type: request.instance_type.clone(),
+                zone: request.zone.clone(),
+            });
         }
 
         Err(ScalewayBackendError::Provider { message })

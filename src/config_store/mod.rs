@@ -235,7 +235,10 @@ impl ConfigWriter for ConfigStore {
                 message: err.to_string(),
             }
         })?;
+        #[cfg(unix)]
         let _lock = lock_config(&dir, &target.path)?;
+        #[cfg(not(unix))]
+        lock_config(&dir, &target.path)?;
         // Another writer may have published the file since discovery, so the
         // decision is made from the state read under the lock. Only a typed
         // `NotFound` is treated as an empty document.
@@ -271,6 +274,7 @@ struct ConfigTarget {
 /// The lock is held from the read that checks for an existing ID through the
 /// rename that publishes the new one, so two unforced runs cannot both pass
 /// the check. The lock is released when the returned file is dropped.
+#[cfg(unix)]
 fn lock_config(dir: &Dir, path: &Utf8Path) -> Result<cap_std::fs_utf8::File, ConfigStoreError> {
     let mut options = cap_std::fs_utf8::OpenOptions::new();
     options.read(true).write(true).create(true);
@@ -288,6 +292,10 @@ fn lock_config(dir: &Dir, path: &Utf8Path) -> Result<cap_std::fs_utf8::File, Con
     })?;
     Ok(file)
 }
+
+/// Leaves updates unserialized where advisory locks are unavailable.
+#[cfg(not(unix))]
+fn lock_config(_dir: &Dir, _path: &Utf8Path) -> Result<(), ConfigStoreError> { Ok(()) }
 
 /// Sets `scaleway.default_volume_id` (trimmed) in `value`, creating the
 /// section when needed and leaving other keys alone.

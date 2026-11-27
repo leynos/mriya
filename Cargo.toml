@@ -23,7 +23,6 @@ camino = "1.1"
 shell-escape = "0.1.5"
 cap-std = { version = "4.0.2", features = ["fs_utf8"] }
 mockable = { version = "3.0.0", default-features = false }
-rustix = { version = "1.1", features = ["fs"] }
 
 [build-dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -135,3 +134,6 @@ missing_docs                        = "deny"
 
 [workspace.lints.rustdoc]
 missing_crate_level_docs            = "deny"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }

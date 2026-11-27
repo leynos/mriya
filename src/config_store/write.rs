@@ -21,14 +21,6 @@ use super::{
 /// leaves the previous file intact, so a rollback cannot delete a volume that
 /// the configuration already names.
 pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), ConfigStoreError> {
-    // macOS passes access ACLs to new files independently of the mode, and
-    // their native representation is not copied here; refuse rather than risk
-    // exposing or dropping access to a file that holds a secret key.
-    if cfg!(target_os = "macos") {
-        return Err(ConfigStoreError::AccessControlUnsupported {
-            path: path.to_path_buf(),
-        });
-    }
     let (parent, file_name) = split_config_path(path)?;
     Dir::create_ambient_dir_all(parent, ambient_authority()).map_err(|err| {
         ConfigStoreError::Io {
@@ -41,6 +33,14 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
             path: parent.to_path_buf(),
             message: err.to_string(),
         })?;
+    // macOS passes access ACLs outside the mode and their native form is not
+    // copied here, so an existing target that grants group or other access is
+    // refused; a new file or an owner-only target is safe by mode.
+    if cfg!(target_os = "macos") && !macos_target_is_private(&dir, file_name) {
+        return Err(ConfigStoreError::AccessControlUnsupported {
+            path: path.to_path_buf(),
+        });
+    }
 
     let rendered = toml::to_string_pretty(value).map_err(|err| ConfigStoreError::Parse {
         path: path.to_path_buf(),
@@ -79,10 +79,27 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
     sync_directory(parent, path)
 }
 
+/// Reports whether an existing macOS target is owner-only or absent.
+#[cfg(target_os = "macos")]
+fn macos_target_is_private(dir: &Dir, file_name: &str) -> bool {
+    use cap_std::fs::PermissionsExt;
+
+    match dir.metadata(file_name) {
+        Ok(metadata) => metadata.permissions().mode() & 0o077 == 0,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+/// Treats every target as safe on platforms with POSIX ACL handling.
+#[cfg(not(target_os = "macos"))]
+const fn macos_target_is_private(_dir: &Dir, _file_name: &str) -> bool { true }
+
 /// Flushes a directory entry to disk.
 ///
 /// The capability `Dir` is opened with `O_PATH` on Linux and cannot be
 /// fsynced, so the directory is reopened read-only for this one call.
+#[cfg(unix)]
 fn sync_directory(parent: &Utf8Path, path: &Utf8Path) -> Result<(), ConfigStoreError> {
     use rustix::fs::{CWD, Mode, OFlags, fsync, openat};
 
@@ -100,6 +117,10 @@ fn sync_directory(parent: &Utf8Path, path: &Utf8Path) -> Result<(), ConfigStoreE
     })?;
     Ok(())
 }
+
+/// Leaves directory durability to the platform on non-Unix targets.
+#[cfg(not(unix))]
+fn sync_directory(_parent: &Utf8Path, _path: &Utf8Path) -> Result<(), ConfigStoreError> { Ok(()) }
 
 /// Removes the temporary file unless the rename has published it.
 struct TempFile<'a> {
@@ -169,6 +190,7 @@ fn write_private(
         });
     }
     // Flush the contents and metadata before the rename publishes the name.
+    #[cfg(unix)]
     if let Err(error) = rustix::fs::fsync(&file) {
         drop(file);
         drop(dir.remove_file(names.replacement));

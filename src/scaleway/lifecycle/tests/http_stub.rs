@@ -107,6 +107,7 @@ async fn next_stream(
     stop: &mut std::pin::Pin<&mut oneshot::Receiver<()>>,
 ) -> Result<Option<TcpStream>> {
     tokio::select! {
+        biased;
         accepted = listener.accept() => {
             let (stream, _) = accepted?;
             Ok(Some(stream))
