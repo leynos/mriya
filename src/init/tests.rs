@@ -14,13 +14,14 @@ use super::{
     InitConfigError,
     InitRequest,
     InitRequestError,
+    InitRequestInputs,
     VOLUME_ID_ENV_VAR,
     environment_volume_id,
     format_failure_message,
+    request_from_loaded_config,
 };
 use crate::{
     ScalewayConfig,
-    config_store::ConfigStoreError,
     sync::{RemoteCommandOutput, SyncError},
     teardown::append_teardown_note,
 };
@@ -42,42 +43,64 @@ fn scaleway_with_volume(volume_id: Option<&str>) -> ScalewayConfig {
     }
 }
 
-/// A configured volume ID, including one from the environment, must refuse a
-/// replacement unless `--force` was supplied.
+/// A file-backed volume ID must refuse a replacement unless `--force` was
+/// supplied; the error tells the user to rerun with the flag.
 #[test]
-fn from_config_rejects_a_configured_volume_id_without_force() {
-    let scaleway = scaleway_with_volume(Some("env-volume"));
+fn request_builder_rejects_a_file_volume_id_without_force() {
+    let scaleway = scaleway_with_volume(Some("file-volume"));
     let init_config = InitConfig { volume_size_gb: 20 };
+    let env = MapEnv::new();
 
-    let result = InitRequest::from_config(&scaleway, &init_config, "project", false);
+    let err = request_from_loaded_config(
+        InitRequestInputs {
+            scaleway: &scaleway,
+            init_config: &init_config,
+            project_name: "project",
+            overwrite_existing_volume_id: false,
+        },
+        &env,
+    )
+    .expect_err("a file-backed ID must be refused without force");
 
     assert!(
         matches!(
-            result,
-            Err(InitRequestError::Store(
-                ConfigStoreError::VolumeAlreadyConfigured { ref volume_id }
-            )) if volume_id == "env-volume"
+            err,
+            InitRequestError::FileVolumeAlreadyConfigured { ref volume_id }
+                if volume_id == "file-volume"
         ),
-        "expected VolumeAlreadyConfigured for the configured ID, got {result:?}"
+        "expected a file-backed refusal, got {err}"
+    );
+    assert!(
+        err.to_string().contains("--force"),
+        "a file-backed refusal should mention --force: {err}"
     );
 }
 
-/// Forcing the overwrite lets the request through, and the request remembers
-/// which ID the resolved configuration supplied, separately from the
-/// environment provenance the composition root records.
+/// Forcing the overwrite lets a file-backed ID through, and the request
+/// records it separately from the environment provenance.
 #[test]
-fn from_config_accepts_a_configured_volume_id_with_force() {
-    let scaleway = scaleway_with_volume(Some("env-volume"));
+fn request_builder_accepts_a_file_volume_id_with_force() {
+    let scaleway = scaleway_with_volume(Some("file-volume"));
     let init_config = InitConfig { volume_size_gb: 20 };
+    let env = MapEnv::new();
 
-    let request = InitRequest::from_config(&scaleway, &init_config, "project", true)
-        .expect("force should permit the overwrite");
+    let request = request_from_loaded_config(
+        InitRequestInputs {
+            scaleway: &scaleway,
+            init_config: &init_config,
+            project_name: "project",
+            overwrite_existing_volume_id: true,
+        },
+        &env,
+    )
+    .expect("force should permit the file-backed overwrite");
 
     assert_eq!(
         request.configured_volume_id.as_deref(),
-        Some("env-volume"),
+        Some("file-volume"),
         "the request should carry the configured ID"
     );
+    assert_eq!(request.environment_volume_id, None);
 }
 
 /// A blank resolved value records nothing here, so request construction does
@@ -94,7 +117,6 @@ fn from_config_ignores_a_blank_configured_volume_id() {
     assert_eq!(request.configured_volume_id, None);
 }
 
-/// Checks that zero-sized volumes return `InvalidVolumeSize`.
 #[test]
 fn validate_rejects_zero_volume_size() {
     let config = InitConfig { volume_size_gb: 0 };
@@ -296,4 +318,36 @@ fn a_blank_environment_volume_id_survives_loading_and_is_recorded() {
         Some(""),
         "the provenance should record the blank environment layer"
     );
+}
+
+proptest::proptest! {
+    /// Any casing of the canonical spelling is found, and the value is trimmed.
+    #[test]
+    fn environment_volume_id_matches_any_key_casing(
+        bits in proptest::collection::vec(
+            proptest::prelude::any::<bool>(),
+            VOLUME_ID_ENV_VAR.len()..=VOLUME_ID_ENV_VAR.len(),
+        ),
+        id in "[A-Za-z0-9_-]{1,24}",
+        leading in "[ \\t]{0,4}",
+        trailing in "[ \\t]{0,4}",
+    ) {
+        let key: String = VOLUME_ID_ENV_VAR
+            .chars()
+            .zip(bits.iter())
+            .map(|(character, uppercase)| {
+                if *uppercase {
+                    character.to_ascii_uppercase()
+                } else {
+                    character.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        let value = format!("{leading}{id}{trailing}");
+        let env = MapEnv::new().with_var(key.as_str(), value.as_str());
+
+        let found = environment_volume_id(&env).expect("a UTF-8 value should be accepted");
+
+        assert_eq!(found.as_deref(), Some(id.as_str()));
+    }
 }

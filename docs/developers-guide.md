@@ -400,6 +400,25 @@ without changing behaviour, and each publishes only what its parent needs:
   `Janitor`. The delete operations take their zone from the listed resource
   rather than from configuration, which is what lets one sweep remove a server
   and a volume that report different zones.
+- `src/init/request.rs` holds `InitRequest`, the value that describes a
+  volume preparation, and the composition-root builder
+  `request_from_loaded_config`. The builder consumes the process-backed scan
+  source in production and an injected `ortho_config::MapEnv` in tests; it
+  publishes the request, the environment provenance, and the
+  `VOLUME_ID_ENV_VAR` name. Request construction validates configuration; the
+  orchestrator applies the overwrite guard before `create_volume`.
+
+- `src/config_store/volume.rs` owns the TOML document shape: reading the
+  root-level `default_volume_id` with its legacy `[scaleway]` fallback, and
+  writing the root-level key. It publishes those functions to its parent only,
+  plus the two key names for tests. It reads no environment.
+
+- `tests/config_support/mod.rs` holds the hermetic integration fixtures: a
+  temporary `Workspace` with a home directory and target config path, a
+  `shared_env` helper that pins a map's working directory and coerces one `Arc`
+  into both a discovery source and a merge scanner, and small path helpers.
+  Tests inject these instead of mutating the process environment.
+
 - `src/test_backdoors.rs` separates deciding from doing. `select_fake_outcome`
   reads the injected environment and returns a `FakeOutcome` value; it has no
   side effects, so the precedence rules and the `MRIYA_FAKE_RUN_ENABLE` gate

@@ -360,4 +360,5 @@ decoded, because its signature carries no error. Prefer `home_from_env` when
 you need to tell those two cases apart or report the cause; the error type
 implements `std::error::Error`, so `?` propagates it in a program whose error
 type accepts it. Everything to change when upgrading a dependent is listed in
-[Migrating to 0.2.0](migration-0.2.0.md).
+[Migrating to 0.2.0](migration-0.2.0.md), including the root-level
+configuration shape and the `mriya init` volume-ID rules.

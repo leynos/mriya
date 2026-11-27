@@ -8,7 +8,6 @@
 
 use crate::{
     ScalewayConfig,
-    config_store::ConfigStoreError,
     init::{
         InitConfig,
         InitRequestError,
@@ -46,17 +45,25 @@ pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
 ///
 /// The key match is case-insensitive, because the loader's environment
 /// provider matches keys that way; a guard that looked only for the canonical
-/// spelling would miss a value the loader still applies. Returns `None` when no
-/// spelling is present and the trimmed value when it is usable. A present blank
-/// value is returned as an empty string so the request carries the provenance;
-/// the loader still merges it over the file, and the orchestrator refuses it
-/// before any backend work.
+/// spelling would miss a value the loader still applies.
+///
+/// # Parameters
+///
+/// - `env`: the scan source to read. It must describe the same environment that resolved the
+///   configuration being checked; the loader's `process_scan_env_source` and a test `MapEnv` are
+///   the expected sources.
+///
+/// # Returns
+///
+/// `Ok(None)` when no spelling of the variable is present, `Ok(Some(value))`
+/// with the trimmed value when it is usable, and `Ok(Some(String::new()))` for
+/// a present blank value so the request carries that provenance for the
+/// orchestrator to refuse.
 ///
 /// # Errors
 ///
 /// Returns [`InitRequestError::NonUtf8EnvironmentVolumeId`] for a value the
-/// boundary cannot decode. A present blank value is returned as an empty
-/// string so the request carries the provenance; the orchestrator rejects it.
+/// boundary cannot decode.
 pub fn environment_volume_id(
     env: &dyn ortho_config::ScanEnvSource,
 ) -> Result<Option<String>, InitRequestError> {
@@ -98,33 +105,92 @@ pub struct InitRequestInputs<'a> {
 /// Builds the init request the binary would use for a loaded configuration.
 ///
 /// This is the composition root's whole decision: the request is built from
-/// configuration, and the environment's own volume ID is recorded so a forced
-/// run cannot silently replace a value only the environment controls.
+/// configuration, the environment's own volume ID is recorded so a forced run
+/// cannot silently replace a value only the environment controls, and a
+/// file-backed ID is refused without `--force`.
+///
+/// # Parameters
+///
+/// - `inputs`: the loaded configuration and the overwrite flag. `scaleway` must have been loaded
+///   from the same environment `env` describes.
+/// - `env`: the scan source that detects the volume-ID variable, typically
+///   `ortho_config::process_scan_env_source` in production and a `MapEnv` in tests.
+///
+/// # Returns
+///
+/// A request carrying the configured ID and, when present, the environment's
+/// volume ID. The environment value is left for the orchestrator to refuse,
+/// even with `--force`.
 ///
 /// # Errors
 ///
-/// Returns [`InitRequestError`] when the configuration is invalid or the
-/// environment supplies an unusable volume ID.
+/// Returns [`InitRequestError::FileVolumeAlreadyConfigured`] when a file-backed
+/// value is present and `overwrite_existing_volume_id` is false, and the
+/// configuration or environment errors described by [`InitRequestError`].
 pub fn request_from_loaded_config(
     inputs: InitRequestInputs<'_>,
     env: &dyn ortho_config::ScanEnvSource,
 ) -> Result<InitRequest, InitRequestError> {
     let environment_volume_id = environment_volume_id(env)?;
-    InitRequest::from_config(
+    let request = InitRequest::from_config(
         inputs.scaleway,
         inputs.init_config,
         inputs.project_name,
         inputs.overwrite_existing_volume_id,
-    )
-    .map(|request| request.with_environment_volume_id(environment_volume_id))
+    )?;
+
+    // An environment value is refused by the orchestrator even with `--force`;
+    // `--force` only replaces a file-backed value, so the file check applies
+    // solely when the environment supplies none.
+    if let Some(volume_id) =
+        file_volume_needing_force(&inputs, &request, environment_volume_id.as_deref())
+    {
+        return Err(InitRequestError::FileVolumeAlreadyConfigured {
+            volume_id: volume_id.to_owned(),
+        });
+    }
+
+    Ok(request.with_environment_volume_id(environment_volume_id))
+}
+
+/// The configured ID when a file-backed value needs `--force` to replace it.
+///
+/// Returns `None` when the environment supplies an ID (the orchestrator
+/// refuses that case), when overwriting was requested, or when no usable ID is
+/// configured.
+fn file_volume_needing_force<'a>(
+    inputs: &InitRequestInputs<'_>,
+    request: &'a InitRequest,
+    environment_volume_id: Option<&str>,
+) -> Option<&'a str> {
+    if environment_volume_id.is_some() || inputs.overwrite_existing_volume_id {
+        return None;
+    }
+    request.configured_volume_id.as_deref()
 }
 
 impl InitRequest {
     /// Builds an init request from configuration and the project name.
     ///
-    /// A usable volume ID from the resolved configuration counts as existing
-    /// configuration: without `--force` the request fails rather than
-    /// replacing it.
+    /// A usable volume ID from the resolved configuration is recorded on the
+    /// request. This constructor does not decide whether it may be replaced:
+    /// [`request_from_loaded_config`] applies the file-backed `--force` rule,
+    /// and the orchestrator refuses an environment-supplied value.
+    ///
+    /// # Parameters
+    ///
+    /// - `scaleway`: the resolved Scaleway configuration.
+    /// - `init_config`: the init-specific configuration.
+    /// - `project_name`: the name used to derive the volume name.
+    /// - `overwrite_existing_volume_id`: whether a configured ID may be replaced. The request
+    ///   records it for the orchestrator.
+    ///
+    /// # Returns
+    ///
+    /// A request whose `configured_volume_id` is the usable resolved value and
+    /// whose `environment_volume_id` is `None`. Use
+    /// [`InitRequest::with_environment_volume_id`] or
+    /// [`request_from_loaded_config`] to record environment provenance.
     ///
     /// # Errors
     ///
@@ -145,13 +211,6 @@ impl InitRequest {
 
         scaleway.validate()?;
         let configured_volume_id = usable_volume_id(scaleway);
-        if !overwrite_existing_volume_id && let Some(volume_id) = configured_volume_id.as_deref() {
-            return Err(InitRequestError::Store(
-                ConfigStoreError::VolumeAlreadyConfigured {
-                    volume_id: volume_id.to_owned(),
-                },
-            ));
-        }
         let instance_request = InstanceRequest::builder()
             .image_label(&scaleway.default_image)
             .instance_type(&scaleway.default_instance_type)
@@ -185,6 +244,15 @@ impl InitRequest {
     /// The composition root reads `SCW_DEFAULT_VOLUME_ID` because only it has
     /// the process environment; the orchestrator then refuses a forced
     /// replacement even when the file holds the same value.
+    ///
+    /// # Parameters
+    ///
+    /// - `volume_id`: `None` records no environment provenance; `Some("")` records a present blank
+    ///   value, which the orchestrator refuses; `Some(value)` records the trimmed value.
+    ///
+    /// # Returns
+    ///
+    /// The request with `environment_volume_id` set, for chaining.
     #[must_use]
     pub fn with_environment_volume_id(mut self, volume_id: Option<String>) -> Self {
         self.environment_volume_id = volume_id;

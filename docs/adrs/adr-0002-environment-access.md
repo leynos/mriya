@@ -118,3 +118,23 @@ removed and no test mutates the process environment. `expand_tilde` and
 request builder splits into `build_backend_and_request` and
 `build_backend_and_request_with`, so tests inject a `MockEnv` or a
 `ScalewayConfig` instead. The rest of this record stands.
+
+## Addendum: 2026-11-27 — the volume-ID scan exception
+
+`mriya init` must detect any spelling of `SCW_DEFAULT_VOLUME_ID` that the
+loader applies, and the loader's environment provider matches keys
+case-insensitively. Detecting that needs enumeration, which `mockable::Env`
+does not offer: it exposes named reads only. The decision above therefore gains
+one narrow exception, recorded here rather than edited into the accepted text:
+
+- The volume-ID check scans through `ortho_config::process_scan_env_source`,
+  the same boundary the loader scans, so detection and loading cannot disagree
+  about which keys apply.
+- Every named environment read remains on `mockable::Env`; the exception covers
+  only this enumeration.
+- Tests inject `ortho_config::MapEnv` as the scan source, so the check is still
+  exercised without reading the process environment.
+
+The rule that a new variable read takes an `Env` parameter is unchanged for
+named reads. A future enumeration need should extend this exception explicitly,
+not widen it by assumption.

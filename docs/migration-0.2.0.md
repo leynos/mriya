@@ -32,6 +32,49 @@ names the variable rather than assuming the default:
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
 
+## Configuration files use root-level keys
+
+Mriya's configuration loader reads `mriya.toml` as a flat document. Section
+tables were never read, so a file written in the old shape silently supplied
+nothing. Write the keys at the root instead:
+
+```toml
+# Before: these tables were ignored
+[scaleway]
+secret_key = "scw-secret"
+default_project_id = "11111111-2222-3333-4444-555555555555"
+default_volume_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+[sync]
+ssh_identity_file = "~/.ssh/id_ed25519"
+
+[init]
+volume_size_gb = 20
+```
+
+```toml
+# After: root-level keys
+secret_key = "scw-secret"
+default_project_id = "11111111-2222-3333-4444-555555555555"
+default_volume_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ssh_identity_file = "~/.ssh/id_ed25519"
+volume_size_gb = 20
+```
+
+`mriya init` now writes `default_volume_id` at the root. To migrate a legacy
+`[scaleway] default_volume_id`, move the value to the root key, or rerun
+`mriya init --force` to replace it with a new volume.
+
+The store edits TOML only. If discovery selects a YAML or JSON5 file,
+`mriya init` refuses it with an error naming the format rather than parsing it
+as TOML; supply a `mriya.toml` instead.
+
+`mriya init` refuses to replace a volume ID supplied by
+`SCW_DEFAULT_VOLUME_ID`, even with `--force`, because the environment overrides
+the file on every run. A variable that is set but blank is rejected too. To
+replace such a volume, unset `SCW_DEFAULT_VOLUME_ID` and rerun
+`mriya init --force`; the new ID is then recorded in `mriya.toml`.
+
 ## What did not change
 
 - macOS and Windows keep their platform linker; the preflight skips the linker

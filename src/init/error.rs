@@ -39,10 +39,19 @@ pub enum InitRequestError {
         /// Name of the environment variable.
         variable: &'static str,
     },
-    /// Raised when a volume ID is already configured and overwriting was not
-    /// requested, including a value supplied through the environment.
-    #[error(transparent)]
-    Store(#[from] ConfigStoreError),
+    /// Raised when a file-backed volume ID is configured and overwriting was
+    /// not requested.
+    ///
+    /// Environment-supplied values take the separate orchestrator path, where
+    /// `--force` cannot help because a file write cannot replace them.
+    #[error(
+        "default volume ID already configured as {volume_id} in the configuration file; \
+         rerun with --force to replace the file-backed value"
+    )]
+    FileVolumeAlreadyConfigured {
+        /// Identifier recorded in the configuration file.
+        volume_id: String,
+    },
 }
 
 /// Errors raised while initializing a cache volume.

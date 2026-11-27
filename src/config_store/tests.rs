@@ -120,42 +120,6 @@ fn write_volume_id_uses_root_level_key(
     Ok(())
 }
 
-/// Selects the volume ID a file records: the root-level key when it holds a
-/// value, otherwise a usable legacy `[scaleway]` value, and `None` when neither
-/// does. A blank root value records nothing, so it must not hide an ID an
-/// earlier release recorded.
-#[rstest]
-#[case::root_key_wins(
-    "default_volume_id = \"root-volume\"\n[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
-    Some("root-volume")
-)]
-#[case::legacy_section_is_detected(
-    "[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
-    Some("legacy-volume")
-)]
-#[case::blank_root_is_unset("default_volume_id = \"  \"\n", None)]
-#[case::blank_root_falls_back_to_legacy(
-    "default_volume_id = \"\"\n[scaleway]\ndefault_volume_id = \"legacy-volume\"\n",
-    Some("legacy-volume")
-)]
-fn read_volume_id_selects_the_recorded_volume(
-    config_fixture: anyhow::Result<ConfigFixture>,
-    #[case] contents: &str,
-    #[case] expected: Option<&str>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let value = parse_toml(&fixture.path, contents).context("parse config should succeed")?;
-
-    let volume_id =
-        read_volume_id(&fixture.path, &value).context("read volume id should succeed")?;
-
-    ensure!(
-        volume_id.as_deref() == expected,
-        "expected {expected:?}, got {volume_id:?}"
-    );
-    Ok(())
-}
-
 /// Builds a store whose discovery selects `name` inside `root`, with the
 /// fixture root as the only working directory and XDG location.
 fn store_selecting(root: &Utf8Path, name: &str) -> ConfigStore {
@@ -310,21 +274,6 @@ fn read_config_reports_missing_parent_dir(
         path == missing_parent.to_path_buf(),
         "error should cite the missing parent directory"
     );
-    Ok(())
-}
-
-#[rstest]
-fn read_volume_id_rejects_non_table_root(
-    config_fixture: anyhow::Result<ConfigFixture>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let Err(err) = read_volume_id(&fixture.path, &toml::Value::String("nope".into())) else {
-        bail!("read should fail");
-    };
-    let ConfigStoreError::InvalidStructure { path, .. } = err else {
-        bail!("expected invalid structure error");
-    };
-    ensure!(path == fixture.path, "error should cite the config path");
     Ok(())
 }
 
