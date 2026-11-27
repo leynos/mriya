@@ -181,7 +181,7 @@ fn exec_run(args: &RunArgs) -> i32 {
     // The opt-in is checked before the driver is built, so a refusal never
     // depends on credentials being present. An operator who has not enabled
     // paid runs should not have to configure a provider to be told so.
-    let opt_in = std::env::var(OPT_IN_ENV).ok();
+    let opt_in = paid_run_opt_in(&mockable::DefaultEnv);
     if let Err(err) = mriya::bench::campaign::require_opt_in(opt_in.as_deref()) {
         report(&err.to_string());
         return 1;
@@ -235,6 +235,13 @@ fn exec_run(args: &RunArgs) -> i32 {
         }
     }
 }
+
+/// Returns the paid-run opt-in as the operator set it.
+///
+/// Reading it through [`mockable::Env`] lets both permission outcomes be
+/// tested without mutating the process environment; the entry point supplies
+/// [`mockable::DefaultEnv`].
+fn paid_run_opt_in(env: &impl mockable::Env) -> Option<String> { env.string(OPT_IN_ENV) }
 
 /// Reads a UTF-8 file through a capability handle on its parent directory.
 ///
@@ -353,4 +360,28 @@ impl OutputClaim {
 
 impl Drop for OutputClaim {
     fn drop(&mut self) { self.directory.remove_file(&self.name).ok(); }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the binary's environment boundary.
+
+    use mockable::MockEnv;
+
+    use super::{OPT_IN_ENV, paid_run_opt_in};
+
+    #[test]
+    fn the_opt_in_is_read_through_the_environment_boundary() {
+        let mut env = MockEnv::new();
+        env.expect_string()
+            .returning(|key| (key == OPT_IN_ENV).then(|| String::from("1")));
+        assert_eq!(paid_run_opt_in(&env).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn an_unset_opt_in_is_reported_as_absent() {
+        let mut env = MockEnv::new();
+        env.expect_string().returning(|_| None);
+        assert_eq!(paid_run_opt_in(&env), None);
+    }
 }

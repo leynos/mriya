@@ -32,7 +32,13 @@ pub const PROBE_COMMAND: &str = concat!(
     "printf 'cache_mounted=1\\n'; ",
     "printf 'cache_bytes=%s\\n' \"$(du -sb \"$cache\" | cut -f1)\"; ",
     "printf 'cache_total_bytes=%s\\n' \"$(df -B1 --output=size \"$cache\" | tail -n 1)\"; ",
-    "printf 'cache_entries=%s\\n' \"$(find \"$cache\" -mindepth 1 -maxdepth 1 ! -name lost+found | wc -l)\"; ",
+    // The listing's status is checked rather than piped into `wc`: a `find`
+    // that cannot read the directory prints nothing, and a count of zero would
+    // then record a populated cache as empty. A failed listing is reported as
+    // a non-numeric fact, which the parser rejects as a probe failure.
+    "if entries=$(find \"$cache\" -mindepth 1 -maxdepth 1 ! -name lost+found); then ",
+    "printf 'cache_entries=%s\\n' \"$(printf '%s\\n' \"$entries\" | grep -c .)\"; ",
+    "else printf 'cache_entries=unreadable\\n'; fi; ",
     "else printf 'cache_mounted=0\\ncache_bytes=0\\ncache_total_bytes=0\\ncache_entries=0\\n'; fi; ",
     "printf 'rustc=%s\\n' \"$(rustc --version 2>/dev/null || echo unknown)\"; ",
     "printf 'cargo=%s\\n' \"$(cargo --version 2>/dev/null || echo unknown)\""
@@ -69,6 +75,12 @@ pub struct ProbeReport {
 
 impl ProbeReport {
     /// Builds the allocation this probe reported.
+    ///
+    /// # Returns
+    ///
+    /// The measured allocation. `requested_architecture` is empty because the
+    /// probe knows only what the guest reported; the caller must fill it from
+    /// the provider request before persisting the allocation.
     #[must_use]
     pub const fn allocation(&self) -> Allocation {
         Allocation {

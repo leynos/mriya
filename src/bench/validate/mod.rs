@@ -340,16 +340,18 @@ pub fn format_complaints(complaints: &[Complaint]) -> String {
 }
 
 /// Returns the line a complaint refers to, or `usize::MAX` for a file-level one.
-const fn complaint_line(complaint: &Complaint) -> usize {
+fn complaint_line(complaint: &Complaint) -> usize {
     match complaint {
         Complaint::Unreadable { line, .. }
         | Complaint::SchemaMismatch { line, .. }
         | Complaint::MissingPin { line, .. }
         | Complaint::Incoherent { line, .. }
         | Complaint::CleanupDoubt { line, .. } => *line,
-        Complaint::MissingHeader
-        | Complaint::RepeatedHeader { .. }
-        | Complaint::NoRuns
-        | Complaint::MixedCampaigns { .. } => usize::MAX,
+        // The second header is where the file first departs from the
+        // one-header contract, so it is the located problem a reader must fix.
+        Complaint::RepeatedHeader { lines } => lines.get(1).copied().unwrap_or(usize::MAX),
+        Complaint::MissingHeader | Complaint::NoRuns | Complaint::MixedCampaigns { .. } => {
+            usize::MAX
+        }
     }
 }

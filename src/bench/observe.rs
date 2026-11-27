@@ -90,6 +90,22 @@ impl RunObserver for NoopObserver {
 /// This is the only place the orchestrator takes a timestamp for observation,
 /// so every phase is measured the same way and no phase can be measured twice.
 ///
+/// # Parameters
+///
+/// - `observer`: receives the start and the finish of the phase.
+/// - `phase`: which phase is being measured.
+/// - `work`: the blocking work to time.
+///
+/// # Returns
+///
+/// Whatever `work` returned, unchanged.
+///
+/// A callback that returns normally is recorded with `succeeded: true`, even
+/// when the value it returned is a `Result::Err`. The observation reports
+/// whether the phase reached its own success condition, which is a decision
+/// only the caller can make; a caller whose `Err` means the phase failed must
+/// report that separately rather than relying on this helper.
+///
 /// # Examples
 ///
 /// ```
@@ -208,11 +224,11 @@ impl RecordingObserver {
     /// Returns the phases in the order they were finished, unverified ones
     /// included.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics when a previous holder of the lock panicked. Tests use this to
-    /// read their own observations, so a poisoned lock means the test that
-    /// poisoned it has already failed.
+    /// One entry per finished or unverified observation, in arrival order. A
+    /// poisoned lock is recovered rather than reported, because the recorded
+    /// observations are still the ones the run produced.
     #[must_use]
     pub fn phases(&self) -> Vec<PhaseKind> {
         self.observations
@@ -225,10 +241,9 @@ impl RecordingObserver {
 
     /// Returns every observation, including the starts.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics when a previous holder of the lock panicked, for the reason
-    /// [`RecordingObserver::phases`] gives.
+    /// A snapshot of every observation, in arrival order.
     #[must_use]
     pub fn observations(&self) -> Vec<RecordedObservation> {
         self.observations

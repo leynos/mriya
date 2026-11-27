@@ -104,6 +104,11 @@ impl LifecycleEvent {
 /// its own run path.
 pub trait LifecycleSink: Send + Sync {
     /// Records one event.
+    ///
+    /// # Parameters
+    ///
+    /// - `event`: the lifecycle event to record. Implementations must not mutate it or retain a
+    ///   borrow of it.
     fn record(&self, event: &LifecycleEvent);
 }
 
@@ -120,10 +125,10 @@ pub struct RecordingSink {
 impl RecordingSink {
     /// Returns a snapshot of the events recorded so far.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics when a previous holder of the lock panicked, because that means
-    /// the test or harness sharing this sink has already failed.
+    /// Every event in arrival order. A poisoned lock is recovered rather than
+    /// reported, because the events already recorded are still what happened.
     #[must_use]
     pub fn events(&self) -> Vec<LifecycleEvent> {
         self.events
@@ -138,9 +143,9 @@ impl RecordingSink {
     /// identifier reaching the harness, which an operator has to reconcile
     /// differently from a known residual.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics for the reason [`RecordingSink::events`] gives.
+    /// `true` when any recorded event reported an uncertain allocation.
     #[must_use]
     pub fn allocation_uncertain(&self) -> bool {
         self.events()
@@ -150,9 +155,11 @@ impl RecordingSink {
 
     /// Returns the identifiers of resources the sink saw created.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics for the reason [`RecordingSink::events`] gives.
+    /// The identifiers in creation order. This is a historical record: it
+    /// includes resources that were subsequently deleted, so it must not be
+    /// read as a list of resources that still exist.
     #[must_use]
     pub fn created_ids(&self) -> Vec<String> {
         self.events()
@@ -183,6 +190,12 @@ impl<T: LifecycleSink + ?Sized> LifecycleSink for Box<T> {
 }
 
 /// Reports `event` to `sink` when one is configured.
+///
+/// # Parameters
+///
+/// - `sink`: the configured lifecycle sink, or `None` when the caller was not constructed with one.
+///   A `None` sink discards the event without effect.
+/// - `event`: the lifecycle event to report.
 ///
 /// # Examples
 ///

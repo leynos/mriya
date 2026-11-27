@@ -85,6 +85,21 @@ fn the_defective_fixture_reports_each_named_defect(#[case] needle: &str, #[case]
 }
 
 #[test]
+fn a_repeated_header_is_reported_at_the_line_where_the_repeat_occurs() {
+    let header = fixture("valid-campaign.jsonl")
+        .expect("the embedded fixture")
+        .lines()
+        .next()
+        .expect("the fixture has a header");
+    let text = format!("{header}\n{header}\nnot a record\n");
+    let complaints = validate_str(&text).expect_err("two headers are ambiguous");
+    assert!(
+        matches!(complaints.first(), Some(Complaint::RepeatedHeader { lines }) if lines == &vec![1, 2]),
+        "the second header is the earliest located problem: {complaints:?}"
+    );
+}
+
+#[test]
 fn a_file_whose_every_run_line_is_unreadable_has_no_run_records() {
     let text = format!(
         "{}\nnot a record\n",

@@ -17,6 +17,7 @@ use super::super::{
         count_build_messages,
         parse_architecture,
         parse_mount_status,
+        parse_probe_report,
         parse_unsigned,
         parse_version_banner,
         split_banner,
@@ -112,6 +113,34 @@ fn a_mounted_populated_cache_is_warm() {
     let observation = cache_from("0\n", "4096\n", "3\n").expect("a cache observation");
     assert_eq!(observation.state, CacheState::Warm);
     assert_eq!(observation.size_bytes, 4096);
+}
+
+#[test]
+fn a_cache_whose_listing_failed_is_a_probe_error_rather_than_an_empty_cache() {
+    let error = cache_from("0\n", "4096\n", "unreadable\n")
+        .expect_err("a failed listing must not be counted as zero");
+    assert!(matches!(error, ProbeError::NotANumber { .. }), "{error}");
+}
+
+#[test]
+fn a_combined_probe_report_rejects_an_unreadable_cache_listing() {
+    let report = concat!(
+        "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\n",
+        "cache_mounted=1\ncache_bytes=4096\ncache_total_bytes=8192\n",
+        "cache_entries=unreadable\n",
+        "rustc=rustc 1.93.0\ncargo=cargo 1.93.0\n",
+    );
+    let error = parse_probe_report(report).expect_err("a failed listing is not a measurement");
+    assert!(
+        matches!(
+            error,
+            ProbeError::NotANumber {
+                probe: "cache_entries",
+                ..
+            }
+        ),
+        "{error}"
+    );
 }
 
 #[test]

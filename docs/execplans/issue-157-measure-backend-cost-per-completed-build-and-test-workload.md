@@ -254,7 +254,25 @@ from `make test` or CI.
   Block Storage, per-provider subscription attribution across all workloads,
   toolchain comparability, structured subscription errors, and the remaining
   documentation and test corrections.
-- [ ] CodeRabbit final review cleared and draft pull request opened.
+- [x] 2026-11-27: Third CodeRabbit review produced 21 findings, all addressed:
+  a thiserror-derived charge error, a zero-granularity guard, a stable lock
+  directory, residual identifiers preserved through write failures, teardown
+  verified before a write failure is reported, a driver-served-provider check
+  before the sweep, completed-only subscription shares, empty run-id and
+  complaint-order fixes, volume allocation uncertainty, an exclusive output
+  claim, the remaining API contracts, the June 2026 Block Storage rate, the
+  mtime-only workload wording, and compile-time fixtures.
+- [x] 2026-11-27: Fourth CodeRabbit review produced 19 findings, all addressed:
+  an absolute attempt deadline shared by every remote command with a
+  teardown-only grace, a reconciliation sweep for an expired attempt, a
+  deadline-bounded command runner that kills a stalled `ssh` or `rsync`, an
+  `unpriced_extras` declaration so a report states which charges its totals
+  exclude, plan-baseline validation, zero-granularity rejection on the billed
+  path, residual identifiers for a reason-only doubt, warm-ups excluded from
+  comparability, and the remaining documentation, ordering, and test fixes.
+- [x] 2026-11-27: `make test` passes on the final tree: 674 nextest tests and
+  the doctests.
+- [ ] Confirmation CodeRabbit review cleared and draft pull request opened.
 
 ## Surprises & Discoveries
 
@@ -268,8 +286,11 @@ from `make test` or CI.
   until the plan's included hours run out; that is exactly the case the issue
   says must be reported separately from total-account cost.
 - Boat does not save `~/.cache` in a snapshot, except Playwright and Deno, so a
-  Cargo cache placed in the default `~/.cargo` does not survive a Boat stop
-  unless it is relocated under `/home/user` or a folder created at `/`.
+  tool cache stored there does not survive a Boat stop unless it is placed under
+  `/home/user`. Cargo's default `~/.cargo` sits inside the home directory,
+  which Boat documents as saved, so Cargo data does not need relocating for
+  that exclusion. The protocol names both locations rather than treating them
+  as one.
 - A provider's minimum chargeable period need not be a multiple of its billing
   granularity. A property test assumed it was and failed on a 17-second minimum
   at a 4-second granularity; the implementation was right and the property was
@@ -302,8 +323,12 @@ from `make test` or CI.
 - A provider's `month_seconds` must actually be used; a sheet that declared a
   shorter month was silently priced against 30 days.
 - A record's chargeable lifetime is the figure the provider bills, so the report
-  prices from it rather than from the wall-clock lifetime. Re-rounding an
-  already-rounded figure is idempotent, so nothing is lost.
+  prices from it rather than from the wall-clock lifetime. Re-rounding is not
+  idempotent: a one-second measurement at a four-second granularity with a
+  seventeen-second minimum yields seventeen billed seconds, and rounding that
+  again would yield twenty. A recorded billed lifetime is therefore priced
+  unchanged apart from the provider's minimum floor, and only a record whose
+  two lifetimes agree is rounded.
 - A plan's monthly price is charged once per campaign, but a reader still needs
   to see each workload's share. The report divides the subscription across the
   groups in proportion to their timed attempts and gives the remainder to the

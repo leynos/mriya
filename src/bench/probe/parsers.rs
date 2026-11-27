@@ -17,8 +17,16 @@ pub const CACHE_MOUNTED_COMMAND: &str = "mountpoint -q \"$MRIYA_SYNC_VOLUME_MOUN
 
 /// Prints the number of entries under the cache mount path, excluding the
 /// directory the formatter creates.
-pub const CACHE_ENTRIES_COMMAND: &str =
-    "find \"$MRIYA_SYNC_VOLUME_MOUNT_PATH\" -mindepth 1 -maxdepth 1 ! -name lost+found | wc -l";
+///
+/// The listing is captured before it is counted so a failed `find` prints
+/// `unreadable` rather than a zero that would label a populated cache empty.
+/// [`parse_unsigned`] rejects that text, so the caller sees a probe failure.
+pub const CACHE_ENTRIES_COMMAND: &str = concat!(
+    "if entries=$(find \"$MRIYA_SYNC_VOLUME_MOUNT_PATH\" -mindepth 1 -maxdepth 1 ",
+    "! -name lost+found); then ",
+    "if [ -n \"$entries\" ]; then printf '%s\\n' \"$entries\" | grep -c .; else echo 0; fi; ",
+    "else echo unreadable; fi"
+);
 
 /// Prints the used bytes of the cache mount path, or `0` when it is absent.
 pub const CACHE_SIZE_COMMAND: &str =
@@ -167,6 +175,16 @@ pub fn parse_mount_status(output: &str) -> Result<bool, ProbeError> {
 ///
 /// Every field is measured on the guest, so a product name cannot stand in for
 /// what was actually handed over.
+///
+/// # Parameters
+///
+/// - `outputs`: the raw text of the four allocation probes.
+///
+/// # Returns
+///
+/// The measured allocation. `requested_architecture` is empty because the guest
+/// cannot know what the provider was asked for; the caller must fill it from
+/// the request it sent before persisting the allocation.
 ///
 /// # Errors
 ///

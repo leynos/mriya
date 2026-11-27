@@ -226,6 +226,10 @@ fn a_paid_run_refuses_a_campaign_that_declares_no_limits() {
     assert_eq!(status_code(&output), 1);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("campaign is not readable"), "{stderr}");
+    assert!(
+        stderr.contains("max_spend_micros"),
+        "the refusal must name the limit that is missing: {stderr}"
+    );
 }
 
 #[test]
