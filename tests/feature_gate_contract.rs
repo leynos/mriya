@@ -25,6 +25,24 @@ const FAKE_RUN_MODULE: &str = concat!("test", "_backdoors");
 /// cannot match the import that names the same function.
 const DISPATCH_CALL: &str = "select_fake_outcome(";
 
+/// Files that may hold the `run` entry point.
+///
+/// The CLI commands live outside `main.rs` so the entry point stays focused on
+/// dispatch, but the fake dispatch must remain guarded wherever it lives. The
+/// contract follows the function rather than pinning it to one file.
+const RUN_ENTRY_FILES: [&str; 2] = ["src/main.rs", "src/cli_commands.rs"];
+
+/// Returns the source of the file that defines `async fn run_command(`.
+fn run_entry_source() -> Result<String, String> {
+    for file in RUN_ENTRY_FILES {
+        let source = read(file)?;
+        if source.contains("async fn run_command(") {
+            return Ok(source);
+        }
+    }
+    Err(String::from("the run entry point is missing"))
+}
+
 /// Reads one repository file through a capability handle rooted at the
 /// manifest directory.
 fn read(relative: &str) -> Result<String, String> {
@@ -64,32 +82,40 @@ fn the_manifest_declares_no_retired_feature() -> Result<(), String> {
 #[test]
 fn the_fake_run_module_is_guarded_by_cfg_test_alone() -> Result<(), String> {
     let source = read("src/main.rs")?;
-
     require_contains(
         &source,
         &format!("#[cfg(test)]\nmod {FAKE_RUN_MODULE};"),
         "the module declaration guard",
     )?;
-    require_contains(
-        &source,
-        &format!("#[cfg(test)]\nuse {FAKE_RUN_MODULE}::"),
-        "the module import guard",
-    )?;
-    if source.contains(RETIRED_FEATURE) {
-        return Err(format!(
-            "src/main.rs names `{RETIRED_FEATURE}`; the guard must be `#[cfg(test)]` alone"
-        ));
-    }
 
-    for (index, line) in source.lines().enumerate() {
-        let trimmed = line.trim_start();
-        let is_condition = trimmed.starts_with("#[cfg(") || trimmed.starts_with("#[cfg_attr(");
-        if is_condition && !trimmed.contains("test") {
+    // The import moved with the command implementation; it must still be
+    // guarded, in whichever file names the module.
+    let mut found_import = false;
+    for file in RUN_ENTRY_FILES {
+        let candidate = read(file)?;
+        if candidate.contains(&format!("#[cfg(test)]\nuse crate::{FAKE_RUN_MODULE}::"))
+            || candidate.contains(&format!("#[cfg(test)]\nuse {FAKE_RUN_MODULE}::"))
+        {
+            found_import = true;
+        }
+        if candidate.contains(RETIRED_FEATURE) {
             return Err(format!(
-                "src/main.rs:{}: `{trimmed}` is not a test guard",
-                index + 1
+                "{file} names `{RETIRED_FEATURE}`; the guard must be `#[cfg(test)]` alone"
             ));
         }
+        for (index, line) in candidate.lines().enumerate() {
+            let trimmed = line.trim_start();
+            let is_condition = trimmed.starts_with("#[cfg(") || trimmed.starts_with("#[cfg_attr(");
+            if is_condition && !trimmed.contains("test") {
+                return Err(format!(
+                    "{file}:{}: `{trimmed}` is not a test guard",
+                    index + 1
+                ));
+            }
+        }
+    }
+    if !found_import {
+        return Err(String::from("the fake-run module import guard is missing"));
     }
     Ok(())
 }
@@ -115,7 +141,7 @@ fn run_command_body(source: &str) -> Result<&str, String> {
 
 #[test]
 fn the_fake_dispatch_sits_behind_a_test_guard() -> Result<(), String> {
-    let source = read("src/main.rs")?;
+    let source = run_entry_source()?;
     let body = run_command_body(&source)?;
 
     let sites = body.matches(DISPATCH_CALL).count();
