@@ -251,9 +251,9 @@ fn environment_volume_id_rejects_a_non_utf8_value() {
 }
 
 /// The loader keeps a blank environment layer over the file, which is why the
-/// composition root rejects that value before a request can be built.
+/// provenance records it as empty and the orchestrator refuses it.
 #[test]
-fn a_blank_environment_volume_id_survives_loading_but_is_rejected() {
+fn a_blank_environment_volume_id_survives_loading_and_is_recorded() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let root = Utf8Path::from_path(tmp.path()).expect("temp path should be UTF-8");
     let file = root.join("mriya.toml");

@@ -48,8 +48,9 @@ pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
 /// provider matches keys that way; a guard that looked only for the canonical
 /// spelling would miss a value the loader still applies. Returns `None` when no
 /// spelling is present and the trimmed value when it is usable. A present blank
-/// or non-UTF-8 value is rejected: the loader still merges it over the file, so
-/// a volume `init` created would never be the one `run` selects.
+/// value is returned as an empty string so the request carries the provenance;
+/// the loader still merges it over the file, and the orchestrator refuses it
+/// before any backend work.
 ///
 /// # Errors
 ///
