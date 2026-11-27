@@ -46,6 +46,13 @@ $ sha256sum docs/ortho-config-users-guide.md docs/ortho-config-v0-10-0-migration
 b5331aa6cfcc07b3dcd188c620db98d0a1a1f13b0c8ef96d88913d701bca25bf  docs/ortho-config-v0-10-0-migration-guide.md
 ```
 
+The check was repeated on 2026-11-27 against the upstream repository directly:
+`git fetch` of tag `v0.10.0` produced tag object
+`996e5a1c9f22ace4f55bf5dcc196d2c0524262bf`, which peeled to commit
+`38812c563e3953a490e3efc202609f37e21a0517`, and hashing both files at that
+commit produced the same two digests as the local imports. The provenance is
+therefore independently confirmed, not only compared locally.
+
 ## Relative-link mapping
 
 The imported prose is unedited, so its relative links still name upstream
