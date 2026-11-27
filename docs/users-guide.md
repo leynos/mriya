@@ -392,8 +392,11 @@ which applies no such bound.
 
 The two 300-second readiness deadlines and the 600-second cloud-init deadline
 are polling settings, not guarantees about how long a run takes or how long it
-is billed. Each SSH connection attempt also has its own short timeout, so a
-wait can overrun its budget by up to that timeout.
+is billed. Each deadline is checked before an attempt starts, not while one is
+in flight, so a wait can overrun its budget by the length of the attempt that
+was already running: up to 30 seconds for the public-IP phase, whose attempt is
+a provider lookup bounded by the request timeout, and up to 2 seconds for the
+SSH phase, whose attempt is a single connection bounded by its own timeout.
 
 ## Running the integration check
 
