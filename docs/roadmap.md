@@ -4,11 +4,14 @@ This roadmap translates the technical design into phased, measurable work. It
 uses phases for strategic milestones, steps for related workstreams, and tasks
 for concrete, testable deliverables.
 
-Checkbox states record whether a deliverable exists in the code. Evidence
+Checkbox states record whether the workstream's code exists; they do not assert
+that every clause of a task's acceptance text has been demonstrated. Evidence
 notes, dated 26 November 2026, record what the test suite actually establishes,
-so a ticked box is not mistaken for live provider verification. An
-implementation detail that is not exercised by a test is called out in the note
-rather than implied by the tick.
+so a ticked box is not mistaken for live provider verification. Where a task
+bundles several clauses, the note names the ones that remain unproven rather
+than letting the tick imply them. Checkbox states are preserved as historical
+delivery records, so a partial gap is recorded in the note instead of being
+turned into a new unticked task or a reversed tick.
 
 ## 1. MVP – Scaleway single backend
 
@@ -17,8 +20,10 @@ rather than implied by the tick.
 - [x] Implement `ScalewayBackend` with create/wait/destroy covering token,
   project, image, and instance type inputs, and verify teardown leaves no
   residual resources via an integration check.
-  - Evidence: the opt-in live scenario provisions a `DEV1-S` instance, waits
-    for a reachable public IPv4, and destroys it. Teardown is verified only by
+  - Evidence: the lifecycle code and its integration check exist, so the box
+    stays ticked, but the "no residual resources" clause is **not** met.
+    The opt-in live scenario provisions a `DEV1-S` instance, waits for a
+    reachable public IPv4, and destroys it. Teardown is verified only by
     polling until the server disappears from the provider's listing; volumes
     and IP addresses are not inventoried. Partial provisioning can leave a
     server when attachment or power-on fails before a handle is returned,
