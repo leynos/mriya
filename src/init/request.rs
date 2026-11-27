@@ -1,8 +1,10 @@
 //! The request that describes a cache-volume preparation.
 //!
-//! The request is built from configuration before any backend exists, so the
-//! checks here can refuse a run that would create a billable volume the user
-//! does not want replaced.
+//! Building the request catches an invalid configuration, and the
+//! orchestrator's guard refuses a configured volume ID before `create_volume`.
+//! A run that would replace a volume the user did not offer to replace
+//! therefore stops before any billable resource is created, even though the
+//! binary constructs its backend handle first.
 
 use crate::{
     ScalewayConfig,
