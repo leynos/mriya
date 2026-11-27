@@ -127,3 +127,24 @@ for concrete, testable deliverables.
   security group, subnet selection, EBS volume attachment, and cloud-init;
   acceptance: end-to-end run on AWS returns remote exit codes, reuses the cache
   volume, and enforces resource cleanup on failure.
+
+### 7.4. Cost evidence before adoption
+
+- [x] Write the opt-in benchmark protocol, the versioned JSON Lines record
+  format, the offline validator, the integer billing calculator, and the
+  source-cited example price sheet; acceptance: a campaign file validates and
+  prices with no network access, and a file with no run records is refused.
+- [x] Add the observation seams: phase timing through `RunObserver`, provider
+  resource identifiers through `LifecycleSink`, and pre- and post-workload
+  probes; acceptance: `mriya run` behaves exactly as before when no seam is
+  configured.
+- [x] Add the gated `mriya-bench run` harness and the offline equal-work
+  report; acceptance: a paid run refuses without the operator opt-in and
+  declared limits, and a cleanup doubt writes a residual record and stops.
+- [ ] Run the protocol against each proposed backend before adoption, record
+  the four pinned workloads with repeated timings, and publish the marginal and
+  total-account comparison with any cache or storage capability difference
+  stated; acceptance: a backend's cost claim cites a validated campaign file
+  and a dated price sheet. This depends on
+  [#153](https://github.com/leynos/mriya/issues/153)–[#155](https://github.com/leynos/mriya/issues/155)
+  landing for honest Scaleway storage measurements.

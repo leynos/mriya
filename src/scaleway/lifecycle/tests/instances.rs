@@ -119,9 +119,145 @@ async fn create_instance_stopped_preserves_a_provider_rejection(
     .await?;
     let error = result.expect_err("a rejected creation must fail");
     assert!(
-        matches!(error, ScalewayBackendError::Provider { ref message } if message.contains("no such image")),
+        matches!(error, ScalewayBackendError::Rejected { ref message } if message.contains("no such image")),
         "{error:?}"
     );
     assert_eq!(requests.len(), 1);
+    Ok(())
+}
+
+/// A create response whose body is not a server, so the call reports a
+/// provider error after the provider has already allocated the resource.
+fn created_but_unreadable() -> Reply {
+    Reply {
+        status: 201,
+        body: String::from(r#"{"servers":"not what the schema says"}"#),
+    }
+}
+
+/// Scenario: a successful creation reports the resource it created.
+///
+/// Invariant: the lifecycle sink receives one `ResourceCreated` event whose
+/// identifier and location are the ones the provider returned, so a benchmark
+/// record can name the resource instead of guessing an identifier.
+#[rstest]
+#[tokio::test]
+async fn a_successful_creation_reports_the_resource_it_created(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    use crate::bench::lifecycle::{LifecycleEvent, RecordingSink};
+
+    let sink = std::sync::Arc::new(RecordingSink::default());
+    let backend = backend_fixture.with_lifecycle_sink(sink.clone());
+    let (result, _) = with_stub(backend, vec![created_instance()], async |stubbed| {
+        stubbed
+            .create_instance_stopped_observed(&base_request, "img-test")
+            .await
+    })
+    .await?;
+    result?;
+
+    assert_eq!(
+        sink.events(),
+        vec![LifecycleEvent::ResourceCreated {
+            provider: String::from("scaleway"),
+            resource_id: String::from("id"),
+            location: String::from("zone"),
+            product: String::from("type"),
+        }]
+    );
+    Ok(())
+}
+
+/// Scenario: a create call whose response cannot be read.
+///
+/// Invariant: the sink receives an `AllocationUncertain` event rather than a
+/// `ResourceCreated` event, because the provider may have allocated a resource
+/// whose identifier the client never learned. That is the difference between a
+/// campaign that can sweep its leftovers and one that cannot.
+#[rstest]
+#[tokio::test]
+async fn an_unreadable_create_response_reports_an_uncertain_allocation(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    use crate::bench::lifecycle::{LifecycleEvent, RecordingSink};
+
+    let sink = std::sync::Arc::new(RecordingSink::default());
+    let backend = backend_fixture.with_lifecycle_sink(sink.clone());
+    let (result, _) = with_stub(backend, vec![created_but_unreadable()], async |stubbed| {
+        stubbed
+            .create_instance_stopped_observed(&base_request, "img-test")
+            .await
+    })
+    .await?;
+    let error = result.expect_err("an unreadable body is a provider error");
+    assert!(
+        matches!(error, ScalewayBackendError::Provider { .. }),
+        "{error:?}"
+    );
+
+    let events = sink.events();
+    assert!(
+        matches!(
+            events.as_slice(),
+            [LifecycleEvent::AllocationUncertain { provider, location, .. }]
+                if provider == "scaleway" && location == "zone"
+        ),
+        "expected one uncertain allocation, got {events:?}"
+    );
+    Ok(())
+}
+
+/// Scenario: a teardown that the provider confirms.
+///
+/// Invariant: the sink sees the delete request and then a verified teardown, in
+/// that order, so a campaign can distinguish "we asked" from "the provider
+/// confirmed nothing remains".
+#[rstest]
+#[tokio::test]
+async fn a_verified_teardown_reports_both_events(backend_fixture: ScalewayBackend) -> Result<()> {
+    use crate::{
+        Backend,
+        backend::InstanceHandle,
+        bench::lifecycle::{LifecycleEvent, RecordingSink},
+    };
+
+    let sink = std::sync::Arc::new(RecordingSink::default());
+    let mut backend = backend_fixture.with_lifecycle_sink(sink.clone());
+    // The delete response, then two empty listings that end pagination.
+    let delete = Reply {
+        status: 204,
+        body: String::new(),
+    };
+    let empty_page = Reply {
+        status: 200,
+        body: String::from(r#"{"servers":[]}"#),
+    };
+    let stub = super::http_stub::StubApi::start(vec![delete, empty_page]).await?;
+    backend.instance_api_base.clone_from(&stub.base_url);
+
+    backend
+        .destroy(InstanceHandle {
+            id: String::from("srv-1"),
+            zone: String::from("zone"),
+        })
+        .await?;
+    stub.finish().await?;
+
+    assert_eq!(
+        sink.events(),
+        vec![
+            LifecycleEvent::TeardownRequested {
+                provider: String::from("scaleway"),
+                resource_id: String::from("srv-1"),
+            },
+            LifecycleEvent::TeardownVerified {
+                provider: String::from("scaleway"),
+                resource_id: String::from("srv-1"),
+            },
+        ]
+    );
     Ok(())
 }

@@ -1,6 +1,10 @@
 //! Tests for `StreamingCommandRunner` output forwarding and capture.
 
-use std::{ffi::OsString, fmt::Write as _};
+use std::{
+    ffi::OsString,
+    fmt::Write as _,
+    time::{Duration, Instant},
+};
 
 use rstest::rstest;
 
@@ -88,6 +92,67 @@ fn streaming_runner_captures_large_interleaved_output() {
     assert_eq!(output.code, Some(0));
     assert_eq!(output.stdout, expected_out);
     assert_eq!(output.stderr, expected_err);
+}
+
+#[rstest]
+fn deadline_runner_kills_a_child_that_outlives_its_deadline() {
+    let runner = DeadlineCommandRunner::new(Instant::now() + Duration::from_millis(150));
+    let started = Instant::now();
+    let result = runner.run("sh", &[OsString::from("-c"), OsString::from("sleep 30")]);
+
+    assert!(
+        matches!(result, Err(SyncError::DeadlineExceeded { .. })),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the wait must be bounded by the deadline, took {:?}",
+        started.elapsed()
+    );
+}
+
+#[rstest]
+fn deadline_runner_returns_when_a_descendant_holds_the_output_pipe() {
+    // The shell exits immediately but leaves `sleep` holding the inherited
+    // pipe. Joining the forwarders without a bound would wait for it.
+    let runner = DeadlineCommandRunner::new(Instant::now() + Duration::from_millis(150));
+    let started = Instant::now();
+    let result = runner.run(
+        "sh",
+        &[OsString::from("-c"), OsString::from("sleep 30 & exit 0")],
+    );
+
+    assert!(
+        matches!(result, Err(SyncError::DeadlineExceeded { .. })),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "output collection must be bounded by the deadline, took {:?}",
+        started.elapsed()
+    );
+}
+
+#[rstest]
+fn deadline_runner_completes_a_command_that_finishes_in_time() {
+    let runner = DeadlineCommandRunner::new(Instant::now() + Duration::from_secs(30));
+    let output = runner
+        .run("sh", &[OsString::from("-c"), OsString::from("printf done")])
+        .expect("a command within the deadline should succeed");
+
+    assert_eq!(output.code, Some(0));
+    assert_eq!(output.stdout, "done");
+}
+
+#[rstest]
+fn deadline_runner_starts_nothing_once_its_deadline_has_passed() {
+    let runner = DeadlineCommandRunner::new(Instant::now());
+    let result = runner.run("sh", &[OsString::from("-c"), OsString::from("printf ran")]);
+
+    assert!(
+        matches!(result, Err(SyncError::DeadlineExceeded { .. })),
+        "{result:?}"
+    );
 }
 
 #[rstest]

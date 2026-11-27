@@ -5,6 +5,7 @@
 //! lifecycle (create → wait for SSH readiness → destroy).
 
 pub mod backend;
+pub mod bench;
 pub mod cloud_init;
 pub mod config;
 pub mod config_store;
@@ -37,7 +38,7 @@ pub use janitor::{
     TEST_RUN_ID_ENV,
     TEST_RUN_TAG_PREFIX,
 };
-pub use run::{RunError, RunOrchestrator};
+pub use run::{ObservedRun, RunError, RunOrchestrator};
 pub use scaleway::{ScalewayBackend, ScalewayBackendError};
 pub use sync::{
     CommandOutput,

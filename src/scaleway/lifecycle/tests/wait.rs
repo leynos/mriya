@@ -167,6 +167,7 @@ async fn wait_for_ssh_ready_matches_listener_state(
         ssh_port: DEFAULT_SSH_PORT,
         poll_interval: Duration::from_millis(1),
         wait_timeout: Duration::from_millis(50),
+        lifecycle_sink: None,
     };
 
     let networking = InstanceNetworking {

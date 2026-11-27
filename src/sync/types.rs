@@ -3,8 +3,9 @@
 use std::{
     ffi::OsString,
     io::{BufReader, Read, Write},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread,
+    time::{Duration, Instant},
 };
 
 use camino::Utf8PathBuf;
@@ -146,20 +147,89 @@ fn forward_stream(
 /// Join a forwarder thread, mapping panics and stream errors to
 /// [`SyncError::Spawn`].
 ///
-/// Returns an empty string when no forwarder was spawned for the stream.
+/// Returns an empty string when no forwarder was spawned for the stream. With
+/// a deadline, the wait is bounded: a descendant that inherited the output
+/// pipe can keep it open after the direct child has exited, and joining
+/// without a bound would let that descendant hold the attempt past its
+/// lifetime.
 fn join_forwarder(
     handle: Option<thread::JoinHandle<Result<String, SyncError>>>,
-    program: &str,
-    stream_name: &str,
+    wait: &ForwarderWait<'_>,
 ) -> Result<String, SyncError> {
-    match handle {
-        Some(join_handle) => join_handle.join().map_err(|_| SyncError::Spawn {
-            program: program.to_owned(),
-            message: format!("{stream_name} forwarder panicked"),
-        })?,
-        None => Ok(String::new()),
+    let Some(join_handle) = handle else {
+        return Ok(String::new());
+    };
+    let Some(limit) = wait.deadline else {
+        return join_handle
+            .join()
+            .map_err(|_| forwarder_panicked(wait.program, wait.stream_name))?;
+    };
+    loop {
+        if join_handle.is_finished() {
+            return join_handle
+                .join()
+                .map_err(|_| forwarder_panicked(wait.program, wait.stream_name))?;
+        }
+        let now = Instant::now();
+        if now >= limit {
+            // The direct child may have exited while a descendant held the
+            // pipe. Stop the whole group, then give the forwarder a short,
+            // bounded chance to observe the closed pipes.
+            kill_group(wait.group);
+            let _forwarder = wait_for_forwarder(join_handle, wait);
+            return Err(SyncError::DeadlineExceeded {
+                program: wait.program.to_owned(),
+            });
+        }
+        thread::sleep((limit - now).min(DEADLINE_POLL_INTERVAL));
     }
 }
+
+/// The context a bounded forwarder join needs.
+struct ForwarderWait<'a> {
+    /// Command the forwarder belongs to.
+    program: &'a str,
+    /// Which stream the forwarder reads, for the panic message.
+    stream_name: &'a str,
+    /// Absolute deadline the join must not exceed.
+    deadline: Option<Instant>,
+    /// Process group to stop when the deadline passes.
+    group: Option<u32>,
+}
+
+/// Waits a short, bounded time for a forwarder after its pipes were closed.
+///
+/// A forwarder whose pipe is still held open is detached rather than joined:
+/// the call has already reached its deadline and must return.
+fn wait_for_forwarder(
+    handle: thread::JoinHandle<Result<String, SyncError>>,
+    wait: &ForwarderWait<'_>,
+) -> Result<String, SyncError> {
+    let deadline = Instant::now() + FORWARDER_CLEANUP_GRACE;
+    while !handle.is_finished() && Instant::now() < deadline {
+        thread::sleep(DEADLINE_POLL_INTERVAL);
+    }
+    if handle.is_finished() {
+        return handle
+            .join()
+            .map_err(|_| forwarder_panicked(wait.program, wait.stream_name))?;
+    }
+    Ok(String::new())
+}
+
+/// Builds the error a panicked forwarder reports.
+fn forwarder_panicked(program: &str, stream_name: &str) -> SyncError {
+    SyncError::Spawn {
+        program: program.to_owned(),
+        message: format!("{stream_name} forwarder panicked"),
+    }
+}
+
+/// How often a deadline-bounded wait checks whether its child has exited.
+const DEADLINE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// How long a forwarder is given to finish after its process group is killed.
+const FORWARDER_CLEANUP_GRACE: Duration = Duration::from_secs(1);
 
 /// Command runner that streams subprocess stdout/stderr while capturing them.
 #[derive(Clone, Debug, Default)]
@@ -167,37 +237,162 @@ pub struct StreamingCommandRunner;
 
 impl CommandRunner for StreamingCommandRunner {
     fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| SyncError::Spawn {
-                program: program.to_owned(),
-                message: err.to_string(),
-            })?;
+        run_streaming(program, args, None)
+    }
+}
 
-        let stdout_handle = child
-            .stdout
-            .take()
-            .map(|stdout| forward_stream(stdout, false, program));
-        let stderr_handle = child
-            .stderr
-            .take()
-            .map(|stderr| forward_stream(stderr, true, program));
+/// Command runner that kills any child which outlives an absolute deadline.
+///
+/// The benchmark campaign uses this so a stalled `ssh` or `rsync` cannot hold
+/// an attempt open past the lifetime its operator declared. The bound is
+/// absolute rather than per call: every command the attempt runs shares the
+/// deadline, so preparation, probes, synchronization and the workload together
+/// cannot exceed it.
+#[derive(Clone, Debug)]
+pub struct DeadlineCommandRunner {
+    deadline: Instant,
+}
 
-        let status = child.wait().map_err(|err| SyncError::Spawn {
+impl DeadlineCommandRunner {
+    /// Creates a runner whose children must finish before `deadline`.
+    #[must_use]
+    pub const fn new(deadline: Instant) -> Self { Self { deadline } }
+}
+
+impl CommandRunner for DeadlineCommandRunner {
+    fn run(&self, program: &str, args: &[OsString]) -> Result<CommandOutput, SyncError> {
+        run_streaming(program, args, Some(self.deadline))
+    }
+}
+
+/// Runs a child, forwarding its streams, and waits for it.
+///
+/// With a deadline, the child is killed once the deadline passes, so the wait
+/// cannot outlive the caller's budget even when the child never exits. The
+/// bound is checked before spawning as well, so a phase that has already spent
+/// its budget starts no process at all.
+fn run_streaming(
+    program: &str,
+    args: &[OsString],
+    deadline: Option<Instant>,
+) -> Result<CommandOutput, SyncError> {
+    if deadline.is_some_and(|limit| Instant::now() >= limit) {
+        return Err(SyncError::DeadlineExceeded {
             program: program.to_owned(),
-            message: err.to_string(),
-        })?;
+        });
+    }
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // A bounded command gets its own process group, so a timeout can stop the
+    // descendants it started rather than only the direct child.
+    #[cfg(unix)]
+    if deadline.is_some() {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().map_err(|err| spawn_error(program, &err))?;
+    let group = deadline.map(|_| child.id());
 
-        let stdout = join_forwarder(stdout_handle, program, "stdout")?;
-        let stderr = join_forwarder(stderr_handle, program, "stderr")?;
+    let stdout_handle = child
+        .stdout
+        .take()
+        .map(|stdout| forward_stream(stdout, false, program));
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|stderr| forward_stream(stderr, true, program));
 
-        Ok(CommandOutput {
-            code: status.code(),
-            stdout,
-            stderr,
-        })
+    let status = match deadline {
+        Some(limit) => wait_bounded(&mut child, limit, program, group)?,
+        None => child.wait().map_err(|err| spawn_error(program, &err))?,
+    };
+
+    let stdout = join_forwarder(
+        stdout_handle,
+        &ForwarderWait {
+            program,
+            stream_name: "stdout",
+            deadline,
+            group,
+        },
+    )?;
+    let stderr = join_forwarder(
+        stderr_handle,
+        &ForwarderWait {
+            program,
+            stream_name: "stderr",
+            deadline,
+            group,
+        },
+    )?;
+
+    Ok(CommandOutput {
+        code: status.code(),
+        stdout,
+        stderr,
+    })
+}
+
+/// Waits for `child`, killing it once `deadline` passes.
+///
+/// A child that exits between the status check and the kill is harmless: the
+/// deadline has already passed, so the caller would discard the result anyway.
+fn wait_bounded(
+    child: &mut Child,
+    deadline: Instant,
+    program: &str,
+    group: Option<u32>,
+) -> Result<ExitStatus, SyncError> {
+    loop {
+        if let Some(status) = child.try_wait().map_err(|err| spawn_error(program, &err))? {
+            return Ok(status);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            kill_tree(child, group);
+            return Err(SyncError::DeadlineExceeded {
+                program: program.to_owned(),
+            });
+        }
+        thread::sleep((deadline - now).min(DEADLINE_POLL_INTERVAL));
+    }
+}
+
+/// Stops a bounded child and every descendant that stayed in its group.
+fn kill_tree(child: &mut Child, group: Option<u32>) {
+    kill_group(group);
+    child.kill().ok();
+    child.wait().ok();
+}
+
+/// Sends `SIGKILL` to the process group `group`, when one was created.
+#[cfg(unix)]
+fn kill_group(group: Option<u32>) {
+    let Some(pgid) = group else {
+        return;
+    };
+    // `kill -KILL -<pgid>` targets the whole group, which is how descendants
+    // that inherited the output pipes are stopped too.
+    Command::new("kill")
+        .arg("-KILL")
+        .arg(format!("-{pgid}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok();
+}
+
+/// Non-Unix builds cannot create a process group here, so no group is killed.
+#[cfg(not(unix))]
+fn kill_group(_group: Option<u32>) {}
+
+/// Builds the error a failed spawn or wait reports.
+fn spawn_error(program: &str, err: &std::io::Error) -> SyncError {
+    SyncError::Spawn {
+        program: program.to_owned(),
+        message: err.to_string(),
     }
 }

@@ -1,0 +1,220 @@
+# Example price sheet for the backend cost benchmark.
+#
+# Every rate below is quoted in micro-units of the sheet's currency: one
+# currency unit is 1,000,000 micro-units. Integers only, so no reader has to
+# agree with another about a rounded float.
+#
+# Each provider entry cites where its rates were read. Re-check the source and
+# bump `retrieved` before trusting a campaign priced against this file: a price
+# sheet is a dated observation, not a permanent fact.
+#
+# Rates are list prices excluding tax. A campaign that pays tax must extend the
+# sheet, because this one would understate the bill.
+#
+# Scaleway and Hetzner quote in EUR; Boat and Ubicloud quote in USD. The `[fx]`
+# table below states the rate used to bring the USD figures into this EUR sheet,
+# so a comparison across the two is only ever made at a rate somebody wrote
+# down. Replace the rate with the one your card was actually charged at before
+# publishing a claim.
+
+[sheet]
+currency = "EUR"
+retrieved = "2026-11-26"
+# 30 days. Used to turn a per-month storage price into a per-second one.
+month_seconds = 2592000
+
+# ---------------------------------------------------------------------------
+# Scaleway
+#
+# Source: Scaleway billing FAQ, https://www.scaleway.com/en/docs/billing/faq/
+#   "Each of these resources is billed separately for a minimum of 60 minutes."
+#   Compute starts at power-on and stops at power-off; volume storage starts at
+#   creation and stops at deletion.
+# Source: Scaleway virtual instance pricing,
+#   https://www.scaleway.com/en/pricing/virtual-instances/
+#   DEV1-S is EUR 0.00898 per hour.
+# Source: Scaleway's 1 June 2026 price update,
+#   https://www.scaleway.com/en/blog/a-transparent-update-on-scaleway-pricing/
+#   read 2026-11-27, rate EUR 0.000130 per GB-hour for Block SSD, converted
+#   with the sheet's month.
+# ---------------------------------------------------------------------------
+[providers.scaleway]
+display_name = "Scaleway"
+source = "https://www.scaleway.com/en/docs/billing/faq/"
+# Scaleway's list prices exclude an attached public IPv4 address, which the
+# instance request asks for and the record format has no unit to price. A
+# report that uses this provider therefore says its total excludes it.
+unpriced_extras = ["public IPv4 address (billed per hour while attached)"]
+
+[providers.scaleway.products.DEV1-S]
+price_per_hour_micros = 8980
+granularity_seconds = 3600
+minimum_seconds = 3600
+start_charge_micros = 0
+
+[providers.scaleway.products.DEV1-M]
+price_per_hour_micros = 20200
+granularity_seconds = 3600
+minimum_seconds = 3600
+start_charge_micros = 0
+
+[providers.scaleway.storage.block-ssd]
+# Scaleway Block Storage SSD, quoted per GB-hour and converted with the sheet's
+# 30-day month: EUR 0.000130/GB-hour * 720 hours = EUR 0.09360/GB-month, the
+# price effective 1 June 2026.
+# Source: https://www.scaleway.com/en/blog/a-transparent-update-on-scaleway-pricing/
+# read 2026-11-27.
+price_per_gb_month_micros = 93600
+granularity_seconds = 3600
+minimum_seconds = 3600
+
+# ---------------------------------------------------------------------------
+# Hetzner Cloud
+#
+# Source: Hetzner Cloud billing FAQ, https://docs.hetzner.com/cloud/billing/faq/
+#   "Your server's bill will never exceed its monthly price cap... we always
+#   round up the hourly usage of a server."
+# Source: Hetzner cost-optimized cloud servers,
+#   https://www.hetzner.com/cloud/cost-optimized/
+#   CX23 is EUR 0.0096 per hour and EUR 5.99 per month.
+# ---------------------------------------------------------------------------
+[providers.hetzner]
+display_name = "Hetzner Cloud"
+source = "https://docs.hetzner.com/cloud/billing/faq/"
+# The primary IPv4 address is billed monthly per server and is not part of the
+# server's hourly rate.
+unpriced_extras = ["primary IPv4 address (billed monthly per server)"]
+
+[providers.hetzner.products.CX23]
+price_per_hour_micros = 9600
+granularity_seconds = 3600
+minimum_seconds = 3600
+monthly_cap_micros = 5990000
+start_charge_micros = 0
+
+[providers.hetzner.products.CX33]
+price_per_hour_micros = 14400
+granularity_seconds = 3600
+minimum_seconds = 3600
+monthly_cap_micros = 8990000
+start_charge_micros = 0
+
+[providers.hetzner.products.CX43]
+price_per_hour_micros = 26400
+granularity_seconds = 3600
+minimum_seconds = 3600
+monthly_cap_micros = 16490000
+start_charge_micros = 0
+
+[providers.hetzner.storage.snapshot]
+price_per_gb_month_micros = 1430
+granularity_seconds = 3600
+minimum_seconds = 3600
+
+# ---------------------------------------------------------------------------
+# Boat
+#
+# Source: Boat pricing, https://docs.boat.dev/pricing
+#   "You pay per second, only while a sandbox runs." The `default` size is
+#   USD 0.036 per hour. A plan is a monthly price that returns as VM time; the
+#   $20 plan includes 555 hours of `default`.
+#   Extra starts beyond the included allowance cost USD 0.03 to USD 0.07; the
+#   lower bound is used here so the sheet never overstates a competitor's cost.
+#   Saved snapshots past the included count cost USD 0.056 per day.
+# Currency note: Boat quotes in USD. The `[fx]` table converts it into this
+# sheet's EUR, and the converted figures are what a report prints.
+# ---------------------------------------------------------------------------
+[providers.boat]
+display_name = "Boat"
+source = "https://docs.boat.dev/pricing"
+currency = "USD"
+# The plan's start allowance is a rate limit (12 per minute, 60 per hour, 200
+# per day), which a single `included_starts` total cannot express, so every
+# start is charged and the report labels the resulting total an upper bound.
+upper_bound_notes = [
+  "the start charge is an upper bound: Boat's start allowance is a rate limit this sheet cannot model, so every start is charged",
+]
+
+[providers.boat.products.default]
+price_per_hour_micros = 36000
+granularity_seconds = 1
+minimum_seconds = 0
+start_charge_micros = 30000
+
+[providers.boat.products.small]
+price_per_hour_micros = 18000
+granularity_seconds = 1
+minimum_seconds = 0
+start_charge_micros = 30000
+
+[providers.boat.products.large]
+price_per_hour_micros = 72000
+granularity_seconds = 1
+minimum_seconds = 0
+start_charge_micros = 30000
+
+# Boat charges a fixed USD 0.056 per saved snapshot per day above the plan's
+# included count, regardless of size. This sheet prices storage per gibibyte
+# per month, which cannot express a per-snapshot charge, so Boat's saved
+# snapshots are deliberately absent: a campaign that retains one must extend
+# the sheet with a per-snapshot unit rather than approximate it here.
+
+[providers.boat.plan]
+name = "USD 20 plan"
+monthly_price_micros = 20000000
+# 555 hours of `default`, whose hourly rate values the allowance. A product that
+# costs twice as much consumes the allowance twice as fast.
+included_compute_hours = 555
+baseline_product = "default"
+# Boat's start allowance is a rate limit (12 per minute, 60 per hour, 200 per
+# day), not a single period total, so this sheet does not model it and charges
+# every start. That overstates Boat's cost, which is the safe direction for a
+# competitor's figure; a campaign that wants the allowance must add a
+# window-aware rule.
+included_starts = 0
+
+# ---------------------------------------------------------------------------
+# Ubicloud
+#
+# Source: Ubicloud pricing, https://www.ubicloud.com/docs/about/pricing
+#   "We calculate usage at per-minute granularity and bill you at the end of
+#   the month." standard-2 is USD 0.00104 per minute. A public IPv4 address is
+#   USD 3.00 per month, pro-rated per minute.
+# Currency note: quoted in USD, converted through the `[fx]` table as Boat is.
+# ---------------------------------------------------------------------------
+[providers.ubicloud]
+display_name = "Ubicloud"
+source = "https://www.ubicloud.com/docs/about/pricing"
+currency = "USD"
+# Ubicloud bills a public IPv4 address per month, pro-rated per minute; the
+# record format names no address resource, so this sheet cannot price it.
+unpriced_extras = ["public IPv4 address (billed monthly, pro-rated per minute)"]
+
+[providers.ubicloud.products.standard-2]
+price_per_hour_micros = 62400
+granularity_seconds = 60
+minimum_seconds = 60
+start_charge_micros = 0
+
+[providers.ubicloud.products.standard-4]
+price_per_hour_micros = 124800
+granularity_seconds = 60
+minimum_seconds = 60
+start_charge_micros = 0
+
+[providers.ubicloud.storage.machine-image]
+price_per_gb_month_micros = 150000
+granularity_seconds = 60
+minimum_seconds = 60
+
+# ---------------------------------------------------------------------------
+# Currency conversion
+#
+# A placeholder rate, not an observation. It exists so the sheet demonstrates
+# the mechanism and so a test can exercise it; replace it with the rate from
+# your card statement, cite that statement here, and bump `retrieved` in
+# `[sheet]` when you do.
+# ---------------------------------------------------------------------------
+[fx.USD]
+micros_per_unit = 920000
+source = "Placeholder rate: 1 USD = 0.92 EUR. Replace with the rate you were charged."

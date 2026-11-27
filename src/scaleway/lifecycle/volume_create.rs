@@ -105,6 +105,24 @@ impl ScalewayBackend {
     /// let err = backend.create_volume(&request).await.unwrap_err();
     /// assert!(matches!(err, ScalewayBackendError::VolumeCreateFailed { .. }));
     /// ```
+    /// Reports that a volume create may have allocated a resource whose
+    /// identifier could not be learned.
+    ///
+    /// The request reached the provider before the failure, so a volume can
+    /// exist even though its response could not be read.
+    fn note_uncertain_volume(&self, request: &VolumeRequest) {
+        self.notify_lifecycle(
+            &crate::bench::lifecycle::LifecycleEvent::AllocationUncertain {
+                provider: String::from(super::super::backend_impl::PROVIDER_NAME),
+                location: request.zone.clone(),
+                reason: format!(
+                    "the create response for volume {:?} could not be read",
+                    request.name
+                ),
+            },
+        );
+    }
+
     pub(in crate::scaleway) async fn create_volume(
         &self,
         request: &VolumeRequest,
@@ -131,22 +149,40 @@ impl ScalewayBackend {
             })?;
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            Err(err) => {
+                self.note_uncertain_volume(request);
+                return Err(ScalewayBackendError::Provider {
+                    message: err.to_string(),
+                });
+            }
+        };
 
         if status.is_success() {
-            let parsed: CreateVolumeResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
-            return Ok(VolumeHandle {
+            let parsed: CreateVolumeResponse = match serde_json::from_slice(&body) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    self.note_uncertain_volume(request);
+                    return Err(ScalewayBackendError::Provider {
+                        message: err.to_string(),
+                    });
+                }
+            };
+            let handle = VolumeHandle {
                 id: parsed.volume.id,
                 zone: parsed.volume.zone,
+            };
+            // A volume is a billed resource like any other, so the benchmark
+            // sink must hear about it; otherwise a retained cache volume is
+            // invisible to a campaign's residual record.
+            self.notify_lifecycle(&crate::bench::lifecycle::LifecycleEvent::ResourceCreated {
+                provider: String::from(super::super::backend_impl::PROVIDER_NAME),
+                resource_id: handle.id.clone(),
+                location: request.zone.clone(),
+                product: String::from("block-storage"),
             });
+            return Ok(handle);
         }
 
         let message = String::from_utf8_lossy(&body).into_owned();

@@ -189,6 +189,16 @@ pub enum SyncError {
         /// Operating system error string.
         message: String,
     },
+    /// Raised when a command was killed because the attempt deadline passed.
+    ///
+    /// This is distinct from a command failure: the command may have been
+    /// progressing normally, but the attempt's declared lifetime left no time
+    /// for it to finish, so it was stopped rather than allowed to overrun.
+    #[error("{program} was stopped because the attempt reached its declared lifetime")]
+    DeadlineExceeded {
+        /// Command that was stopped.
+        program: String,
+    },
     /// Raised when `rsync` completes with a non-zero exit code.
     #[error("{program} exited with status {status_text}: {stderr}")]
     CommandFailure {

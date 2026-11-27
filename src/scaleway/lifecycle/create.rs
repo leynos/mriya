@@ -200,6 +200,6 @@ impl ScalewayBackend {
             });
         }
 
-        Err(ScalewayBackendError::Provider { message })
+        Err(ScalewayBackendError::Rejected { message })
     }
 }
