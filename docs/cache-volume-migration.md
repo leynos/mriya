@@ -29,27 +29,34 @@ The commands below use `scw`. Set `SCW_PROFILE`, `SCW_DEFAULT_ZONE`, and
 
 ## 1. Snapshot the legacy volume
 
+Snapshot management moved to the Block Storage API:
+`scw instance snapshot create` is deprecated and no longer functional.
+Scaleway's Block Storage FAQ documents creating a Block Storage snapshot of a
+legacy `b_ssd` volume as the supported starting point for this conversion.
+
 ```bash
-scw instance snapshot create \
-  base-volume-id=11111111-1111-1111-1111-111111111111 \
+scw block snapshot create 11111111-1111-1111-1111-111111111111 \
   name=mriya-legacy-cache \
   zone=fr-par-1
 ```
 
-Record the snapshot ID that the command prints.
+Record the snapshot ID that the command prints, and wait until
+`scw block snapshot get <snapshot-id> zone=fr-par-1` reports
+`status: available` before exporting it.
 
 ## 2. Export the snapshot to Object Storage
 
 ```bash
-scw instance snapshot export-to-object-storage \
+scw block snapshot export-to-object-storage \
   22222222-2222-2222-2222-222222222222 \
   bucket=mriya-migration \
-  object-key=mriya-legacy-cache.qcow2 \
+  key=mriya-legacy-cache.qcow2 \
   zone=fr-par-1
 ```
 
-The export writes a QCOW2 image. Wait until the snapshot reports `exporting`
-finished before continuing; `scw instance snapshot get` shows the state.
+The export writes a QCOW2 image. The snapshot reports `exporting` until the
+image is written; wait for that state to clear before continuing, using
+`scw block snapshot get` to check it.
 
 ## 3. Import the image as a Block Storage snapshot
 
@@ -122,9 +129,13 @@ successfully at least once.
 
 ```bash
 scw block snapshot delete 44444444-4444-4444-4444-444444444444 zone=fr-par-1
-scw instance snapshot delete 22222222-2222-2222-2222-222222222222 zone=fr-par-1
-scw instance volume delete 11111111-1111-1111-1111-111111111111 zone=fr-par-1
+scw block snapshot delete 22222222-2222-2222-2222-222222222222 zone=fr-par-1
+scw block volume delete 11111111-1111-1111-1111-111111111111 zone=fr-par-1
 ```
+
+The Block Storage API manages legacy `b_ssd` volumes as well, so the legacy
+volume is deleted through `scw block volume delete`, not the deprecated
+Instances volume commands.
 
 The exported QCOW2 object is not covered by those commands. Remove it from the
 bucket once the new volume is verified, for example with an S3 client:

@@ -12,6 +12,7 @@ use rstest_bdd_macros::{then, when};
 use tokio::runtime::Runtime;
 
 use super::{
+    invocation_steps::{InvocationRole, classify_invocation},
     test_doubles::{ScriptedBackend, ScriptedBackendError},
     test_helpers::{
         RunContext,
@@ -205,18 +206,18 @@ fn teardown_failure_note_present(run_context_result: &RunContextResult) -> Resul
 /// routing assertions pointed at the right call.
 pub fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
     let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    let requested = run_context.requested_command.as_deref();
+    let requested = run_context.requested_command.as_deref().ok_or_else(|| {
+        StepError::Assertion(String::from(
+            "the scenario never requested a remote command",
+        ))
+    })?;
     run_context
         .runner
         .invocations()
         .into_iter()
         .rev()
         .find(|invocation| {
-            invocation.program == ssh_bin
-                && match (invocation.args.last(), requested) {
-                    (Some(arg), Some(command)) => arg.to_string_lossy().contains(command),
-                    _ => false,
-                }
+            classify_invocation(invocation, ssh_bin, requested) == InvocationRole::RemoteCommand
         })
         .and_then(|invocation| {
             invocation

@@ -81,8 +81,9 @@ async fn serve(
         let Some(mut stream) = next_stream(&listener, &mut stop).await? else {
             bail!("lifecycle did not consume the HTTP script");
         };
-        requests.push(read_request(&mut stream).await?);
-        write_reply(&mut stream, &reply).await?;
+        let request = read_request(&mut stream).await?;
+        write_reply(&mut stream, &reply, &request).await?;
+        requests.push(request);
     }
     if let Some(mut stream) = next_stream(&listener, &mut stop).await? {
         let request = read_request(&mut stream).await?;
@@ -92,6 +93,7 @@ async fn serve(
                 status: 500,
                 body: String::from("{}"),
             },
+            &request,
         )
         .await?;
         bail!("lifecycle sent a request after the script ended: {request}");
@@ -113,13 +115,35 @@ async fn next_stream(
     }
 }
 
+/// Replaces a `{{name}}` placeholder with the request's `name` filter.
+///
+/// A reply that has to echo a value the test cannot know in advance, such as a
+/// generated server name, uses the placeholder instead of a copied fixture.
+fn substitute_request(body: &str, request: &str) -> String {
+    if !body.contains("{{name}}") {
+        return body.to_owned();
+    }
+    let name = request
+        .split_whitespace()
+        .nth(1)
+        .and_then(|target| reqwest::Url::parse(&format!("http://localhost{target}")).ok())
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(key, _)| key == "name")
+                .map(|(_, value)| value.into_owned())
+        })
+        .unwrap_or_default();
+    body.replace("{{name}}", &name)
+}
+
 /// Writes one scripted response and closes the connection.
-async fn write_reply(stream: &mut TcpStream, reply: &Reply) -> Result<()> {
+async fn write_reply(stream: &mut TcpStream, reply: &Reply, request: &str) -> Result<()> {
+    let body = substitute_request(&reply.body, request);
     let response = format!(
         "HTTP/1.1 {} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         reply.status,
-        reply.body.len(),
-        reply.body,
+        body.len(),
+        body,
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await?;

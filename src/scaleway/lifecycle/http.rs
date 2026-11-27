@@ -162,18 +162,35 @@ impl ScalewayBackend {
         name: &str,
     ) -> Result<Vec<ScalewayInstance>, ScalewayBackendError> {
         let url = format!("{}/zones/{zone}/servers", self.instance_api_base);
-        let response = checked_response(
-            super::HTTP_CLIENT
-                .get(&url)
-                .header("X-Auth-Token", &self.config.secret_key)
-                .query(&[("name", name), ("project", project_id), ("per_page", "50")]),
-        )
-        .await?;
-        let result = response
-            .json::<ListInstancesResponse>()
-            .await
-            .map_err(|error| request_error(&error))?;
-        Ok(result.servers)
+        let mut found = Vec::new();
+        let mut page = 1_u64;
+        loop {
+            let response = checked_response(
+                super::HTTP_CLIENT
+                    .get(&url)
+                    .header("X-Auth-Token", &self.config.secret_key)
+                    .query(&[("name", name), ("project", project_id), ("per_page", "50")])
+                    .query(&[("page", page)]),
+            )
+            .await?;
+            let result = response
+                .json::<ListInstancesResponse>()
+                .await
+                .map_err(|error| request_error(&error))?;
+            if result.servers.is_empty() {
+                return Ok(found);
+            }
+            // Scaleway's name filter is a partial match (`server1` also matches
+            // `server100`), and these servers are deleted, so only an exact
+            // name is a candidate.
+            found.extend(
+                result
+                    .servers
+                    .into_iter()
+                    .filter(|server| server.name == name),
+            );
+            page += 1;
+        }
     }
 
     /// Deletes an instance before the caller polls for its disappearance.

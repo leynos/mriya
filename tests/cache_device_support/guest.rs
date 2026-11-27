@@ -170,10 +170,35 @@ impl StateFile<'_> {
     }
 }
 
-/// Renders one `lsblk -P` record for a disk.
+/// `lsblk` record type, which decides whether the resolver accepts it.
+#[derive(Clone, Copy)]
+pub(super) enum RecordType {
+    /// A whole disk, which the resolver accepts.
+    Disk,
+    /// A partition, which the resolver ignores.
+    Part,
+}
+
+impl RecordType {
+    /// Returns the type spelling `lsblk` prints.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disk => "disk",
+            Self::Part => "part",
+        }
+    }
+}
+
+/// Renders one `lsblk -P` record for a whole disk.
 pub(super) fn serial_line(name: &str, volume_id: &str) -> String {
+    serial_record(name, volume_id, RecordType::Disk)
+}
+
+/// Renders one `lsblk -P` record with an explicit record type.
+pub(super) fn serial_record(name: &str, volume_id: &str, record_type: RecordType) -> String {
     format!(
-        "NAME=\"{name}\" VENDOR=\"SCW\" MODEL=\"sbs\" SERIAL=\"volume-{volume_id}\" TYPE=\"disk\"\n"
+        "NAME=\"{name}\" VENDOR=\"SCW\" MODEL=\"sbs\" SERIAL=\"volume-{volume_id}\" TYPE=\"{}\"\n",
+        record_type.as_str()
     )
 }
 

@@ -73,6 +73,9 @@ impl PreflightCase {
             Self::Attached => ScalewayBackendError::VolumeAlreadyAttached {
                 volume_id: String::from(CACHE_ID),
                 references: String::from("instance_server:server-id (attached)"),
+                recovery: format!(
+                    "detach it with `scw instance server detach-volume server-id=server-id volume-id={CACHE_ID} zone=zone`"
+                ),
             },
             Self::Creating => ScalewayBackendError::VolumeUnavailable {
                 volume_id: String::from(CACHE_ID),

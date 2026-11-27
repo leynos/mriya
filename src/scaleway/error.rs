@@ -118,6 +118,9 @@ pub enum ScalewayBackendError {
         /// Zone where lookup was attempted.
         zone: String,
     },
+    /// Raised when the configured volume request is invalid.
+    #[error("invalid volume request: {0}")]
+    VolumeRequest(#[from] VolumeRequestError),
     /// Raised when a volume belongs to a different project than configured.
     #[error(
         "volume {volume_id} belongs to project {actual_project_id}, not the configured project {expected_project_id}; use a volume from the configured project"
@@ -131,14 +134,15 @@ pub enum ScalewayBackendError {
         actual_project_id: String,
     },
     /// Raised when a volume is already attached to a resource.
-    #[error(
-        "volume {volume_id} is already attached ({references}); detach it from `scw instance server detach-volume` or choose another volume"
-    )]
+    #[error("cache volume {volume_id} is already attached ({references}); {recovery}")]
     VolumeAlreadyAttached {
         /// Volume identifier that was already attached.
         volume_id: String,
         /// Comma-separated description of the current references.
         references: String,
+        /// Complete command, or lookup instruction, for removing the
+        /// attachment.
+        recovery: String,
     },
     /// Raised when a volume exists but is not in the `available` status.
     #[error(
@@ -222,10 +226,6 @@ pub enum ScalewayBackendError {
         /// Description of the failed cleanup step.
         cleanup: String,
     },
-}
-
-impl From<VolumeRequestError> for ScalewayBackendError {
-    fn from(value: VolumeRequestError) -> Self { Self::Validation(value.to_string()) }
 }
 
 impl From<ScalewayError> for ScalewayBackendError {

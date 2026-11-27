@@ -36,10 +36,13 @@ pub(super) fn malformed_create() -> Reply {
 }
 
 /// A server listing carrying the server the ambiguous create may have made.
+///
+/// The name echoes the request's generated name through the stub's `{{name}}`
+/// placeholder, so the exact-name filter accepts it.
 pub(super) fn listed_server() -> Reply {
     Reply {
         status: 200,
-        body: include_str!("fixtures/listed-stopped-instance.json").to_owned(),
+        body: include_str!("fixtures/listed-mriya-server.json").to_owned(),
     }
 }
 

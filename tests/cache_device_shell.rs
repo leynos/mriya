@@ -17,11 +17,13 @@ use anyhow::{Result, ensure};
 use guest::{
     Guest,
     MOUNT_PATH,
+    RecordType,
     StateFile,
     VOLUME_ID,
     format_case,
     mount_case,
     serial_line,
+    serial_record,
     status_of,
 };
 use mriya::cache_device::unmount_script;
@@ -111,6 +113,13 @@ const FORMAT_CASES: &[FormatCase] = &[
         status: "device-unreadable",
         formats: false,
     },
+    // A partition record carrying the serial is not the cache disk, so the
+    // resolver must ignore it.
+    FormatCase {
+        state: &[("scsi", "partition-record")],
+        status: "not-found",
+        formats: false,
+    },
     // A UUID surviving from a partially wiped filesystem is still a signature.
     FormatCase {
         state: &[("signature-UUID", "a23cd711-3a36-4fca-bfa9-fab507e19e6f\n")],
@@ -138,6 +147,13 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
             "scsi" if value == "root-partition" => {
                 guest.set(StateFile::Scsi(&serial_line("sda1", VOLUME_ID)))?;
             }
+            "scsi" if value == "partition-record" => {
+                guest.set(StateFile::Scsi(&serial_record(
+                    "sdb",
+                    VOLUME_ID,
+                    RecordType::Part,
+                )))?;
+            }
             "scsi" => guest.set(StateFile::Scsi(value))?,
             "root-source" => guest.set(StateFile::RootSource(value))?,
             "pkname-vg-root" => guest.set(StateFile::PknameVgRoot(value))?,
@@ -163,7 +179,7 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
 
 #[rstest]
 fn format_refuses_unsafe_devices(
-    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)] index: usize,
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)] index: usize,
 ) -> Result<()> {
     let case = FORMAT_CASES
         .get(index)

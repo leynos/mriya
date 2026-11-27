@@ -58,7 +58,7 @@ impl ScalewayBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`ScalewayBackendError::Validation`] when the request is not
+    /// Returns [`ScalewayBackendError::VolumeRequest`] when the request is not
     /// creation-ready, [`ScalewayBackendError::VolumeTierUnavailable`] when the
     /// zone does not stock the requested tier, and
     /// [`ScalewayBackendError::VolumeCreateFailed`] when the provider rejects

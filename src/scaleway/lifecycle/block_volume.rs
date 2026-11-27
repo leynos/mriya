@@ -166,7 +166,10 @@ pub(super) struct VolumePollSettings {
 ///
 /// Returns [`ScalewayBackendError::VolumeUnavailable`] for `error` or
 /// `deleted`, [`ScalewayBackendError::VolumeStatusTimeout`] when the deadline
-/// elapses, and any error returned by `fetch`.
+/// elapses, and any error returned by `fetch`. A read that starts before the
+/// deadline may finish after it and still be accepted when it reports the
+/// expected status; the budget bounds the waiting, not the last in-flight
+/// read.
 pub(super) async fn poll_for_volume_status<F, Fut>(
     volume_id: &str,
     expected: &VolumeStatus,
@@ -193,10 +196,11 @@ where
         }
 
         last_status = state.status.to_string();
-        if Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             break;
         }
-        sleep(settings.poll_interval).await;
+        sleep(settings.poll_interval.min(remaining)).await;
     }
 
     Err(ScalewayBackendError::VolumeStatusTimeout {

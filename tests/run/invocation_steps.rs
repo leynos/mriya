@@ -37,7 +37,7 @@ fn mount_command_fails(
 
 /// Classification of a recorded runner invocation by its role in a run.
 #[derive(Debug, PartialEq, Eq)]
-enum InvocationRole {
+pub(super) enum InvocationRole {
     Mount,
     CacheDirectories,
     Rsync,
@@ -61,7 +61,7 @@ fn last_arg(invocation: &CommandInvocation) -> Option<String> {
 /// Matching the payload rather than "anything that is not the mount" is what
 /// makes the ordering assertions meaningful: a run that skipped the remote
 /// command would otherwise still produce an `OtherSsh` tail and pass.
-fn classify_invocation(
+pub(super) fn classify_invocation(
     invocation: &CommandInvocation,
     ssh_bin: &str,
     command: &str,
@@ -72,17 +72,21 @@ fn classify_invocation(
     let Some(payload) = last_arg(invocation) else {
         return InvocationRole::OtherSsh;
     };
+    // Generated scripts end with their own status line, never with the user's
+    // command, so an exact suffix match identifies the command whatever words
+    // it contains.
+    if payload.trim_end().ends_with(command) {
+        return InvocationRole::RemoteCommand;
+    }
     if payload.contains("mount -o defaults") {
         InvocationRole::Mount
-    } else if payload.contains("umount") {
+    } else if payload.contains("MRIYA_CACHE_STATUS=unmounted") {
         InvocationRole::Unmount
     } else if payload.contains("sudo mkdir -p") && payload.contains("cargo") {
         // The production cache-directory command always runs `sudo mkdir -p`
         // over the cache paths; a requested command such as
         // `mkdir -p build && cargo test` must stay the remote command.
         InvocationRole::CacheDirectories
-    } else if payload.contains(command) {
-        InvocationRole::RemoteCommand
     } else {
         InvocationRole::OtherSsh
     }

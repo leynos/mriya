@@ -46,8 +46,12 @@ impl ScalewayBackend {
         let volume_id = request.volume_id.as_deref();
 
         if let Some(id) = volume_id {
-            self.preflight_cache_volume(id, &request.zone, &request.project_id)
-                .await?;
+            let target = PreflightTarget {
+                volume_id: id,
+                zone: &request.zone,
+                project_id: &request.project_id,
+            };
+            self.preflight_cache_volume(&target).await?;
         }
 
         let server = self.create_instance_stopped(request, image_id).await?;
@@ -141,36 +145,34 @@ impl ScalewayBackend {
     /// [`ScalewayBackendError::VolumeUnavailable`] for the other refusals.
     async fn preflight_cache_volume(
         &self,
-        volume_id: &str,
-        zone: &str,
-        project_id: &str,
+        target: &PreflightTarget<'_>,
     ) -> Result<(), ScalewayBackendError> {
-        let state = self.get_volume(zone, volume_id).await?;
+        let state = self.get_volume(target.zone, target.volume_id).await?;
 
-        if state.zone != zone {
+        if state.zone != target.zone {
             return Err(ScalewayBackendError::VolumeNotInZone {
-                volume_id: volume_id.to_owned(),
-                zone: zone.to_owned(),
+                volume_id: target.volume_id.to_owned(),
+                zone: target.zone.to_owned(),
             });
         }
         // A blank project ID is outside the documented response, so it must not
         // bypass the ownership check.
-        if state.project_id.trim() != project_id.trim() {
+        if state.project_id.trim() != target.project_id.trim() {
             return Err(ScalewayBackendError::VolumeProjectMismatch {
-                volume_id: volume_id.to_owned(),
-                expected_project_id: project_id.to_owned(),
+                volume_id: target.volume_id.to_owned(),
+                expected_project_id: target.project_id.to_owned(),
                 actual_project_id: state.project_id.clone(),
             });
         }
         if state.is_legacy() {
             return Err(ScalewayBackendError::VolumeLegacy {
-                volume_id: volume_id.to_owned(),
+                volume_id: target.volume_id.to_owned(),
             });
         }
-        check_attached(&state, volume_id)?;
+        check_attached(&state, target)?;
         if !state.status.is_available() {
             return Err(ScalewayBackendError::VolumeUnavailable {
-                volume_id: volume_id.to_owned(),
+                volume_id: target.volume_id.to_owned(),
                 status: state.status.to_string(),
             });
         }
@@ -262,6 +264,16 @@ struct AttachedCache<'a> {
     volume_id: &'a str,
 }
 
+/// Cache volume and the location it must match before any server exists.
+struct PreflightTarget<'a> {
+    /// Configured volume identifier.
+    volume_id: &'a str,
+    /// Availability Zone the volume must belong to.
+    zone: &'a str,
+    /// Project the volume must belong to.
+    project_id: &'a str,
+}
+
 /// A post-create failure and any cache that rollback must detach first.
 struct PartialCreateFailure<'a> {
     /// Cache that may be attached, or `None` when the attach never happened.
@@ -273,7 +285,7 @@ struct PartialCreateFailure<'a> {
 /// Rejects a volume that is attached or carries any reference.
 fn check_attached(
     state: &crate::volume::VolumeState,
-    volume_id: &str,
+    target: &PreflightTarget<'_>,
 ) -> Result<(), ScalewayBackendError> {
     if !state.status.is_in_use() && state.references.is_empty() {
         return Ok(());
@@ -289,7 +301,30 @@ fn check_attached(
             .join(", ")
     };
     Err(ScalewayBackendError::VolumeAlreadyAttached {
-        volume_id: volume_id.to_owned(),
+        volume_id: target.volume_id.to_owned(),
         references,
+        recovery: detach_hint(state, target),
     })
+}
+
+/// Builds a runnable command, or a lookup instruction, for the attachment.
+fn detach_hint(state: &crate::volume::VolumeState, target: &PreflightTarget<'_>) -> String {
+    state
+        .references
+        .iter()
+        .find(|reference| reference.resource_type.contains("server"))
+        .map_or_else(
+            || {
+                format!(
+                    "find the attaching server with `scw instance server list zone={}` and detach volume {}",
+                    target.zone, target.volume_id
+                )
+            },
+            |reference| {
+                format!(
+                    "detach it with `scw instance server detach-volume server-id={} volume-id={} zone={}`",
+                    reference.resource_id, target.volume_id, target.zone
+                )
+            },
+        )
 }

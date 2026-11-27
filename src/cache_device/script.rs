@@ -175,12 +175,14 @@ fn mount_source_helpers() -> String {
         "  if [ \"$mriya_source_code\" -eq 0 ] && [ -z \"$mriya_source\" ]; then return 0; fi\n",
         "  return 1\n",
         "}\n",
-        // `mountpoint -q` reports 1 for a path that does not exist and 32 for
-        // an existing path that is not a mount point; both mean "not mounted".
+        // `mountpoint -q` reports 32 for an existing path that is not a mount
+        // point, and 1 for a missing path or a failed stat. Treat 1 as "not
+        // mounted" only when the path is confirmed absent.
         "mriya_not_mounted() {\n",
         "  mountpoint -q \"$1\" 2>/dev/null\n",
         "  case \"$?\" in\n",
-        "    1|32) return 0 ;;\n",
+        "    32) return 0 ;;\n",
+        "    1) [ ! -e \"$1\" ] && return 0 ;;\n",
         "  esac\n",
         "  return 1\n",
         "}\n",

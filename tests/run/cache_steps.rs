@@ -155,10 +155,11 @@ fn mount_command_creates_cache_subdirectories(
         }
     }
 
-    // Verify the mkdir is gated by a mountpoint check
-    if !mount_command.contains("if mountpoint -q /mriya") {
+    // A verified cache is required: directory creation must fail closed when
+    // the mount is absent rather than silently skipping.
+    if !mount_command.contains("if ! mountpoint -q /mriya") || !mount_command.contains("exit 1") {
         return Err(StepError::Assertion(format!(
-            "expected mkdir to be gated by mountpoint check, got: {mount_command}"
+            "expected mkdir to fail when the mount is absent, got: {mount_command}"
         )));
     }
 

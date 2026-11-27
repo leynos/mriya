@@ -78,11 +78,16 @@ fn write_private(
             path: path.to_path_buf(),
             message: err.to_string(),
         })?;
-    file.write_all(contents)
-        .map_err(|err| ConfigStoreError::Io {
+    if let Err(error) = file.write_all(contents) {
+        drop(file);
+        // A partial document can hold credentials; never leave it behind.
+        drop(dir.remove_file(name));
+        return Err(ConfigStoreError::Io {
             path: path.to_path_buf(),
-            message: err.to_string(),
-        })
+            message: error.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Copies the target's permissions onto its replacement before the rename.
@@ -91,12 +96,18 @@ fn write_private(
 /// target mode exists to inherit.
 #[cfg(unix)]
 fn inherit_permissions(dir: &Dir, from: &str, to: &str) {
-    use cap_std::fs::{Permissions, PermissionsExt};
+    use cap_std::fs::{MetadataExt, Permissions, PermissionsExt};
 
-    let Ok(metadata) = dir.metadata(from) else {
+    let (Ok(target), Ok(replacement)) = (dir.metadata(from), dir.metadata(to)) else {
         return;
     };
-    let mode = metadata.permissions().mode();
+    // A new file takes its group from the process or the parent directory, not
+    // from the file it replaces. Granting the target's group access while the
+    // group differs would expose the secret key to the wrong group.
+    if target.gid() != replacement.gid() {
+        return;
+    }
+    let mode = target.permissions().mode();
     drop(dir.set_permissions(to, Permissions::from_mode(mode)));
 }
 

@@ -101,8 +101,10 @@ where
     /// Runs the end-to-end workflow and returns the remote command output.
     ///
     /// The remote exit code is returned even when non-zero. Teardown is
-    /// always attempted; when teardown fails the error is surfaced even if
-    /// the remote command succeeded.
+    /// attempted on normal completion and on every handled failure after the
+    /// instance exists; when teardown fails the error is surfaced even if the
+    /// remote command succeeded. Dropping the returned future does not run
+    /// teardown, so a cancelled caller can leave the instance provisioned.
     ///
     /// # Parameters
     ///

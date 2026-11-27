@@ -15,7 +15,14 @@ use super::{
 };
 use crate::{
     scaleway::{ScalewayBackend, ScalewayBackendError},
-    volume::{VolumeHandle, VolumeRequest, VolumeState, VolumeStatus, VolumeTier},
+    volume::{
+        VolumeHandle,
+        VolumeRequest,
+        VolumeRequestError,
+        VolumeState,
+        VolumeStatus,
+        VolumeTier,
+    },
 };
 
 /// A provider reply carrying a volume fixture.
@@ -200,7 +207,7 @@ async fn create_volume_rejects_a_size_below_the_minimum(
 
     assert!(matches!(
         result.expect_err("an undersized volume must fail"),
-        ScalewayBackendError::Validation(_)
+        ScalewayBackendError::VolumeRequest(VolumeRequestError::SizeTooSmall { .. })
     ));
     assert!(requests.is_empty(), "{requests:?}");
     Ok(())

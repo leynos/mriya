@@ -49,17 +49,11 @@ pub(super) fn cache_harness() -> Result<Option<CacheHarness>, String> {
     if !integration_enabled() {
         return Ok(None);
     }
-    let secret = DefaultEnv
-        .raw("SCW_SECRET_KEY")
-        .map_err(|error| format!("SCW_SECRET_KEY: {error}"))?;
-    let project = DefaultEnv
-        .raw("SCW_DEFAULT_PROJECT_ID")
-        .map_err(|error| format!("SCW_DEFAULT_PROJECT_ID: {error}"))?;
-    if secret.trim().is_empty() || project.trim().is_empty() {
+    if credential("SCW_SECRET_KEY")?.is_none() || credential("SCW_DEFAULT_PROJECT_ID")?.is_none() {
         return Ok(None);
     }
 
-    let config = ScalewayConfig::load_from_sources()
+    let config = ScalewayConfig::load_without_cli_args()
         .map_err(|error| format!("live Scaleway configuration: {error}"))?;
     let backend = ScalewayBackend::new(config.clone())
         .map_err(|error| format!("live Scaleway backend: {error}"))?;
@@ -70,6 +64,18 @@ pub(super) fn cache_harness() -> Result<Option<CacheHarness>, String> {
         config,
         sync_config,
     }))
+}
+
+/// Returns a credential, or `None` when it is absent or blank.
+///
+/// An absent credential is the documented opt-out; only a value that is
+/// present but cannot be decoded is a setup failure.
+fn credential(name: &str) -> Result<Option<String>, String> {
+    match DefaultEnv.raw(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(format!("{name}: {error}")),
+    }
 }
 
 /// Runs one async block on the shared Tokio runtime.

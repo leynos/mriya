@@ -85,7 +85,14 @@ async fn ambiguous_create_removes_the_server_it_may_have_created(
 ) -> Result<()> {
     let (result, requests) = with_stub(
         backend_fixture,
-        vec![malformed_create(), listed_server(), deleted(), gone()],
+        // Page 1 names the server; the empty page 2 ends the name search.
+        vec![
+            malformed_create(),
+            listed_server(),
+            gone(),
+            deleted(),
+            gone(),
+        ],
         async |backend| {
             backend
                 .create_with_image_id(&base_request, "img-test")
@@ -99,7 +106,7 @@ async fn ambiguous_create_removes_the_server_it_may_have_created(
         matches!(error, ScalewayBackendError::Provider { .. }),
         "{error:?}"
     );
-    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert_eq!(requests.len(), 5, "{requests:?}");
     assert!(
         at(&requests, 0).starts_with("POST /instance/v1/zones/zone/servers "),
         "{}",
@@ -115,15 +122,24 @@ async fn ambiguous_create_removes_the_server_it_may_have_created(
         name.is_some_and(|value| value.starts_with("mriya-")),
         "the lookup must filter by the generated name: {listing}"
     );
-    assert!(
-        at(&requests, 2).starts_with("DELETE /instance/v1/zones/zone/servers/id "),
-        "{}",
-        at(&requests, 2)
+    let second_page = request_url(at(&requests, 2))?;
+    assert_eq!(
+        second_page
+            .query_pairs()
+            .find(|(key, _)| key == "page")
+            .map(|(_, value)| value.into_owned()),
+        Some(String::from("2")),
+        "{second_page}"
     );
     assert!(
-        at(&requests, 3).starts_with("GET /instance/v1/zones/zone/servers?"),
+        at(&requests, 3).starts_with("DELETE /instance/v1/zones/zone/servers/id "),
         "{}",
         at(&requests, 3)
+    );
+    assert!(
+        at(&requests, 4).starts_with("GET /instance/v1/zones/zone/servers?"),
+        "{}",
+        at(&requests, 4)
     );
     Ok(())
 }

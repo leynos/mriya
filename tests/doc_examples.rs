@@ -188,10 +188,12 @@ fn check_init_example(fence: &Fence, init: &toml::value::Table) -> Result<bool, 
         .and_then(toml::Value::as_integer)
         .and_then(|raw| u32::try_from(raw).ok())
         .ok_or_else(|| format!("example {} needs an integer size", fence.id))?;
-    let tier = init
-        .get("volume_tier")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("sbs_5k");
+    let tier = match init.get("volume_tier") {
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| format!("example {} needs a string volume_tier", fence.id))?,
+        None => "sbs_5k",
+    };
     let config = InitConfig {
         volume_size_gb: size,
         volume_tier: tier.to_owned(),

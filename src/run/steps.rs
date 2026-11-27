@@ -213,8 +213,15 @@ where
         networking: &InstanceNetworking,
         mount_path: &str,
     ) -> Result<(), RunError<B::Error>> {
+        // The cache was verified before this call, so an unmounted path here
+        // means it was lost or replaced; fail rather than continue with
+        // caches routed nowhere.
         let command = format!(
-            "if mountpoint -q {path} 2>/dev/null; then {create}; fi",
+            concat!(
+                "if ! mountpoint -q {path} 2>/dev/null; then ",
+                "printf '%s\n' 'mriya: cache mount {path} is absent' >&2; exit 1; fi; ",
+                "{create}"
+            ),
             path = escape(mount_path.into()),
             create = create_cache_directories_command(mount_path)
         );
@@ -250,7 +257,10 @@ where
     /// Polls for cloud-init's `boot-finished` marker until it appears or the
     /// timeout elapses.
     ///
-    /// A failure to run the check, or a timeout, destroys the instance.
+    /// Each check runs under `timeout` with the remaining budget, so a remote
+    /// command that hangs while the SSH session stays responsive cannot
+    /// overrun the deadline. A failure to run the check, or a timeout,
+    /// destroys the instance.
     ///
     /// For example, the marker `/var/lib/cloud/instance/boot-finished`
     /// appearing ends the wait successfully, while the deadline passing
@@ -261,9 +271,12 @@ where
     ) -> Result<(), RunError<B::Error>> {
         let deadline = Instant::now() + self.cloud_init_wait_timeout;
         let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
-        let command = format!("sudo test -f {cloud_init_finished_marker}");
 
         while Instant::now() <= deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let budget_seconds = remaining.as_secs().max(1);
+            let command =
+                format!("timeout {budget_seconds} sudo test -f {cloud_init_finished_marker}");
             let finished = match self.syncer.run_remote(context.networking, &command) {
                 Ok(output) => matches!(output.exit_code, Some(0)),
                 Err(err) => {
