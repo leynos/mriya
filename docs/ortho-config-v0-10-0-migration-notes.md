@@ -204,9 +204,11 @@ modules:
   files, and one proving a non-TOML selection is refused with its format named.
 - `src/init/tests.rs`: tests proving a usable resolved volume ID is refused
   without `--force`, that the request carries the configured ID separately from
-  the environment provenance, that a blank resolved value records nothing, and
-  that a blank or environment-supplied ID is refused by the orchestrator even
-  with `--force`.
+  the environment provenance, and that a blank resolved value records nothing.
+- `tests/init/bdd_steps.rs`: a connected test that loads real configuration,
+  builds the request, and runs the mocked-backend orchestrator, proving a blank
+  or environment-supplied ID is refused even with `--force` and no volume is
+  created.
 - `src/main_request_tests.rs`: one test proving a real `mriya run` override
   equal to its documented default beats a different configured value.
 
