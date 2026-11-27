@@ -112,6 +112,28 @@ fn deadline_runner_kills_a_child_that_outlives_its_deadline() {
 }
 
 #[rstest]
+fn deadline_runner_returns_when_a_descendant_holds_the_output_pipe() {
+    // The shell exits immediately but leaves `sleep` holding the inherited
+    // pipe. Joining the forwarders without a bound would wait for it.
+    let runner = DeadlineCommandRunner::new(Instant::now() + Duration::from_millis(150));
+    let started = Instant::now();
+    let result = runner.run(
+        "sh",
+        &[OsString::from("-c"), OsString::from("sleep 30 & exit 0")],
+    );
+
+    assert!(
+        matches!(result, Err(SyncError::DeadlineExceeded { .. })),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "output collection must be bounded by the deadline, took {:?}",
+        started.elapsed()
+    );
+}
+
+#[rstest]
 fn deadline_runner_completes_a_command_that_finishes_in_time() {
     let runner = DeadlineCommandRunner::new(Instant::now() + Duration::from_secs(30));
     let output = runner

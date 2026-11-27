@@ -49,7 +49,14 @@ impl CampaignLock {
             Dir::open_ambient_dir(&directory_path, ambient_authority()).map_err(|err| {
                 CampaignError::InvalidPlan(format!("cannot open {directory_path}: {err}"))
             })?;
-        let name = format!("mriya-bench-{}.lock", sanitize(campaign_id));
+        // Two distinct identifiers can sanitize to the same text — `run/1` and
+        // `run_1` — so the digest keeps their locks apart while identical identifiers
+        // still map to one file.
+        let name = format!(
+            "mriya-bench-{}-{:016x}.lock",
+            sanitize(campaign_id),
+            digest(campaign_id)
+        );
         let mut options = OpenOptions::new();
         options.create_new(true).write(true);
         let file = directory
@@ -86,6 +93,20 @@ impl Drop for CampaignLock {
 /// session shell sets it, a scheduled job may not — and each would then take
 /// a different lock for the same campaign.
 fn runtime_directory() -> Utf8PathBuf { Utf8PathBuf::from("/tmp") }
+
+/// Returns a stable 64-bit digest of the whole identifier.
+///
+/// FNV-1a is used because it is deterministic across processes and versions;
+/// the digest is not a security boundary, only a way to keep identifiers that
+/// sanitize alike from sharing a lock file.
+fn digest(campaign_id: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in campaign_id.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
 
 /// Reduces a campaign identifier to characters safe in a file name.
 fn sanitize(campaign_id: &str) -> String {

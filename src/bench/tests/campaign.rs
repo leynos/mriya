@@ -92,6 +92,44 @@ fn a_clean_campaign_writes_a_header_and_every_run() {
     assert_eq!(runs, 2);
     // The pre-sweep runs before any attempt.
     assert_eq!(driver.calls().first().map(String::as_str), Some("sweep"));
+    // The header and each attempt are flushed as they exist, not only at the
+    // end, so an interrupted campaign keeps the evidence it paid for.
+    assert!(
+        sink.flushes >= 3,
+        "the header and each attempt must be flushed: {}",
+        sink.flushes
+    );
+}
+
+#[test]
+fn a_failure_that_names_no_resource_writes_no_residual_record() {
+    let mut driver = ScriptedDriver::healthy(1);
+    driver.runs = Mutex::new(VecDeque::from(vec![Err(
+        AttemptFailure::without_resources("the probe could not be read"),
+    )]));
+    let mut sink = MemorySink::default();
+    let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
+        .expect_err("an attempt that produced nothing still fails the campaign");
+    assert!(matches!(error, CampaignError::AttemptFailed(_)), "{error}");
+    assert!(
+        !sink
+            .records
+            .iter()
+            .any(|record| record.kind() == RecordKind::ResidualResource),
+        "a failure that names no resource states nothing remains: {:?}",
+        sink.records
+    );
+}
+
+#[test]
+fn two_identifiers_that_sanitize_alike_do_not_share_a_lock() {
+    use super::super::campaign::CampaignLock;
+
+    let first = CampaignLock::acquire("lock-test-run/1").expect("the first lock is free");
+    let second = CampaignLock::acquire("lock-test-run_1")
+        .expect("a distinct identifier must have its own lock");
+    drop(second);
+    drop(first);
 }
 
 #[test]

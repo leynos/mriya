@@ -18,6 +18,7 @@
 mod lock;
 mod plan;
 mod ports;
+mod residual;
 mod runner;
 mod scaleway_driver;
 mod scaleway_facts;

@@ -126,11 +126,18 @@ impl CampaignDriver for ScriptedDriver {
 pub struct MemorySink {
     /// Records in the order they were appended.
     pub records: Vec<Record>,
+    /// How many times the harness asked for the buffer to be pushed out.
+    pub flushes: usize,
 }
 
 impl RecordSink for MemorySink {
     fn append(&mut self, record: &Record) -> Result<(), String> {
         self.records.push(record.clone());
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), String> {
+        self.flushes = self.flushes.saturating_add(1);
         Ok(())
     }
 }

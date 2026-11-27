@@ -134,6 +134,15 @@ impl ScalewayBackend {
     /// and the outcome of every teardown. Nothing reads back from it, so an
     /// attached sink cannot change what the backend does.
     ///
+    /// # Parameters
+    ///
+    /// - `sink`: the shared sink to notify. Cloned backends share it, so every clone reports to the
+    ///   same collector.
+    ///
+    /// # Returns
+    ///
+    /// This backend with the sink attached.
+    ///
     /// # Examples
     ///
     /// ```ignore

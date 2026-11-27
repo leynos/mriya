@@ -128,7 +128,10 @@ pub(super) fn tree_pin(source: &Utf8PathBuf) -> DriverResult<TreePin> {
     let remote = git_output(source, &["config", "--get", "remote.origin.url"]).unwrap_or_default();
     // A status that could not be read is not an empty status: an empty one
     // would claim a clean tree the harness never established.
-    let status = git_output(source, &["status", "--porcelain"])?;
+    // `--untracked-files=all` is passed explicitly: git can be configured to
+    // omit untracked files from `status`, and an omitted untracked file would
+    // be recorded as a clean tree even though rsync transferred it.
+    let status = git_output(source, &["status", "--porcelain", "--untracked-files=all"])?;
     let files = git_output(source, &["ls-tree", "-r", "-l", "HEAD"])?;
     let (file_count, size_bytes) = tree_size(&files);
     Ok(TreePin {

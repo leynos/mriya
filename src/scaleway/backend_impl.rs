@@ -113,15 +113,10 @@ pub(super) const PROVIDER_NAME: &str = "scaleway";
 
 /// Returns whether a create failure might still have created a resource.
 ///
-/// A validation failure or a rejected instance type cannot have created
-/// anything; a transport, response-read, or response-parse failure can have.
+/// Only an uncertain `Provider` failure qualifies: a transport, response-read,
+/// or response-parse failure may have reached the provider. A validation
+/// failure, a definite rejection, an unavailable instance type, or an image
+/// lookup failure cannot have created anything.
 pub(super) const fn may_have_created(err: &ScalewayBackendError) -> bool {
-    matches!(
-        err,
-        ScalewayBackendError::Provider { .. }
-            | ScalewayBackendError::InstanceTypeUnavailable { .. }
-            | ScalewayBackendError::VolumeAttachmentFailed { .. }
-            | ScalewayBackendError::VolumeNotFound { .. }
-            | ScalewayBackendError::PowerOnNotAllowed { .. }
-    )
+    matches!(err, ScalewayBackendError::Provider { .. })
 }

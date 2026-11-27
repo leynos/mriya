@@ -119,7 +119,7 @@ async fn create_instance_stopped_preserves_a_provider_rejection(
     .await?;
     let error = result.expect_err("a rejected creation must fail");
     assert!(
-        matches!(error, ScalewayBackendError::Provider { ref message } if message.contains("no such image")),
+        matches!(error, ScalewayBackendError::Rejected { ref message } if message.contains("no such image")),
         "{error:?}"
     );
     assert_eq!(requests.len(), 1);

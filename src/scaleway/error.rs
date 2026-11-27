@@ -60,10 +60,23 @@ pub enum ScalewayBackendError {
         /// Current state reported by the provider.
         state: String,
     },
-    /// Wrapper for provider level failures.
+    /// Wrapper for provider level failures that leave the outcome uncertain.
+    ///
+    /// A transport, response-read, or response-parse failure may have reached
+    /// the provider, so a create that returns this variant may still have
+    /// allocated a resource.
     #[error("provider error: {message}")]
     Provider {
         /// Message returned by the provider SDK.
+        message: String,
+    },
+    /// The provider answered and rejected the request.
+    ///
+    /// Unlike [`ScalewayBackendError::Provider`], this is a definite refusal:
+    /// no resource was created, so it is not an uncertain allocation.
+    #[error("provider rejected the request: {message}")]
+    Rejected {
+        /// Message the provider returned with its refusal.
         message: String,
     },
     /// Raised when a volume cannot be attached to an instance.

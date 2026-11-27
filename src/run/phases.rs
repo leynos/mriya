@@ -15,9 +15,17 @@ use super::{RunError, RunOrchestrator};
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
     bench::{observe::Observation, record::PhaseKind},
-    sync::{CommandRunner, RemoteCommandOutput, create_cache_directories_command},
+    sync::{CommandRunner, RemoteCommandOutput, SyncError, create_cache_directories_command},
     teardown::append_teardown_note,
 };
+
+/// Why cloud-init polling did not finish.
+enum CloudInitFailure {
+    /// A poll command could not run.
+    Command(SyncError),
+    /// The wait timed out before the marker appeared.
+    Timeout,
+}
 
 impl<B, R> RunOrchestrator<B, R>
 where
@@ -58,11 +66,17 @@ where
         request: &InstanceRequest,
     ) -> Result<(), RunError<B::Error>> {
         if request.volume_id.is_some() {
-            self.observe_async(
-                PhaseKind::CacheRestore,
-                self.mount_cache_volume(handle, networking),
-            )
-            .await?;
+            // The observation ends before failure cleanup starts, so teardown
+            // is not attributed to the cache-restore phase.
+            let mounted =
+                self.observe_sync(PhaseKind::CacheRestore, || self.mount_cache(networking));
+            if let Err(err) = mounted {
+                let message = self.destroy_with_note(handle, &err).await;
+                return Err(RunError::Sync {
+                    message,
+                    source: err,
+                });
+            }
         }
         Ok(())
     }
@@ -140,11 +154,7 @@ where
     /// The creation command itself ends in `2>/dev/null || true`, so a
     /// read-only or full filesystem also leaves no directories without failing
     /// the run. A toolchain must therefore cope with their absence.
-    pub(super) async fn mount_cache_volume(
-        &self,
-        handle: &InstanceHandle,
-        networking: &InstanceNetworking,
-    ) -> Result<(), RunError<B::Error>> {
+    fn mount_cache(&self, networking: &InstanceNetworking) -> Result<(), SyncError> {
         let config = self.syncer.config();
         let mount_path = &config.volume_mount_path;
         let escaped_mount_path = escape(mount_path.as_str().into());
@@ -169,16 +179,9 @@ where
 
         let full_command = format!("{mount_command}{mkdir_cache_dirs}");
 
-        match self.syncer.run_remote_raw(networking, &full_command) {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let message = self.destroy_with_note(handle, &err).await;
-                Err(RunError::Sync {
-                    message,
-                    source: err,
-                })
-            }
-        }
+        self.syncer
+            .run_remote_raw(networking, &full_command)
+            .map(|_| ())
     }
 
     /// Polls for cloud-init's `boot-finished` marker until it appears or the
@@ -196,30 +199,47 @@ where
     ) -> Result<(), RunError<B::Error>> {
         // Cloud-init readiness is part of bootstrap: it is the guest still
         // becoming usable, and the protocol times it there rather than opening
-        // an eighth phase for a wait that only some runs perform.
+        // an eighth phase for a wait that only some runs perform. The
+        // observation ends before failure cleanup, so teardown is not counted
+        // as bootstrap time.
         self.observer
             .observe(Observation::PhaseStarted(PhaseKind::Bootstrap));
         let started = Instant::now();
-        let outcome = self.poll_cloud_init(handle, networking).await;
+        let outcome = self.poll_cloud_init(networking).await;
         let succeeded = outcome.is_ok();
         self.observer.observe(Observation::PhaseFinished {
             phase: PhaseKind::Bootstrap,
             duration: started.elapsed(),
             succeeded,
         });
-        outcome
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(CloudInitFailure::Command(err)) => {
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Provisioning {
+                    message,
+                    source: err,
+                })
+            }
+            Err(CloudInitFailure::Timeout) => {
+                let timeout_message = format!(
+                    "cloud-init did not finish within {} seconds",
+                    self.cloud_init_wait_timeout.as_secs()
+                );
+                let message = self.destroy_with_note(handle, &timeout_message).await;
+                Err(RunError::ProvisioningTimeout { message })
+            }
+        }
     }
 
-    /// Polls for cloud-init's completion marker, destroying the instance on
-    /// failure or timeout.
+    /// Polls for cloud-init's completion marker without destroying anything.
     ///
     /// Split from [`RunOrchestrator::wait_for_cloud_init`] so the observation
-    /// wraps every exit path, including the ones that destroy the instance.
-    pub(super) async fn poll_cloud_init(
+    /// ends before failure cleanup begins and teardown gets its own span.
+    async fn poll_cloud_init(
         &self,
-        handle: &InstanceHandle,
         networking: &InstanceNetworking,
-    ) -> Result<(), RunError<B::Error>> {
+    ) -> Result<(), CloudInitFailure> {
         let deadline = Instant::now() + self.cloud_init_wait_timeout;
         let cloud_init_finished_marker = "/var/lib/cloud/instance/boot-finished";
         let command = format!("sudo test -f {cloud_init_finished_marker}");
@@ -227,13 +247,7 @@ where
         while Instant::now() <= deadline {
             let finished = match self.syncer.run_remote(networking, &command) {
                 Ok(output) => matches!(output.exit_code, Some(0)),
-                Err(err) => {
-                    let message = self.destroy_with_note(handle, &err).await;
-                    return Err(RunError::Provisioning {
-                        message,
-                        source: err,
-                    });
-                }
+                Err(err) => return Err(CloudInitFailure::Command(err)),
             };
 
             if finished {
@@ -243,14 +257,7 @@ where
             sleep(self.cloud_init_poll_interval).await;
         }
 
-        let timeout_message = format!(
-            "cloud-init did not finish within {} seconds",
-            self.cloud_init_wait_timeout.as_secs()
-        );
-        let message_with_teardown = self.destroy_with_note(handle, &timeout_message).await;
-        Err(RunError::ProvisioningTimeout {
-            message: message_with_teardown,
-        })
+        Err(CloudInitFailure::Timeout)
     }
 
     /// Destroys the instance and returns `err` as text, with a note appended
