@@ -8,7 +8,7 @@ use thiserror::Error;
 mod read;
 mod write;
 
-use read::{parse_toml, read_config, read_volume_id, split_config_path};
+use read::{parse_toml, read_config, read_config_if_present, read_volume_id, split_config_path};
 use write::write_config;
 
 /// Application name that seeds `OrthoConfig` discovery paths.
@@ -72,6 +72,22 @@ pub enum ConfigStoreError {
         /// Configuration path whose owner would change.
         path: Utf8PathBuf,
     },
+    /// Raised when replacing the file would change its group and drop access.
+    #[error(
+        "refusing to replace {path}: the update would change the file's group and drop existing group access"
+    )]
+    GroupChanged {
+        /// Configuration path whose group would change.
+        path: Utf8PathBuf,
+    },
+    /// Raised when native ACLs cannot be preserved on this platform.
+    #[error(
+        "refusing to replace {path}: ACLs cannot be preserved here while the file grants group or other access"
+    )]
+    AccessControlUnsupported {
+        /// Configuration path whose ACLs would be lost.
+        path: Utf8PathBuf,
+    },
     /// Raised when the configuration path is a symbolic link.
     #[error(
         "refusing to update {path}: it is a symbolic link; point the discovery path at the real file"
@@ -79,6 +95,15 @@ pub enum ConfigStoreError {
     Symlinked {
         /// Configuration path that is a symbolic link.
         path: Utf8PathBuf,
+    },
+    /// Raised when a volume ID is in effect from a source other than the file
+    /// or the environment.
+    #[error(
+        "volume ID {volume_id} is already in effect; unset it or rerun with --force to create and record a new volume"
+    )]
+    VolumeIdInEffect {
+        /// Volume identifier already in effect.
+        volume_id: String,
     },
     /// Raised when the environment supplies an effective volume ID.
     #[error(
@@ -203,14 +228,9 @@ impl ConfigWriter for ConfigStore {
         })?;
         let _lock = lock_config(&dir, &target.path)?;
         // Another writer may have published the file since discovery, so the
-        // decision is made from the state read under the lock.
-        let contents = match read_config(&target.path) {
-            Ok(contents) => contents,
-            Err(ConfigStoreError::Io { ref message, .. }) if message.contains("No such file") => {
-                String::new()
-            }
-            Err(error) => return Err(error),
-        };
+        // decision is made from the state read under the lock. Only a typed
+        // `NotFound` is treated as an empty document.
+        let contents = read_config_if_present(&target.path)?.unwrap_or_default();
 
         let mut value = parse_toml(&target.path, &contents)?;
         if let Some(existing) = read_volume_id(&target.path, &value)?

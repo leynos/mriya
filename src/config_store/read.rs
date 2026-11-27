@@ -50,21 +50,30 @@ pub(super) fn path_exists(path: &Utf8Path) -> Result<bool, ConfigStoreError> {
     }
 }
 
-/// Reads the whole configuration file as text.
-pub(super) fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
+/// Reads the configuration file, or `None` when it does not exist.
+pub(super) fn read_config_if_present(path: &Utf8Path) -> Result<Option<String>, ConfigStoreError> {
     let (parent, file_name) = split_config_path(path)?;
-
     let dir =
         Dir::open_ambient_dir(parent, ambient_authority()).map_err(|err| ConfigStoreError::Io {
             path: parent.to_path_buf(),
             message: err.to_string(),
         })?;
-
-    dir.read_to_string(file_name)
-        .map_err(|err| ConfigStoreError::Io {
+    match dir.read_to_string(file_name) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(ConfigStoreError::Io {
             path: path.to_path_buf(),
             message: err.to_string(),
-        })
+        }),
+    }
+}
+
+/// Reads the whole configuration file as text.
+pub(super) fn read_config(path: &Utf8Path) -> Result<String, ConfigStoreError> {
+    read_config_if_present(path)?.ok_or_else(|| ConfigStoreError::Io {
+        path: path.to_path_buf(),
+        message: String::from("configuration file does not exist"),
+    })
 }
 
 /// Parses `contents` as TOML, treating blank content as an empty table so a

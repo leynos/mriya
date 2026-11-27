@@ -20,7 +20,9 @@ old volume is left untouched, and Mriya never reformats it.
   `scw instance server delete` deletes attached volumes too, which would
   destroy the source before it is snapshotted.
 - You need an Object Storage bucket in the same region as the volume. The
-  bucket key will hold a temporary QCOW2 image.
+  bucket key will hold a temporary QCOW2 image. The bucket must not use SSE-KMS
+  encryption: Scaleway does not support exporting a snapshot to an SSE-KMS
+  bucket, and the procedure would stop after creating the snapshot.
 - The snapshot export/import route accepts snapshots between 1 GB and 1 TB.
   A larger legacy volume cannot use this procedure; migrate the data at the
   application level or contact Scaleway support for a supported transfer.

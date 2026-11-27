@@ -25,6 +25,15 @@ use crate::{
     volume::VolumeBackend,
 };
 
+/// Verified cache mount and the guest device that must back it.
+#[derive(Clone, Copy)]
+struct MountTarget<'a> {
+    /// Guest directory the cache is mounted at.
+    path: &'a str,
+    /// Device path the mount was verified against.
+    device: &'a str,
+}
+
 impl<B, R> RunOrchestrator<B, R>
 where
     B: crate::backend::Backend + VolumeBackend,
@@ -194,12 +203,13 @@ where
         };
         let verified_device = device.to_owned();
 
-        if config.create_cache_directories
-            && let Err(failure) = self
-                .create_cache_directories(instance, networking, &mount_path)
-                .await
-        {
-            return Err(failure);
+        if config.create_cache_directories {
+            let target = MountTarget {
+                path: &mount_path,
+                device: &verified_device,
+            };
+            self.create_cache_directories(instance, networking, &target)
+                .await?;
         }
 
         Ok(verified_device)
@@ -211,19 +221,21 @@ where
         &self,
         instance: ProvisionedInstance<'_>,
         networking: &InstanceNetworking,
-        mount_path: &str,
+        target: &MountTarget<'_>,
     ) -> Result<(), RunError<B::Error>> {
-        // The cache was verified before this call, so an unmounted path here
-        // means it was lost or replaced; fail rather than continue with
-        // caches routed nowhere.
+        let MountTarget { path, device } = *target;
+        // The cache was verified before this call, so a path that is now
+        // unmounted or backed by another device was replaced; fail rather than
+        // write cache directories onto a foreign filesystem.
         let command = format!(
             concat!(
-                "if ! mountpoint -q {path} 2>/dev/null; then ",
-                "printf '%s\n' 'mriya: cache mount {path} is absent' >&2; exit 1; fi; ",
+                "if [ \"$(findmnt -no SOURCE --mountpoint {path} 2>/dev/null)\" != {device} ]; then ",
+                "printf 'mriya: cache mount %s is not %s\n' {path} {device} >&2; exit 1; fi; ",
                 "{create}"
             ),
-            path = escape(mount_path.into()),
-            create = create_cache_directories_command(mount_path)
+            path = escape(path.into()),
+            device = escape(device.into()),
+            create = create_cache_directories_command(path)
         );
         let output = match self.syncer.run_remote_raw(networking, &command) {
             Ok(output) => output,
@@ -241,7 +253,8 @@ where
             return Ok(());
         }
         let failure = format!(
-            "creating cache directories under {mount_path} exited with {:?}: {}",
+            "creating cache directories under {} exited with {:?}: {}",
+            target.path,
             output.exit_code,
             output.stderr.trim()
         );
@@ -294,7 +307,11 @@ where
                 return Ok(());
             }
 
-            sleep(self.cloud_init_poll_interval).await;
+            let sleep_budget = deadline.saturating_duration_since(Instant::now());
+            if sleep_budget.is_zero() {
+                break;
+            }
+            sleep(self.cloud_init_poll_interval.min(sleep_budget)).await;
         }
 
         let timeout_message = format!(

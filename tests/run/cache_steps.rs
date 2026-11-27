@@ -133,6 +133,13 @@ fn offending_cache_directory(run_context: &RunContext) -> Option<String> {
     cache_directory_payloads(run_context).into_iter().next()
 }
 
+/// Reports whether the directory step verifies the mounted device.
+fn cache_step_checks_device(command: &str) -> bool {
+    command.contains("findmnt -no SOURCE --mountpoint /mriya")
+        && command.contains("/dev/sdb")
+        && command.contains("exit 1")
+}
+
 #[then("the mount command creates cache subdirectories")]
 fn mount_command_creates_cache_subdirectories(
     run_context_result: &RunContextResult,
@@ -157,11 +164,11 @@ fn mount_command_creates_cache_subdirectories(
         }
     }
 
-    // A verified cache is required: directory creation must fail closed when
-    // the mount is absent rather than silently skipping.
-    if !mount_command.contains("if ! mountpoint -q /mriya") || !mount_command.contains("exit 1") {
+    // A verified cache is required: directory creation must fail unless the
+    // mount path is still backed by the verified device.
+    if !cache_step_checks_device(&mount_command) {
         return Err(StepError::Assertion(format!(
-            "expected mkdir to fail when the mount is absent, got: {mount_command}"
+            "expected mkdir to fail unless the verified device is mounted, got: {mount_command}"
         )));
     }
 

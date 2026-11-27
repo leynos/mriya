@@ -57,17 +57,43 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
     };
     refuse_symlink(&dir, &names, path)?;
     write_private(&dir, &names, rendered.as_bytes(), path)?;
+    let mut temporary = TempFile {
+        dir: &dir,
+        name: names.replacement,
+        armed: true,
+    };
     ensure_owner(&dir, &names, path)?;
     inherit_permissions(&dir, &names);
     dir.rename(names.replacement, &dir, names.target)
-        .map_err(|err| {
-            // The temporary file is left behind only on this failure path.
-            drop(dir.remove_file(&temp_name));
-            ConfigStoreError::Io {
-                path: path.to_path_buf(),
-                message: err.to_string(),
-            }
-        })
+        .map_err(|err| ConfigStoreError::Io {
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        })?;
+    temporary.disarm();
+    Ok(())
+}
+
+/// Removes the temporary file unless the rename has published it.
+struct TempFile<'a> {
+    /// Directory holding the temporary file.
+    dir: &'a Dir,
+    /// Temporary file name.
+    name: &'a str,
+    /// Whether the file still needs removing.
+    armed: bool,
+}
+
+impl TempFile<'_> {
+    /// Stops the guard from removing the file.
+    const fn disarm(&mut self) { self.armed = false; }
+}
+
+impl Drop for TempFile<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            drop(self.dir.remove_file(self.name));
+        }
+    }
 }
 
 /// Writes `contents` to a new file that only the owner can read.
@@ -97,6 +123,17 @@ fn write_private(
     if let Err(error) = file.write_all(contents) {
         drop(file);
         // A partial document can hold credentials; never leave it behind.
+        drop(dir.remove_file(names.replacement));
+        return Err(ConfigStoreError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        });
+    }
+    // The requested mode is masked by the process umask and by any default
+    // ACL, so set it explicitly; the next run must be able to read the ID.
+    #[cfg(unix)]
+    if let Err(error) = rustix::fs::fchmod(&file, rustix::fs::Mode::from_bits_truncate(0o600)) {
+        drop(file);
         drop(dir.remove_file(names.replacement));
         return Err(ConfigStoreError::Io {
             path: path.to_path_buf(),
@@ -157,11 +194,60 @@ fn ensure_owner(dir: &Dir, names: &Names<'_>, path: &Utf8Path) -> Result<(), Con
             path: path.to_path_buf(),
         });
     }
-    // An ACL's group entries refer to the file's owning group, so it may only
-    // be copied when that group is unchanged.
-    if target.gid() == replacement.gid() {
-        copy_acl(dir, names, path)?;
+    // ACL group entries refer to the owning group, and applying the target
+    // mode without its group would drop existing readers, so a differing group
+    // refuses the replacement.
+    if target.gid() != replacement.gid() {
+        drop(dir.remove_file(names.replacement));
+        return Err(ConfigStoreError::GroupChanged {
+            path: path.to_path_buf(),
+        });
     }
+    preserve_access_controls(dir, names, &target, path)
+}
+
+/// Preserves the target's access controls on the replacement.
+#[cfg(target_os = "linux")]
+fn preserve_access_controls(
+    dir: &Dir,
+    names: &Names<'_>,
+    _target: &cap_std::fs::Metadata,
+    path: &Utf8Path,
+) -> Result<(), ConfigStoreError> {
+    copy_acl(dir, names, path)
+}
+
+/// Refuses a replacement whose native ACLs cannot be preserved.
+///
+/// macOS does not use the POSIX `system.posix_acl_access` attribute, so this
+/// platform only allows replacing a file that grants no group or other
+/// access; such a file's mode fully describes its readers.
+#[cfg(target_os = "macos")]
+fn preserve_access_controls(
+    dir: &Dir,
+    names: &Names<'_>,
+    target: &cap_std::fs::Metadata,
+    path: &Utf8Path,
+) -> Result<(), ConfigStoreError> {
+    use cap_std::fs::PermissionsExt;
+
+    if target.permissions().mode() & 0o077 != 0 {
+        drop(dir.remove_file(names.replacement));
+        return Err(ConfigStoreError::AccessControlUnsupported {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+/// Leaves access controls unchanged on other platforms.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn preserve_access_controls(
+    _dir: &Dir,
+    _names: &Names<'_>,
+    _target: &cap_std::fs::Metadata,
+    _path: &Utf8Path,
+) -> Result<(), ConfigStoreError> {
     Ok(())
 }
 

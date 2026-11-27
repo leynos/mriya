@@ -58,6 +58,9 @@ fn run_script(
     let output = syncer
         .run_remote_raw(networking, script)
         .with_context(|| format!("run {label} script"))?;
+    if output.exit_code != Some(0) {
+        bail!("{label} exited with status {:?}", output.exit_code);
+    }
     let report = cache_device::parse_report(&output.stdout)
         .with_context(|| format!("parse {label} status"))?;
     if report.status() != &action.expected() {

@@ -9,6 +9,7 @@ mod error;
 mod format;
 mod helpers;
 mod orchestrator;
+mod recovery;
 mod request;
 
 pub use config::InitConfig;

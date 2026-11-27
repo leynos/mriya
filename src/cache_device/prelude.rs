@@ -112,7 +112,7 @@ pub(super) fn root_guard() -> String {
             "    echo \"{prefix}root-disk DEVICE=$mriya_device\"\n",
             "    exit 0\n",
             "  fi\n",
-            "  mriya_walk=$(lsblk -no PKNAME \"/dev/$mriya_walk\" 2>/dev/null)\n",
+            "  mriya_walk=$(lsblk --nodeps -no PKNAME \"/dev/$mriya_walk\" 2>/dev/null)\n",
             "  mriya_walk_status=$?\n",
             "  if [ \"$mriya_walk_status\" -ne 0 ]; then\n",
             "    echo \"{prefix}root-unknown DEVICE=$mriya_device\"\n",
@@ -201,7 +201,9 @@ pub(super) fn signature_probe() -> String {
             "fi\n",
             "mriya_last_mib=$((mriya_device_size / 1048576 - 1))\n",
             "if [ \"$mriya_last_mib\" -lt 0 ]; then mriya_last_mib=0; fi\n",
-            "if ! sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 skip=\"$mriya_last_mib\" count=1 >/dev/null 2>&1; then\n",
+            // Two blocks so the final partial mebibyte is read too; dd stops
+            // cleanly at the end of the device.
+            "if ! sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 skip=\"$mriya_last_mib\" count=2 >/dev/null 2>&1; then\n",
             "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=tail-read\"\n",
             "  exit 0\n",
             "fi\n",

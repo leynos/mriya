@@ -183,6 +183,14 @@ fn every_user_guide_fence_is_marked_and_unique() {
 ///
 /// Returns whether the example contained an `[init]` table.
 fn check_init_example(fence: &Fence, init: &toml::value::Table) -> Result<bool, String> {
+    // Reject a misspelt key rather than validating the default it left in
+    // place.
+    const KNOWN_KEYS: &[&str] = &["volume_size_gb", "volume_tier"];
+    for key in init.keys() {
+        if !KNOWN_KEYS.contains(&key.as_str()) {
+            return Err(format!("example {} documents unknown key {key}", fence.id));
+        }
+    }
     let size = init
         .get("volume_size_gb")
         .and_then(toml::Value::as_integer)

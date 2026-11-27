@@ -113,6 +113,13 @@ pub(super) const FORMAT_CASES: &[FormatCase] = &[
         status: "not-found",
         formats: false,
     },
+    // A root disk whose partitions exist must still end the walk at the
+    // disk's own (empty) parent, accepting an unrelated cache disk.
+    FormatCase {
+        state: &[("pkname-sda", "")],
+        status: "formatted",
+        formats: true,
+    },
     // A failed disk listing cannot prove the device is absent.
     FormatCase {
         state: &[("lsblk-exit", "1\n")],

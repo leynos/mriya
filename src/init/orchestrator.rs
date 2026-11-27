@@ -5,6 +5,7 @@ use std::fmt::Display;
 use super::{
     error::InitError,
     format::{FormatFailure, format_error, format_spawn_failure},
+    recovery::recovery_steps,
     request::{InitOutcome, InitRequest},
 };
 use crate::{
@@ -164,7 +165,7 @@ where
                 self.delete_detached_volume(handle, volume, failure).await
             }
             Err(failure) => {
-                let recovery = Self::recovery_steps(failure.stage, handle, volume);
+                let recovery = recovery_steps(failure.stage, handle, volume);
                 Err(InitError::FormatterTeardown {
                     message: format!(
                         "formatter {} ({}) failed: {}; cache volume {} in zone {}: {recovery}",
@@ -210,32 +211,6 @@ where
                 source: Box::new(failure.source),
             },
         })
-    }
-
-    /// Returns the recovery steps for the teardown stage that failed.
-    ///
-    /// A stop or detach failure leaves the cache possibly attached, so the
-    /// volume must not be deleted before those steps succeed. A destroy
-    /// failure after detachment leaves only the formatter to remove.
-    fn recovery_steps(
-        stage: crate::volume::TeardownStage,
-        handle: &InstanceHandle,
-        volume: &VolumeHandle,
-    ) -> String {
-        match stage {
-            crate::volume::TeardownStage::Stopping => format!(
-                "stop server {} and detach volume {} in zone {} before deleting either",
-                handle.id, volume.id, volume.zone
-            ),
-            crate::volume::TeardownStage::Detaching => format!(
-                "detach volume {} from server {} with `scw instance server detach-volume server-id={} volume-id={} zone={}`",
-                volume.id, handle.id, handle.id, volume.id, volume.zone
-            ),
-            crate::volume::TeardownStage::Destroying => format!(
-                "the volume was detached; remove the formatter with `scw instance server delete {} zone={}`",
-                handle.id, volume.zone
-            ),
-        }
     }
 
     /// Creates the cache volume and waits for its documented ready state.
@@ -285,20 +260,14 @@ where
         // The environment wins over the file for `mriya run`, so report it
         // first: rerunning with `--force` would not make the new volume the one
         // a run uses.
-        let environment = request
+        if let Some(environment) = request
             .environment_volume_id
             .as_deref()
             .filter(|value| !value.is_empty())
-            .or_else(|| {
-                request
-                    .effective_volume_id
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-            });
-        if let Some(effective) = environment {
+        {
             return Err(InitError::Config(
                 ConfigStoreError::EffectiveVolumeConfigured {
-                    volume_id: effective.to_owned(),
+                    volume_id: environment.to_owned(),
                 },
             ));
         }
@@ -309,6 +278,19 @@ where
                     volume_id: existing.to_owned(),
                 },
             ));
+        }
+
+        // A merged value whose source is neither the writer's file nor the
+        // environment still overrides a new volume, but the refusal cannot
+        // name a variable the user should unset.
+        if let Some(effective) = request
+            .effective_volume_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            return Err(InitError::Config(ConfigStoreError::VolumeIdInEffect {
+                volume_id: effective.to_owned(),
+            }));
         }
 
         Ok(())
@@ -338,8 +320,8 @@ where
                 stage.as_str(),
                 failure.source
             ));
+            cleanup.push(recovery_steps(stage, formatter, volume));
             if stage != crate::volume::TeardownStage::Destroying {
-                cleanup.push(Self::recovery_steps(stage, formatter, volume));
                 return InitError::Rollback {
                     original: Box::new(original),
                     cleanup: cleanup.join("; "),

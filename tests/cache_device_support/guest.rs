@@ -94,6 +94,8 @@ pub(super) enum StateFile<'a> {
     RootSource(&'a str),
     /// The parent kernel name reported for `sda1`.
     PknameSda1(&'a str),
+    /// The parent kernel name reported for the whole `sda` disk.
+    PknameSda(&'a str),
     /// The parent kernel name reported for the `vg-root` mapper device.
     PknameVgRoot(&'a str),
     /// The parent kernel name reported for the `dm-0` mapper device.
@@ -145,6 +147,7 @@ impl<'a> StateFile<'a> {
         Some(match name {
             "root-source" => Self::RootSource(value),
             "pkname-sda1" => Self::PknameSda1(value),
+            "pkname-sda" => Self::PknameSda(value),
             "pkname-vg-root" => Self::PknameVgRoot(value),
             "pkname-dm-0" => Self::PknameDm0(value),
             "scsi" => Self::Scsi(value),
@@ -174,6 +177,7 @@ impl<'a> StateFile<'a> {
         match self {
             Self::RootSource(_) => "root-source",
             Self::PknameSda1(_) => "pkname-sda1",
+            Self::PknameSda(_) => "pkname-sda",
             Self::PknameVgRoot(_) => "pkname-vg-root",
             Self::PknameDm0(_) => "pkname-dm-0",
             Self::Scsi(_) => "scsi",
@@ -202,6 +206,7 @@ impl<'a> StateFile<'a> {
         match self {
             Self::RootSource(value)
             | Self::PknameSda1(value)
+            | Self::PknameSda(value)
             | Self::PknameVgRoot(value)
             | Self::PknameDm0(value)
             | Self::Scsi(value)

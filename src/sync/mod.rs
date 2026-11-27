@@ -232,6 +232,7 @@ impl<R: CommandRunner> Syncer<R> {
         let mut args = vec![
             OsString::from("-az"),
             OsString::from("--delete"),
+            OsString::from("--one-file-system"),
             OsString::from("--filter=:- .gitignore"),
             OsString::from("--exclude"),
             OsString::from(".git/"),

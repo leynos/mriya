@@ -70,7 +70,10 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
 
 #[rstest]
 fn format_refuses_unsafe_devices(
-    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)] index: usize,
+    #[values(
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+    )]
+    index: usize,
 ) -> Result<()> {
     let case = FORMAT_CASES
         .get(index)

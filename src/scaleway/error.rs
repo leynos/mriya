@@ -176,7 +176,7 @@ pub enum ScalewayBackendError {
     },
     /// Raised when the requested tier is not offered in the zone.
     #[error(
-        "volume tier '{tier}' is not available in zone {zone}; list the zone's volume types with `scw block volume-type list zone={zone}` or choose sbs_5k"
+        "volume tier '{tier}' is not available in zone {zone}; list the zone's volume types with `scw block volume-type list zone={zone}` and choose one it offers"
     )]
     VolumeTierUnavailable {
         /// Tier that was requested.

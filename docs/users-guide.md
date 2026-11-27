@@ -111,7 +111,7 @@ Or inline (handy for short scripts):
 
 <!-- tested-example: users-guide-cloud-init-inline -->
 ```bash
-mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
+mriya run --cloud-init $'#!/bin/sh\necho ready' -- sh -lc 'echo ok'
 ```
 
 A file path starting with `~/` is expanded through `HOME` before the file is

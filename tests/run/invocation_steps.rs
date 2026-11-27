@@ -184,12 +184,21 @@ fn unmount_after_remote_command(run_context_result: &RunContextResult) -> Result
         .position(|event| event == "unmount")
         .ok_or_else(|| StepError::Assertion(format!("missing unmount event: {events:?}")))?;
     // A failed unmount reports its own status, so a recorded call alone is not
-    // evidence that the cache was flushed.
-    let unmount_succeeded = run_context.runner.invocations().iter().any(|invocation| {
-        invocation.exit_code == Some(0)
-            && last_arg(invocation)
-                .is_some_and(|payload| payload.contains("MRIYA_CACHE_STATUS=unmounted"))
-    });
+    // evidence that the cache was flushed. Match the invocation by role and
+    // check the output it produced.
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let requested = run_context.requested_command.as_deref().unwrap_or_default();
+    let unmount_succeeded = run_context
+        .runner
+        .invocations()
+        .iter()
+        .find(|invocation| {
+            classify_invocation(invocation, ssh_bin, requested) == InvocationRole::Unmount
+        })
+        .is_some_and(|invocation| {
+            invocation.exit_code == Some(0)
+                && invocation.stdout.contains("MRIYA_CACHE_STATUS=unmounted")
+        });
     let ordered = unmount > remote && unmount_event < teardown;
     if ordered && unmount_succeeded {
         Ok(())
