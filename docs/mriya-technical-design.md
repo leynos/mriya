@@ -827,9 +827,10 @@ setup required for caching.
   cloud-init to run the format command automatically).
 
 - **Update `mriya.toml`:** Record the new volume’s ID in the config so that
-  subsequent `mriya run` (test runs) know to attach this volume. For example,
-  we might add `volume_id = "<uuid>"` under the profile or under a per-project
-  config section. This ties the volume to the project.
+  subsequent `mriya run` (test runs) know to attach this volume. The ID is
+  written as the root-level `default_volume_id = "<uuid>"` key, because the
+  loader reads root-level keys rather than section tables. This ties the volume
+  to the project.
 
 #### Volume init decisions (December 2025)
 

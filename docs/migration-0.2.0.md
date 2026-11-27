@@ -88,8 +88,13 @@ replace such a volume, unset `SCW_DEFAULT_VOLUME_ID` and rerun
 Production code no longer reads environment variables through `std::env`: it
 reads them through `mockable::Env`, and `DefaultEnv` is injected at each entry
 point. Reads that are not environment variables are unaffected; `main.rs` still
-calls `std::env::current_dir`, which has no `Env` equivalent. Library users
-keep every existing entry point and gain injectable ones beside them:
+calls `std::env::current_dir`, which has no `Env` equivalent. `mriya init` also
+scans for any spelling of `SCW_DEFAULT_VOLUME_ID` through
+`ortho_config::process_scan_env_source`, the boundary the loader itself scans,
+because `mockable` cannot enumerate variables; tests inject an
+`ortho_config::MapEnv` for that check. Every named read stays on
+`mockable::Env`. Library users keep every existing entry point and gain
+injectable ones beside them:
 
 - `mriya::sync::expand_tilde(path)` is unchanged in name, signature and
   arity, and still returns the path unchanged when `HOME` is absent. Its one
@@ -112,8 +117,10 @@ downstream exhaustive `match` over either enum needs a new arm; code that only
 formats the error is unaffected, and the message names the file.
 
 `mockable` 3.0.0 with default features off is now a regular and build
-dependency, and `temp-env` 0.3.6 is a dev-dependency. The decision and its
-rationale are recorded in [ADR 002](adrs/adr-0002-environment-access.md).
+dependency. `temp-env` was removed: no test mutates the process environment.
+The decision and its rationale are recorded in
+[ADR 002](adrs/adr-0002-environment-access.md), including the later addendum
+that records the volume-ID scan exception.
 
 ### Behaviour changes
 
@@ -126,6 +133,7 @@ rationale are recorded in [ADR 002](adrs/adr-0002-environment-access.md).
   so for it the undecodable case returns the path unchanged, exactly as an
   absent `HOME` does.
 - The test-support `EnvGuard` and `ENV_LOCK` are gone from the public
-  `test_support` module. A test that needs the live environment should use
-  `temp_env::with_var` for the process, or `Command::env` for a spawned child;
-  a test of production logic should inject a `mockable::MockEnv`.
+  `test_support` module. A test of production logic injects a
+  `mockable::MockEnv`, a `Command::env` for a spawned child, or an
+  `ortho_config::MapEnv` where the loader's own boundary is being exercised. No
+  test mutates the process environment.
