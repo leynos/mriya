@@ -35,6 +35,7 @@ pub use init::{
     InitOutcome,
     InitRequest,
     VOLUME_ID_ENV_VAR,
+    environment_volume_id,
 };
 pub use janitor::{
     Janitor,

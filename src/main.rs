@@ -38,7 +38,7 @@ use mriya::{
     StreamingCommandRunner,
     SyncConfig,
     Syncer,
-    VOLUME_ID_ENV_VAR,
+    environment_volume_id,
 };
 #[cfg(test)]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
@@ -229,7 +229,8 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
 
     // The environment overrides any file value on every run, so record it
     // separately; `init` refuses to replace it even with `--force`.
-    let environment_volume_id = environment_volume_id(&mockable::DefaultEnv)?;
+    let environment_volume_id = environment_volume_id(&mockable::DefaultEnv)
+        .map_err(|err| CliError::Config(err.to_string()))?;
     let request =
         InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
             .map_err(|err| CliError::Config(err.to_string()))?
@@ -247,30 +248,6 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     .ok();
 
     Ok(0)
-}
-
-/// Reads the `SCW_DEFAULT_VOLUME_ID` value through the environment boundary.
-///
-/// Returns `None` when the variable is unset and the trimmed value when it is
-/// usable. A variable that is present but blank or not valid UTF-8 is
-/// rejected: the loader would still merge it over the file, so a volume
-/// `init` created would never be the one `run` selects.
-fn environment_volume_id(env: &impl mockable::Env) -> Result<Option<String>, CliError> {
-    match env.raw(VOLUME_ID_ENV_VAR) {
-        Ok(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(CliError::Config(format!(
-                    "{VOLUME_ID_ENV_VAR} is set but blank; unset it or give it a volume ID"
-                )));
-            }
-            Ok(Some(trimmed.to_owned()))
-        }
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(CliError::Config(format!(
-            "{VOLUME_ID_ENV_VAR} is not valid UTF-8; unset it or give it a UTF-8 volume ID"
-        ))),
-    }
 }
 
 /// Builds the Scaleway backend and its default instance request, then

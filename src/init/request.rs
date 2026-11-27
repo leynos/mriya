@@ -33,14 +33,44 @@ pub struct InitRequest {
     /// The volume ID the environment supplies, when the caller can tell.
     ///
     /// A file write cannot change what the environment provides, so `init`
-    /// refuses even a forced replacement while this is set. The comparison in
-    /// the orchestrator catches a differing value on its own; this field also
-    /// catches the case where the environment and the file hold the same ID.
+    /// refuses even a forced replacement while this is set.
     pub environment_volume_id: Option<String>,
 }
 
 /// Environment variable that supplies the volume ID directly.
 pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
+
+/// Reads the volume-ID variable through an injected environment boundary.
+///
+/// Returns `None` when the variable is unset and the trimmed value when it is
+/// usable. A variable that is present but blank or not valid UTF-8 is rejected:
+/// the loader still merges it over the file, so a volume `init` created would
+/// never be the one `run` selects.
+///
+/// # Errors
+///
+/// Returns [`InitRequestError::BlankEnvironmentVolumeId`] for a present blank
+/// value and [`InitRequestError::NonUtf8EnvironmentVolumeId`] for a value the
+/// boundary cannot decode.
+pub fn environment_volume_id(env: &impl mockable::Env) -> Result<Option<String>, InitRequestError> {
+    match env.raw(VOLUME_ID_ENV_VAR) {
+        Ok(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(InitRequestError::BlankEnvironmentVolumeId {
+                    variable: VOLUME_ID_ENV_VAR,
+                });
+            }
+            Ok(Some(trimmed.to_owned()))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(InitRequestError::NonUtf8EnvironmentVolumeId {
+                variable: VOLUME_ID_ENV_VAR,
+            })
+        }
+    }
+}
 
 impl InitRequest {
     /// Builds an init request from configuration and the project name.

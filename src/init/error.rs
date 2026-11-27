@@ -33,6 +33,18 @@ pub enum InitRequestError {
     /// Raised when the volume size cannot be represented in bytes.
     #[error("volume size is too large to represent")]
     SizeOverflow,
+    /// Raised when the volume-ID variable is present but blank.
+    #[error("{variable} is set but blank; unset it or give it a volume ID")]
+    BlankEnvironmentVolumeId {
+        /// Name of the environment variable.
+        variable: &'static str,
+    },
+    /// Raised when the volume-ID variable cannot be decoded as UTF-8.
+    #[error("{variable} is not valid UTF-8; unset it or give it a UTF-8 volume ID")]
+    NonUtf8EnvironmentVolumeId {
+        /// Name of the environment variable.
+        variable: &'static str,
+    },
     /// Raised when a volume ID is already configured and overwriting was not
     /// requested, including a value supplied through the environment.
     #[error(transparent)]

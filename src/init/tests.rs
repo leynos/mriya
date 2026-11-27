@@ -3,9 +3,21 @@
 //! Kills the init validation and mkfs failure-message survivors tracked in
 //! #56.
 
+use std::sync::Arc;
+
+use camino::Utf8Path;
+use ortho_config::{MapEnv, OrthoConfig as _};
 use rstest::rstest;
 
-use super::{InitConfig, InitConfigError, InitRequest, InitRequestError, format_failure_message};
+use super::{
+    InitConfig,
+    InitConfigError,
+    InitRequest,
+    InitRequestError,
+    VOLUME_ID_ENV_VAR,
+    environment_volume_id,
+    format_failure_message,
+};
 use crate::{
     ScalewayConfig,
     config_store::ConfigStoreError,
@@ -172,5 +184,97 @@ fn append_teardown_note_appends_teardown_failure() {
     assert_eq!(
         note,
         format!("provision failed (teardown also failed: {teardown})")
+    );
+}
+
+/// An environment source that answers only the volume-ID key.
+fn volume_env(result: Result<String, std::env::VarError>) -> mockable::MockEnv {
+    let mut env = mockable::MockEnv::new();
+    env.expect_raw().returning(move |key| {
+        assert_eq!(key, VOLUME_ID_ENV_VAR, "unexpected key");
+        result.clone()
+    });
+    env
+}
+
+#[test]
+fn environment_volume_id_is_absent_when_unset() {
+    let env = volume_env(Err(std::env::VarError::NotPresent));
+
+    let result = environment_volume_id(&env).expect("an unset variable should be accepted");
+
+    assert_eq!(result, None);
+}
+
+#[test]
+fn environment_volume_id_is_trimmed_when_set() {
+    let env = volume_env(Ok(String::from("  volume-123 ")));
+
+    let result = environment_volume_id(&env).expect("a set variable should be accepted");
+
+    assert_eq!(result.as_deref(), Some("volume-123"));
+}
+
+#[rstest]
+#[case::blank(Ok(String::from("   ")), "set but blank")]
+#[case::non_utf8(
+    Err(std::env::VarError::NotUnicode(std::ffi::OsString::from("not utf8"))),
+    "not valid UTF-8"
+)]
+fn environment_volume_id_rejects_unusable_values(
+    #[case] raw: Result<String, std::env::VarError>,
+    #[case] expected: &str,
+) {
+    let env = volume_env(raw);
+
+    let err = environment_volume_id(&env).expect_err("an unusable variable must be rejected");
+
+    assert!(
+        err.to_string().contains(expected),
+        "error should say {expected}: {err}"
+    );
+}
+
+/// The loader keeps a blank environment layer over the file, which is why the
+/// composition root rejects that value before a request can be built.
+#[test]
+fn a_blank_environment_volume_id_survives_loading_but_is_rejected() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let root = Utf8Path::from_path(tmp.path()).expect("temp path should be UTF-8");
+    let file = root.join("mriya.toml");
+    cap_std::fs_utf8::Dir::open_ambient_dir(root, cap_std::ambient_authority())
+        .expect("temp directory should open")
+        .write(
+            "mriya.toml",
+            concat!(
+                "secret_key = \"secret\"\n",
+                "default_project_id = \"project\"\n",
+                "default_volume_id = \"file-volume\"\n"
+            ),
+        )
+        .expect("config fixture should be written");
+    let env = MapEnv::new()
+        .with_current_dir(root)
+        .with_var("MRIYA_CONFIG_PATH", file.as_str())
+        .with_var(VOLUME_ID_ENV_VAR, "   ");
+    let shared = Arc::new(env);
+    let config = ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared)
+        .expect("configuration should load");
+
+    assert!(
+        config
+            .default_volume_id
+            .as_deref()
+            .is_some_and(|volume_id| volume_id.trim().is_empty()),
+        "the loader should retain a blank layer over the file, got {:?}",
+        config.default_volume_id
+    );
+
+    let mock = volume_env(Ok(String::from("   ")));
+    let err = environment_volume_id(&mock).expect_err("the composition root should reject it");
+
+    assert!(
+        matches!(err, InitRequestError::BlankEnvironmentVolumeId { .. }),
+        "unexpected error: {err}"
     );
 }
