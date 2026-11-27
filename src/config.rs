@@ -58,14 +58,19 @@ pub struct ScalewayConfig {
     /// Boot-volume storage type: `l_ssd` (local SSD) or `sbs_volume` (Block
     /// Storage).
     ///
-    /// When unset, the backend applies its documented compatibility default
-    /// and reports that it did so.
+    /// Set it through `SCW_BOOT_VOLUME_TYPE`; the matching `boot_volume_type`
+    /// key in `[scaleway]` is accepted by the schema but not yet read by the
+    /// loader (issue #195). When unset, the backend applies its documented
+    /// compatibility default and reports that it did so.
     pub boot_volume_type: Option<String>,
     /// Boot-volume capacity in decimal gigabytes (10^9 bytes).
     ///
-    /// When unset, the backend applies its documented compatibility default
-    /// and reports that it did so. Note that this unit differs from the cache
-    /// volume's `volume_size_gb`, which is binary gibibytes.
+    /// Set it through `SCW_BOOT_VOLUME_SIZE_GB`; the matching
+    /// `boot_volume_size_gb` key in `[scaleway]` is accepted by the schema but
+    /// not yet read by the loader (issue #195). When unset, the backend applies
+    /// its documented compatibility default and reports that it did so. Note
+    /// that this unit differs from the cache volume's `volume_size_gb`, which
+    /// is binary gibibytes.
     pub boot_volume_size_gb: Option<u32>,
     /// Optional cloud-init user-data payload (cloud-config YAML or script).
     pub cloud_init_user_data: Option<String>,

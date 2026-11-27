@@ -330,6 +330,26 @@ Update `docs/users-guide.md` and `docs/mriya-technical-design.md`, add
   Rationale: the style guide's loader does not exist in this repository yet, so
   marking six new fences would not make them exercised and would diverge from
   every existing example; it is a repository-wide follow-up.
+- Decision: keep classification of a failed cache attach on the HTTP status
+  alone, rather than confirming with a read-back. Rationale: a 4xx is a
+  definitive rejection, while a read-back cannot prove a timed-out request will
+  not commit afterwards; two review rounds proposed opposite rules, and the
+  status rule is the one that cannot destroy data. A non-4xx keeps the server
+  and names it.
+- Decision: keep the delete-without-stop cleanup for a failed create.
+  Rationale: the create request sends `stopped: true`, every cleanup path runs
+  before a successful power-on, and the provider's delete endpoint accepts a
+  running server; a stop-then-wait would add a failure mode without improving
+  the guarantee.
+- Decision: keep the `"0"` fallback in root selection. Rationale: the provider
+  may omit the boot flag, and `CreatedVolume`'s boolean default cannot tell an
+  omitted flag from an explicit `false`, so tightening only the live check
+  would reject a valid response shape.
+- Decision: leave the `[scaleway]` mention in configuration error messages,
+  while the new field docs name the environment variable as the working route.
+  Rationale: every existing configuration error uses the same wording, the gap
+  is tracked in issue #195, and changing one message in isolation would make
+  the suite inconsistent.
 
 ## Outcomes & Retrospective
 

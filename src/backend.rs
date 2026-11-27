@@ -264,6 +264,16 @@ pub trait Backend {
     /// changes between the two calls, the create's resolution is the one that
     /// governs the server.
     ///
+    /// # Parameters
+    /// - `request`: the instance request whose boot volume should be resolved.
+    ///
+    /// # Returns
+    /// The plan `create` would send for the same request at the same moment.
+    ///
+    /// # Errors
+    /// Returns the backend's error when the request is impossible or a provider
+    /// lookup fails.
+    ///
     /// For example, a 20 GB local plan succeeds where the instance type
     /// offers local storage and the image fits, while a size above the type's
     /// maximum fails before any request is made.
@@ -273,6 +283,17 @@ pub trait Backend {
     ) -> BackendFuture<'a, BootVolumePlan, Self::Error>;
 
     /// Creates a new instance and returns a handle used for subsequent calls.
+    ///
+    /// # Parameters
+    /// - `request`: the instance to create, including its boot storage.
+    ///
+    /// # Returns
+    /// A handle identifying the instance and recording its root volume, when
+    /// the backend reported one.
+    ///
+    /// # Errors
+    /// Returns the backend's error when the request is impossible or the
+    /// provider rejects the create.
     ///
     /// For example, a valid request yields a handle whose identifier and zone
     /// are then passed to every later call, while an unavailable instance type
@@ -284,6 +305,16 @@ pub trait Backend {
 
     /// Blocks until the instance is ready for SSH and returns networking info.
     ///
+    /// # Parameters
+    /// - `handle`: the instance to wait for.
+    ///
+    /// # Returns
+    /// The public address and SSH port to use.
+    ///
+    /// # Errors
+    /// Returns the backend's timeout or provider error when the instance never
+    /// becomes reachable.
+    ///
     /// For example, an instance that becomes reachable yields its public IP
     /// and SSH port, while one that never does returns the backend's timeout
     /// error.
@@ -293,6 +324,16 @@ pub trait Backend {
     ) -> BackendFuture<'a, InstanceNetworking, Self::Error>;
 
     /// Destroys the instance and ensures no provider resources remain.
+    ///
+    /// # Parameters
+    /// - `handle`: the instance to destroy.
+    ///
+    /// # Returns
+    /// `Ok(())` once the instance is gone.
+    ///
+    /// # Errors
+    /// Returns the backend's provider error when deletion or its verification
+    /// fails, so the caller can report a possible leak.
     ///
     /// For example, a successful teardown resolves once the instance is gone
     /// from the provider's listing, while a provider rejection returns its

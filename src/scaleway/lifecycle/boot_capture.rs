@@ -83,6 +83,14 @@ impl ScalewayBackend {
         let product = self
             .fetch_server_type(&request.zone, &request.instance_type)
             .await?;
+        // Architecture is refused before the image lookup: a mismatch cannot
+        // be fixed by any image, so spending a lookup on it is waste.
+        super::boot_plan::ensure_architecture(
+            &request.instance_type,
+            &product,
+            &request.architecture,
+        )?;
+
         // The catalogue decides which storage kinds exist on this type, so it
         // is fetched first and narrows the image candidates.
         let supported = ImageStorage::new(

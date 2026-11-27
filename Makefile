@@ -135,7 +135,7 @@ scaleway-boot-test: check-build-tools ## Run the opt-in boot-volume live check w
 		(echo "MRIYA_TEST_BOOT_CASES must list instance_type:volume_type:size_gb cases" && exit 1)
 	@MRIYA_TEST_RUN_ID="$$(uuidgen | tr '[:upper:]' '[:lower:]')" ; \
 	echo "MRIYA_TEST_RUN_ID=$$MRIYA_TEST_RUN_ID" ; \
-	trap 'MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor > /dev/null' EXIT ; \
+	trap 'rc=$$?; MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor > /dev/null || { echo "final janitor sweep failed" >&2; rc=1; }; exit $$rc' EXIT ; \
 	MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) run --bin mriya-janitor ; \
 	MRIYA_RUN_SCALEWAY_BOOT_TESTS=1 MRIYA_TEST_BOOT_CASES="$(MRIYA_TEST_BOOT_CASES)" MRIYA_TEST_RUN_ID="$$MRIYA_TEST_RUN_ID" RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" $(CARGO) test --test scaleway_boot_volume -- --test-threads=1
 

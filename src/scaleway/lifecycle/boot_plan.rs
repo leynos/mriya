@@ -149,15 +149,11 @@ impl Resolution<'_> {
     /// A catalogue entry that omits `arch` is accepted: absence means the
     /// provider did not say, not that it disagrees.
     fn ensure_architecture(&self) -> Result<(), ScalewayBackendError> {
-        let offered = &self.product.arch;
-        if offered.is_empty() || offered == self.requested_architecture {
-            return Ok(());
-        }
-        Err(ScalewayBackendError::BootVolumeArchitectureMismatch {
-            instance_type: self.instance_type.to_owned(),
-            requested_arch: self.requested_architecture.to_owned(),
-            offered_arch: offered.clone(),
-        })
+        ensure_architecture(
+            self.instance_type,
+            self.product,
+            self.requested_architecture,
+        )
     }
 
     /// Picks the storage type, refusing an unavailable one and applying the
@@ -284,6 +280,34 @@ impl Resolution<'_> {
         }
         Ok(bounds)
     }
+}
+
+/// Refuses a type whose published architecture is not the one requested.
+///
+/// This is separate from [`Resolution`] because it depends on nothing but the
+/// catalogue entry and the request, so a caller can check it before spending an
+/// image lookup.
+///
+/// # Errors
+///
+/// Returns [`ScalewayBackendError::BootVolumeArchitectureMismatch`] when the
+/// catalogue publishes a different architecture.
+///
+/// For example, an `arm64` type asked for by an `x86_64` request is refused.
+pub(in crate::scaleway) fn ensure_architecture(
+    instance_type: &str,
+    product: &ProductServerType,
+    requested_architecture: &str,
+) -> Result<(), ScalewayBackendError> {
+    let offered = &product.arch;
+    if offered.is_empty() || offered == requested_architecture {
+        return Ok(());
+    }
+    Err(ScalewayBackendError::BootVolumeArchitectureMismatch {
+        instance_type: instance_type.to_owned(),
+        requested_arch: requested_architecture.to_owned(),
+        offered_arch: offered.clone(),
+    })
 }
 
 /// Resolves a boot-volume plan from a profile request, a catalogue entry, and
