@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Rust
-        uses: leynos/shared-actions/.github/actions/setup-rust@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/setup-rust@a108423efa7fb83565089449f2647d34286a48a4
         with:
           install-mold: 'true'
           expect-cache: any
@@ -36,7 +36,7 @@ jobs:
       - name: Install mdtablefix
         # `make check-fmt` runs `mdtablefix --check --git`; 0.6.0 is the
         # first release with `--check` and `--git`.
-        uses: leynos/shared-actions/.github/actions/install-mdtablefix@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/install-mdtablefix@a108423efa7fb83565089449f2647d34286a48a4
         with:
           version: "0.6.1"
 
@@ -47,13 +47,13 @@ jobs:
         with:
           globs: '**/*.md'
       - name: Install Whitaker Dylint suite
-        uses: leynos/shared-actions/.github/actions/install-whitaker@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/install-whitaker@a108423efa7fb83565089449f2647d34286a48a4
       - name: Set up uv for the YAML lint tools
         uses: astral-sh/setup-uv@c5680ec91f7b9b91406fab4ded5d45245abf7b67
         with:
           enable-cache: false
       - name: Install the YAML lint tools
-        uses: leynos/shared-actions/.github/actions/install-yaml-lint@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/install-yaml-lint@a108423efa7fb83565089449f2647d34286a48a4
       - name: Lint
         run: make lint
       - name: Setup uv
@@ -78,7 +78,7 @@ jobs:
           # measurement, so it takes neither the parallel frontend nor the mold linker.
           # Assigning RUSTFLAGS displaces every `rustflags` table in .cargo/config.toml.
           RUSTFLAGS: -D warnings
-        uses: leynos/shared-actions/.github/actions/generate-coverage@ab6505246c6b043b742a225e428e00448c0a37af
+        uses: leynos/shared-actions/.github/actions/generate-coverage@a108423efa7fb83565089449f2647d34286a48a4
         with:
           output-path: lcov.info
           format: lcov
