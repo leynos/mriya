@@ -223,14 +223,15 @@ fn environment_volume_id_matches_a_case_variant_key() {
 }
 
 #[test]
-fn environment_volume_id_rejects_a_blank_value() {
+fn environment_volume_id_records_a_blank_value_for_the_orchestrator() {
     let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::new("   "))]);
 
-    let err = environment_volume_id(&env).expect_err("a blank variable must be rejected");
+    let result = environment_volume_id(&env).expect("a blank value is recorded, not rejected");
 
-    assert!(
-        err.to_string().contains("set but blank"),
-        "unexpected error: {err}"
+    assert_eq!(
+        result.as_deref(),
+        Some(""),
+        "the blank layer should be recorded so the guard sees it"
     );
 }
 
@@ -285,11 +286,12 @@ fn a_blank_environment_volume_id_survives_loading_but_is_rejected() {
         config.default_volume_id
     );
 
-    let err =
-        environment_volume_id(shared.as_ref()).expect_err("the composition root should reject it");
+    let recorded = environment_volume_id(shared.as_ref())
+        .expect("the blank layer should be recorded, not rejected");
 
-    assert!(
-        matches!(err, InitRequestError::BlankEnvironmentVolumeId { .. }),
-        "unexpected error: {err}"
+    assert_eq!(
+        recorded.as_deref(),
+        Some(""),
+        "the provenance should record the blank environment layer"
     );
 }

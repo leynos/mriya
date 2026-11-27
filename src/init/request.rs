@@ -51,9 +51,9 @@ pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
 ///
 /// # Errors
 ///
-/// Returns [`InitRequestError::BlankEnvironmentVolumeId`] for a present blank
-/// value and [`InitRequestError::NonUtf8EnvironmentVolumeId`] for a value the
-/// boundary cannot decode.
+/// Returns [`InitRequestError::NonUtf8EnvironmentVolumeId`] for a value the
+/// boundary cannot decode. A present blank value is returned as an empty
+/// string so the request carries the provenance; the orchestrator rejects it.
 pub fn environment_volume_id(
     env: &dyn ortho_config::ScanEnvSource,
 ) -> Result<Option<String>, InitRequestError> {
@@ -71,11 +71,9 @@ pub fn environment_volume_id(
                 variable: VOLUME_ID_ENV_VAR,
             })?;
         let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Err(InitRequestError::BlankEnvironmentVolumeId {
-                variable: VOLUME_ID_ENV_VAR,
-            });
-        }
+        // A blank layer is still a layer: record it as present so the
+        // orchestrator refuses before any backend work rather than treating
+        // the variable as absent.
         found = Some(trimmed.to_owned());
     }
     Ok(found)

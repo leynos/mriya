@@ -182,8 +182,14 @@ where
         let stored = self.config_writer.current_volume_id()?;
 
         if let Some(environment) = request.environment_volume_id.as_deref() {
+            let trimmed = environment.trim();
+            if trimmed.is_empty() {
+                return Err(InitError::BlankEnvironmentVolumeId {
+                    variable: VOLUME_ID_ENV_VAR,
+                });
+            }
             return Err(InitError::EnvironmentVolumeId {
-                volume_id: environment.to_owned(),
+                volume_id: trimmed.to_owned(),
             });
         }
 

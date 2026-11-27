@@ -266,7 +266,9 @@ const fn map_failure_kind(
     err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
 ) -> InitFailureKind {
     match err {
-        InitError::Config(_) | InitError::EnvironmentVolumeId { .. } => InitFailureKind::Config,
+        InitError::Config(_)
+        | InitError::EnvironmentVolumeId { .. }
+        | InitError::BlankEnvironmentVolumeId { .. } => InitFailureKind::Config,
         InitError::Volume(_) => InitFailureKind::Volume,
         InitError::Provision(_) => InitFailureKind::Provision,
         InitError::Wait { .. } => InitFailureKind::Wait,
@@ -291,18 +293,16 @@ fn parse_failure_kind(kind: &str) -> Result<InitFailureKind, StepError> {
     }
 }
 
-/// The whole composition root over a real load: configuration comes from an
-/// injected file and environment, the scan source supplies the volume-ID
-/// provenance, and the mocked backend must record no volume creation.
-#[test]
-fn init_refuses_a_case_variant_environment_volume_id() -> Result<(), StepError> {
+/// Loads a real configuration from an injected file and environment, then
+/// builds the init request the composition root would use.
+fn loaded_request_with_environment(
+    key: &str,
+    value: &str,
+) -> Result<mriya::InitRequest, StepError> {
     use std::sync::Arc;
 
     use mriya::{InitConfig, ScalewayConfig, request_from_loaded_config};
     use ortho_config::{MapEnv, OrthoConfig as _};
-
-    use super::{test_doubles::ScriptedVolumeBackend, test_helpers::InitTestError};
-    use crate::sync_config::sync_config;
 
     let tmp = tempfile::TempDir::new().map_err(|err| StepError::Assertion(err.to_string()))?;
     let root = camino::Utf8Path::from_path(tmp.path())
@@ -322,13 +322,13 @@ fn init_refuses_a_case_variant_environment_volume_id() -> Result<(), StepError> 
     let env = MapEnv::new()
         .with_current_dir(root)
         .with_var("MRIYA_CONFIG_PATH", file.as_str())
-        .with_var("scw_default_volume_id", "old-id");
+        .with_var(key, value);
     let shared = Arc::new(env);
-
     let scaleway =
         ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared.clone())
             .map_err(|err| StepError::Assertion(err.to_string()))?;
-    let request = request_from_loaded_config(
+
+    request_from_loaded_config(
         mriya::InitRequestInputs {
             scaleway: &scaleway,
             init_config: &InitConfig { volume_size_gb: 20 },
@@ -337,13 +337,26 @@ fn init_refuses_a_case_variant_environment_volume_id() -> Result<(), StepError> 
         },
         shared.as_ref(),
     )
-    .map_err(|err| StepError::Assertion(err.to_string()))?;
-    if request.environment_volume_id.as_deref() != Some("old-id") {
-        return Err(StepError::Assertion(
-            "the case-variant environment value should be recorded".into(),
-        ));
-    }
+    .map_err(|err| StepError::Assertion(err.to_string()))
+}
 
+/// The whole composition root over a real load: configuration comes from an
+/// injected file and environment, the scan source supplies the volume-ID
+/// provenance, and the mocked backend must record no volume creation. Covers
+/// a case-variant key and a present but blank value.
+#[rstest::rstest]
+#[case::case_variant("scw_default_volume_id", "old-id")]
+#[case::blank("SCW_DEFAULT_VOLUME_ID", "   ")]
+fn init_refuses_an_environment_volume_id(
+    #[case] key: &str,
+    #[case] value: &str,
+) -> Result<(), StepError> {
+    use mriya::InitError;
+
+    use super::{test_doubles::ScriptedVolumeBackend, test_helpers::InitTestError};
+    use crate::sync_config::sync_config;
+
+    let request = loaded_request_with_environment(key, value)?;
     let backend = ScriptedVolumeBackend::new();
     let runner = mriya::test_support::ScriptedRunner::new();
     let syncer = Syncer::new(sync_config(), runner).map_err(InitTestError::from)?;
@@ -353,9 +366,12 @@ fn init_refuses_a_case_variant_environment_volume_id() -> Result<(), StepError> 
 
     let result = runtime.block_on(async { orchestrator.execute(&request).await });
 
-    if !matches!(result, Err(InitError::EnvironmentVolumeId { .. })) {
+    if !matches!(
+        result,
+        Err(InitError::EnvironmentVolumeId { .. } | InitError::BlankEnvironmentVolumeId { .. })
+    ) {
         return Err(StepError::Assertion(format!(
-            "expected the environment guard, got {result:?}"
+            "expected an environment refusal, got {result:?}"
         )));
     }
     if backend.create_volume_calls() != 0 {
