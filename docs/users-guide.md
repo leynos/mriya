@@ -60,9 +60,10 @@ Required sync settings: `ssh_identity_file`.
 
 ## File sync semantics
 
-Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
-so only files not matched by `.gitignore` patterns are transferred. The filter
-is not a full implementation of Git's ignore rules, and five differences matter:
+Mriya syncs the working tree with
+`rsync -az --delete --filter=":- .gitignore"`, so `.gitignore` patterns act as
+transfer filters. The filter is not a full implementation of Git's ignore
+rules, and five differences matter:
 
 - It reads per-directory `.gitignore` files only, so `.git/info/exclude` and
   `core.excludesFile` have no effect and a path ignored only through them still
