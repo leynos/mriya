@@ -65,9 +65,14 @@ so only files not matched by `.gitignore` patterns are transferred. That filter
 reads per-directory `.gitignore` files only: it does not read
 `.git/info/exclude` or `core.excludesFile`, and it does not apply Git's `!`
 re-inclusion, so a path ignored only through those means still transfers.
-Ignored cache paths such as `target/` are **not** deleted remotely, which keeps
-pre-existing build outputs available for incremental runs. The `.git` directory
-is excluded from transfer.
+
+An ignored path already present on the remote survives only when the receiving
+directory already holds the matching `.gitignore`. Rsync deletes during the
+transfer by default, before the per-directory filter file is updated, so a
+fresh remote that has no `.gitignore` yet can lose a pre-existing `target/`
+before the filter that protects it arrives. Once both sides hold the same
+`.gitignore`, ignored cache paths are preserved, which keeps build outputs
+available for incremental runs. The `.git` directory is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
 remote exit code when teardown succeeds. If `cargo test` fails remotely with

@@ -31,8 +31,10 @@ code.
 ## What it does
 
 - **Git-aware sync** – Uses rsync with `.gitignore` filters, so paths ignored
-  by a per-directory `.gitignore` file are excluded from the transfer and are
-  not deleted on the remote. The filter reads `.gitignore` patterns rather than
+  by a per-directory `.gitignore` file are excluded from the transfer. An
+  ignored path on the remote survives only when the receiving directory already
+  holds the matching `.gitignore`; rsync's default delete mode can remove it
+  before that file arrives. The filter reads `.gitignore` patterns rather than
   Git's index, so an untracked but unignored file still travels; it does not
   read `.git/info/exclude` or `core.excludesFile`, and it does not apply Git's
   `!` re-inclusion, so a path ignored only there still transfers. Persistence

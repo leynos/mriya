@@ -37,8 +37,11 @@ turned into a new unticked task or a reversed tick.
   matches the remote command.
   - Evidence: the `.gitignore` filter and `--delete` behaviour run against a
     local copy simulator (`tests/sync/rsync_simulator.rs`), and exit-code
-    propagation runs against a scripted command runner. No recorded live run
-    inspects a remote cache after sync.
+    propagation runs against a scripted command runner. Preservation holds
+    when the receiving directory already carries the matching `.gitignore`;
+    rsync's default delete mode can remove an ignored path before that filter
+    arrives on a fresh remote, which the simulation does not model. No recorded
+    live run inspects a remote cache after sync.
 
 ### 1.2. Remote execution flow
 
