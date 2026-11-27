@@ -257,3 +257,29 @@ fn write_error_writes_cli_error() {
         "rendered: {rendered}"
     );
 }
+
+#[test]
+fn environment_volume_id_is_absent_when_unset() {
+    let result = environment_volume_id(None).expect("an unset variable should be accepted");
+
+    assert_eq!(result, None);
+}
+
+#[test]
+fn environment_volume_id_is_trimmed_when_set() {
+    let result = environment_volume_id(Some(String::from("  volume-123 ")))
+        .expect("a set variable should be accepted");
+
+    assert_eq!(result.as_deref(), Some("volume-123"));
+}
+
+#[test]
+fn environment_volume_id_rejects_a_present_blank_value() {
+    let err = environment_volume_id(Some(String::from("   ")))
+        .expect_err("a blank variable must be rejected");
+
+    assert!(
+        matches!(err, CliError::Config(ref message) if message.contains("set but blank")),
+        "unexpected error: {err}"
+    );
+}

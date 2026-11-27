@@ -229,10 +229,7 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
 
     // The environment overrides any file value on every run, so record it
     // separately; `init` refuses to replace it even with `--force`.
-    let environment_volume_id = std::env::var(VOLUME_ID_ENV_VAR)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
+    let environment_volume_id = environment_volume_id(std::env::var(VOLUME_ID_ENV_VAR).ok())?;
     let request =
         InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
             .map_err(|err| CliError::Config(err.to_string()))?
@@ -250,6 +247,25 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
     .ok();
 
     Ok(0)
+}
+
+/// Interprets the raw `SCW_DEFAULT_VOLUME_ID` value.
+///
+/// Returns `None` when the variable is unset and the trimmed value when it is
+/// usable. A variable that is present but blank is rejected: the loader would
+/// still merge that blank value over the file, so a volume `init` created
+/// would never be the one `run` selects.
+fn environment_volume_id(raw: Option<String>) -> Result<Option<String>, CliError> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CliError::Config(format!(
+            "{VOLUME_ID_ENV_VAR} is set but blank; unset it or give it a volume ID"
+        )));
+    }
+    Ok(Some(trimmed.to_owned()))
 }
 
 /// Builds the Scaleway backend and its default instance request, then

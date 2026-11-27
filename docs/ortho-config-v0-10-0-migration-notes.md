@@ -165,9 +165,13 @@ The migration fixes this:
   release unless `--force` is supplied. That guard holds even when a blank
   root-level key is present, because a blank value records no volume of its own.
 - `mriya init` also treats a volume ID supplied by the environment as an
-  existing configuration, so it refuses to replace one without `--force`.
-  Previously only the file store was checked, and the environment value would
-  have overridden the ID `init` wrote when `run` loaded configuration.
+  existing configuration, so it refuses to replace one without `--force`, and
+  refuses even a forced replacement because a file write cannot change what the
+  environment supplies. A present but blank variable is rejected before
+  provisioning, and an ID inherited through a file `extends` chain counts as
+  file-backed, so a forced write to the child overrides it. Previously only the
+  file store was checked, and the environment value would have overridden the ID
+  `init` wrote when `run` loaded configuration.
 - `ConfigStore` refuses a discovered YAML or JSON5 file, naming its format,
   instead of parsing it as TOML. The loader treats every other extension,
   including none, as TOML, and the store now matches that classification. The
@@ -223,7 +227,7 @@ $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [  21.162s] 562 tests run: 562 passed, 0 skipped
+Summary [  61.791s] 566 tests run: 566 passed, 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 

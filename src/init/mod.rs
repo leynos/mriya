@@ -167,20 +167,17 @@ where
     /// what `run` selects. An ID the environment supplies is different: the
     /// file write cannot change it, so the new volume would never be the
     /// effective one. That case fails even with `--force`.
+    ///
+    /// Only the provenance recorded by the composition root distinguishes the
+    /// two. A resolved ID that merely differs from the selected file may be
+    /// inherited through `extends`, and forcing a child write does replace an
+    /// inherited value.
     fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
         let stored = self.config_writer.current_volume_id()?;
 
         if let Some(environment) = request.environment_volume_id.as_deref() {
             return Err(InitError::EnvironmentVolumeId {
                 volume_id: environment.to_owned(),
-            });
-        }
-
-        if let Some(configured) = request.configured_volume_id.as_deref()
-            && stored.as_deref() != Some(configured)
-        {
-            return Err(InitError::EnvironmentVolumeId {
-                volume_id: configured.to_owned(),
             });
         }
 

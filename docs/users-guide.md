@@ -201,7 +201,8 @@ To enable the cache volume:
    before reporting the error, so a failed run does not leave a VM billing. If
    `SCW_DEFAULT_VOLUME_ID` is set, the environment value overrides the file on
    every run, so `init` refuses even with `--force`; unset the variable and
-   rerun to replace the recorded volume.
+   rerun to replace the recorded volume. A variable that is set but blank is
+   rejected rather than treated as unset.
 2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash

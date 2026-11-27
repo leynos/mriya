@@ -353,3 +353,42 @@ fn store_and_loader_agree_when_the_explicit_path_is_absent() -> anyhow::Result<(
         &project_file,
     )
 }
+
+/// A forced write to the child file replaces an ID inherited through
+/// `extends`, so a later load selects the new ID. Inherited values are
+/// file-backed, which is why the orchestrator no longer treats a resolved ID
+/// that differs from the child as an environment value.
+#[test]
+fn forced_write_to_a_child_file_overrides_an_inherited_volume_id() -> anyhow::Result<()> {
+    let workspace = Workspace::new()?;
+    write_at(
+        &workspace.root.join("parent.toml"),
+        concat!(
+            "secret_key = \"secret\"\n",
+            "default_project_id = \"project\"\n",
+            "default_volume_id = \"parent-volume\"\n"
+        ),
+    )?;
+    workspace.write("mriya.toml", "extends = \"parent.toml\"\n")?;
+    let store = store_for(&workspace);
+
+    let written = store
+        .write_volume_id("child-volume", true)
+        .context("forced write to the child should succeed")?;
+    ensure!(
+        written.as_str() == workspace.config,
+        "store should write the child file, wrote {written}"
+    );
+
+    let config = load_scaleway(&workspace)?;
+    ensure!(
+        config.secret_key == "secret",
+        "credentials should still be inherited"
+    );
+    ensure!(
+        config.default_volume_id.as_deref() == Some("child-volume"),
+        "the child value should override the inherited one, got {:?}",
+        config.default_volume_id
+    );
+    Ok(())
+}
