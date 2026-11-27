@@ -157,7 +157,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
   0. Logs are under `/tmp/*-mriya-issue-159*.out`; the rebased candidate's gates
   are recorded under
   `/tmp/*-mriya-issue-159-migrate-from-ortho-config-v0-9-0-to-v0-10-0.out`,
-  where `make test` reports 568 passed across 23 binaries.
+  where `make test` reports 569 passed across 23 binaries.
 - [x] (2026-11-12) Inspect the final dependency graph.
       `cargo tree -i ortho_config` shows only `mriya`; all three `ortho_*`
       crates resolve together (0.11.0 after the rebase);
@@ -281,8 +281,8 @@ The migration is observable by running the repository gates (`make check-fmt`,
   2026-11-26, implementation agent.
 - Decision: accept a documented exception to the 1200-line scope tolerance and
   record it here rather than stopping the delivery. Rationale: the excess is
-  entirely test code mandated by the hosted completeness assessments (1,270 net
-  lines; production and documentation outside tests are 578 net lines across 14
+  entirely test code mandated by the hosted completeness assessments (1,285 net
+  lines; production and documentation outside tests are 588 net lines across 14
   files, inside both limits). The implementation surface the tolerance exists
   to bound did not grow. The tolerance now states both figures and this
   exception explicitly, so the deviation is visible rather than silent.

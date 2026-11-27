@@ -42,34 +42,43 @@ pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
 
 /// Reads the volume-ID variable through an injected environment boundary.
 ///
-/// Returns `None` when the variable is unset and the trimmed value when it is
-/// usable. A variable that is present but blank or not valid UTF-8 is rejected:
-/// the loader still merges it over the file, so a volume `init` created would
-/// never be the one `run` selects.
+/// The key match is case-insensitive, because the loader's environment
+/// provider matches keys that way; a guard that looked only for the canonical
+/// spelling would miss a value the loader still applies. Returns `None` when no
+/// spelling is present and the trimmed value when it is usable. A present blank
+/// or non-UTF-8 value is rejected: the loader still merges it over the file, so
+/// a volume `init` created would never be the one `run` selects.
 ///
 /// # Errors
 ///
 /// Returns [`InitRequestError::BlankEnvironmentVolumeId`] for a present blank
 /// value and [`InitRequestError::NonUtf8EnvironmentVolumeId`] for a value the
 /// boundary cannot decode.
-pub fn environment_volume_id(env: &impl mockable::Env) -> Result<Option<String>, InitRequestError> {
-    match env.raw(VOLUME_ID_ENV_VAR) {
-        Ok(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(InitRequestError::BlankEnvironmentVolumeId {
-                    variable: VOLUME_ID_ENV_VAR,
-                });
-            }
-            Ok(Some(trimmed.to_owned()))
+pub fn environment_volume_id(
+    env: &dyn ortho_config::ScanEnvSource,
+) -> Result<Option<String>, InitRequestError> {
+    let mut found = None;
+    for (key, raw) in env.scan() {
+        if !key
+            .to_string_lossy()
+            .eq_ignore_ascii_case(VOLUME_ID_ENV_VAR)
+        {
+            continue;
         }
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(InitRequestError::NonUtf8EnvironmentVolumeId {
+        let text = raw
+            .into_string()
+            .map_err(|_| InitRequestError::NonUtf8EnvironmentVolumeId {
                 variable: VOLUME_ID_ENV_VAR,
-            })
+            })?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(InitRequestError::BlankEnvironmentVolumeId {
+                variable: VOLUME_ID_ENV_VAR,
+            });
         }
+        found = Some(trimmed.to_owned());
     }
+    Ok(found)
 }
 
 impl InitRequest {

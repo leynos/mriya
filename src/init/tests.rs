@@ -187,19 +187,15 @@ fn append_teardown_note_appends_teardown_failure() {
     );
 }
 
-/// An environment source that answers only the volume-ID key.
-fn volume_env(result: Result<String, std::env::VarError>) -> mockable::MockEnv {
-    let mut env = mockable::MockEnv::new();
-    env.expect_raw().returning(move |key| {
-        assert_eq!(key, VOLUME_ID_ENV_VAR, "unexpected key");
-        result.clone()
-    });
-    env
+/// A scanning environment map with `vars` set.
+fn volume_env(vars: &[(&str, &std::ffi::OsStr)]) -> MapEnv {
+    vars.iter()
+        .fold(MapEnv::new(), |env, (key, value)| env.with_var(*key, value))
 }
 
 #[test]
 fn environment_volume_id_is_absent_when_unset() {
-    let env = volume_env(Err(std::env::VarError::NotPresent));
+    let env = volume_env(&[]);
 
     let result = environment_volume_id(&env).expect("an unset variable should be accepted");
 
@@ -208,30 +204,48 @@ fn environment_volume_id_is_absent_when_unset() {
 
 #[test]
 fn environment_volume_id_is_trimmed_when_set() {
-    let env = volume_env(Ok(String::from("  volume-123 ")));
+    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::new("  volume-123 "))]);
 
     let result = environment_volume_id(&env).expect("a set variable should be accepted");
 
     assert_eq!(result.as_deref(), Some("volume-123"));
 }
 
-#[rstest]
-#[case::blank(Ok(String::from("   ")), "set but blank")]
-#[case::non_utf8(
-    Err(std::env::VarError::NotUnicode(std::ffi::OsString::from("not utf8"))),
-    "not valid UTF-8"
-)]
-fn environment_volume_id_rejects_unusable_values(
-    #[case] raw: Result<String, std::env::VarError>,
-    #[case] expected: &str,
-) {
-    let env = volume_env(raw);
+/// The loader matches environment keys case-insensitively, so the guard must
+/// too.
+#[test]
+fn environment_volume_id_matches_a_case_variant_key() {
+    let env = volume_env(&[("scw_default_volume_id", std::ffi::OsStr::new("old-id"))]);
 
-    let err = environment_volume_id(&env).expect_err("an unusable variable must be rejected");
+    let result = environment_volume_id(&env).expect("a case variant should be accepted");
+
+    assert_eq!(result.as_deref(), Some("old-id"));
+}
+
+#[test]
+fn environment_volume_id_rejects_a_blank_value() {
+    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::new("   "))]);
+
+    let err = environment_volume_id(&env).expect_err("a blank variable must be rejected");
 
     assert!(
-        err.to_string().contains(expected),
-        "error should say {expected}: {err}"
+        err.to_string().contains("set but blank"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn environment_volume_id_rejects_a_non_utf8_value() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::from_bytes(&[0xff]))]);
+
+    let err = environment_volume_id(&env).expect_err("a non-UTF-8 variable must be rejected");
+
+    assert!(
+        err.to_string().contains("not valid UTF-8"),
+        "unexpected error: {err}"
     );
 }
 
@@ -258,8 +272,9 @@ fn a_blank_environment_volume_id_survives_loading_but_is_rejected() {
         .with_var("MRIYA_CONFIG_PATH", file.as_str())
         .with_var(VOLUME_ID_ENV_VAR, "   ");
     let shared = Arc::new(env);
-    let config = ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared)
-        .expect("configuration should load");
+    let config =
+        ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared.clone())
+            .expect("configuration should load");
 
     assert!(
         config
@@ -270,8 +285,8 @@ fn a_blank_environment_volume_id_survives_loading_but_is_rejected() {
         config.default_volume_id
     );
 
-    let mock = volume_env(Ok(String::from("   ")));
-    let err = environment_volume_id(&mock).expect_err("the composition root should reject it");
+    let err =
+        environment_volume_id(shared.as_ref()).expect_err("the composition root should reject it");
 
     assert!(
         matches!(err, InitRequestError::BlankEnvironmentVolumeId { .. }),

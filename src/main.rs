@@ -229,8 +229,9 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
 
     // The environment overrides any file value on every run, so record it
     // separately; `init` refuses to replace it even with `--force`.
-    let environment_volume_id = environment_volume_id(&mockable::DefaultEnv)
-        .map_err(|err| CliError::Config(err.to_string()))?;
+    let scan = ortho_config::process_scan_env_source();
+    let environment_volume_id =
+        environment_volume_id(scan.as_ref()).map_err(|err| CliError::Config(err.to_string()))?;
     let request =
         InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
             .map_err(|err| CliError::Config(err.to_string()))?
