@@ -1,4 +1,4 @@
-//! Tests for how the report groups, attributes and summarises results.
+//! Tests for how the report groups, attributes and summarizes results.
 
 use super::{
     super::{
@@ -24,7 +24,11 @@ fn attempts_with_different_cache_classes_are_reported_separately() {
         run.cache.size_bytes = 4096;
         run.repetition = 2;
     });
-    let report = build_report(&campaign_with(vec![cold, warm]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![cold, warm]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let results = report.workloads.get("cold-build").expect("the workload");
     assert_eq!(results.len(), 2, "each cache class is its own group");
     assert!(
@@ -50,8 +54,11 @@ fn a_warm_up_is_costed_but_excluded_from_the_per_gate_figure() {
         run.lifetime.total_nanos = 60_000_000_000;
         run.lifetime.chargeable_nanos = 3_600_000_000_000;
     });
-    let report =
-        build_report(&campaign_with(vec![warm_up, timed]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![warm_up, timed]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let results = report.workloads.get("cold-build").expect("the workload");
     let total_warm_up: u64 = results.iter().map(|r| r.warm_up_marginal_micros).sum();
     assert!(total_warm_up > 0, "the warm-up is costed");
@@ -72,7 +79,7 @@ fn a_warm_up_is_costed_but_excluded_from_the_per_gate_figure() {
 #[test]
 fn the_execution_summary_uses_the_remote_execution_phase() {
     let attempt = run_with(|_| {});
-    let mut campaign = campaign_with(vec![attempt]);
+    let mut campaign = campaign_with(vec![attempt]).expect("a valid campaign");
     let run_id = campaign
         .runs
         .first()
@@ -93,7 +100,11 @@ fn the_execution_summary_uses_the_remote_execution_phase() {
             status: super::super::record::PhaseStatus::Ok,
         },
     ));
-    let report = build_report(&campaign, &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign,
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let result = report
         .workloads
         .get("cold-build")
@@ -111,9 +122,16 @@ fn retained_storage_is_priced_into_the_campaign_total() {
             held_nanos: 3_600_000_000_000,
         }];
     });
-    let without =
-        build_report(&campaign_with(vec![run_with(|_| {})]), &example_sheet()).expect("priced");
-    let with = build_report(&campaign_with(vec![run]), &example_sheet()).expect("priced");
+    let without = build_report(
+        &campaign_with(vec![run_with(|_| {})]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    let with = build_report(
+        &campaign_with(vec![run]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     assert!(
         with.totals.storage_micros > without.totals.storage_micros,
         "retained storage must reach the campaign total"
@@ -150,8 +168,8 @@ fn each_providers_subscription_is_attributed_only_to_that_provider() {
         run.repetition = 1;
     });
     let report = build_report(
-        &campaign_with(vec![boat, scaleway, boat_again]),
-        &example_sheet(),
+        &campaign_with(vec![boat, scaleway, boat_again]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
     )
     .expect("priced");
     let boat_share: u64 = report

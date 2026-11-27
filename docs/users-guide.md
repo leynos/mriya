@@ -378,12 +378,14 @@ MRIYA_BENCH_ENABLE_PAID_RUNS=1 \
   --out results.jsonl
 ```
 
-The harness runs one instance at a time. It sweeps for resources left by an
-earlier run of the same campaign before it allocates anything, appends each
-record as soon as it exists, and stops at the first cleanup doubt. The sweep
-uses the campaign identifier as the resource tag, and the backend tags its
-instances with that same identifier, so the sweep can actually find the
-campaign's own leftovers.
+The harness runs one instance at a time and holds a campaign-scoped lock, so
+two invocations that share a campaign identifier cannot both allocate. It
+refuses an output file that already holds records, because a campaign file must
+begin with exactly one header. It sweeps for resources left by an earlier run
+of the same campaign before it allocates anything, appends each record as soon
+as it exists, and stops at the first cleanup doubt. The sweep uses the campaign
+identifier as the resource tag, and the backend tags its instances with that
+same identifier, so the sweep can actually find the campaign's own leftovers.
 
 On a doubt — a failed attempt, an unverified teardown, or a sweep that could
 not run — it appends a residual record naming the provider and every identifier

@@ -30,6 +30,14 @@ pub struct CampaignLock {
 impl CampaignLock {
     /// Takes the lock for `campaign_id`, or reports who holds it.
     ///
+    /// # Parameters
+    ///
+    /// - `campaign_id`: the campaign identifier to exclude.
+    ///
+    /// # Returns
+    ///
+    /// A guard that removes the lock file when it drops.
+    ///
     /// # Errors
     ///
     /// Returns [`CampaignError::CampaignAlreadyRunning`] when another process
@@ -73,16 +81,11 @@ impl Drop for CampaignLock {
 
 /// Returns the directory a lock file lives in.
 ///
-/// `XDG_RUNTIME_DIR` is per-user and cleaned by the session; `/tmp` is the
-/// fallback when it is absent.
-fn runtime_directory() -> Utf8PathBuf {
-    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR")
-        && let Ok(path) = Utf8PathBuf::from_path_buf(runtime.into())
-    {
-        return path;
-    }
-    Utf8PathBuf::from("/tmp")
-}
+/// `/tmp` is used unconditionally rather than `XDG_RUNTIME_DIR`, because two
+/// invocations of the same campaign can disagree about that variable — a
+/// session shell sets it, a scheduled job may not — and each would then take
+/// a different lock for the same campaign.
+fn runtime_directory() -> Utf8PathBuf { Utf8PathBuf::from("/tmp") }
 
 /// Reduces a campaign identifier to characters safe in a file name.
 fn sanitize(campaign_id: &str) -> String {

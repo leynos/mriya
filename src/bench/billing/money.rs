@@ -73,6 +73,15 @@ impl CostBreakdown {
 ///
 /// assert_eq!(format_currency("USD", 24_000), "USD 0.024000");
 /// ```
+///
+/// # Parameters
+///
+/// - `currency`: the label to prefix; it is not validated.
+/// - `micros`: the amount, in micro-units.
+///
+/// # Returns
+///
+/// `"<label> <whole>.<six digits>"`.
 #[must_use]
 pub fn format_currency(currency: &str, micros: u64) -> String {
     format!("{currency} {}", super::format_micros(micros))
@@ -91,6 +100,14 @@ pub fn format_currency(currency: &str, micros: u64) -> String {
 /// assert!(figures_agree(1_000, 1_000));
 /// assert!(!figures_agree(1_000, 1_001));
 /// ```
+///
+/// # Parameters
+///
+/// - `left`, `right`: the two amounts to compare, in micro-units.
+///
+/// # Returns
+///
+/// `true` exactly when the amounts are equal.
 #[must_use]
 pub const fn figures_agree(left: u64, right: u64) -> bool { left == right }
 
@@ -103,6 +120,14 @@ pub const fn figures_agree(left: u64, right: u64) -> bool { left == right }
 ///
 /// assert_eq!(split_units(1_500_000), (1, 500_000));
 /// ```
+///
+/// # Parameters
+///
+/// - `micros`: the amount, in micro-units.
+///
+/// # Returns
+///
+/// The whole currency units, then the remaining micro-units.
 #[must_use]
 pub fn split_units(micros: u64) -> (u64, u64) {
     (

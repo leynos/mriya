@@ -107,8 +107,9 @@ fn render_result(report: &BenchmarkReport, result: &WorkloadResult) -> Vec<Strin
     }
     if result.failed > 0 {
         lines.push(format!(
-            "    failed-attempt cost {}",
-            format_currency(&report.currency, result.failed_marginal_micros)
+            "    failed-attempt cost {}, with subscription share {}",
+            format_currency(&report.currency, result.failed_marginal_micros),
+            format_currency(&report.currency, result.failed_subscription_micros)
         ));
     }
     if result.warm_up_marginal_micros > 0 {

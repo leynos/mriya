@@ -240,6 +240,7 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
         runs: Mutex::new(VecDeque::from(vec![Ok(record)])),
         teardowns: Mutex::new(VecDeque::from(vec![Ok(TeardownReport::verified())])),
         attempts_run: std::sync::atomic::AtomicU64::new(0),
+        resource_ids: Vec::new(),
     };
     let mut sink = MemorySink::default();
     run_campaign(&plan(1), Some("1"), &driver, &mut sink).expect("a failed attempt is still data");
@@ -297,4 +298,27 @@ fn two_runs_of_one_campaign_do_not_overlap() {
     );
     drop(lock);
     CampaignLock::acquire("lock-test-campaign").expect("the lock is released with the guard");
+}
+
+#[test]
+fn a_run_record_that_cannot_be_written_still_verifies_teardown() {
+    // The attempt succeeded, so its teardown must be checked even though its
+    // record cannot be written; the error must name what may remain.
+    let mut driver = ScriptedDriver::healthy(1);
+    driver.resource_ids = vec![String::from("srv-42")];
+    let mut sink = super::campaign_doubles::RejectRuns::default();
+    let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
+        .expect_err("a record that cannot be written stops the campaign");
+    match &error {
+        CampaignError::RecordWriteFailed { residual, .. } => {
+            let detail = residual.as_deref().unwrap_or_default();
+            assert!(detail.contains("srv-42"), "{detail}");
+        }
+        other => panic!("expected a write failure, got {other}"),
+    }
+    assert!(
+        driver.calls().iter().any(|call| call == "verify"),
+        "teardown must still be verified: {:?}",
+        driver.calls()
+    );
 }

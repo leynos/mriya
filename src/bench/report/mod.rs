@@ -66,6 +66,11 @@ pub struct WorkloadResult {
     pub warm_up_marginal_micros: u64,
     /// Subscription share attributed to the completed attempts.
     pub subscription_micros: u64,
+    /// Subscription share attributed to the failed attempts.
+    ///
+    /// Reported beside the failed-attempt cost, so a plan is never presented as
+    /// a cost of completed work when nothing completed.
+    pub failed_subscription_micros: u64,
     /// Total-account cost of the completed attempts.
     pub total_account_micros: u64,
     /// Compute time the plan absorbed, in nanoseconds.
@@ -100,6 +105,7 @@ impl WorkloadResult {
     ///     failed_marginal_micros: 0,
     ///     warm_up_marginal_micros: 0,
     ///     subscription_micros: 0,
+    ///     failed_subscription_micros: 0,
     ///     total_account_micros: 3,
     ///     absorbed_nanos: 0,
     ///     chargeable_nanos: 0,
@@ -148,6 +154,7 @@ impl WorkloadResult {
     ///     failed_marginal_micros: 0,
     ///     warm_up_marginal_micros: 0,
     ///     subscription_micros: 0,
+    ///     failed_subscription_micros: 0,
     ///     total_account_micros: 0,
     ///     absorbed_nanos: 0,
     ///     chargeable_nanos: 0,

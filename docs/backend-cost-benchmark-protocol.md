@@ -28,7 +28,7 @@ inherit from the cache.
 | Identifier         | What it measures                                                | Command shape                                     |
 | ------------------ | --------------------------------------------------------------- | ------------------------------------------------- |
 | `cold-build`       | Full dependency and workspace compile with an empty build cache | Workspace build with the target directory cleared |
-| `warm-incremental` | Recompile after one source file changes                         | The same build with one touched source            |
+| `warm-incremental` | Recompile after one source file's timestamp changes             | The same build with one touched source            |
 | `link-heavy`       | Linking and final artefact production                           | A build forced to relink every test binary        |
 | `test-execution`   | Representative test run over an already warm build              | The repository's own test command                 |
 
@@ -66,6 +66,11 @@ cargo test --workspace --all-features --no-run
 export CARGO_BUILD_JOBS=8
 cargo nextest run --workspace --all-targets --all-features
 ```
+
+Each command runs under
+`timeout --signal=TERM --kill-after=30 <declared lifetime in seconds>`, so an
+overrunning workload is stopped and torn down. The wrapper is part of the
+command vector the record pins, because it is part of what ran.
 
 The warm-incremental workload assumes a Rust library crate with a `src/lib.rs`.
 A different workload repository needs its own workload definitions and a new

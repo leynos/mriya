@@ -197,6 +197,10 @@ pub fn validate_str(text: &str) -> Result<Campaign, Vec<Complaint>> {
     if complaints.is_empty() {
         complaints.push(Complaint::NoRuns);
     }
+    // Sort by line so the first complaint is the earliest problem in the file,
+    // which is what the contract promises; file-level complaints have no line
+    // and sort after the per-line ones.
+    complaints.sort_by_key(complaint_line);
     Err(complaints)
 }
 
@@ -333,4 +337,19 @@ pub fn format_complaints(complaints: &[Complaint]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Returns the line a complaint refers to, or `usize::MAX` for a file-level one.
+const fn complaint_line(complaint: &Complaint) -> usize {
+    match complaint {
+        Complaint::Unreadable { line, .. }
+        | Complaint::SchemaMismatch { line, .. }
+        | Complaint::MissingPin { line, .. }
+        | Complaint::Incoherent { line, .. }
+        | Complaint::CleanupDoubt { line, .. } => *line,
+        Complaint::MissingHeader
+        | Complaint::RepeatedHeader { .. }
+        | Complaint::NoRuns
+        | Complaint::MixedCampaigns { .. } => usize::MAX,
+    }
 }

@@ -15,7 +15,7 @@ use super::{
             SweepReport,
             TeardownReport,
         },
-        record::{CampaignLimits, Record, RunRecord},
+        record::{CampaignLimits, Record, RecordKind, RunRecord},
     },
     support::run_record,
 };
@@ -33,6 +33,8 @@ pub struct ScriptedDriver {
     pub teardowns: Mutex<VecDeque<Result<TeardownReport, String>>>,
     /// How many attempts this driver has produced, for run identifiers.
     pub attempts_run: std::sync::atomic::AtomicU64,
+    /// Identifiers each attempt reports as created.
+    pub resource_ids: Vec<String>,
 }
 
 impl ScriptedDriver {
@@ -48,6 +50,7 @@ impl ScriptedDriver {
             runs: Mutex::new(attempts.into()),
             teardowns: Mutex::new((0..runs).map(|_| Ok(TeardownReport::verified())).collect()),
             attempts_run: std::sync::atomic::AtomicU64::new(0),
+            resource_ids: Vec::new(),
         }
     }
 
@@ -71,6 +74,8 @@ impl ScriptedDriver {
 }
 
 impl CampaignDriver for ScriptedDriver {
+    fn provider(&self) -> &'static str { "scaleway" }
+
     fn pre_sweep(&self, _campaign_id: &str) -> Result<SweepReport, String> {
         self.note(String::from("sweep"));
         self.sweep.clone()
@@ -97,7 +102,7 @@ impl CampaignDriver for ScriptedDriver {
         Ok(AttemptRecords {
             run,
             phases: Vec::new(),
-            resource_ids: Vec::new(),
+            resource_ids: self.resource_ids.clone(),
         })
     }
 
@@ -167,5 +172,22 @@ pub fn plan(attempts: usize) -> CampaignPlan {
                 estimated_micros: 1,
             })
             .collect(),
+    }
+}
+
+/// A sink that accepts the header and rejects every run record.
+#[derive(Debug, Default)]
+pub struct RejectRuns {
+    /// Records that were accepted.
+    pub accepted: Vec<Record>,
+}
+
+impl RecordSink for RejectRuns {
+    fn append(&mut self, record: &Record) -> Result<(), String> {
+        if record.kind() == RecordKind::Run {
+            return Err(String::from("the disk is full"));
+        }
+        self.accepted.push(record.clone());
+        Ok(())
     }
 }

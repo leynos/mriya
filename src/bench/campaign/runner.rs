@@ -25,6 +25,17 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 /// be recorded, a record cannot be written, or a teardown cannot be verified.
 /// On a cleanup doubt the residual record is written before the error returns.
 ///
+/// # Parameters
+///
+/// - `plan`: the operator's declared campaign.
+/// - `opt_in`: the value of the opt-in variable, if set.
+/// - `driver`: the provider implementation.
+/// - `sink`: where each record is appended and flushed.
+///
+/// # Returns
+///
+/// `Ok(())` after every attempt completed and the final record was flushed.
+///
 /// # Examples
 ///
 /// A campaign that is not enabled does not call the driver at all:
@@ -49,6 +60,7 @@ use crate::bench::record::{Record, RecordKind, ResidualRecord, SCHEMA_VERSION};
 /// struct NeverCalled;
 ///
 /// impl CampaignDriver for NeverCalled {
+///     fn provider(&self) -> &'static str { "scaleway" }
 ///     fn pre_sweep(&self, _: &str) -> Result<SweepReport, String> {
 ///         panic!("the driver must not be called when paid runs are disabled")
 ///     }
@@ -111,6 +123,7 @@ where
 {
     require_opt_in(opt_in)?;
     plan.validate()?;
+    check_served_provider(plan, driver)?;
     // Held for the whole campaign, so a second invocation cannot pass its own
     // sweep while this one is allocating.
     let _lock = super::CampaignLock::acquire(&plan.campaign_id)?;
@@ -147,19 +160,18 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
         Ok(records) => records,
         Err(failure) => return abandon_attempt(plan, attempt, failure, sink),
     };
-    sink.append(&Record::Run(Box::new(records.run.clone())))
-        .map_err(|message| CampaignError::RecordWriteFailed {
+    // A successful attempt has already run, so its teardown is verified even
+    // when its record cannot be written: the operator needs to know whether
+    // anything it created survived.
+    let write_failure = append_attempt(records.as_records(), sink).err();
+    let teardown = driver.verify_teardown(&plan.campaign_id, attempt, &records.run);
+    if let Some(message) = write_failure {
+        return Err(CampaignError::RecordWriteFailed {
             message,
-            residual: None,
-        })?;
-    for phase in &records.phases {
-        sink.append(&Record::Phase(Box::new(phase.clone())))
-            .map_err(|message| CampaignError::RecordWriteFailed {
-                message,
-                residual: None,
-            })?;
+            residual: residual_detail(attempt, &records.resource_ids, teardown),
+        });
     }
-    match driver.verify_teardown(&plan.campaign_id, attempt, &records.run) {
+    match teardown {
         Ok(report) if report.is_verified() => Ok(()),
         Ok(report) => {
             let residual_ids = report.residual_ids;
@@ -199,6 +211,36 @@ fn run_one_attempt<D: CampaignDriver, S: RecordSink>(
     }
 }
 
+/// Appends an attempt's records, returning the first failure.
+fn append_attempt<S: RecordSink>(records: Vec<Record>, sink: &mut S) -> Result<(), String> {
+    for record in records {
+        sink.append(&record)?;
+    }
+    Ok(())
+}
+
+/// Describes what a write failure left behind, when anything is known.
+fn residual_detail(
+    attempt: &PlannedAttempt,
+    resource_ids: &[String],
+    teardown: Result<super::ports::TeardownReport, String>,
+) -> Option<String> {
+    let (residual_ids, reason) = match teardown {
+        Ok(report) if report.is_verified() && resource_ids.is_empty() => return None,
+        Ok(report) => (report.residual_ids, report.reason),
+        Err(reason) => (resource_ids.to_vec(), reason),
+    };
+    let ids = if residual_ids.is_empty() {
+        resource_ids.to_vec()
+    } else {
+        residual_ids
+    };
+    Some(format!(
+        "provider {:?} resources {ids:?}: teardown status {reason:?}",
+        attempt.provider
+    ))
+}
+
 /// Records a failed attempt as a cleanup doubt and stops the campaign.
 fn abandon_attempt<S: RecordSink>(
     plan: &CampaignPlan,
@@ -229,6 +271,26 @@ fn abandon_attempt<S: RecordSink>(
     Err(CampaignError::AttemptFailed(failure.reason))
 }
 
+/// Requires every attempt to target the provider the driver serves.
+///
+/// A plan can declare several providers, but a campaign is run by one driver.
+/// Checking before the sweep means a mismatched plan allocates nothing at all.
+fn check_served_provider<D: CampaignDriver>(
+    plan: &CampaignPlan,
+    driver: &D,
+) -> Result<(), CampaignError> {
+    let served = driver.provider();
+    for attempt in &plan.attempts {
+        if attempt.provider != served {
+            return Err(CampaignError::InvalidPlan(format!(
+                "attempt for {} targets provider {:?}, but this driver serves {served:?}",
+                attempt.workload_id, attempt.provider
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Runs the pre-sweep, stopping the campaign when it finds anything.
 ///
 /// A sweep that could not run is treated exactly like a sweep that found
@@ -246,7 +308,7 @@ fn pre_sweep<D: CampaignDriver, S: RecordSink>(
                 sink,
                 plan,
                 ResidualDetail {
-                    provider: plan.providers.first().cloned().unwrap_or_default(),
+                    provider: driver.provider().to_owned(),
                     resource_ids: report.residual_ids.clone(),
                     reason: String::from("the pre-sweep found resources from an earlier campaign"),
                 },
@@ -258,7 +320,7 @@ fn pre_sweep<D: CampaignDriver, S: RecordSink>(
                 sink,
                 plan,
                 ResidualDetail {
-                    provider: plan.providers.first().cloned().unwrap_or_default(),
+                    provider: driver.provider().to_owned(),
                     resource_ids: Vec::new(),
                     reason: format!("the pre-sweep could not be completed: {reason}"),
                 },
@@ -309,6 +371,6 @@ fn record_residual<S: RecordSink>(
     sink.flush()
         .map_err(|message| CampaignError::RecordWriteFailed {
             message,
-            residual: None,
+            residual: Some(named),
         })
 }

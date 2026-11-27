@@ -100,7 +100,7 @@ minimum_seconds = 0
 
 #[test]
 fn the_example_sheet_records_where_every_rate_came_from() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     for (name, provider) in &sheet.providers {
         assert!(
             provider.source.starts_with("https://"),

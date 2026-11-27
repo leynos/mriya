@@ -142,11 +142,22 @@ const fn default_month_seconds() -> u64 { DEFAULT_MONTH_SECONDS }
 
 /// Loads a price sheet from TOML text.
 ///
+/// # Parameters
+///
+/// - `text`: a TOML document with `[sheet]`, optional `[fx.*]`, and `[providers.*]`.
+///
+/// # Returns
+///
+/// The validated sheet. A provider with no `currency` quotes in the sheet's,
+/// and a missing `month_seconds` defaults to a 30-day month.
+///
 /// # Errors
 ///
-/// Returns [`PriceSheetError::Parse`] when the text is not a price sheet, and
-/// [`PriceSheetError::MissingCurrency`] when it declares no currency, because a
-/// price without a unit cannot be compared with anything.
+/// Returns [`PriceSheetError::Parse`] when the text is not a price sheet,
+/// [`PriceSheetError::MissingCurrency`] when it declares no currency,
+/// [`PriceSheetError::MissingRetrievalDate`] when it does not say when the
+/// rates were read, and [`PriceSheetError::MissingSource`] when a provider or
+/// conversion rate does not say where it came from.
 ///
 /// # Examples
 ///

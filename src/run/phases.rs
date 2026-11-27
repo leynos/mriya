@@ -263,7 +263,12 @@ where
         handle: &InstanceHandle,
         err: &E,
     ) -> String {
-        let teardown_error = self.backend.destroy(handle.clone()).await.err();
+        // Cleanup after a failure is still teardown work, so the observer sees
+        // its cost on every path rather than only on a clean run.
+        let teardown_error = self
+            .observe_async(PhaseKind::Teardown, self.backend.destroy(handle.clone()))
+            .await
+            .err();
         append_teardown_note(err.to_string(), teardown_error.as_ref())
     }
 }

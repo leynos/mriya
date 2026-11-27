@@ -138,6 +138,8 @@ impl ScalewayDriver {
 }
 
 impl CampaignDriver for ScalewayDriver {
+    fn provider(&self) -> &'static str { "scaleway" }
+
     fn pre_sweep(&self, campaign_id: &str) -> DriverResult<SweepReport> { self.sweep(campaign_id) }
 
     fn run_attempt(

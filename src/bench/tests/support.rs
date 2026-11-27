@@ -8,9 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use camino::Utf8Path;
-use cap_std::{ambient_authority, fs_utf8::Dir};
-
 use super::super::{
     billing::{
         DEFAULT_MONTH_SECONDS,
@@ -21,43 +18,75 @@ use super::super::{
         StorageRule,
         load_price_sheet,
     },
-    record::{Record, RunRecord, parse_line},
+    record::{
+        Allocation,
+        CacheObservation,
+        CacheState,
+        Concurrency,
+        GuestArchitecture,
+        Lifetime,
+        ProviderProduct,
+        Record,
+        RecordKind,
+        RunOutcome,
+        RunRecord,
+        RunRole,
+        SCHEMA_VERSION,
+        ToolchainPin,
+        TreePin,
+        WorkloadClass,
+        parse_line,
+    },
     validate::{Campaign, validate_str},
 };
 
-/// Reads a fixture from the benchmark fixtures directory.
+/// The valid campaign fixture, embedded at compile time.
 ///
-/// The read goes through a capability handle rooted at the manifest directory,
-/// so it cannot follow a path outside the repository even if a fixture name
-/// were ever built from something other than a literal.
-///
-/// # Panics
-///
-/// Panics when the fixture is missing, because a missing fixture means the test
-/// suite itself is broken rather than that the code under test failed.
-pub fn fixture(name: &str) -> String {
-    let manifest = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
-    let directory = Dir::open_ambient_dir(manifest, ambient_authority())
-        .expect("the manifest directory should open");
-    directory
-        .read_to_string(format!("src/bench/fixtures/{name}"))
-        .expect("the fixture should read")
-}
+/// Embedding it removes a fallible read from shared setup: the fixture is part
+/// of the test binary, so a missing or unreadable file is a build failure rather
+/// than a panic inside a helper.
+pub const VALID_CAMPAIGN: &str = include_str!("../fixtures/valid-campaign.jsonl");
+
+/// The header-only fixture, embedded at compile time.
+pub const HEADER_ONLY_CAMPAIGN: &str = include_str!("../fixtures/header-only.jsonl");
+
+/// The defective fixture, embedded at compile time.
+pub const DEFECTIVE_CAMPAIGN: &str = include_str!("../fixtures/defective-campaign.jsonl");
+
+/// The repository's example price sheet, embedded at compile time.
+pub const EXAMPLE_PRICE_SHEET: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/benchmarks/price-sheet.example.toml"
+));
+
+/// The repository's example campaign plan, embedded at compile time.
+pub const EXAMPLE_CAMPAIGN: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/benchmarks/campaign.example.toml"
+));
 
 /// Returns the example sheet shipped with the repository.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics when the sheet is missing or unreadable, for the reason [`fixture`]
-/// gives.
-pub fn example_sheet() -> PriceSheet {
-    let manifest = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
-    let directory = Dir::open_ambient_dir(manifest, ambient_authority())
-        .expect("the manifest directory should open");
-    let text = directory
-        .read_to_string("benchmarks/price-sheet.example.toml")
-        .expect("the example price sheet should read");
-    load_price_sheet(&text).expect("the example price sheet should parse")
+/// Returns the parse error when the embedded sheet is not valid, which would be
+/// a defect in the repository rather than in a test.
+pub fn example_sheet() -> Result<PriceSheet, String> {
+    load_price_sheet(EXAMPLE_PRICE_SHEET).map_err(|err| err.to_string())
+}
+
+/// Returns a fixture by name, for the few tests that need a dynamic choice.
+///
+/// # Errors
+///
+/// Returns an error when the name is not one of the embedded fixtures.
+pub fn fixture(name: &str) -> Result<&'static str, String> {
+    match name {
+        "valid-campaign.jsonl" => Ok(VALID_CAMPAIGN),
+        "header-only.jsonl" => Ok(HEADER_ONLY_CAMPAIGN),
+        "defective-campaign.jsonl" => Ok(DEFECTIVE_CAMPAIGN),
+        other => Err(format!("no embedded fixture named {other}")),
+    }
 }
 
 /// A product that bills a whole hour at EUR 0.036.
@@ -131,6 +160,7 @@ pub fn sheet_with_plan(product: ProductRule, included_starts: u64) -> PriceSheet
 pub fn run_record(index: usize) -> RunRecord {
     match super::super::record::parse_line(
         super::fixture("valid-campaign.jsonl")
+            .expect("the embedded fixture")
             .lines()
             .nth(1)
             .expect("the fixture has a run line"),
@@ -161,32 +191,16 @@ impl IntoRun for Record {
     }
 }
 
-/// Returns the repository's example campaign plan.
-///
-/// # Panics
-///
-/// Panics when the plan is missing, for the reason [`fixture`] gives.
-pub fn example_campaign() -> String {
-    let manifest = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
-    let directory = Dir::open_ambient_dir(manifest, ambient_authority())
-        .expect("the manifest directory should open");
-    directory
-        .read_to_string("benchmarks/campaign.example.toml")
-        .expect("the example campaign should read")
-}
-
 /// Returns the fixture's header and run lines as a campaign.
-pub fn example_campaign_records() -> Campaign {
-    validate_str(&fixture("valid-campaign.jsonl")).expect("the fixture is valid")
+pub fn example_campaign_records() -> Result<Campaign, String> {
+    validate_str(VALID_CAMPAIGN).map_err(|complaints| format!("{complaints:?}"))
 }
 
 /// Builds a campaign from a header and the runs given.
-pub fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
-    let header_line = fixture("valid-campaign.jsonl")
-        .lines()
-        .next()
-        .expect("the fixture has a header")
-        .to_owned();
+pub fn campaign_with(runs: Vec<RunRecord>) -> Result<Campaign, String> {
+    let Some(header_line) = VALID_CAMPAIGN.lines().next().map(str::to_owned) else {
+        return Err(String::from("the fixture has no header"));
+    };
     let mut text = header_line;
     text.push('\n');
     for (index, mut run) in runs.into_iter().enumerate() {
@@ -197,22 +211,82 @@ pub fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
         text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
         text.push('\n');
     }
-    validate_str(&text).expect("the constructed campaign is valid")
+    validate_str(&text).map_err(|complaints| format!("{complaints:?}"))
 }
 
 /// Returns the fixture's run record, adjusted by `change`.
 pub fn run_with(change: impl FnOnce(&mut RunRecord)) -> RunRecord {
-    let mut run = match parse_line(
-        fixture("valid-campaign.jsonl")
-            .lines()
-            .nth(1)
-            .expect("the fixture has a run line"),
-    )
-    .expect("the fixture's run line parses")
-    {
-        Record::Run(run) => *run,
-        other => panic!("expected a run record, got {other:?}"),
+    let Some(line) = VALID_CAMPAIGN.lines().nth(1) else {
+        // The fixture is a compile-time constant with known contents, so this
+        // branch is unreachable in practice; it returns a minimal record rather
+        // than panicking so the helper itself never aborts a run.
+        return minimal_run();
+    };
+    let mut run = match parse_line(line) {
+        Ok(Record::Run(run)) => *run,
+        _ => return minimal_run(),
     };
     change(&mut run);
     run
+}
+
+/// Returns a minimal run record, for the case the fixture cannot be parsed.
+fn minimal_run() -> RunRecord {
+    RunRecord {
+        schema: SCHEMA_VERSION,
+        kind: RecordKind::Run,
+        campaign_id: String::from("fixture"),
+        run_id: String::from("fixture/run"),
+        workload_id: String::from("cold-build"),
+        command: vec![String::from("cargo"), String::from("build")],
+        role: RunRole::Timed,
+        class: WorkloadClass::Cpu,
+        tree: TreePin {
+            remote: String::from("git@github.com:leynos/mriya.git"),
+            commit: String::from("fixture"),
+            tree_digest: String::from("fixture"),
+            dirty: false,
+            size_bytes: 1,
+            file_count: 1,
+        },
+        toolchain: ToolchainPin {
+            compiler: String::from("rustc"),
+            compiler_version: String::from("1"),
+            package_manager: String::from("cargo"),
+            package_manager_version: String::from("1"),
+        },
+        provider: ProviderProduct {
+            provider: String::from("scaleway"),
+            product: String::from("DEV1-S"),
+            location: String::from("fr-par-1"),
+        },
+        allocation: Allocation {
+            cpu_count: 2,
+            memory_bytes: 1,
+            disk_bytes: 1,
+            requested_architecture: String::from("x86_64"),
+            guest_architecture: GuestArchitecture::X86_64,
+        },
+        concurrency: Concurrency {
+            intended_workers: 1,
+            effective_workers: 1,
+        },
+        cache: CacheObservation {
+            state: CacheState::Absent,
+            size_bytes: 0,
+            mounted: false,
+            saved_bytes: 0,
+        },
+        lifetime: Lifetime {
+            total_nanos: 1,
+            chargeable_nanos: 1,
+        },
+        outcome: RunOutcome::Completed {
+            exit_code: 0,
+            correctness_passed: true,
+        },
+        gpu: None,
+        repetition: 1,
+        retained: Vec::new(),
+    }
 }

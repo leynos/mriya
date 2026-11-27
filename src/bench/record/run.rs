@@ -125,10 +125,11 @@ pub struct Lifetime {
     /// Billable lifetime the writer recorded for this attempt.
     ///
     /// A writer that knows the provider's granularity may already have applied
-    /// it. The report prices from this figure and lets the sheet round again,
-    /// which is idempotent, so a record that applied a minimum is never
-    /// re-rounded downwards. The validator requires it to be at least the
-    /// measured lifetime.
+    /// it. When this figure equals the measured lifetime, the report applies
+    /// the sheet's rules to the measured lifetime. When it is longer, the
+    /// report prices it unchanged (floored at the provider's minimum), because
+    /// rounding an applied minimum again could overstate it. The validator
+    /// requires it to be at least the measured lifetime.
     pub chargeable_nanos: u64,
 }
 

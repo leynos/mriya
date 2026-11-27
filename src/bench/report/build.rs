@@ -112,6 +112,8 @@ struct GroupBuilder {
     warm_up_marginal_micros: u64,
     /// Subscription share attributed to completed attempts.
     subscription_micros: u64,
+    /// Subscription share attributed to failed attempts.
+    failed_subscription_micros: u64,
     /// Total-account cost of completed attempts.
     total_account_micros: u64,
     /// Absorbed compute time.
@@ -137,6 +139,7 @@ impl GroupBuilder {
             failed_marginal_micros: 0,
             warm_up_marginal_micros: 0,
             subscription_micros: 0,
+            failed_subscription_micros: 0,
             total_account_micros: 0,
             absorbed_nanos: 0,
             chargeable_nanos: 0,
@@ -205,6 +208,7 @@ impl GroupBuilder {
             failed_marginal_micros: self.failed_marginal_micros,
             warm_up_marginal_micros: self.warm_up_marginal_micros,
             subscription_micros: self.subscription_micros,
+            failed_subscription_micros: self.failed_subscription_micros,
             total_account_micros: self.total_account_micros,
             absorbed_nanos: self.absorbed_nanos,
             chargeable_nanos: self.chargeable_nanos,

@@ -55,9 +55,10 @@ start_charge_micros = 0
 
 [providers.scaleway.storage.block-ssd]
 # Scaleway Block Storage SSD, quoted per GB-hour and converted with the sheet's
-# 30-day month: EUR 0.000118/GB-hour * 720 hours = EUR 0.08496/GB-month.
+# 30-day month: EUR 0.000130/GB-hour * 720 hours = EUR 0.09360/GB-month, the
+# price effective 1 June 2026.
 # Source: https://www.scaleway.com/en/pricing/block-storage/ read 2026-11-27.
-price_per_gb_month_micros = 84960
+price_per_gb_month_micros = 93600
 granularity_seconds = 3600
 minimum_seconds = 3600
 

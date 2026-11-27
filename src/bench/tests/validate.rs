@@ -34,7 +34,7 @@ fn an_empty_file_reports_both_missing_header_and_missing_runs() {
 
 #[test]
 fn a_valid_fixture_reports_no_complaint() {
-    let campaign = validate_str(&fixture("valid-campaign.jsonl"))
+    let campaign = validate_str(fixture("valid-campaign.jsonl").expect("the embedded fixture"))
         .expect("the valid fixture should validate clean");
     assert_eq!(campaign.id(), "example-2026-11-26");
     assert_eq!(campaign.runs.len(), 1);
@@ -43,8 +43,8 @@ fn a_valid_fixture_reports_no_complaint() {
 
 #[test]
 fn a_header_with_no_runs_is_reported() {
-    let complaints =
-        validate_str(&fixture("header-only.jsonl")).expect_err("a header alone proves nothing");
+    let complaints = validate_str(fixture("header-only.jsonl").expect("the embedded fixture"))
+        .expect_err("a header alone proves nothing");
     let rendered = messages(&complaints);
     assert!(rendered.contains("no run records"), "{rendered}");
     assert!(!rendered.contains("no campaign header"), "{rendered}");
@@ -75,7 +75,8 @@ fn a_header_with_no_runs_is_reported() {
 #[case("malformed record", "a non-JSON line is reported")]
 fn the_defective_fixture_reports_each_named_defect(#[case] needle: &str, #[case] why: &str) {
     let complaints =
-        validate_str(&fixture("defective-campaign.jsonl")).expect_err("the fixture is defective");
+        validate_str(fixture("defective-campaign.jsonl").expect("the embedded fixture"))
+            .expect_err("the fixture is defective");
     let rendered = messages(&complaints);
     assert!(
         rendered.contains(needle),
@@ -87,7 +88,9 @@ fn the_defective_fixture_reports_each_named_defect(#[case] needle: &str, #[case]
 fn a_file_whose_every_run_line_is_unreadable_has_no_run_records() {
     let text = format!(
         "{}\nnot a record\n",
-        fixture("header-only.jsonl").trim_end()
+        fixture("header-only.jsonl")
+            .expect("the embedded fixture")
+            .trim_end()
     );
     let complaints = validate_str(&text).expect_err("an unreadable run is not a run");
     let rendered = messages(&complaints);
@@ -98,7 +101,8 @@ fn a_file_whose_every_run_line_is_unreadable_has_no_run_records() {
 #[test]
 fn every_defect_is_reported_rather_than_only_the_first() {
     let complaints =
-        validate_str(&fixture("defective-campaign.jsonl")).expect_err("the fixture is defective");
+        validate_str(fixture("defective-campaign.jsonl").expect("the embedded fixture"))
+            .expect_err("the fixture is defective");
     // The fixture carries at least a dozen independent problems; a validator
     // that stopped at the first would report one.
     assert!(
@@ -243,6 +247,7 @@ fn a_gpu_run_without_a_passing_correctness_check_is_a_failure() {
 fn valid_run() -> RunRecord {
     match parse_line(
         fixture("valid-campaign.jsonl")
+            .expect("the embedded fixture")
             .lines()
             .nth(1)
             .expect("the fixture has a run line"),
@@ -361,6 +366,7 @@ fn a_phase_that_names_no_run_is_refused() {
 /// test can construct the duplicate this validator must reject.
 fn campaign_text(runs: Vec<RunRecord>) -> String {
     let mut text = fixture("valid-campaign.jsonl")
+        .expect("the embedded fixture")
         .lines()
         .next()
         .expect("the fixture has a header")

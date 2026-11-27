@@ -38,6 +38,7 @@ fn report_missing_pins(line: usize, run: &RunRecord, complaints: &mut Vec<Compla
     let pins: &[(&'static str, bool)] = &[
         ("campaign_id", run.campaign_id.trim().is_empty()),
         ("workload_id", run.workload_id.trim().is_empty()),
+        ("run_id", run.run_id.trim().is_empty()),
         ("command", run.command.is_empty()),
         ("tree.remote", run.tree.remote.trim().is_empty()),
         ("tree.commit", run.tree.commit.trim().is_empty()),

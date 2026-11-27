@@ -96,8 +96,22 @@ pub(super) fn attribute_subscription(
             u64::try_from(proportional).unwrap_or(u64::MAX).min(left)
         };
         remaining.insert(result.provider.clone(), left.saturating_sub(share));
-        result.subscription_micros = share;
-        result.total_account_micros = result.total_account_micros.saturating_add(share);
+        // Only the completed attempts' share belongs in the completed-gate
+        // figures; a group with no completed attempt must not report a
+        // completed-gate cost.
+        let weight_total = result.completed.saturating_add(result.failed);
+        let completed_share = if weight_total == 0 {
+            0
+        } else {
+            let proportional = u128::from(share)
+                .saturating_mul(u128::from(result.completed))
+                .checked_div(u128::from(weight_total))
+                .unwrap_or(0);
+            u64::try_from(proportional).unwrap_or(u64::MAX)
+        };
+        result.subscription_micros = completed_share;
+        result.failed_subscription_micros = share.saturating_sub(completed_share);
+        result.total_account_micros = result.total_account_micros.saturating_add(completed_share);
     }
 }
 

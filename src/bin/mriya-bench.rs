@@ -188,6 +188,17 @@ fn exec_run(args: &RunArgs) -> i32 {
     }
     // Checking the destination before the driver means an operator with a
     // stale output file is told so without needing provider credentials.
+    //
+    // The claim is taken before the check and held through the final flush, so
+    // two campaigns with different identifiers cannot both pass the check and
+    // write a header each.
+    let _claim = match OutputClaim::acquire(&args.out) {
+        Ok(claim) => claim,
+        Err(message) => {
+            report(&message);
+            return 1;
+        }
+    };
     if let Err(message) = require_empty(&args.out) {
         report(&message);
         return 1;
@@ -304,3 +315,42 @@ fn say(message: &str) { writeln!(io::stdout(), "{message}").ok(); }
 
 /// Writes one line to standard error, ignoring a closed stream.
 fn report(message: &str) { writeln!(io::stderr(), "{message}").ok(); }
+
+/// An exclusive claim on one output path, held for the life of a paid run.
+struct OutputClaim {
+    /// Directory holding the claim file.
+    directory: Dir,
+    /// Name of the claim file.
+    name: String,
+}
+
+impl OutputClaim {
+    /// Claims `output` by creating `<output>.lock` exclusively.
+    ///
+    /// The claim is a separate file so the output itself can be appended to
+    /// normally. A leftover claim means a previous run did not finish; the
+    /// error says so rather than guessing that it is stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when another run holds the claim, or when the claim
+    /// file cannot be created.
+    fn acquire(output: &str) -> Result<Self, String> {
+        let claim_path = format!("{output}.lock");
+        let (directory, name) = parent_handle(&claim_path)?;
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        match directory.as_ref().open_with(&name, &options) {
+            Ok(_) => Ok(Self { directory, name }),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+                "{output} is claimed by a run that did not finish; move {claim_path} aside and \
+                 retry"
+            )),
+            Err(err) => Err(format!("cannot claim {output}: {err}")),
+        }
+    }
+}
+
+impl Drop for OutputClaim {
+    fn drop(&mut self) { self.directory.remove_file(&self.name).ok(); }
+}

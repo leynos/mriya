@@ -165,6 +165,17 @@ impl StorageRule {
 /// Rounds `nanos` up to whole `granularity_seconds` units and floors the result
 /// at `minimum_seconds`.
 ///
+/// # Parameters
+///
+/// - `measured_nanos`: the lifetime the attempt measured.
+/// - `granularity_seconds`: the provider's billable unit, which must be non-zero.
+/// - `minimum_seconds`: the provider's minimum chargeable period.
+///
+/// # Returns
+///
+/// The chargeable lifetime in nanoseconds: a whole number of granularity units,
+/// or the minimum when that is longer.
+///
 /// # Errors
 ///
 /// Returns [`PriceSheetError::ZeroGranularity`] when the rule declares a
@@ -202,6 +213,16 @@ pub fn chargeable_nanos(
 
 /// Converts `micros` from one currency into the sheet's currency.
 ///
+/// # Parameters
+///
+/// - `micros`: the amount in the source currency.
+/// - `rate_micros_per_unit`: micro-units of the sheet currency per whole unit of the source
+///   currency.
+///
+/// # Returns
+///
+/// The converted amount, rounded up to the micro-unit.
+///
 /// # Errors
 ///
 /// Returns [`PriceSheetError::Overflow`] when the converted amount does not fit
@@ -235,6 +256,14 @@ pub fn convert_micros(micros: u64, rate_micros_per_unit: u64) -> Result<u64, Pri
 /// Converts a currency amount in micro-units into a fixed decimal string.
 ///
 /// The report prints money in this form so it never has to use a float.
+///
+/// # Parameters
+///
+/// - `micros`: the amount, in micro-units.
+///
+/// # Returns
+///
+/// The amount as `"<whole>.<six digits>"`, without a currency label.
 ///
 /// # Examples
 ///

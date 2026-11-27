@@ -97,6 +97,13 @@ impl AttemptFailure {
 
 /// Runs one attempt and reports the resources it used.
 pub trait CampaignDriver {
+    /// Returns the provider this driver serves.
+    ///
+    /// A plan may declare several providers, but one driver serves one of them.
+    /// The harness checks every attempt against this before it sweeps or
+    /// allocates, so a plan cannot quietly run on a provider it did not name.
+    fn provider(&self) -> &'static str;
+
     /// Lists and deletes anything an earlier run of this campaign left behind.
     ///
     /// # Errors
@@ -290,4 +297,23 @@ pub fn require_opt_in(value: Option<&str>) -> Result<(), CampaignError> {
         variable: OPT_IN_ENV,
         value: OPT_IN_VALUE,
     })
+}
+
+impl AttemptRecords {
+    /// Returns the attempt's records in the order they are written.
+    ///
+    /// # Returns
+    ///
+    /// The run record first, then each phase record.
+    #[must_use]
+    pub fn as_records(&self) -> Vec<Record> {
+        let mut records = Vec::with_capacity(self.phases.len().saturating_add(1));
+        records.push(Record::Run(Box::new(self.run.clone())));
+        records.extend(
+            self.phases
+                .iter()
+                .map(|phase| Record::Phase(Box::new(phase.clone()))),
+        );
+        records
+    }
 }

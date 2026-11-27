@@ -47,7 +47,7 @@ fn a_zero_granularity_is_refused_rather_than_dividing_by_zero() {
 
 #[test]
 fn scaleway_prices_a_two_minute_gate_as_one_hour() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     // DEV1-S is EUR 0.00898/hour and bills a 60-minute minimum.
     let usage = Usage::new("scaleway", "DEV1-S", 120 * NANOS_PER_SECOND);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
@@ -61,7 +61,7 @@ fn scaleway_prices_a_two_minute_gate_as_one_hour() {
 
 #[test]
 fn hetzner_caps_a_long_gate_at_the_monthly_price() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     // CX23 costs EUR 0.0096/hour but never more than EUR 5.99 per month.
     let usage = Usage::new("hetzner", "CX23", 1_000 * NANOS_PER_HOUR);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
@@ -70,7 +70,7 @@ fn hetzner_caps_a_long_gate_at_the_monthly_price() {
 
 #[test]
 fn boat_bills_per_second_so_a_short_gate_costs_a_fraction_of_an_hour() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
     // USD 0.036/hour for one minute is USD 0.0006, and the extra start is
@@ -83,7 +83,7 @@ fn boat_bills_per_second_so_a_short_gate_costs_a_fraction_of_an_hour() {
 
 #[test]
 fn boat_absorbs_a_gate_inside_its_plan_and_reports_the_subscription() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND)
         .with_plan_allowance(NANOS_PER_HOUR)
         .with_starts_used(1)
@@ -110,7 +110,7 @@ fn boat_absorbs_a_gate_inside_its_plan_and_reports_the_subscription() {
 
 #[test]
 fn a_plan_that_includes_starts_absorbs_the_start_charge() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND)
         .with_plan_allowance(NANOS_PER_HOUR)
         .with_starts_used(0)
@@ -135,7 +135,7 @@ fn a_plan_that_includes_starts_absorbs_the_start_charge() {
 
 #[test]
 fn the_subscription_share_is_converted_into_the_sheet_currency() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     // Boat publishes its plan in USD; the sheet reports in EUR.
     let usage = Usage::new("boat", "default", 0).with_subscription_share(20_000_000);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
@@ -161,7 +161,7 @@ fn a_start_is_charged_only_beyond_the_plan_allowance(
 
 #[test]
 fn boat_charges_its_start_charge_when_no_start_is_included() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("boat", "default", 60 * NANOS_PER_SECOND).with_starts_used(0);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
     // The example plan includes no starts, so the USD 0.03 start applies and
@@ -171,7 +171,7 @@ fn boat_charges_its_start_charge_when_no_start_is_included() {
 
 #[test]
 fn ubicloud_bills_per_minute() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("ubicloud", "standard-2", 61 * NANOS_PER_SECOND);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
     assert_eq!(
@@ -198,7 +198,7 @@ fn retained_storage_is_priced_over_the_window_it_was_held() {
 
 #[test]
 fn an_unknown_product_is_named_rather_than_priced_as_zero() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("scaleway", "NO-SUCH-PRODUCT", NANOS_PER_HOUR);
     let error = charge(&sheet, &usage).expect_err("the product is absent");
     assert!(
@@ -209,7 +209,7 @@ fn an_unknown_product_is_named_rather_than_priced_as_zero() {
 
 #[test]
 fn an_unknown_provider_is_named() {
-    let sheet = example_sheet();
+    let sheet = example_sheet().expect("the example sheet parses");
     let usage = Usage::new("no-such-provider", "p", NANOS_PER_HOUR);
     let error = charge(&sheet, &usage).expect_err("the provider is absent");
     assert!(error.to_string().contains("no-such-provider"), "{error}");

@@ -207,6 +207,14 @@ impl CampaignPlan {
     /// what it may spend, and defaulting one would defeat the operator's
     /// declaration.
     ///
+    /// # Parameters
+    ///
+    /// - `text`: a TOML campaign plan with `[campaign]`, `[campaign.limits]` and `[[attempts]]`.
+    ///
+    /// # Returns
+    ///
+    /// The plan, after [`CampaignPlan::validate`] has accepted it.
+    ///
     /// # Errors
     ///
     /// Returns a message when the text is not a campaign plan, or when the plan

@@ -134,6 +134,14 @@ impl Usage {
     }
 
     /// Declares how many included starts had already been used.
+    ///
+    /// # Parameters
+    ///
+    /// - `starts_used`: starts already made under the plan's allowance.
+    ///
+    /// # Returns
+    ///
+    /// The usage, with the count set.
     #[must_use]
     pub const fn with_starts_used(mut self, starts_used: u64) -> Self {
         self.plan_starts_used = starts_used;

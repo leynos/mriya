@@ -19,8 +19,11 @@ use super::{
 
 #[test]
 fn the_fixture_is_priced_against_the_example_sheet() {
-    let report = build_report(&example_campaign_records(), &example_sheet())
-        .expect("the fixture should be priceable");
+    let report = build_report(
+        &example_campaign_records().expect("the fixture campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("the fixture should be priceable");
     assert_eq!(report.campaign_id, "example-2026-11-26");
     assert_eq!(report.currency, "EUR");
     let results = report
@@ -37,7 +40,11 @@ fn the_fixture_is_priced_against_the_example_sheet() {
 
 #[test]
 fn the_report_renders_the_cost_per_completed_gate() {
-    let report = build_report(&example_campaign_records(), &example_sheet()).expect("priced");
+    let report = build_report(
+        &example_campaign_records().expect("the fixture campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let rendered = render(&report);
     assert!(
         rendered.contains("campaign example-2026-11-26"),
@@ -58,7 +65,11 @@ fn a_failed_attempt_is_costed_but_not_counted_as_completed() {
             summary: String::from("compile error"),
         };
     });
-    let report = build_report(&campaign_with(vec![run]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![run]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let result = report
         .workloads
         .get("cold-build")
@@ -98,7 +109,11 @@ fn a_cache_capability_difference_is_stated_rather_than_averaged(
         run.cache.mounted = second != CacheState::Absent;
         run.cache.size_bytes = u64::from(second == CacheState::Warm) * 1024;
     });
-    let report = build_report(&campaign_with(vec![a, b]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![a, b]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     assert!(
         report
             .capability_notes
@@ -120,7 +135,11 @@ fn a_different_command_makes_two_attempts_incomparable() {
         run.provider.product = String::from("CX23");
         run.command = vec![String::from("cargo"), String::from("build")];
     });
-    let report = build_report(&campaign_with(vec![a, b]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![a, b]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     assert!(
         report
             .comparability_problems
@@ -149,7 +168,11 @@ fn a_mixed_cpu_and_gpu_workload_is_refused_as_a_ranking() {
             correctness_passed: true,
         });
     });
-    let report = build_report(&campaign_with(vec![a, b]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![a, b]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     assert!(
         report
             .comparability_problems
@@ -170,12 +193,17 @@ fn a_run_charged_less_than_its_measurement_is_refused() {
     // directly: the report must refuse it too, because a reader may price a
     // file that was produced by an older or a buggy writer.
     let campaign = Campaign {
-        header: example_campaign_records().header,
+        header: example_campaign_records()
+            .expect("the fixture campaign")
+            .header,
         runs: vec![(2, run)],
         phases: Vec::new(),
     };
-    let error = build_report(&campaign, &example_sheet())
-        .expect_err("an incoherent lifetime must not be priced");
+    let error = build_report(
+        &campaign,
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect_err("an incoherent lifetime must not be priced");
     assert!(matches!(error, ReportError::Incoherent { .. }), "{error}");
 }
 
@@ -184,8 +212,11 @@ fn an_unknown_product_is_refused_rather_than_priced_at_zero() {
     let run = run_with(|run| {
         run.provider.product = String::from("NO-SUCH-PRODUCT");
     });
-    let error = build_report(&campaign_with(vec![run]), &example_sheet())
-        .expect_err("an unpriced product must fail");
+    let error = build_report(
+        &campaign_with(vec![run]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect_err("an unpriced product must fail");
     assert!(matches!(error, ReportError::Billing(_)), "{error}");
     assert!(error.to_string().contains("NO-SUCH-PRODUCT"), "{error}");
 }
@@ -198,7 +229,11 @@ fn boat_absorbs_an_attempt_inside_its_plan_and_reports_the_subscription() {
         run.cache.state = CacheState::Absent;
         run.cache.mounted = false;
     });
-    let report = build_report(&campaign_with(vec![run]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![run]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let result = report
         .workloads
         .get("cold-build")
@@ -224,7 +259,11 @@ fn a_campaign_with_a_plan_reports_both_figures() {
         run.cache.state = CacheState::Absent;
         run.cache.mounted = false;
     });
-    let report = build_report(&campaign_with(vec![run]), &example_sheet()).expect("priced");
+    let report = build_report(
+        &campaign_with(vec![run]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
     let rendered = render(&report);
     assert!(rendered.contains("campaign marginal cost"), "{rendered}");
     assert!(
