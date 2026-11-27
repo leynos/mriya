@@ -61,8 +61,11 @@ Required sync settings: `ssh_identity_file`.
 ## File sync semantics
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
-so only files not matched by `.gitignore` patterns are transferred. Ignored
-cache paths such as `target/` are **not** deleted remotely, which keeps
+so only files not matched by `.gitignore` patterns are transferred. That filter
+reads per-directory `.gitignore` files only: it does not read
+`.git/info/exclude` or `core.excludesFile`, and it does not apply Git's `!`
+re-inclusion, so a path ignored only through those means still transfers.
+Ignored cache paths such as `target/` are **not** deleted remotely, which keeps
 pre-existing build outputs available for incremental runs. The `.git` directory
 is excluded from transfer.
 
