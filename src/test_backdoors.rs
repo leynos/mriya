@@ -17,7 +17,8 @@ use std::io::Write;
 use mockable::Env;
 use mriya::{RunError, ScalewayBackendError};
 
-use super::{CliError, RunCommand, build_backend_and_request};
+use super::{CliError, RunCommand};
+use crate::cli_commands::build_backend_and_request;
 
 /// A fake outcome chosen from the environment, before anything runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -168,8 +169,8 @@ impl PrefailStage {
             Self::Config => CliError::Config(String::from("fake")),
             Self::Sync => CliError::Sync(String::from("fake")),
             Self::Backend => CliError::Backend(String::from("fake")),
-            Self::Run => CliError::Run(RunError::Provision(ScalewayBackendError::Config(
-                String::from("fake"),
+            Self::Run => CliError::Run(Box::new(RunError::Provision(
+                ScalewayBackendError::Config(String::from("fake")),
             ))),
         }
     }

@@ -5,20 +5,35 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "7"
     When I orchestrate a remote run for "cargo test"
     Then the run result exit code is "7"
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface sync failures and still teardown
+  Scenario: Surface sync failures and still clean up
     Given a ready backend and sync pipeline
     And sync fails with status "12"
     When I orchestrate a remote run for "cargo test"
     Then the run error mentions sync failure
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface teardown failure after success
-    Given a backend that fails during teardown
+  Scenario: Surface cleanup failure after success
+    Given a backend that fails during cleanup
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "echo ok"
-    Then teardown failure is reported
+    Then the run error includes a cleanup failure note
+    And the run error names the residual resource
+
+  Scenario: Recover from partial provisioning after the create request
+    Given a ready backend and sync pipeline
+    And the create request fails after allocation
+    When I orchestrate a remote run for "cargo test"
+    Then the run error is a provisioning failure
+    And the instance is cleaned up
+
+  Scenario: Cancel a run and still clean up
+    Given a ready backend and sync pipeline
+    And the run is cancelled after its first allocation
+    When I orchestrate a remote run for "cargo test"
+    Then the run error is a cancellation
+    And the instance is cleaned up
 
   Scenario: Mount cache volume before syncing when volume ID is configured
     Given a ready backend and sync pipeline
@@ -28,17 +43,16 @@ Feature: Remote execution via mriya run
     When I orchestrate a remote run for "cargo build"
     Then the run result exit code is "0"
     And the cache volume is mounted before files are synced
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Continue execution when volume mount fails
+  Scenario: Surface a cache mount failure and still clean up
     Given a ready backend and sync pipeline
     And a volume ID "vol-12345" is configured
     And the mount command fails
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
-    Then the run result exit code is "0"
-    And files are still synced and the remote command still runs after the failed mount
-    And the instance is destroyed
+    Then the run error mentions sync failure
+    And the instance is cleaned up
 
   Scenario: Route Cargo caches to the mounted cache volume
     Given a ready backend and sync pipeline
@@ -47,7 +61,7 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo test"
     Then the remote command routes Cargo caches to the volume
-    And the instance is destroyed
+    And the instance is cleaned up
 
   Scenario: Allow disabling cache routing
     Given a ready backend and sync pipeline
@@ -57,7 +71,7 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo test"
     Then the remote command does not route Cargo caches
-    And the instance is destroyed
+    And the instance is cleaned up
 
   Scenario: Wait for cloud-init readiness before executing the remote command
     Given a ready backend and sync pipeline
@@ -68,27 +82,27 @@ Feature: Remote execution via mriya run
     When I orchestrate a remote run for "echo ok"
     Then cloud-init readiness is checked before executing the remote command
     And the run result exit code is "0"
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface cloud-init provisioning check failures and still teardown
+  Scenario: Surface cloud-init provisioning check failures and still clean up
     Given a ready backend and sync pipeline
     And cloud-init user data is configured
     And the rsync step succeeds
     And cloud-init check fails
     When I orchestrate a remote run for "echo ok"
     Then the run error mentions provisioning failure
-    And the instance is destroyed
+    And the instance is cleaned up
 
-  Scenario: Surface cloud-init provisioning timeout and still teardown
+  Scenario: Surface cloud-init provisioning timeout and still clean up
     Given a ready backend and sync pipeline
-    And a backend that fails during teardown
+    And a backend that fails during cleanup
     And cloud-init user data is configured
     And the rsync step succeeds
     And cloud-init provisioning times out
     When I orchestrate a remote run for "echo ok"
     Then the run error is a provisioning timeout
-    And the run error includes a teardown failure note
-    And the instance is destroyed
+    And the run error includes a cleanup failure note
+    And the instance is cleaned up
 
   Scenario: Create cache subdirectories after mounting the volume
     Given a ready backend and sync pipeline
@@ -97,7 +111,7 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the mount command creates cache subdirectories
-    And the instance is destroyed
+    And the instance is cleaned up
 
   Scenario: Allow disabling cache directory creation
     Given a ready backend and sync pipeline
@@ -107,4 +121,4 @@ Feature: Remote execution via mriya run
     And the scripted runner returns exit code "0"
     When I orchestrate a remote run for "cargo build"
     Then the mount command does not create cache subdirectories
-    And the instance is destroyed
+    And the instance is cleaned up

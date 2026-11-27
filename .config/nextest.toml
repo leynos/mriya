@@ -9,6 +9,11 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 # The whole run, strictly above the largest per-test allowance (600 s, below).
 global-timeout = "30m"
 
+[test-groups.live-scaleway]
+# The live Scaleway suites share one project and compare project-wide
+# inventories before and after a scenario, so they must not overlap.
+max-threads = 1
+
 [test-groups.nested-cargo-builds]
 # Tests that start a child cargo or rustc contend for the package-cache lock
 # and for build parallelism, and a cold build looks like a hang. One at a time,
@@ -19,3 +24,8 @@ max-threads = 1
 filter = 'binary(=cli_run) | binary(=cli_smoke) | binary(=cloud_init_behaviour) | binary(=instance_overrides_behaviour) | binary(=feature_gate_contract) | binary(=ui)'
 test-group = "nested-cargo-builds"
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+[[profile.default.overrides]]
+filter = 'binary(=scaleway_backend) | binary(=scaleway_cleanup) | binary(=scaleway_cloud_init)'
+test-group = "live-scaleway"
+slow-timeout = { period = "120s", terminate-after = 10 }

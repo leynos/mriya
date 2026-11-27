@@ -4,13 +4,7 @@ use mriya::sync::CACHE_SUBDIRECTORIES;
 use rstest_bdd_macros::{given, then};
 
 use super::{
-    bdd_steps::{
-        SshLookupDirection,
-        StepError,
-        context,
-        find_ssh_command,
-        last_ssh_remote_command,
-    },
+    bdd_steps::{StepError, context, first_ssh_remote_command, last_ssh_remote_command},
     test_helpers::{RunContext, RunContextResult},
 };
 
@@ -81,7 +75,7 @@ fn remote_command_does_not_route_cargo_caches(
 }
 
 fn first_ssh_raw_command(run_context: &RunContext) -> Result<String, StepError> {
-    find_ssh_command(run_context, SshLookupDirection::First)
+    first_ssh_remote_command(run_context)
 }
 
 #[then("the mount command creates cache subdirectories")]

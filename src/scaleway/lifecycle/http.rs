@@ -1,196 +1,245 @@
-//! HTTP boundary for instance reads, snapshot polling, deletion, and power-on
-//! actions.
+//! HTTP boundary for every direct Scaleway request.
 //!
-//! Keeping the endpoint private lets tests substitute a loopback API without
-//! altering global environment variables or calling the live provider. The
-//! instance read, list, delete, power-on, create, and volume paths all format
-//! their URL from `instance_api_base` for the same reason: the SDK's own
-//! helpers hard-code the production host, which leaves the caller unreachable
-//! from a test. Image lookup is the one exception; it still delegates to
-//! `ScalewayListInstanceImagesBuilder` on the SDK client and is covered by the
-//! pure selection cases instead.
+//! The base URLs are fields on the backend rather than constants so a test can
+//! point the whole lifecycle at a loopback server. Every request is bounded by
+//! the shared per-request timeout, and every failure is classified once here so
+//! the rest of the lifecycle can distinguish a 404 (evidence that a resource
+//! may be absent) from a 401 or 403 (a failure to act) and from a 5xx (an
+//! outcome that may still have been applied).
 
-use reqwest::{RequestBuilder, Response};
-use scaleway_rs::{ScalewayApiError, ScalewayError, ScalewayInstance};
-use serde::Deserialize;
+use std::future::Future;
 
-use crate::{
-    backend::InstanceHandle,
-    scaleway::{ScalewayBackend, ScalewayBackendError, types::Zone},
-};
-
-/// Response page from the list-servers call.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Schematic: page 1 carries one server and page 2 is empty, which ends
-/// // pagination. A real `ScalewayInstance` has about thirty required fields
-/// // with no serde defaults, so abbreviated JSON is not decodable; the tests
-/// // use `src/scaleway/lifecycle/tests/fixtures/detach-instance.json` as a
-/// // complete server.
-/// {"servers": [{ ... }]}   // page 1: one server
-/// {"servers": []}          // page 2: empty, so polling stops
-/// ```
-#[derive(Deserialize)]
-struct ListInstancesResponse {
-    /// Instances on this page; an empty list marks the end of pagination.
-    servers: Vec<ScalewayInstance>,
+/// A paginated listing's zone, project, and optional tag filter.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct ListQuery<'a> {
+    /// Zone the listing is scoped to.
+    pub(in crate::scaleway) zone: &'a str,
+    /// Project the listing is scoped to.
+    pub(in crate::scaleway) project_id: &'a str,
+    /// Optional tag every returned item must carry.
+    pub(in crate::scaleway) tag: Option<&'a str>,
 }
 
-#[derive(Deserialize)]
-struct GetInstanceResponse {
-    server: ScalewayInstance,
-}
+/// Number of items requested per list page.
+pub(in crate::scaleway) const LIST_PAGE_SIZE: u32 = 100;
 
-/// Adds request context when a transport or response-body operation fails.
+/// Safety bound on pagination, so a provider that ignores `page` cannot make a
+/// listing loop forever.
+pub(in crate::scaleway) const MAX_LIST_PAGES: u32 = 100;
+
+/// Collects pages until the provider returns an empty page.
 ///
-/// For example, a connection timeout becomes a provider error prefixed
-/// `Request:`.
-fn request_error(error: &reqwest::Error) -> ScalewayBackendError {
-    ScalewayBackendError::Provider {
-        message: format!("Request: {error}"),
+/// The bound exists so a provider that ignores `page` cannot loop forever. One
+/// terminal probe follows the last permitted populated page, which lets a
+/// listing whose final content page is the bound itself still end normally.
+///
+/// # Errors
+///
+/// Returns the first page failure, and a provider error when the listing does
+/// not terminate within [`MAX_LIST_PAGES`].
+pub(in crate::scaleway) async fn collect_pages<T, F, Fut>(
+    operation: &str,
+    mut fetch: F,
+) -> Result<Vec<T>, ScalewayBackendError>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: Future<Output = Result<Vec<T>, ScalewayBackendError>>,
+{
+    let mut page = 1;
+    let mut items = Vec::new();
+    loop {
+        let batch = fetch(page).await?;
+        if batch.is_empty() {
+            return Ok(items);
+        }
+        items.extend(batch);
+        page += 1;
+        if page > MAX_LIST_PAGES + 1 {
+            return Err(ScalewayBackendError::Provider {
+                message: format!("{operation} did not terminate after {MAX_LIST_PAGES} pages"),
+            });
+        }
     }
 }
 
-/// Preserves the SDK's structured client-error messages and HTTP status checks.
+use reqwest::{RequestBuilder, Response, StatusCode};
+use scaleway_rs::ScalewayApiError;
+use serde::de::DeserializeOwned;
+
+use super::super::{ScalewayBackend, ScalewayBackendError};
+
+/// Adds the operation name to a transport-level request failure.
 ///
-/// For example, a 403 `{"type":"denied","message":"no access"}` response
-/// becomes a provider error with the message `Api: denied - no access`.
-async fn checked_response(request: RequestBuilder) -> Result<Response, ScalewayBackendError> {
-    // Retain the per-request budget if the shared client fell back to an
-    // unconfigured client after its builder failed.
+/// For example, a connection timeout names the operation before
+/// `Request: <cause>`, so a report can say which call failed.
+pub(in crate::scaleway) fn request_error(
+    operation: &str,
+    error: &reqwest::Error,
+) -> ScalewayBackendError {
+    ScalewayBackendError::Provider {
+        message: format!("{operation}: Request: {error}"),
+    }
+}
+
+/// Extracts the provider's own message from a response body.
+///
+/// For example, `{"type":"denied","message":"no access"}` yields
+/// `denied - no access`, while a non-JSON body is returned trimmed.
+pub(in crate::scaleway) fn provider_message(body: &str) -> String {
+    serde_json::from_str::<ScalewayApiError>(body).map_or_else(
+        |_| body.trim().to_owned(),
+        |error| format!("{} - {}", error.etype, error.message),
+    )
+}
+
+/// Maps a non-success response to the backend error that describes it.
+///
+/// For example, a 404 becomes [`ScalewayBackendError::NotFound`], a 403
+/// becomes [`ScalewayBackendError::AccessDenied`], and any other status
+/// becomes a [`ScalewayBackendError::Provider`] naming the operation and
+/// status.
+pub(in crate::scaleway) fn classify_error(
+    operation: &str,
+    status: StatusCode,
+    body: &str,
+) -> ScalewayBackendError {
+    let message = provider_message(body);
+    match status.as_u16() {
+        401 | 403 => ScalewayBackendError::AccessDenied {
+            operation: operation.to_owned(),
+            status: status.as_u16(),
+            message,
+        },
+        404 => ScalewayBackendError::NotFound {
+            operation: operation.to_owned(),
+            message,
+        },
+        _ => ScalewayBackendError::Provider {
+            message: format!(
+                "{operation} failed with HTTP {}: {message}",
+                status.as_u16()
+            ),
+        },
+    }
+}
+
+/// Sends `request`, mapping a non-success status through [`classify_error`].
+///
+/// # Errors
+///
+/// Returns a transport [`ScalewayBackendError::Provider`] when no response
+/// arrives, and the classified error for a non-success status.
+pub(in crate::scaleway) async fn checked_response(
+    operation: &str,
+    request: RequestBuilder,
+) -> Result<Response, ScalewayBackendError> {
     let response = request
         .timeout(super::HTTP_TIMEOUT)
         .send()
         .await
-        .map_err(|error| request_error(&error))?;
-    if response.status().is_client_error() {
-        let error = response
-            .json::<ScalewayApiError>()
-            .await
-            .map_err(|error| request_error(&error))?;
-        return Err(ScalewayError::Api(error).into());
+        .map_err(|error| request_error(operation, &error))?;
+
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
     }
+
+    // Keep the status even when the body cannot be read; the read failure is
+    // added to the provider message instead of replacing the classification.
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|error| format!("response body could not be read: {error}"));
+    Err(classify_error(operation, status, &body))
+}
+
+/// Sends `request` and decodes a successful JSON response.
+///
+/// # Errors
+///
+/// Returns the same failures as [`checked_response`], and a provider error
+/// when a successful body cannot be decoded.
+pub(in crate::scaleway) async fn checked_json<T: DeserializeOwned>(
+    operation: &str,
+    request: RequestBuilder,
+) -> Result<T, ScalewayBackendError> {
+    let response = checked_response(operation, request).await?;
     response
-        .error_for_status()
-        .map_err(|error| request_error(&error))
+        .json::<T>()
+        .await
+        .map_err(|error| request_error(operation, &error))
 }
 
 impl ScalewayBackend {
-    /// Reads one instance through the substitutable HTTP boundary.
-    ///
-    /// For example, a `{"server": {...}}` response yields that server, while a
-    /// provider denial becomes a `ScalewayError::Api` provider error.
-    pub(in crate::scaleway) async fn get_instance(
-        &self,
-        handle: &InstanceHandle,
-    ) -> Result<ScalewayInstance, ScalewayBackendError> {
-        let url = format!(
-            "{}/zones/{}/servers/{}",
-            self.instance_api_base, handle.zone, handle.id,
-        );
-        let response = checked_response(
-            super::HTTP_CLIENT
-                .get(&url)
-                .header("X-Auth-Token", &self.config.secret_key),
-        )
-        .await?;
-        let result = response
-            .json::<GetInstanceResponse>()
-            .await
-            .map_err(|error| request_error(&error))?;
-        Ok(result.server)
+    /// Builds an Instances API URL for `zone` and a path suffix.
+    pub(in crate::scaleway) fn instance_url(&self, zone: &str, suffix: &str) -> String {
+        format!("{}/zones/{zone}/{suffix}", self.instance_api_base)
     }
 
-    /// Lists the selected instance using the SDK's pagination contract.
-    ///
-    /// For example, one matching server on page 1 followed by an empty page 2
-    /// yields that server; an empty first page yields `None`.
-    pub(in crate::scaleway) async fn list_instance(
-        &self,
-        handle: &InstanceHandle,
-    ) -> Result<Option<ScalewayInstance>, ScalewayBackendError> {
-        let url = format!("{}/zones/{}/servers", self.instance_api_base, handle.zone);
-        let mut page = 1_u64;
-        let mut last_server = None;
-        loop {
-            let response = checked_response(
-                super::HTTP_CLIENT
-                    .get(&url)
-                    .header("X-Auth-Token", &self.config.secret_key)
-                    .query(&[("servers", handle.id.as_str()), ("per_page", "1")])
-                    .query(&[("page", page)]),
-            )
-            .await?;
-            let mut result = response
-                .json::<ListInstancesResponse>()
-                .await
-                .map_err(|error| request_error(&error))?;
-            if result.servers.is_empty() {
-                return Ok(last_server);
-            }
-            last_server = result.servers.pop();
-            page += 1;
-        }
+    /// Builds a Block Storage API URL for `zone` and a path suffix.
+    pub(in crate::scaleway) fn block_url(&self, zone: &str, suffix: &str) -> String {
+        format!("{}/zones/{zone}/{suffix}", self.block_api_base)
     }
 
-    /// Deletes an instance before the caller polls for its disappearance.
-    ///
-    /// For example, a successful 204 response returns `Ok(())`; a provider
-    /// client error is returned before teardown polling starts.
-    pub(in crate::scaleway) async fn delete_instance(
-        &self,
-        handle: &InstanceHandle,
-    ) -> Result<(), ScalewayBackendError> {
-        let url = format!(
-            "{}/zones/{}/servers/{}",
-            self.instance_api_base, handle.zone, handle.id,
-        );
-        checked_response(
-            super::HTTP_CLIENT
-                .delete(&url)
-                .header("X-Auth-Token", &self.config.secret_key),
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Issues a power-on action through the same substitutable HTTP boundary.
-    ///
-    /// For example, a successful action response returns `Ok(())`, while an
-    /// API error retains its provider message.
-    pub(in crate::scaleway) async fn power_on_instance(
-        &self,
-        zone: &Zone,
-        instance_id: &str,
-    ) -> Result<(), ScalewayBackendError> {
-        let url = format!(
-            "{}/zones/{}/servers/{instance_id}/action",
-            self.instance_api_base,
-            zone.as_str(),
-        );
-        checked_response(
-            super::HTTP_CLIENT
-                .post(&url)
-                .header("X-Auth-Token", &self.config.secret_key)
-                .json(&serde_json::json!({"action": "poweron"})),
-        )
-        .await?;
-        Ok(())
+    /// Adds the authentication header every provider call needs.
+    pub(in crate::scaleway) fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
+        request.header("X-Auth-Token", &self.config.secret_key)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Exercises HTTP request budgets against a local server that withholds responses.
+    //! Exercises error classification and the request budget.
 
     use std::time::Duration;
 
+    use reqwest::StatusCode;
     use tokio::net::TcpListener;
 
-    use super::{super::HTTP_TIMEOUT, checked_response};
+    use super::{checked_response, classify_error};
     use crate::scaleway::ScalewayBackendError;
+
+    #[test]
+    fn a_denied_response_is_classified_as_access_denied() {
+        let error = classify_error(
+            "delete server",
+            StatusCode::FORBIDDEN,
+            r#"{"type":"denied","message":"no access"}"#,
+        );
+        assert_eq!(
+            error,
+            ScalewayBackendError::AccessDenied {
+                operation: String::from("delete server"),
+                status: 403,
+                message: String::from("denied - no access"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_not_found_response_is_classified_as_not_found() {
+        let error = classify_error("get volume", StatusCode::NOT_FOUND, "missing");
+        assert_eq!(
+            error,
+            ScalewayBackendError::NotFound {
+                operation: String::from("get volume"),
+                message: String::from("missing"),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unexpected_status_keeps_the_provider_message() {
+        let error = classify_error("create server", StatusCode::BAD_REQUEST, "bad request");
+        assert!(
+            matches!(
+                error,
+                ScalewayBackendError::Provider { ref message }
+                    if message.contains("400") && message.contains("bad request")
+            ),
+            "{error:?}"
+        );
+    }
 
     /// Ensures an accepted request returns at its deadline if no response
     /// arrives.
@@ -207,7 +256,7 @@ mod tests {
             .build()
             .expect("test client should build without a total timeout");
         let mut request_task = tokio::spawn(async move {
-            checked_response(client.get(format!("http://{address}/"))).await
+            checked_response("probe", client.get(format!("http://{address}/"))).await
         });
 
         let (server_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
@@ -215,7 +264,7 @@ mod tests {
             .expect("request should reach the local listener before the real deadline")
             .expect("listener should accept the request");
         tokio::time::pause();
-        tokio::time::advance(HTTP_TIMEOUT + Duration::from_secs(1)).await;
+        tokio::time::advance(super::super::HTTP_TIMEOUT + Duration::from_secs(1)).await;
 
         let request_result =
             match tokio::time::timeout(Duration::from_secs(1), &mut request_task).await {
@@ -231,7 +280,7 @@ mod tests {
             matches!(
                 &request_result,
                 Err(ScalewayBackendError::Provider { message })
-                    if message.starts_with("Request:")
+                    if message.contains("Request:")
             ),
             "expected a request provider error after the deadline: {request_result:?}"
         );

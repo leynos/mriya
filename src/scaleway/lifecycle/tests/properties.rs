@@ -129,8 +129,11 @@ fn error_outcome(error: ScalewayBackendError) -> Outcome {
         ScalewayBackendError::Timeout {
             action,
             instance_id,
+        } if action == "wait_until_gone" => Outcome::Residual(instance_id),
+        ScalewayBackendError::Timeout {
+            action,
+            instance_id,
         } => Outcome::Timeout(action, instance_id),
-        ScalewayBackendError::ResidualResource { instance_id } => Outcome::Residual(instance_id),
         ScalewayBackendError::Provider { message } => Outcome::Provider(message),
         other => Outcome::Unexpected(other.to_string()),
     }

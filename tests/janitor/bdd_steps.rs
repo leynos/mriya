@@ -121,6 +121,13 @@ fn scw_lists_tagged_resources(
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[("vol-b", "fr-par-1", &[])]), "");
+    // instance and block volume listings: no recorded boot volume remains
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
 
     Ok(janitor_context)
 }
@@ -151,6 +158,13 @@ fn scw_lists_remaining_server(
         json_servers(&[("srv-a", "fr-par-1", &[tag.as_str()])]),
         "",
     );
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
+    // instance and block volume listings: the recorded boot volume is gone
+    janitor_context
+        .runner
+        .push_output(Some(0), json_volumes(&[]), "");
     janitor_context
         .runner
         .push_output(Some(0), json_volumes(&[]), "");
@@ -196,8 +210,10 @@ fn reports_deletions(
     }
 }
 
-#[then("the janitor deletes servers without deleting attached volumes")]
-fn deletes_servers_without_volumes(janitor_context: &JanitorContext) -> Result<(), StepError> {
+#[then("the janitor deletes each server with its root volume and keeps non-root volumes")]
+fn deletes_servers_with_root_volume_only(
+    janitor_context: &JanitorContext,
+) -> Result<(), StepError> {
     let invocations = janitor_context.runner.invocations();
     let delete_call = invocations
         .iter()
@@ -218,15 +234,22 @@ fn deletes_servers_without_volumes(janitor_context: &JanitorContext) -> Result<(
             .iter()
             .any(|arg| arg.to_string_lossy() == needle)
     };
-    if !contains("with-volumes=none") {
+    if !contains("with-volumes=root") {
         return Err(StepError::Assertion(format!(
-            "expected with-volumes=none, got args: {:?}",
+            "expected with-volumes=root, got args: {:?}",
             delete_call.args
         )));
     }
     if !contains("--wait") {
         return Err(StepError::Assertion(String::from(
             "expected --wait flag for server delete",
+        )));
+    }
+    // Root-only deletion removes the untagged boot volume while leaving any
+    // other attached volume to the tagged-volume sweep.
+    if contains("with-volumes=all") {
+        return Err(StepError::Assertion(String::from(
+            "the janitor must not delete every attached volume",
         )));
     }
     Ok(())

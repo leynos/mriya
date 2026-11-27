@@ -1,0 +1,204 @@
+//! Cleanup and outcome composition for the init orchestrator.
+//!
+//! Initialization has one cleanup path and three outcomes: the volume was
+//! deleted before formatting, the volume was retained and its identifier is in
+//! configuration, or the volume was retained and must be recovered by
+//! identifier. Each outcome keeps the primary failure and reports what happened
+//! to the volume.
+
+use std::fmt::Display;
+
+use super::{
+    InitError,
+    InitErrorKind,
+    InitOrchestrator,
+    InitOutcome,
+    InitRequest,
+    orchestrator::CleanupOutcome,
+    outcome::{after_volume, clear_journal, interrupted_note, journal_note},
+};
+use crate::{
+    backend::Backend,
+    cancel::{Cancellation, Signal},
+    config_store::ConfigWriter,
+    ownership::ResourceLedger,
+    sync::CommandRunner,
+    volume::{VolumeBackend, VolumeHandle},
+};
+
+/// Inputs shared by the init steps and their cleanup.
+#[derive(Clone, Copy)]
+pub(super) struct InitContext<'a> {
+    /// The request that describes the volume to prepare.
+    pub(super) request: &'a InitRequest,
+    /// The run's ownership ledger.
+    pub(super) ledger: &'a ResourceLedger,
+    /// Cancellation view shared with the signal listener.
+    pub(super) cancellation: &'a Cancellation,
+}
+
+impl<B, R, W> InitOrchestrator<B, R, W>
+where
+    B: Backend + VolumeBackend,
+    B::Error: Display + Send + Sync + std::error::Error + 'static,
+    R: CommandRunner,
+    W: ConfigWriter,
+{
+    /// Promotes the volume to retained, cleans up, and records the ID.
+    pub(super) async fn finish_success(
+        &self,
+        context: &InitContext<'_>,
+        volume: &VolumeHandle,
+    ) -> Result<InitOutcome, InitError<B::Error>> {
+        let InitContext { ledger, .. } = *context;
+        if let Err(error) = Self::promote_retained(ledger, volume) {
+            return Err(self
+                .finish_unrecorded_retention(context, volume, error)
+                .await);
+        }
+        let warnings = self.cleanup_retained(context, volume).await?;
+        self.write_retained(context, volume, warnings)
+    }
+
+    /// Cleans up after a failure that happened after the volume was created.
+    pub(super) async fn finish_failure_after_volume(
+        &self,
+        context: &InitContext<'_>,
+        volume: &VolumeHandle,
+        primary: InitError<B::Error>,
+    ) -> InitError<B::Error> {
+        let InitContext {
+            ledger,
+            cancellation,
+            ..
+        } = *context;
+        match self.cleanup(ledger, cancellation).await {
+            CleanupOutcome::Completed(_) => {
+                // The volume is gone and the formatter instance with it, so
+                // the journal has nothing left to replay.
+                ledger.clear_journal().ok();
+                after_volume(
+                    primary,
+                    volume,
+                    format!(
+                        "the new volume {volume_id} in zone {zone} was deleted",
+                        volume_id = volume.id,
+                        zone = volume.zone
+                    ),
+                    None,
+                )
+            }
+            CleanupOutcome::Failed(failure) => {
+                let note = format!(
+                    "cleanup failed, so the new volume {volume_id} in zone {zone} may remain: \
+                     {failure}",
+                    volume_id = volume.id,
+                    zone = volume.zone
+                );
+                after_volume(primary, volume, note, Some(failure))
+            }
+            CleanupOutcome::Interrupted => {
+                after_volume(primary, volume, interrupted_note(ledger), None)
+            }
+        }
+    }
+
+    /// Cleans up after a failure before any volume identifier was recorded.
+    pub(super) async fn finish_failure_without_volume(
+        &self,
+        context: &InitContext<'_>,
+        primary: B::Error,
+    ) -> InitError<B::Error> {
+        let InitContext {
+            ledger,
+            cancellation,
+            ..
+        } = *context;
+        match self.cleanup(ledger, cancellation).await {
+            CleanupOutcome::Completed(_) => {
+                // Nothing was recorded as owned, so the journal is settled.
+                ledger.clear_journal().ok();
+                InitError::Volume(primary)
+            }
+            CleanupOutcome::Failed(failure) => {
+                let kind = InitErrorKind::Volume;
+                InitError::AfterVolume {
+                    primary: InitError::<B::Error>::Volume(primary).to_string(),
+                    kind,
+                    cause: None,
+                    volume_id: String::from("unknown"),
+                    zone: ledger.scope().zone,
+                    note: format!("cleanup failed and the allocation may remain: {failure}"),
+                    cleanup: Some(Box::new(failure)),
+                }
+            }
+            CleanupOutcome::Interrupted => {
+                let kind = InitErrorKind::Volume;
+                InitError::AfterVolume {
+                    primary: InitError::<B::Error>::Volume(primary).to_string(),
+                    kind,
+                    cause: None,
+                    volume_id: String::from("unknown"),
+                    zone: ledger.scope().zone,
+                    note: interrupted_note(ledger),
+                    cleanup: None,
+                }
+            }
+        }
+    }
+
+    /// Cleans up after a signal interrupted initialization.
+    pub(super) async fn finish_cancelled(&self, context: &InitContext<'_>) -> InitError<B::Error> {
+        let InitContext {
+            ledger,
+            cancellation,
+            ..
+        } = *context;
+        let signal = cancellation.signal().unwrap_or(Signal::Interrupt);
+        let mut journal = ledger.journal_path();
+        let mut cleanup_failure = None;
+        let mut warnings = Vec::new();
+        let state = match self.cleanup(ledger, cancellation).await {
+            CleanupOutcome::Completed(report) => {
+                warnings.extend(report.warnings);
+                // Owned resources are gone, so a journal with nothing left to
+                // recover must not keep warning the operator.
+                journal = clear_journal(ledger, &mut warnings);
+                String::from("provisioned resources were cleaned up")
+            }
+            CleanupOutcome::Failed(failure) => {
+                let message = format!("ownership-aware cleanup did not complete: {failure}");
+                cleanup_failure = Some(Box::new(failure));
+                message
+            }
+            CleanupOutcome::Interrupted => {
+                String::from("cleanup was interrupted; run `mriya recover` to finish it")
+            }
+        };
+        InitError::Cancelled {
+            message: format!(
+                "{signal_name} received; {state}{journal_note}",
+                signal_name = signal.as_str(),
+                journal_note = journal_note(journal.as_deref())
+            ),
+            signal,
+            cleanup: cleanup_failure,
+            journal,
+        }
+    }
+
+    /// Runs backend cleanup, aborting it when a second signal arrives.
+    pub(super) async fn cleanup(
+        &self,
+        ledger: &ResourceLedger,
+        cancellation: &Cancellation,
+    ) -> CleanupOutcome {
+        tokio::select! {
+            result = self.backend.cleanup(ledger) => match result {
+                Ok(report) => CleanupOutcome::Completed(report),
+                Err(error) => CleanupOutcome::Failed(error),
+            },
+            () = cancellation.repeated() => CleanupOutcome::Interrupted,
+        }
+    }
+}

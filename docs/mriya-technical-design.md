@@ -246,10 +246,17 @@ provisioning) that will guide subsequent optimizations.
   routed IP so SSH is reachable. Readiness polling runs every 5 seconds, using
   a 5-minute polling deadline, and requires a `running` state with a parseable
   public IP.
-- **Teardown verification:** Destruction calls the Instances API delete
-  endpoint then polls until the server disappears, failing the integration test
-  if any residual resource remains. Integration coverage provisions the
-  smallest shape (`DEV1-S`) to keep cost and blast radius low.
+- **Teardown verification:** Cleanup is ownership-aware (issue #154). Every
+  confirmed allocation is recorded in a thread-safe ledger, persisted to a
+  recovery journal before the first create request and rewritten atomically
+  after each allocation. Cleanup powers the server off and waits for `stopped`,
+  detaches and verifies every retained or borrowed volume, deletes the server,
+  then deletes owned volumes and public IPs through the API that owns each one
+  (Instances or Block Storage) and confirms each absence by a successful,
+  identity-checked listing in the recorded zone and project. Only resources
+  recorded as owned are deleted. A 404 is evidence, never proof; a 401 or 403
+  is a failure. Integration coverage provisions the smallest shape (`DEV1-S`)
+  to keep cost and blast radius low.
 - **Environment boundary:** Process-environment reads go through
   `mockable::Env`, injected at each boundary and defaulting to `DefaultEnv` at
   the entry points. The decision is recorded in
@@ -259,22 +266,27 @@ provisioning) that will guide subsequent optimizations.
 
 ### Scaleway HTTP boundary decision (15 October 2026)
 
-Snapshot listing, the single-instance read, power-on, deletion, server
-creation, volume creation, and volume attachment and detachment all use the
+Snapshot listing, the single-instance read, power-on and power-off, deletion,
+server creation, volume creation, Instances and Block Storage volume reads and
+deletions, public IP release, and volume attachment and detachment all use the
 shared HTTP client through `src/scaleway/lifecycle/http.rs`; the client is
-defined in `src/scaleway/lifecycle/mod.rs`. The private `instance_api_base`
-defaults to Scaleway's official Instance API and lets tests substitute a
-loopback server. Each request has a 30-second request timeout, not a hard
-lifecycle timeout; `wait_timeout` remains the polling-loop deadline. Volume
-detachment re-reads the instance through that boundary so the caller supplies
-the root volume it preserves, which the SDK helper could not do against a
-substituted host. Image lookup remains on the SDK's
-`ScalewayListInstanceImagesBuilder`, which hard-codes the production host, and
-is covered by the pure selection cases instead. The readiness wrapper groups
-its settings in `PollSettings`, and the production `poll_for_public_ip` and
-`poll_until_gone` loops receive an instance-fetch closure. HTTP failures map to
-the existing `ScalewayBackendError::Provider` variant; no public error variants
-changed.
+defined in `src/scaleway/lifecycle/mod.rs`. Two private base URLs —
+`instance_api_base` and `block_api_base` — default to Scaleway's official
+Instances and Block Storage APIs and let tests substitute a loopback server.
+SBS volumes live in the Block Storage API and identifier namespace, so the
+family recorded for a volume decides which API deletes and verifies it. Each
+request has a 30-second request timeout, not a hard lifecycle timeout;
+`wait_timeout` remains the polling-loop deadline. Volume detachment re-reads
+the instance through that boundary so the caller supplies the root volume it
+preserves, which the SDK helper could not do against a substituted host. Image
+lookup remains on the SDK's `ScalewayListInstanceImagesBuilder`, which
+hard-codes the production host, and is covered by the pure selection cases
+instead. The readiness wrapper groups its settings in `PollSettings`, and the
+`poll_for_public_ip` loop receives an instance-fetch closure; `poll_until_gone`
+survives only as a test-only helper that pins the loop's timing behaviour. HTTP
+failures are classified once, at the boundary, into `NotFound`, `AccessDenied`
+(401/403), or `Provider`, and an ambiguous create becomes `AmbiguousOutcome`
+or, when reconciliation cannot settle it, `AllocationOutcomeUnknown`.
 
 ## Backend Abstraction Design
 
@@ -291,9 +303,9 @@ design anticipates others (Hetzner, DigitalOcean, AWS, etc.) in later versions.
 classDiagram
     class Backend {
         <<trait>>
-        +create(request InstanceRequest) Result~InstanceHandle, Error~
+        +create(request InstanceRequest, ledger ResourceLedger) Result~InstanceHandle, Error~
         +wait_for_ready(handle InstanceHandle) Result~InstanceNetworking, Error~
-        +destroy(handle InstanceHandle) Result~(), Error~
+        +cleanup(ledger ResourceLedger) Result~CleanupReport, CleanupFailure~
     }
 
     class InstanceRequest {
@@ -387,7 +399,7 @@ classDiagram
         +InstanceTypeUnavailable instance_type String zone String
         +Timeout action String instance_id String
         +MissingPublicIp instance_id String
-        +ResidualResource instance_id String
+        +CleanupFailure residual Vec~ResidualResource~
         +Provider message String
     }
 
@@ -416,43 +428,68 @@ classDiagram
     ScalewayBackend ..> InstanceRequest : consumes
     ScalewayBackend ..> InstanceHandle : returns
     ScalewayBackend ..> InstanceNetworking : returns
-    ScalewayBackend ..> ScalewayInstance : uses
+    ScalewayBackend ..> ResourceLedger : records into
+    ScalewayBackend ..> CleanupReport : returns
+    ScalewayBackend --> CleanupReport : verifies
     ScalewayBackendError <-- BackendError : From
     ScalewayBackendError <-- ConfigError : From
 ```
 <!-- markdownlint-enable MD013 -->
 
-**`Backend` Trait – Minimal Interface:** At v0, the trait can be very simple,
-focusing on the VM lifecycle:
+**`Backend` Trait – Minimal Interface:** The trait keeps the VM lifecycle
+small, and cleanup is driven by the ownership ledger rather than by a single
+handle, so a partially provisioned run can still be cleaned up:
 
 ```rust
 trait Backend {
-    fn create_vm(&self, opts: CreateOpts) -> Result<InstanceHandle>;
-    fn wait_for_ssh(&self, handle: &InstanceHandle) -> Result<IpAddr>;
-    fn destroy_vm(&self, handle: InstanceHandle) -> Result<()>;
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn create(
+        &self,
+        request: &InstanceRequest,
+        ledger: &ResourceLedger,
+    ) -> BackendFuture<InstanceHandle, Self::Error>;
+
+    fn wait_for_ready(
+        &self,
+        handle: &InstanceHandle,
+    ) -> BackendFuture<InstanceNetworking, Self::Error>;
+
+    fn cleanup(
+        &self,
+        ledger: &ResourceLedger,
+    ) -> BackendFuture<CleanupReport, CleanupFailure>;
 }
 ```
 
-- `create_vm` should provision a new VM instance and return an `InstanceHandle`
-  (which might include the instance ID or other metadata like volume IDs, plus
-  the chosen SSH login user and possibly an initial public IP).
+- `create` provisions a new VM and records every resource the provider
+  confirms in `ledger` before returning — including on the error path, so a
+  failure between “server created” and “volume attached” still leaves a cleanup
+  path. The image is recorded as borrowed, a configured cache as retained, and
+  the server, its root volume, and its public IPs as owned.
 
-- `wait_for_ssh` will block until the instance is reachable via SSH on its
-  public IP, returning the IP (and possibly ensuring the SSH service is up).
-  This could be implemented by polling the instance status via API and/or
-  attempting socket connections on port 22.
+- `wait_for_ready` blocks until the instance is reachable via SSH on its
+  public IP, first polling the provider and then attempting socket connections
+  on port 22.
 
-- `destroy_vm` tears down the instance (deleting it and freeing any allocated
-  resources like IPs).
+- `cleanup` powers the server off, detaches and verifies every retained or
+  borrowed volume, deletes the server, deletes owned volumes and public IPs
+  through the API that owns each one, and verifies every absence. It reports
+  residual resources instead of claiming success when a postcondition cannot be
+  proved.
+
+`VolumeBackend::create_volume` takes the same ledger, so `mriya init` can
+promote its new volume from owned (delete on failure) to retained (preserve
+after formatting).
 
 Each backend implementation (Scaleway, Hetzner, etc.) will encapsulate the
-provider-specific logic for these steps. For example, Scaleway’s `create_vm`
-will call into `scaleway_api_rs` to create a server in a specific zone.
-Hetzner’s might call the `hcloud` crate to create a server, DigitalOcean’s
-would call their API (via a Rust SDK like the `digitalocean` crate), and AWS
-could use the AWS SDK or `rusoto` to launch an EC2 instance. The trait method
-signatures can be async (using `tokio`) if needed, since API calls are
-network-bound.
+provider-specific logic for these steps. For example, Scaleway’s `create` calls
+the Instances API, records the allocation tag before the first request, and
+reconciles an ambiguous create by that tag. Hetzner’s might call the `hcloud`
+crate to create a server, DigitalOcean’s would call their API (via a Rust SDK
+like the `digitalocean` crate), and AWS could use the AWS SDK or `rusoto` to
+launch an EC2 instance. The trait method signatures can be async (using
+`tokio`) if needed, since API calls are network-bound.
 
 **Handling Provider Differences:** While all cloud providers offer similar
 primitives (instances, images, volumes, networks), there are important
@@ -503,18 +540,20 @@ differences:
 - **Teardown semantics:** Destroying an instance is straightforward on all
   providers, but we must also consider any ancillary resources. For example,
   Scaleway and AWS allocate elastic IPs or volumes that might need cleaning up
-  if not automatically removed with the VM. The MVP simply deletes the VM and
-  assumes the provider cleans attached resources (Scaleway by default deletes
-  the attached root volume with the instance). In the future, our trait might
-  need to handle explicit cleanup of things like volumes or floating IPs if
-  they were allocated separately.
+  if not automatically removed with the VM. Scaleway does not reliably release
+  every transient resource when a server is deleted: a dynamic IP is released
+  with the server, but an implicitly created root volume and any separately
+  allocated address need their own deletion, and a retained cache must be
+  detached first. Cleanup therefore records ownership as allocations succeed
+  and deletes each owned resource through the API that owns it.
 
 **Evolving the Trait:** We anticipate adding more capabilities to the Backend
-trait as Mriya gains features (volumes, snapshots, etc.). Initially, we keep it
-minimal (create/wait/destroy). As we add volume support (v0.1), we might extend
-`CreateOpts` to include an optional volume to attach. We might also add
-separate methods for creating/destroying volumes or images, or extend
-`InstanceHandle` to include them. For example, a `Backend` might later gain:
+trait as Mriya gains features (volumes, snapshots, etc.). Ownership-aware
+cleanup already replaced the single-handle destroy, and `VolumeBackend` adds
+volume creation. As we add volume support (v0.1), we might extend `CreateOpts`
+to include an optional volume to attach. We might also add separate methods for
+creating/destroying volumes or images, or extend `InstanceHandle` to include
+them. For example, a `Backend` might later gain:
 
 ```rust
 fn attach_volume(
@@ -1143,15 +1182,14 @@ the connection which should terminate the remote shell).
 - For `wait_for_ssh`, we’ll cap how long we wait (maybe 2 minutes), after which
   we consider the VM initialization failed and destroy it.
 
-**Ctrl+C Handling:** We intercept SIGINT/SIGTERM on the Mriya process. If the
-user cancels, we want to **terminate the remote job and destroy the VM**. With
-the SSH library, if we drop the session, the remote process will terminate (as
-its controlling session ended). We then proceed to call `destroy_vm`. We should
-do this carefully to avoid leaving the VM if the process is killed forcibly.
-(We might not catch SIGKILL of course, but for Ctrl+C we can handle.)
-
-We will likely use the `ctrlc` crate to register a handler that triggers a
-graceful shutdown sequence.
+**Ctrl+C Handling (implemented):** SIGINT and SIGTERM are published through a
+`tokio::sync::watch` channel. The run and init orchestrators race every awaited
+step against it with `select!` and check it between steps, terminate the active
+streaming child process, and then run ownership-aware cleanup. A cancelled run
+returns `RunError::Cancelled` and exits 130 for SIGINT or 143 for SIGTERM. A
+second signal during cleanup stops it and leaves the remaining work to
+`mriya recover`, naming the journal path. SIGKILL is uncatchable; the journal
+written before the first allocation is what makes that case recoverable.
 
 **Logging:** By v1.0, we will refine logging output. The user should see:
 
@@ -1599,13 +1637,13 @@ grace period with SIGTERM first.
 `mriya test` and nothing happens for a while, then they hit Ctrl+C. Mriya’s
 signal handler triggers:
 
-- If VM was already created, we log “Cancelling… destroying instance” to
-  inform user.
+- If the VM was already created, cleanup runs from the ownership ledger: power
+  off, detach preserved volumes, delete the server, delete owned volumes and
+  IPs, and verify each postcondition.
 
-- It calls backend.destroy_vm. If that fails (say network issue contacting
-  API), we might retry a couple times. If still fails, we warn user: “Instance
-  could not be destroyed, please check cloud console.” This is rare but we
-  handle it.
+- If a step cannot be verified (say the API denies the delete), cleanup reports
+  the residual resource identifiers as `kind id@zone (cause)` and keeps the
+  journal, so `mriya recover` can finish the job.
 
 - If rsync was in progress, we cancel it (kill the process or drop SSH session).
 

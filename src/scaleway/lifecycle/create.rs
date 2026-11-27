@@ -1,22 +1,26 @@
-//! Instance creation helpers for the Scaleway backend.
+//! Server creation with allocation tagging and ambiguous-outcome recovery.
 //!
-//! Scaleway instances must receive cloud-init user-data before first boot.
-//! The creation request sets `stopped: true` so the payload is available when
-//! the instance is powered on.
+//! Scaleway instances must receive cloud-init user-data before first boot, so
+//! the request sets `stopped: true` and the caller powers the server on once
+//! the cache volume is attached. The allocation tag is written to the request
+//! before it is sent, which is what lets an interrupted or ambiguous create be
+//! reconciled from the provider's own metadata.
 
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use scaleway_rs::ScalewayApiError;
+use serde::Serialize;
 
 use super::{
-    super::{ScalewayBackend, ScalewayBackendError},
-    InstanceSnapshot,
+    HTTP_CLIENT,
+    http::{classify_error, request_error},
+    models::{ServerModel, ServerResponse},
 };
-use crate::{backend::InstanceRequest, scaleway::types::Zone};
+use crate::{
+    backend::InstanceRequest,
+    ownership::{AllocationScope, AllocationTag, ResourceKind, ResourceLedger},
+    scaleway::{ScalewayBackend, ScalewayBackendError},
+};
 
 /// JSON body for the create-server call.
-///
-/// This mirrors what the code currently sends, including `stopped` and
-/// `cloud_init`; see issue #176 for the provider's response to those keys.
 ///
 /// # Examples
 ///
@@ -39,7 +43,7 @@ use crate::{backend::InstanceRequest, scaleway::types::Zone};
 /// ```
 #[derive(Serialize)]
 struct CreateServerRequest {
-    /// Generated instance name, `mriya-` followed by a random UUID.
+    /// Generated instance name, `mriya-` followed by the allocation suffix.
     name: String,
     /// Instance type to provision, such as `DEV1-S`.
     commercial_type: String,
@@ -63,143 +67,169 @@ struct CreateServerRequest {
     organization: Option<String>,
 }
 
-/// Wrapper for the server object returned by a successful create call.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Schematic: the provider nests the instance under `server`. A real
-/// // `ScalewayInstance` carries about thirty required fields with no serde
-/// // defaults, so abbreviated JSON would fail to deserialize before any
-/// // assertion ran. The decodable fixture used by the tests is
-/// // `src/scaleway/lifecycle/tests/fixtures/detach-instance.json`.
-/// {"server": {"id": "srv-1", "state": "stopped", ...}}
-/// ```
-#[derive(Deserialize)]
-struct CreateServerResponse {
-    /// The created instance as reported by the provider.
-    server: scaleway_rs::ScalewayInstance,
+/// A create-server response awaiting classification.
+struct CreateResponse<'a> {
+    /// The request that produced the response.
+    request: &'a InstanceRequest,
+    /// Allocation tag used to reconcile an ambiguous outcome.
+    tag: &'a AllocationTag,
+    /// Scope used to reconcile an ambiguous outcome.
+    scope: &'a AllocationScope,
+    /// HTTP status the provider returned.
+    status: reqwest::StatusCode,
+    /// Response body bytes.
+    body: &'a [u8],
 }
 
 impl ScalewayBackend {
-    /// Powers on a stopped instance only when `poweron` is an allowed action.
+    /// Creates a Scaleway instance in a stopped state.
+    ///
+    /// The body names the server after the allocation tag so an operator
+    /// reading the console sees the same identifier the journal records.
     ///
     /// # Errors
     ///
-    /// Returns `PowerOnNotAllowed` when the snapshot is not running and does
-    /// not offer `poweron`, and propagates a provider error from the power-on
-    /// request.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// // A running snapshot needs no request at all.
-    /// backend.power_on_if_needed(&zone, &running_snapshot).await?;
-    ///
-    /// // A stopped snapshot offering only `reboot` cannot be powered on.
-    /// let err = backend.power_on_if_needed(&zone, &reboot_only).await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::PowerOnNotAllowed { .. }));
-    /// ```
-    pub(in crate::scaleway) async fn power_on_if_needed(
-        &self,
-        zone: &Zone,
-        snapshot: &InstanceSnapshot,
-    ) -> Result<(), ScalewayBackendError> {
-        if snapshot.state.as_str() == "running" {
-            return Ok(());
-        }
-
-        if snapshot
-            .allowed_actions
-            .iter()
-            .any(|action| action.as_str() == "poweron")
-        {
-            self.power_on_instance(zone, snapshot.id.as_str()).await?;
-            return Ok(());
-        }
-
-        Err(ScalewayBackendError::PowerOnNotAllowed {
-            instance_id: snapshot.id.as_str().to_owned(),
-            state: snapshot.state.as_str().to_owned(),
-        })
-    }
-
-    /// Creates a Scaleway instance in a stopped state so optional cloud-init
-    /// user-data can be supplied before first boot.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Provider`/network failures, and `InstanceTypeUnavailable` when
-    /// the requested instance type is not available in the selected zone.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// // A well-formed request returns the instance as the provider reports it.
-    /// let instance = backend.create_instance_stopped(&request, "img-1").await?;
-    /// assert_eq!(instance.state, "stopped");
-    ///
-    /// // An instance type the zone does not offer is reported by name.
-    /// let err = backend.create_instance_stopped(&request, "img-1").await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::InstanceTypeUnavailable { .. }));
-    /// ```
+    /// Returns `InstanceTypeUnavailable` when the provider identifies the
+    /// requested type as the problem, a classified provider error for other
+    /// rejections, and [`ScalewayBackendError::AllocationOutcomeUnknown`] when
+    /// an ambiguous request could not be reconciled by tag.
     pub(in crate::scaleway) async fn create_instance_stopped(
         &self,
         request: &InstanceRequest,
         image_id: &str,
-    ) -> Result<scaleway_rs::ScalewayInstance, ScalewayBackendError> {
-        let url = format!("{}/zones/{}/servers", self.instance_api_base, request.zone);
-        let name = format!("mriya-{}", Uuid::new_v4().simple());
-        let tags = Self::instance_tags(self.test_run_id.as_deref());
+        ledger: &ResourceLedger,
+    ) -> Result<ServerModel, ScalewayBackendError> {
+        let tag = ledger.tag();
+        let scope = ledger.scope();
+        let url = self.instance_url(&request.zone, "servers");
         let payload = CreateServerRequest {
-            name,
+            name: format!("mriya-{}", tag.suffix()),
             commercial_type: request.instance_type.clone(),
             image: image_id.to_owned(),
             project: request.project_id.clone(),
             routed_ip_enabled: true,
             dynamic_ip_required: true,
-            tags,
+            tags: Self::instance_tags(self.test_run_id.as_deref(), Some(tag.as_str())),
             stopped: true,
             cloud_init: request.cloud_init_user_data.clone(),
             organization: request.organisation_id.clone(),
         };
 
-        let response = super::HTTP_CLIENT
-            .post(&url)
-            .header("X-Auth-Token", &self.config.secret_key)
+        let send = self
+            .authorized(HTTP_CLIENT.post(&url))
             .json(&payload)
+            .timeout(super::HTTP_TIMEOUT)
             .send()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+            .await;
+
+        let response = match send {
+            Ok(response) => response,
+            // A connection failure means the request never reached the
+            // provider, so nothing was created and reconciliation would only
+            // waste the wait window.
+            Err(error) if error.is_connect() => {
+                return Err(request_error("create server", &error));
+            }
+            Err(error) => {
+                return self
+                    .reconcile_or_unknown(&tag, &scope, &error.to_string())
+                    .await;
+            }
+        };
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            // A definitive client rejection stays a rejection even when its
+            // body is unreadable: the provider decided, so the request was not
+            // applied and reconciliation would only waste the wait window.
+            Err(error) if status.is_client_error() => {
+                return Err(classify_error(
+                    "create server",
+                    status,
+                    &format!("response body could not be read: {error}"),
+                ));
+            }
+            Err(error) => {
+                return self
+                    .reconcile_or_unknown(&tag, &scope, &error.to_string())
+                    .await;
+            }
+        };
 
+        self.classify_create_response(CreateResponse {
+            request,
+            tag: &tag,
+            scope: &scope,
+            status,
+            body: &body,
+        })
+        .await
+    }
+
+    /// Maps a create response body to a server, a rejection, or a
+    /// reconciliation attempt.
+    async fn classify_create_response(
+        &self,
+        response: CreateResponse<'_>,
+    ) -> Result<ServerModel, ScalewayBackendError> {
+        let CreateResponse {
+            request,
+            tag,
+            scope,
+            status,
+            body,
+        } = response;
         if status.is_success() {
-            let parsed: CreateServerResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
-            return Ok(parsed.server);
+            return match serde_json::from_slice::<ServerResponse>(body) {
+                Ok(parsed) => Ok(parsed.server),
+                Err(error) => {
+                    self.reconcile_or_unknown(tag, scope, &error.to_string())
+                        .await
+                }
+            };
         }
 
-        let message = String::from_utf8_lossy(&body).into_owned();
-        if let Ok(api_err) = serde_json::from_slice::<scaleway_rs::ScalewayApiError>(&body)
-            && Self::is_instance_type_error(&api_err, request)
-        {
-            return Err(ScalewayBackendError::InstanceTypeUnavailable {
-                instance_type: request.instance_type.clone(),
-                zone: request.zone.clone(),
-            });
+        let text = String::from_utf8_lossy(body).into_owned();
+        if status.is_client_error() {
+            if let Ok(api_error) = serde_json::from_slice::<ScalewayApiError>(body)
+                && Self::is_instance_type_error(&api_error, request)
+            {
+                return Err(ScalewayBackendError::InstanceTypeUnavailable {
+                    instance_type: request.instance_type.clone(),
+                    zone: request.zone.clone(),
+                });
+            }
+            return Err(classify_error("create server", status, &text));
         }
 
-        Err(ScalewayBackendError::Provider { message })
+        self.reconcile_or_unknown(
+            tag,
+            scope,
+            &format!("provider answered {}", status.as_u16()),
+        )
+        .await
+    }
+
+    /// Reconciles an ambiguous create, or reports that the outcome is unknown.
+    async fn reconcile_or_unknown(
+        &self,
+        tag: &AllocationTag,
+        scope: &AllocationScope,
+        detail: &str,
+    ) -> Result<ServerModel, ScalewayBackendError> {
+        let unknown = |reason: String| ScalewayBackendError::AllocationOutcomeUnknown {
+            kind: ResourceKind::Server,
+            tag: tag.to_string(),
+            zone: scope.zone.clone(),
+            detail: reason,
+        };
+        // A failed lookup is exactly the unknown case: the create may have been
+        // applied, and the tag is the only way to find it later.
+        match self.reconcile_server(tag, scope).await {
+            Ok(Some(server)) => Ok(server),
+            Ok(None) => Err(unknown(detail.to_owned())),
+            Err(error) => Err(unknown(format!("{detail}; reconciliation failed: {error}"))),
+        }
     }
 }

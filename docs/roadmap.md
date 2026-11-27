@@ -8,9 +8,14 @@ for concrete, testable deliverables.
 
 ### 1.1. Instance lifecycle and sync
 
-- [x] Implement `ScalewayBackend` with create/wait/destroy covering token,
+- [x] Implement `ScalewayBackend` with create/wait/cleanup covering token,
   project, image, and instance type inputs, and verify teardown leaves no
   residual resources via an integration check.
+- [x] Record every allocation in an ownership ledger, persist it to a recovery
+  journal, and clean up through the verified power-off → detach → delete →
+  confirm sequence; acceptance: partial provisioning, ambiguous creates,
+  cancellation, and repeated cleanup are covered by loopback and live tests, and
+  `mriya recover` finishes an interrupted journal.
 - [x] Ship git-aware file sync that uses rsync with `.gitignore` filters and
   avoids deleting ignored cache paths, proven by an end-to-end run where a
   pre-created `target/` on the remote is preserved and the local exit code
@@ -96,10 +101,13 @@ for concrete, testable deliverables.
 
 ### 6.2. Timeouts and cancellation
 
+- [x] Handle SIGINT and SIGTERM by aborting the remote job, terminating the
+  streaming child, and running ownership-aware cleanup; acceptance: a cancelled
+  run exits 130 or 143, leaves no orphaned instances or volumes, and a second
+  signal defers the remainder to `mriya recover`.
 - [ ] Add configurable timeouts for VM creation, SSH readiness, and remote
-  command execution, plus SIGINT/SIGTERM handling that aborts the remote job
-  and destroys the VM; acceptance: manual Ctrl+C leaves no orphaned instances
-  or volumes.
+  command execution; acceptance: a hung step fails with a timeout instead of
+  waiting for the built-in defaults.
 
 ### 6.3. Progress visibility
 

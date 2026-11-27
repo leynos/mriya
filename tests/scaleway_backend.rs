@@ -7,10 +7,13 @@ use std::{
 
 use mockable::{DefaultEnv, Env};
 use mriya::{
+    AllocationScope,
     Backend,
+    CleanupFailure,
     InstanceHandle,
     InstanceNetworking,
     InstanceRequest,
+    ResourceLedger,
     ScalewayBackend,
     ScalewayBackendError,
     ScalewayConfig,
@@ -79,28 +82,70 @@ fn base_request(scaleway_config: Option<ScalewayConfig>) -> Option<InstanceReque
     scaleway_config.and_then(|cfg| cfg.as_request().ok())
 }
 
+/// Cleans up whatever a failed `create` may have recorded.
+///
+/// A cleanup failure is returned, not logged: residue after a failed create is
+/// exactly what these tests exist to catch.
+async fn cleanup_recorded(
+    backend: &ScalewayBackend,
+    ledger: &ResourceLedger,
+) -> Result<(), CleanupFailure> {
+    backend.cleanup(ledger).await.map(|_| ())
+}
+
+/// Combines a failed create with the cleanup that followed it.
+fn cleanup_after_create_error(
+    create_error: &ScalewayBackendError,
+    failure: &CleanupFailure,
+) -> ScalewayBackendError {
+    ScalewayBackendError::Provider {
+        message: format!("create failed with '{create_error}'; cleanup also failed: {failure}"),
+    }
+}
+
+/// Builds an in-memory ledger for the request's zone and project.
+fn ledger_for(request: &InstanceRequest) -> ResourceLedger {
+    ResourceLedger::in_memory(AllocationScope::new(
+        request.zone.clone(),
+        request.project_id.clone(),
+    ))
+}
+
 fn provision_and_cleanup(
     backend: &ScalewayBackend,
     request: &InstanceRequest,
 ) -> Result<InstanceNetworking, ScalewayBackendError> {
+    let ledger = ledger_for(request);
     block_on(async {
-        let handle: InstanceHandle = match backend.create(request).await {
+        let handle: InstanceHandle = match backend.create(request, &ledger).await {
             Ok(handle) => handle,
+            // `create` may have recorded the server before it failed, so the
+            // ledger is cleaned up before the error is reported.
             Err(err) if err.to_string().contains("permissions_denied") => {
+                cleanup_recorded(backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
                 skip!("permissions denied during create: {err}")
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                cleanup_recorded(backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
+                return Err(err);
+            }
         };
         let ready_result = backend.wait_for_ready(&handle).await;
-        let teardown_result = backend.destroy(handle.clone()).await;
+        let teardown_result = backend.cleanup(&ledger).await;
 
         match (ready_result, teardown_result) {
-            (Ok(networking), Ok(())) => Ok(networking),
-            (Err(wait_err), Ok(())) => Err(wait_err),
-            (Ok(_), Err(destroy_err)) => Err(destroy_err),
-            (Err(wait_err), Err(destroy_err)) => Err(ScalewayBackendError::Provider {
+            (Ok(networking), Ok(_)) => Ok(networking),
+            (Err(wait_err), Ok(_)) => Err(wait_err),
+            (Ok(_), Err(cleanup_err)) => Err(ScalewayBackendError::Provider {
+                message: cleanup_err.to_string(),
+            }),
+            (Err(wait_err), Err(cleanup_err)) => Err(ScalewayBackendError::Provider {
                 message: format!(
-                    "wait_for_ready failed with '{wait_err}' before destroy failed with '{destroy_err}'"
+                    "wait_for_ready failed with '{wait_err}' before cleanup failed with '{cleanup_err}'"
                 ),
             }),
         }
@@ -120,20 +165,40 @@ fn test_invalid_request(
 ) -> Result<(), ScalewayBackendError> {
     let mut request = base_request;
     modify_request(&mut request);
+    let ledger = ledger_for(&request);
 
     block_on(async {
-        match scaleway_backend.create(&request).await {
-            Ok(handle) => {
-                scaleway_backend.destroy(handle).await?;
+        match scaleway_backend.create(&request, &ledger).await {
+            Ok(_handle) => {
+                scaleway_backend.cleanup(&ledger).await.map_err(|failure| {
+                    ScalewayBackendError::Provider {
+                        message: failure.to_string(),
+                    }
+                })?;
                 Err(ScalewayBackendError::Provider {
                     message: String::from("unexpected success"),
                 })
             }
             Err(err) if err.to_string().contains("permissions_denied") => {
+                cleanup_recorded(scaleway_backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
                 skip!("permissions denied during instance creation: {err}")
             }
-            Err(err) if is_expected_error(&err) => Ok(()),
-            Err(err) => Err(err),
+            Err(err) if is_expected_error(&err) => {
+                // The create may have recorded a server before failing, so the
+                // ledger is cleaned before the error is accepted.
+                cleanup_recorded(scaleway_backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
+                Ok(())
+            }
+            Err(err) => {
+                cleanup_recorded(scaleway_backend, &ledger)
+                    .await
+                    .map_err(|failure| cleanup_after_create_error(&err, &failure))?;
+                Err(err)
+            }
         }
     })
 }

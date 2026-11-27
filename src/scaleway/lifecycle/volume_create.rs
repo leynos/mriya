@@ -1,9 +1,27 @@
 //! Block Storage volume creation helpers for the Scaleway backend.
+//!
+//! Volume creation uses the Instances API, which owns Basic Block Storage
+//! (`b_ssd`) volumes. The allocation tag is written to the request before it is
+//! sent, so an ambiguous create can be reconciled exactly as a server can.
 
 use serde::{Deserialize, Serialize};
 
-use super::super::{ScalewayBackend, ScalewayBackendError};
-use crate::volume::{VolumeHandle, VolumeRequest};
+use super::{
+    HTTP_CLIENT,
+    http::{classify_error, request_error},
+};
+use crate::{
+    ownership::{
+        AllocationScope,
+        AllocationTag,
+        Disposition,
+        ResourceKind,
+        ResourceLedger,
+        ResourceRef,
+    },
+    scaleway::{ScalewayBackend, ScalewayBackendError},
+    volume::{VolumeHandle, VolumeRequest},
+};
 
 /// Volume type requested for cache volumes (Scaleway Block Storage SSD).
 const VOLUME_TYPE_BLOCK: &str = "b_ssd";
@@ -64,7 +82,7 @@ struct CreateVolumeResponse {
     volume: ScalewayVolume,
 }
 
-/// The subset of the provider's volume object that mriya reads.
+/// The subset of the provider's volume object that creation reads.
 ///
 /// # Examples
 ///
@@ -81,79 +99,239 @@ struct ScalewayVolume {
     /// Provider identifier of the volume.
     id: String,
     /// Zone in which the provider placed the volume.
+    #[serde(default)]
     zone: String,
 }
 
+/// A create-volume response awaiting classification.
+struct VolumeCreateResponse<'a> {
+    /// The request that produced the response.
+    request: &'a VolumeRequest,
+    /// Allocation tag used to reconcile an ambiguous outcome.
+    tag: &'a AllocationTag,
+    /// Scope used to reconcile an ambiguous outcome.
+    scope: &'a AllocationScope,
+    /// HTTP status the provider returned.
+    status: reqwest::StatusCode,
+    /// Response body bytes.
+    body: &'a [u8],
+}
+
 impl ScalewayBackend {
-    /// Creates a new Block Storage volume.
+    /// Creates a new Block Storage volume and records it as owned.
     ///
     /// # Errors
     ///
     /// Returns [`ScalewayBackendError::VolumeCreateFailed`] when the provider
-    /// rejects the creation request. A request that fails before producing a
-    /// response, or whose response body cannot be parsed, returns
-    /// [`ScalewayBackendError::Provider`] instead.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// // A successful create returns the provider's identifier for the volume.
-    /// let handle = backend.create_volume(&request).await?;
-    /// assert_eq!(handle.id, "vol-1");
-    ///
-    /// // A rejected create names the volume and the provider's message.
-    /// let err = backend.create_volume(&request).await.unwrap_err();
-    /// assert!(matches!(err, ScalewayBackendError::VolumeCreateFailed { .. }));
-    /// ```
+    /// rejects the creation request, a provider error when no response
+    /// arrives, and [`ScalewayBackendError::AllocationOutcomeUnknown`] when an
+    /// ambiguous request could not be reconciled by tag.
     pub(in crate::scaleway) async fn create_volume(
         &self,
         request: &VolumeRequest,
+        ledger: &ResourceLedger,
     ) -> Result<VolumeHandle, ScalewayBackendError> {
-        let url = format!("{}/zones/{}/volumes", self.instance_api_base, request.zone);
+        ledger
+            .persist_initial()
+            .map_err(|error| ScalewayBackendError::Journal {
+                message: error.message,
+            })?;
+
+        let handle = match self.create_or_reconcile_volume(request, ledger).await {
+            Ok(handle) => handle,
+            Err(error @ ScalewayBackendError::AllocationOutcomeUnknown { .. }) => {
+                ledger.mark_outcome_unknown();
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = ledger.record_durable(
+            ResourceRef::instance_volume(&handle.id, &handle.zone),
+            Disposition::Owned,
+        ) {
+            // The volume exists but is not durably recorded. Keeping the
+            // unknown-outcome flag makes recovery look it up by tag.
+            ledger.mark_outcome_unknown();
+            return Err(ScalewayBackendError::Journal {
+                message: error.to_string(),
+            });
+        }
+        Ok(handle)
+    }
+
+    /// Creates the volume, reconciling an ambiguous response by allocation tag.
+    async fn create_or_reconcile_volume(
+        &self,
+        request: &VolumeRequest,
+        ledger: &ResourceLedger,
+    ) -> Result<VolumeHandle, ScalewayBackendError> {
+        let tag = ledger.tag();
+        let scope = ledger.scope();
+        let url = self.instance_url(&request.zone, "volumes");
         let payload = CreateVolumeRequest {
             name: request.name.clone(),
             size: request.size_bytes,
             volume_type: String::from(VOLUME_TYPE_BLOCK),
             project: request.project_id.clone(),
             organization: request.organisation_id.clone(),
-            tags: Self::volume_tags(self.test_run_id.as_deref()),
+            tags: Self::volume_tags(self.test_run_id.as_deref(), Some(tag.as_str())),
         };
 
-        let response = super::HTTP_CLIENT
-            .post(&url)
-            .header("X-Auth-Token", &self.config.secret_key)
+        let send = self
+            .authorized(HTTP_CLIENT.post(&url))
             .json(&payload)
             .timeout(super::HTTP_TIMEOUT)
             .send()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+            .await;
+
+        let response = match send {
+            Ok(response) => response,
+            Err(error) if error.is_connect() => {
+                return Err(request_error("create volume", &error));
+            }
+            Err(error) => {
+                return self
+                    .reconcile_created_volume(&tag, &scope, &error.to_string())
+                    .await;
+            }
+        };
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            // The provider decided, so the create was not applied; keep the
+            // rejection rather than reconciling an allocation that cannot
+            // exist.
+            Err(error) if status.is_client_error() => {
+                return Err(ScalewayBackendError::VolumeCreateFailed {
+                    name: request.name.clone(),
+                    zone: request.zone.clone(),
+                    message: classify_error(
+                        "create volume",
+                        status,
+                        &format!("response body could not be read: {error}"),
+                    )
+                    .to_string(),
+                });
+            }
+            Err(error) => {
+                return self
+                    .reconcile_created_volume(&tag, &scope, &error.to_string())
+                    .await;
+            }
+        };
 
+        self.classify_volume_response(VolumeCreateResponse {
+            request,
+            tag: &tag,
+            scope: &scope,
+            status,
+            body: &body,
+        })
+        .await
+    }
+
+    /// Maps a create response body to a handle, a rejection, or an attempt to
+    /// reconcile an allocation the provider may have made.
+    async fn classify_volume_response(
+        &self,
+        response: VolumeCreateResponse<'_>,
+    ) -> Result<VolumeHandle, ScalewayBackendError> {
+        let VolumeCreateResponse {
+            request,
+            tag,
+            scope,
+            status,
+            body,
+        } = response;
         if status.is_success() {
-            let parsed: CreateVolumeResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
-            return Ok(VolumeHandle {
-                id: parsed.volume.id,
-                zone: parsed.volume.zone,
+            return match serde_json::from_slice::<CreateVolumeResponse>(body) {
+                Ok(parsed) if parsed.volume.id.trim().is_empty() => {
+                    // A handle without an identifier cannot be cleaned up by
+                    // ID, so treat it like an unreadable success and look the
+                    // volume up by its allocation tag instead.
+                    self.reconcile_created_volume(tag, scope, "create volume returned a blank id")
+                        .await
+                }
+                Ok(parsed) => {
+                    Self::ensure_created_zone(&parsed.volume, &request.zone)?;
+                    Ok(VolumeHandle::new(parsed.volume.id, request.zone.clone()))
+                }
+                Err(error) => {
+                    self.reconcile_created_volume(tag, scope, &error.to_string())
+                        .await
+                }
+            };
+        }
+
+        let text = String::from_utf8_lossy(body).into_owned();
+        if status.is_client_error() {
+            return Err(ScalewayBackendError::VolumeCreateFailed {
+                name: request.name.clone(),
+                zone: request.zone.clone(),
+                message: classify_error("create volume", status, &text).to_string(),
             });
         }
 
-        let message = String::from_utf8_lossy(&body).into_owned();
-        Err(ScalewayBackendError::VolumeCreateFailed {
-            name: request.name.clone(),
-            zone: request.zone.clone(),
-            message,
+        self.reconcile_created_volume(
+            tag,
+            scope,
+            &format!("provider answered {}", status.as_u16()),
+        )
+        .await
+    }
+
+    /// Rejects a create response that names a zone other than the request's.
+    ///
+    /// Adopting the response zone would make cleanup act where the volume is not,
+    /// and a 404 there could be read as absence while the volume survives.
+    fn ensure_created_zone(
+        volume: &ScalewayVolume,
+        zone: &str,
+    ) -> Result<(), ScalewayBackendError> {
+        if volume.zone.trim().is_empty() || volume.zone == zone {
+            return Ok(());
+        }
+        Err(ScalewayBackendError::Provider {
+            message: format!(
+                "create volume returned {id} in zone {actual}, but {zone} was requested",
+                id = volume.id,
+                actual = volume.zone
+            ),
         })
+    }
+
+    /// Reconciles an ambiguous volume create, or reports an unknown outcome.
+    async fn reconcile_created_volume(
+        &self,
+        tag: &AllocationTag,
+        scope: &AllocationScope,
+        detail: &str,
+    ) -> Result<VolumeHandle, ScalewayBackendError> {
+        let unknown = |reason: String| ScalewayBackendError::AllocationOutcomeUnknown {
+            kind: ResourceKind::InstanceVolume,
+            tag: tag.to_string(),
+            zone: scope.zone.clone(),
+            detail: reason,
+        };
+        // A failed lookup is the unknown case: the POST may have created the
+        // volume, and the tag is the only durable way to find it later.
+        match self.reconcile_volume(tag, scope).await {
+            // A handle without an identifier cannot be addressed by later
+            // operations; the tag is the only durable way back to it.
+            Ok(Some(volume)) if volume.id.trim().is_empty() => Err(unknown(format!(
+                "{detail}; the reconciled volume has no id"
+            ))),
+            Ok(Some(volume)) => Ok(VolumeHandle::new(
+                volume.id,
+                if volume.zone.trim().is_empty() {
+                    scope.zone.clone()
+                } else {
+                    volume.zone
+                },
+            )),
+            Ok(None) => Err(unknown(detail.to_owned())),
+            Err(error) => Err(unknown(format!("{detail}; reconciliation failed: {error}"))),
+        }
     }
 }

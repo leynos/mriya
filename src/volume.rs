@@ -1,6 +1,9 @@
 //! Volume lifecycle abstractions for persistent cache storage.
 
-use crate::backend::{Backend, BackendFuture, InstanceHandle};
+use crate::{
+    backend::{Backend, BackendFuture},
+    ownership::{Disposition, ResourceKind, ResourceLedger, ResourceRef},
+};
 
 /// Parameters required to create a persistent volume.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,18 +55,34 @@ pub struct VolumeHandle {
     pub zone: String,
 }
 
+impl VolumeHandle {
+    /// Creates a handle from its identifier and zone.
+    #[must_use]
+    pub fn new(id: impl Into<String>, zone: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            zone: zone.into(),
+        }
+    }
+
+    /// Records this volume as owned by the allocation.
+    pub fn record_owned(&self, ledger: &ResourceLedger) {
+        ledger.record(
+            ResourceRef::new(ResourceKind::InstanceVolume, &self.id, &self.zone),
+            Disposition::Owned,
+        );
+    }
+}
+
 /// Backend operations required for volume management.
 pub trait VolumeBackend: Backend {
     /// Creates a new volume and returns its handle.
+    ///
+    /// The volume is recorded in `ledger` as `Owned` before this call returns,
+    /// including when a later step of the caller fails.
     fn create_volume<'a>(
         &'a self,
         request: &'a VolumeRequest,
+        ledger: &'a ResourceLedger,
     ) -> BackendFuture<'a, VolumeHandle, Self::Error>;
-
-    /// Detaches a volume from the given instance.
-    fn detach_volume<'a>(
-        &'a self,
-        handle: &'a InstanceHandle,
-        volume_id: &'a str,
-    ) -> BackendFuture<'a, (), Self::Error>;
 }

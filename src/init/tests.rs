@@ -5,11 +5,12 @@
 
 use rstest::rstest;
 
-use super::{InitConfig, InitConfigError, format_failure_message};
-use crate::{
-    sync::{RemoteCommandOutput, SyncError},
-    teardown::append_teardown_note,
+use super::{
+    InitConfig,
+    InitConfigError,
+    format::{FormatFailure, format_failure_message, format_spawn_failure},
 };
+use crate::sync::{RemoteCommandOutput, SyncError};
 
 /// Checks that zero-sized volumes return `InvalidVolumeSize`.
 #[test]
@@ -52,7 +53,7 @@ fn format_failure_message_covers_every_arm(
 /// Verifies the public display text for a formatting failure.
 #[test]
 fn format_failure_display_writes_the_message() {
-    let failure = super::FormatFailure {
+    let failure = FormatFailure {
         message: String::from("mkfs.ext4 exited with status 1"),
         source: None,
     };
@@ -67,7 +68,7 @@ fn format_failure_display_writes_the_message() {
 /// for a broken volume and fix `HOME` instead.
 #[test]
 fn format_failure_names_the_unusable_home() {
-    let failure = super::format_spawn_failure(SyncError::HomeUnavailable {
+    let failure = format_spawn_failure(SyncError::HomeUnavailable {
         path: String::from("~/keys/id"),
         source: crate::sync::HomeUnavailable,
     });
@@ -83,25 +84,4 @@ fn format_failure_names_the_unusable_home() {
             "`{expected}` should appear in the diagnostic: {rendered}"
         );
     }
-}
-
-/// Ensures successful teardown leaves the original provisioning error intact.
-#[test]
-fn append_teardown_note_returns_message_unchanged_without_error() {
-    let note = append_teardown_note::<SyncError>(String::from("provision failed"), None);
-    assert_eq!(note, "provision failed");
-}
-
-/// Checks that teardown failure is appended without replacing the primary
-/// error.
-#[test]
-fn append_teardown_note_appends_teardown_failure() {
-    let teardown = SyncError::InvalidConfig {
-        field: String::from("ssh_user"),
-    };
-    let note = super::append_teardown_note(String::from("provision failed"), Some(&teardown));
-    assert_eq!(
-        note,
-        format!("provision failed (teardown also failed: {teardown})")
-    );
 }

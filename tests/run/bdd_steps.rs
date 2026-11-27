@@ -1,16 +1,20 @@
 //! BDD step definitions for the `mriya run` workflow.
 //!
-//! This module contains the core step definitions. Cache-related steps are
-//! in the `cache_steps` submodule.
+//! The steps drive the production orchestrator with a scripted backend, so
+//! every scenario exercises the real step sequence, cleanup path, and error
+//! composition.
 
 use std::time::Duration;
 
 use mriya::{
+    CancelHandle,
+    ResourceRef,
     RunOrchestrator,
-    sync::{RemoteCommandOutput, Syncer},
+    Signal,
+    sync::Syncer,
     test_support::ScriptedRunner,
 };
-use rstest_bdd_macros::{given, then, when};
+use rstest_bdd_macros::{given, when};
 use tokio::runtime::Runtime;
 
 use super::{
@@ -68,12 +72,34 @@ fn scripted_sync_failure(
     Ok(Ok(run_context))
 }
 
-#[given("a backend that fails during teardown")]
-fn backend_fails_teardown(
+#[given("a backend that fails during cleanup")]
+fn backend_fails_cleanup(
     run_context_result: RunContextResult,
 ) -> Result<RunContextResult, StepError> {
     let run_context = run_context_result?;
-    run_context.backend.fail_on_destroy();
+    run_context.backend.fail_cleanup(ResourceRef::server(
+        "scripted-id",
+        &run_context.request.zone,
+    ));
+    Ok(Ok(run_context))
+}
+
+#[given("the create request fails after allocation")]
+fn create_fails_after_allocation(
+    run_context_result: RunContextResult,
+) -> Result<RunContextResult, StepError> {
+    let run_context = run_context_result?;
+    run_context.backend.fail_after_allocation();
+    Ok(Ok(run_context))
+}
+
+#[given("the run is cancelled after its first allocation")]
+fn cancel_after_allocation(
+    run_context_result: RunContextResult,
+) -> Result<RunContextResult, StepError> {
+    let mut run_context = run_context_result?;
+    run_context.backend.block_create_until_cancelled();
+    run_context.cancel_after_allocation = true;
     Ok(Ok(run_context))
 }
 
@@ -172,6 +198,7 @@ fn outcome(
         source,
         cloud_init_poll_interval_override,
         cloud_init_wait_timeout_override,
+        cancel_after_allocation,
         source_tmp,
         ..
     } = run_context;
@@ -187,32 +214,55 @@ fn outcome(
         orchestrator = orchestrator.with_cloud_init_wait_timeout(timeout);
     }
 
-    let request_clone = request.clone();
-    let source_clone = source.clone();
+    let ledger = mriya::ResourceLedger::in_memory(mriya::AllocationScope::new(
+        request.zone.clone(),
+        request.project_id.clone(),
+    ));
     let requested_command = command.clone();
+    let (cancel, cancellation) = CancelHandle::channel();
+    let request_for_run = request.clone();
+    let source_for_run = source.clone();
+    let ledger_for_run = ledger.clone();
+    let recorder = backend.clone();
     let result = runtime.block_on(async move {
-        orchestrator
-            .execute(&request_clone, &source_clone, command.as_str())
-            .await
+        let execute = orchestrator.execute(mriya::run::RunInputs {
+            request: &request_for_run,
+            ledger: &ledger_for_run,
+            source: &source_for_run,
+            remote_command: command.as_str(),
+            cancellation: &cancellation,
+        });
+        if !cancel_after_allocation {
+            return execute.await;
+        }
+
+        // The backend records its allocation and then pends, so the observer
+        // resolves first. Bounding the whole interaction means a missed
+        // interrupt fails the scenario instead of hanging it.
+        let limit = Duration::from_secs(30);
+        let interrupt_handle = cancel.clone();
+        let interrupt = async move {
+            recorder.wait_until_recorded().await;
+            interrupt_handle.cancel(Signal::Interrupt);
+        };
+        tokio::pin!(execute);
+        tokio::pin!(interrupt);
+        tokio::time::timeout(limit, async {
+            tokio::select! {
+                result = &mut execute => result,
+                () = &mut interrupt => execute.await,
+            }
+        })
+        .await
+        .expect("the cancellation scenario must settle within its bound")
     });
 
     let result_enum = match result {
-        Ok(output) => RunResult::Success(output),
-        Err(err) => {
-            let kind = match &err {
-                mriya::RunError::Provision(_) => RunFailureKind::Provision,
-                mriya::RunError::Wait { .. } => RunFailureKind::Wait,
-                mriya::RunError::Provisioning { .. } => RunFailureKind::Provisioning,
-                mriya::RunError::ProvisioningTimeout { .. } => RunFailureKind::ProvisioningTimeout,
-                mriya::RunError::Sync { .. } => RunFailureKind::Sync,
-                mriya::RunError::Remote { .. } => RunFailureKind::Remote,
-                mriya::RunError::Teardown(_) => RunFailureKind::Teardown,
-            };
-            RunResult::Failure(RunFailure {
-                kind,
-                message: err.to_string(),
-            })
-        }
+        Ok(outcome) => RunResult::Success(outcome.output),
+        Err(err) => RunResult::Failure(RunFailure {
+            kind: failure_kind(&err),
+            message: err.to_string(),
+        }),
     };
 
     Ok(Ok(RunContext {
@@ -224,117 +274,47 @@ fn outcome(
         cloud_init_poll_interval_override,
         cloud_init_wait_timeout_override,
         outcome: Some(result_enum),
+        cancel_after_allocation,
         requested_command: Some(requested_command),
         source_tmp,
     }))
 }
 
-#[then("the run result exit code is \"{code}\"")]
-fn run_exit_code(run_context_result: &RunContextResult, code: i32) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    let Some(result) = &run_context.outcome else {
-        return Err(StepError::Assertion(String::from("missing outcome")));
-    };
-
-    match result {
-        RunResult::Success(RemoteCommandOutput {
-            exit_code: Some(actual),
-            ..
-        }) if *actual == code => Ok(()),
-        RunResult::Success(other) => Err(StepError::Assertion(format!(
-            "expected exit code {code}, got {:?}",
-            other.exit_code
-        ))),
-        RunResult::Failure(err) => Err(StepError::Assertion(format!(
-            "run failed unexpectedly: {}",
-            err.message
-        ))),
+/// Classifies a run failure for scenario assertions.
+fn failure_kind(
+    err: &mriya::RunError<super::test_doubles::ScriptedBackendError>,
+) -> RunFailureKind {
+    match err {
+        mriya::RunError::Provision(_) => RunFailureKind::Provision,
+        mriya::RunError::Wait { .. } => RunFailureKind::Wait,
+        mriya::RunError::Provisioning { .. } => RunFailureKind::Provisioning,
+        mriya::RunError::ProvisioningTimeout { .. } => RunFailureKind::ProvisioningTimeout,
+        mriya::RunError::Sync { .. } => RunFailureKind::Sync,
+        mriya::RunError::Remote { .. } => RunFailureKind::Remote,
+        // A cleanup failure that wraps a primary error reports the primary
+        // kind, so a scenario still sees why the run failed even when cleanup
+        // also failed. `Cleanup` is reserved for a cleanup failure after a
+        // successful remote command, which has no primary error.
+        mriya::RunError::Cleanup { failure } => failure
+            .primary
+            .as_deref()
+            .map_or(RunFailureKind::Cleanup, failure_kind),
+        mriya::RunError::Cancelled(_) => RunFailureKind::Cancelled,
     }
 }
 
-#[then("the instance is destroyed")]
-fn instance_destroyed(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    if run_context.backend.destroy_calls() > 0 {
-        Ok(())
-    } else {
-        Err(StepError::Assertion(String::from(
-            "backend.destroy should be invoked",
-        )))
-    }
-}
-
-fn assert_failure_contains(
-    run_context: &RunContext,
-    expected_substring: &str,
-) -> Result<(), StepError> {
-    let Some(result) = &run_context.outcome else {
-        return Err(StepError::Assertion(String::from("missing outcome")));
-    };
-
-    match result {
-        RunResult::Failure(failure) if failure.message.contains(expected_substring) => Ok(()),
-        other => Err(StepError::Assertion(format!(
-            "unexpected outcome: {other:?}"
-        ))),
-    }
-}
-
-#[then("the run error is a provisioning timeout")]
-fn provisioning_timeout(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    let Some(result) = &run_context.outcome else {
-        return Err(StepError::Assertion(String::from("missing outcome")));
-    };
-
-    match result {
-        RunResult::Failure(failure) if failure.kind == RunFailureKind::ProvisioningTimeout => {
-            Ok(())
-        }
-        RunResult::Failure(failure) => Err(StepError::Assertion(format!(
-            "expected provisioning timeout, got {kind:?}: {message}",
-            kind = failure.kind,
-            message = failure.message
-        ))),
-        RunResult::Success(_) => Err(StepError::Assertion(String::from(
-            "expected failure, got success",
-        ))),
-    }
-}
-
-#[then("the run error includes a teardown failure note")]
-fn teardown_failure_note_present(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    assert_failure_contains(run_context, "teardown also failed")
-}
-
-/// Direction for SSH invocation lookup.
-#[derive(Clone, Copy)]
-pub enum SshLookupDirection {
-    /// Return the first matching SSH invocation.
-    First,
-    /// Return the last matching SSH invocation.
-    Last,
-}
-
-/// Finds an SSH invocation's remote command string.
+/// Returns the first SSH invocation's remote command string.
 ///
-/// Common logic for extracting the remote command from SSH invocations.
-pub fn find_ssh_command(
-    run_context: &RunContext,
-    direction: SshLookupDirection,
-) -> Result<String, StepError> {
+/// The first SSH call is the mount-and-mkdir step, which is what the cache
+/// directory assertions need.
+pub fn first_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
     let ssh_bin = run_context.sync_config.ssh_bin.as_str();
-    let invocations = run_context.runner.invocations();
-
-    let invocation = match direction {
-        SshLookupDirection::First => invocations.into_iter().find(|inv| inv.program == ssh_bin),
-        SshLookupDirection::Last => invocations
-            .into_iter()
-            .rev()
-            .find(|inv| inv.program == ssh_bin),
-    }
-    .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
+    let invocation = run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .find(|inv| inv.program == ssh_bin)
+        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))?;
 
     let command = invocation.args.last().ok_or_else(|| {
         StepError::Assertion(String::from("ssh invocation missing remote command"))
@@ -343,24 +323,28 @@ pub fn find_ssh_command(
     Ok(command.to_string_lossy().into_owned())
 }
 
+/// Returns the last SSH payload that is not the cache-release call.
+///
+/// The release runs after the requested command, so asking for the last SSH
+/// invocation without this filter would return `sync; ... umount ...` and hide
+/// the command the scenario actually exercised.
 pub fn last_ssh_remote_command(run_context: &RunContext) -> Result<String, StepError> {
-    find_ssh_command(run_context, SshLookupDirection::Last)
-}
-
-#[then("the run error mentions sync failure")]
-fn sync_failure_reported(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    assert_failure_contains(run_context, "sync")
-}
-
-#[then("the run error mentions provisioning failure")]
-fn provisioning_failure_reported(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    assert_failure_contains(run_context, "provisioning")
-}
-
-#[then("teardown failure is reported")]
-fn teardown_failure_reported(run_context_result: &RunContextResult) -> Result<(), StepError> {
-    let run_context = context(run_context_result)?;
-    assert_failure_contains(run_context, "failed to destroy instance")
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    run_context
+        .runner
+        .invocations()
+        .into_iter()
+        .rev()
+        .filter(|invocation| invocation.program == ssh_bin)
+        .filter_map(|invocation| {
+            invocation
+                .args
+                .last()
+                .map(|arg| arg.to_string_lossy().into_owned())
+        })
+        .find(|payload| {
+            !(payload.starts_with("sync; if mountpoint -q ")
+                && payload.contains("; then sudo umount "))
+        })
+        .ok_or_else(|| StepError::Assertion(String::from("missing ssh invocation")))
 }

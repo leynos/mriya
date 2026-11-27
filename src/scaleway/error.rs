@@ -3,7 +3,7 @@
 use scaleway_rs::ScalewayError;
 use thiserror::Error;
 
-use crate::{backend::BackendError, config::ConfigError};
+use crate::{backend::BackendError, config::ConfigError, ownership::ResourceKind};
 
 /// Errors raised by the Scaleway backend.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -40,15 +40,17 @@ pub enum ScalewayBackendError {
         /// Provider instance identifier.
         instance_id: String,
     },
+    /// Raised when waiting for a volume state exceeds the timeout.
+    #[error("timeout waiting for {action} on volume {volume_id}")]
+    VolumeTimeout {
+        /// Action being waited on.
+        action: String,
+        /// Provider volume identifier.
+        volume_id: String,
+    },
     /// Raised when the instance never exposes a public IP.
     #[error("instance {instance_id} missing public IPv4 address")]
     MissingPublicIp {
-        /// Provider instance identifier.
-        instance_id: String,
-    },
-    /// Raised when teardown leaves a server visible in the API.
-    #[error("instance {instance_id} still present after teardown")]
-    ResidualResource {
         /// Provider instance identifier.
         instance_id: String,
     },
@@ -60,10 +62,64 @@ pub enum ScalewayBackendError {
         /// Current state reported by the provider.
         state: String,
     },
+    /// Raised when the provider answered 404 for an operation.
+    ///
+    /// A 404 is evidence, not proof: absence is confirmed only by a
+    /// successful, identity-checked listing.
+    #[error("{operation} returned not found: {message}")]
+    NotFound {
+        /// Operation that returned 404.
+        operation: String,
+        /// Provider message for the response.
+        message: String,
+    },
+    /// Raised when the provider denied authentication or authorization.
+    ///
+    /// Cleanup treats this as a failure: it cannot prove the resource is
+    /// gone, and silently ignoring it would report a leak as clean.
+    #[error("{operation} was denied with HTTP {status}: {message}")]
+    AccessDenied {
+        /// Operation that was denied.
+        operation: String,
+        /// HTTP status, 401 or 403.
+        status: u16,
+        /// Provider message for the response.
+        message: String,
+    },
+    /// Raised when a create request may or may not have been applied.
+    #[error("{operation} outcome is ambiguous: {message}")]
+    AmbiguousOutcome {
+        /// Operation whose outcome is unknown.
+        operation: String,
+        /// Why the outcome could not be decided.
+        message: String,
+    },
+    /// Raised when reconciliation found no resource carrying the allocation
+    /// tag after an ambiguous create.
+    #[error(
+        "allocation outcome unknown for {kind} {tag} in zone {zone}: {detail}; \
+         run `mriya recover` to reconcile"
+    )]
+    AllocationOutcomeUnknown {
+        /// Kind of resource whose allocation is uncertain.
+        kind: ResourceKind,
+        /// Allocation correlation tag.
+        tag: String,
+        /// Zone the allocation was requested in.
+        zone: String,
+        /// Why the outcome could not be decided.
+        detail: String,
+    },
     /// Wrapper for provider level failures.
     #[error("provider error: {message}")]
     Provider {
         /// Message returned by the provider SDK.
+        message: String,
+    },
+    /// Raised when the ownership journal cannot be written.
+    #[error("failed to persist the ownership journal: {message}")]
+    Journal {
+        /// Human-readable persistence failure.
         message: String,
     },
     /// Raised when a volume cannot be attached to an instance.

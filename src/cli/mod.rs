@@ -19,6 +19,12 @@ pub(crate) enum Cli {
     /// Prepare a cache volume for this project.
     #[command(name = "init", about = "Prepare a cache volume for this project")]
     Init(InitCommand),
+    /// Clean up resources recorded by an interrupted run or init.
+    #[command(
+        name = "recover",
+        about = "Clean up resources recorded by an interrupted run or init"
+    )]
+    Recover(RecoverCommand),
 }
 
 /// Arguments for the `mriya run` subcommand.
@@ -59,3 +65,11 @@ pub(crate) struct InitCommand {
     #[arg(long)]
     pub(crate) force: bool,
 }
+
+/// Arguments for the `mriya recover` subcommand.
+///
+/// Recovery is deliberately argument-free: it replays every journal in the
+/// state directory, so an operator never has to know which allocation was
+/// interrupted.
+#[derive(Debug, Parser)]
+pub(crate) struct RecoverCommand;

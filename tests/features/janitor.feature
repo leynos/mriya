@@ -5,7 +5,7 @@ Feature: Scaleway test-run janitor
     And scw lists one tagged server and one tagged volume
     When I run the janitor sweep
     Then the janitor reports deleting 1 server and 1 volume
-    And the janitor deletes servers without deleting attached volumes
+    And the janitor deletes each server with its root volume and keeps non-root volumes
 
   Scenario: Fail the sweep when resources remain
     Given a configured janitor for project "project" and test run "run-1"

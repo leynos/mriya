@@ -14,8 +14,9 @@ scaleway-rs = { version = "0.1.9", default-features = false, features = ["rustls
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 uuid = { version = "1.10", features = ["v4"] }
+libc = "0.2"
 camino = "1.1"
 shell-escape = "0.1.5"
 cap-std = { version = "4.0.2", features = ["fs_utf8"] }

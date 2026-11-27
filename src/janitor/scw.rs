@@ -104,7 +104,13 @@ impl<R: CommandRunner> Janitor<R> {
         self.list_scw_resources(&["instance", "server"], ResourceType::Servers)
     }
 
-    /// Deletes `server`, leaving its IP and volumes to the provider's sweep.
+    /// Deletes `server` and its root volume, leaving other volumes to the
+    /// tagged-volume sweep.
+    ///
+    /// `with-volumes=root` removes the implicitly created local boot volume,
+    /// which carries none of the janitor's tags and would otherwise outlive
+    /// the server as a silent leak. A separately tagged Block Storage volume is
+    /// still found and deleted by the volume sweep.
     ///
     /// The zone comes from the listed server rather than from config, so a
     /// server discovered in another zone is still deleted in its own zone.
@@ -117,11 +123,43 @@ impl<R: CommandRunner> Janitor<R> {
             server.id.as_str(),
             zone_arg.as_str(),
             "with-ip=true",
-            "with-volumes=none",
+            "with-volumes=root",
             "force-shutdown=true",
             "--wait",
         ];
         self.run_scw(&args, ResourceType::Servers)
+    }
+
+    /// Lists the Instances API volumes in the project, across zones.
+    ///
+    /// The root volume recorded from a deleted server is untagged, so it is
+    /// found by identifier rather than by the tag sweep.
+    pub(super) fn list_instance_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
+        self.list_scw_resources(&["instance", "volume"], ResourceType::Volumes)
+    }
+
+    /// Deletes an Instances API volume in the zone it reports.
+    pub(super) fn delete_instance_volume(
+        &self,
+        volume: &ScwVolume,
+    ) -> Result<CommandOutput, JanitorError> {
+        let zone_arg = format!("zone={}", volume.zone);
+        let args = [
+            "instance",
+            "volume",
+            "delete",
+            volume.id.as_str(),
+            zone_arg.as_str(),
+        ];
+        self.run_scw(&args, ResourceType::Volumes)
+    }
+
+    /// Lists the Block Storage volumes in the project, across zones.
+    ///
+    /// SBS roots are not visible through the Instances API, so the recorded
+    /// identifier must be looked for here as well.
+    pub(super) fn list_block_volumes(&self) -> Result<Vec<ScwVolume>, JanitorError> {
+        self.list_scw_resources(&["block", "volume"], ResourceType::Volumes)
     }
 
     /// Lists the Block Storage volumes the janitor may sweep in its zone.

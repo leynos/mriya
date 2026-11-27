@@ -31,6 +31,7 @@ to override discovery.
 
 Example `mriya.toml`:
 
+<!-- tested-example: config-example -->
 ```toml
 [scaleway]
 secret_key = "scw-secret-key-here"
@@ -46,6 +47,7 @@ ssh_user = "ubuntu"
 Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
+<!-- tested-example: missing-field-message -->
 ```text
 missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
 ```
@@ -82,6 +84,7 @@ missing status.
 To override the Scaleway instance type or image for a single run, pass
 `--instance-type` and/or `--image`:
 
+<!-- tested-example: instance-overrides -->
 ```bash
 mriya run --instance-type DEV1-M --image "Ubuntu 24.04 Noble Numbat" -- cargo test
 ```
@@ -99,12 +102,14 @@ first-boot provisioning before the remote command starts.
 
 Provide user-data either inline or via a local file:
 
+<!-- tested-example: cloud-init-file -->
 ```bash
 mriya run --cloud-init-file ./cloud-init.yml -- jq --version
 ```
 
 Or inline (handy for short scripts):
 
+<!-- tested-example: cloud-init-inline -->
 ```bash
 mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 ```
@@ -112,6 +117,7 @@ mriya run --cloud-init "#!/bin/sh\necho ready" -- sh -lc 'echo ok'
 A file path starting with `~/` is expanded through `HOME` before the file is
 read:
 
+<!-- tested-example: cloud-init-tilde-path -->
 ```bash
 mriya run --cloud-init-file '~/cloud-init.yml' -- jq --version
 ```
@@ -193,18 +199,34 @@ To enable the cache volume:
 
 1. Run `mriya init` to create and format a Block Storage volume in the
    configured zone. The command writes the new volume ID into `mriya.toml`. Use
-   `mriya init --force` to replace an existing configured volume ID. If any
-   step after provisioning fails — including the instance read it performs
-   before detaching the volume — the command destroys the formatter instance
-   before reporting the error, so a failed run does not leave a VM billing.
+   `mriya init --force` to replace an existing configured volume ID.
+
+   The new volume is owned by the run until `mkfs.ext4` succeeds, and owned
+   means "delete on failure": a failure before formatting deletes the volume
+   and names its identifier in the error. After formatting succeeds the volume
+   is promoted to retained, so cleanup detaches it and never deletes it. If the
+   configuration write then fails, the error names the volume ID and zone and
+   prints the exact setting to add:
+
+   <!-- tested-example: init-retained-setting -->
+   ```text
+   [scaleway]
+   default_volume_id = "<volume-id>"
+   ```
+
+   together with `SCW_DEFAULT_VOLUME_ID=<volume-id>` and the `mriya recover`
+   step that confirms it. The formatter instance is cleaned up either way, so a
+   failed run does not leave a VM billing.
 2. (Optional) override the volume ID explicitly via configuration:
 
+   <!-- tested-example: cache-volume-env -->
    ```bash
    export SCW_DEFAULT_VOLUME_ID="11111111-2222-3333-4444-555555555555"
    ```
 
    Or in `mriya.toml`:
 
+   <!-- tested-example: cache-volume-setting -->
    ```toml
    [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
@@ -212,6 +234,7 @@ To enable the cache volume:
 
 3. Configure the build tool to use the mounted volume. For Cargo:
 
+   <!-- tested-example: run-with-cache -->
    ```bash
    mriya run -- cargo build
    ```
@@ -235,6 +258,7 @@ setups.
 the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
 `mriya.toml`:
 
+<!-- tested-example: init-volume-size -->
 ```toml
 [init]
 volume_size_gb = 50
@@ -252,31 +276,101 @@ volume_size_gb = 50
 - Resolves the freshest public image matching `SCW_DEFAULT_IMAGE` and
   architecture in the chosen zone.
 - Ensures the requested instance type is available before provisioning.
-- Creates an instance with a routed public IPv4 address and tags `mriya` and
-  `ephemeral`.
+- Creates an instance with a routed public IPv4 address and tags `mriya`,
+  `ephemeral`, and a per-allocation tag `mriya-alloc-<uuid>`. The server is
+  named `mriya-<uuid>` from the same allocation, so the console, the API, and
+  the recovery journal agree on which run owns it.
 - Attaches a Block Storage volume if `SCW_DEFAULT_VOLUME_ID` is configured,
   then mounts it to `/mriya` after the instance boots.
 - Polls every five seconds (up to five minutes) until the instance is running
   and reachable via SSH on port 22.
-- Destroys the instance and polls until the API no longer lists it, failing if
-  any residual resource remains.
+- Cleans up through the verified sequence described below.
 
 Each API request to read or list instances, create a server or volume, power an
-instance on, attach or detach a volume, or delete an instance has a 30-second
-timeout. That includes the instance read `mriya init` performs before it
-detaches the volume, so a hung provider cannot leave the command waiting
-indefinitely. If a request times out, Mriya reports a provider error; check
-connectivity to the Scaleway API and the instance's actual state before
-retrying, as the request may have reached Scaleway even though its response did
-not arrive. Image lookup is the exception: it goes through the Scaleway SDK,
-which applies no such bound.
+instance on or off, attach or detach a volume, release a public IP, or delete a
+resource has a 30-second timeout. If a request times out, Mriya reports a
+provider error; check connectivity to the Scaleway API and the instance's
+actual state before retrying, as the request may have reached Scaleway even
+though its response did not arrive. Image lookup is the exception: it goes
+through the Scaleway SDK, which applies no such bound.
+
+## Resource ownership and cleanup
+
+Mriya records every provider allocation in an ownership ledger as soon as the
+provider confirms it, and writes that ledger to a recovery journal before the
+first create request. The journal lives under `MRIYA_STATE_DIR` (or the XDG
+state directory, `~/.local/state` by default) in `mriya/runs/`, is written with
+mode `0600`, and is replaced atomically after every allocation.
+
+Cleanup is ownership-aware and verifies each postcondition:
+
+1. The server is powered off with the provider's `poweroff` action, and Mriya
+   waits until the provider reports `stopped`.
+2. Every volume the run must keep — a configured cache (retained) or an
+   attachment Mriya did not create (borrowed) — is detached, and the detachment
+   is verified by re-reading the server.
+3. The server is deleted, and its absence is confirmed by a successful,
+   identity-checked listing in the recorded zone and project.
+4. Owned volumes and public IPs are deleted through the API that owns each one
+   (the Instances API or the Block Storage API) and confirmed absent. A Block
+   Storage volume is first waited on until it is no longer `in_use`.
+
+Only resources recorded as owned are deleted. A 404 is treated as evidence,
+never as proof: absence is confirmed only by a listing that succeeds and
+returns no matching identifier. A 401 or 403 is a failure, reported with the
+residual resource identifiers as `kind id@zone (cause)`. Running cleanup again
+after it succeeded is safe: confirmed absence counts as success.
+
+If a create request's response never arrives, Mriya reconciles by the
+allocation tag within its bounded wait window. When that also finds nothing,
+the command fails with `allocation outcome unknown` and keeps the journal, so
+`mriya recover` can finish the job later.
+
+## Recovering an interrupted run
+
+<!-- tested-example: recover-command -->
+```bash
+mriya recover
+```
+
+`mriya recover` replays every journal in the state directory. It prints what it
+removed, verifies that retained volumes are present and detached, prints the
+configuration setting for each retained volume, and exits non-zero if any
+resource could not be verified. It never deletes a retained volume. Run it
+after a crash, after a second Ctrl+C during cleanup, or whenever `mriya run` or
+`mriya init` warns that journals from earlier runs remain.
+
+## Signals and exit codes
+
+`mriya run` and `mriya init` publish SIGINT and SIGTERM through a cancellation
+channel, race each awaited step against it, and still run ownership-aware
+cleanup. The remote command's child process is terminated when a signal
+arrives, so no orphan keeps running on the instance.
+
+| Outcome                                       | Exit status       |
+| --------------------------------------------- | ----------------- |
+| Remote command succeeded or failed on its own | The remote status |
+| SIGINT, resources cleaned up                  | 130               |
+| SIGTERM, resources cleaned up                 | 143               |
+| Any other failure, including cleanup failure  | 1                 |
+
+A second signal during cleanup stops it and leaves the rest to `mriya recover`;
+the message names the journal path.
+
+When a run fails and cleanup also fails, the error keeps all three parts: the
+original failure, the remote command's status if it ran, and the cleanup
+failure with residual resource identifiers. The command exits 1 either way, so
+a leak is never reported as success.
 
 ## Running the integration check
 
-The behavioural suite provisions a real DEV1-S instance to prove create → wait
-→ destroy works end to end and that teardown leaves no residue. Ensure the
-`SCW_*` variables are set, then run:
+The behavioural suite provisions a real DEV1-S instance and inventories
+servers, Instance volumes, Block Storage volumes, and public IPs before and
+after each scenario, so it proves create → wait → cleanup works end to end and
+that ownership-aware cleanup leaves no residue. Ensure the `SCW_*` variables
+are set, then run:
 
+<!-- tested-example: scaleway-test -->
 ```bash
 make scaleway-test
 ```
@@ -286,10 +380,17 @@ The target:
 - Sets `MRIYA_RUN_SCALEWAY_TESTS=1` to enable the Scaleway behavioural suite.
 - Generates `MRIYA_TEST_RUN_ID` via `uuidgen` and tags created instances.
 - Runs `mriya-janitor` before and after tests so leaked instances are cleaned
-  up even when the test command fails.
+  up even when the test command fails. The janitor deletes a server with
+  `with-volumes=root`, so the implicitly created local boot volume — which
+  carries none of the janitor's tags — is removed with the server.
 
 The underlying `cargo test` uses `--test-threads=1` to keep only one instance
 alive at a time.
+
+Run the live suite against a **dedicated** Scaleway project. It provisions and
+deletes real, billable resources, and the janitor sweeps by tag within the
+project the credentials name. Sharing a project with other work risks sweeping
+resources that are not part of the test run.
 
 ## Building from source
 
@@ -311,6 +412,7 @@ prefix's `bin` first on `PATH`, so every Make target uses the pinned release; a
 bare `cargo build` outside Make needs the same directory on `PATH`. The example
 reads the variable the Makefile reads, so it follows an override:
 
+<!-- tested-example: build-tools-path -->
 ```bash
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
@@ -320,6 +422,7 @@ assigns its own `RUSTFLAGS`, which displaces the configuration's flags, so a
 shipped artefact keeps the platform linker. To build with the platform linker
 directly, assign an empty `RUSTFLAGS`:
 
+<!-- tested-example: release-platform-linker -->
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
@@ -332,6 +435,7 @@ entry point that reads the environment has two forms: the default one reads the
 real process environment, and a `_with_env` counterpart takes any
 `mockable::Env` so your own tests can inject a value.
 
+<!-- tested-example: library-example -->
 ```rust
 use mriya::sync::{expand_tilde, expand_tilde_with_home, home_from_env};
 use mockable::{DefaultEnv, Env};

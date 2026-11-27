@@ -33,8 +33,7 @@ pub enum InitFailureKind {
     Provision,
     Wait,
     Format,
-    Detach,
-    Teardown,
+    Cleanup,
     Config,
 }
 
@@ -77,7 +76,6 @@ fn build_init_context() -> Result<InitContext, InitTestError> {
         .map_err(|err| InitTestError::Fixture(format!("instance request: {err}")))?;
 
     let volume = VolumeRequest::new("mriya-test-cache", 10 * BYTES_PER_GB, "fr-par-1", "project");
-
     Ok(InitContext {
         backend: ScriptedVolumeBackend::new(),
         runner: ScriptedRunner::new(),
