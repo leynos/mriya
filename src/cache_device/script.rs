@@ -29,7 +29,7 @@ use super::prelude::{
     probe_helpers,
     resolver_prelude,
     shared_prelude,
-    wipefs_probe,
+    signature_probe,
 };
 
 /// Prefix of the single machine-readable status line.
@@ -66,10 +66,11 @@ pub(super) fn quoted(value: &str) -> String { escape(value.into()).into_owned() 
 /// assert!(script.contains("volume-11111111-1111-1111-1111-111111111111"));
 /// assert!(script.contains("mkfs.ext4 -F -L mriya-cache"));
 /// assert!(script.contains("wipefs --no-act"));
+/// assert!(script.contains("blockdev --getsize64"));
 /// ```
 #[must_use]
 pub fn format_script(volume_id: &str) -> String {
-    let prelude = format!("{}{}", shared_prelude(volume_id), wipefs_probe());
+    let prelude = format!("{}{}", shared_prelude(volume_id), signature_probe());
     format!(
         concat!(
             "{prelude}",

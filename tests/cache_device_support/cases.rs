@@ -87,6 +87,25 @@ pub(super) const FORMAT_CASES: &[FormatCase] = &[
         status: "probe-failed",
         formats: false,
     },
+    // An empty `wipefs` listing is not proof on its own: a blkid probe that
+    // cannot return a clean negative must stop the format.
+    FormatCase {
+        state: &[("signature-TYPE", "code=8\n")],
+        status: "probe-failed",
+        formats: false,
+    },
+    // Nor is it proof when the signature-bearing regions cannot be read.
+    FormatCase {
+        state: &[("dd-exit", "1\n")],
+        status: "probe-failed",
+        formats: false,
+    },
+    // A failed device-size query cannot prove where the tail region is.
+    FormatCase {
+        state: &[("blockdev-exit", "1\n")],
+        status: "probe-failed",
+        formats: false,
+    },
     // A partition record carrying the serial is not the cache disk, so the
     // resolver must ignore it.
     FormatCase {

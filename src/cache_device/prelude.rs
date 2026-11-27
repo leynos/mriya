@@ -157,12 +157,18 @@ pub(super) fn probe_helpers() -> String {
     .to_owned()
 }
 
-/// Builds the `wipefs` signature probe used before formatting.
+/// Builds the signature probe used before formatting.
 ///
-/// `wipefs --no-act` lists every signature and exits non-zero when the device
-/// cannot be probed, so the formatter can tell a clean, empty disk from a
-/// failed probe; `blkid -p` uses exit status 2 for both.
-pub(super) fn wipefs_probe() -> String {
+/// An empty `wipefs --no-act` listing alone does not prove the disk is empty:
+/// a read failure during its scan can also exit zero with no output. The
+/// formatter therefore requires three independent negatives, any failure of
+/// which refuses the format:
+///
+/// - `wipefs` reports no signature and exits zero;
+/// - a full `blkid -p` probe finds nothing (exit 2);
+/// - the first and last mebibytes can be read, which is where superblocks, LVM labels and primary
+///   and backup GPT entries live.
+pub(super) fn signature_probe() -> String {
     format!(
         concat!(
             "mriya_signatures=$(sudo wipefs --no-act \"$mriya_device\" 2>/dev/null)\n",
@@ -173,6 +179,30 @@ pub(super) fn wipefs_probe() -> String {
             "fi\n",
             "if [ -n \"$mriya_signatures\" ]; then\n",
             "  echo \"{prefix}signature-present DEVICE=$mriya_device\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "sudo blkid -p \"$mriya_device\" >/dev/null 2>&1\n",
+            "mriya_blkid_code=$?\n",
+            "if [ \"$mriya_blkid_code\" -ne 2 ]; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=$mriya_blkid_code\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "mriya_device_size=$(sudo blockdev --getsize64 \"$mriya_device\" 2>/dev/null) || mriya_device_size=''\n",
+            "case \"$mriya_device_size\" in\n",
+            "  ''|*[!0-9]*) mriya_device_size=0 ;;\n",
+            "esac\n",
+            "if [ \"$mriya_device_size\" -le 0 ]; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=size\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "if ! sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 count=1 >/dev/null 2>&1; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=read\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "mriya_last_mib=$((mriya_device_size / 1048576 - 1))\n",
+            "if [ \"$mriya_last_mib\" -lt 0 ]; then mriya_last_mib=0; fi\n",
+            "if ! sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 skip=\"$mriya_last_mib\" count=1 >/dev/null 2>&1; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=tail-read\"\n",
             "  exit 0\n",
             "fi\n",
         ),

@@ -40,6 +40,8 @@ pub struct CommandInvocation {
     /// Exit code the scripted runner returned, or `None` when the fake
     /// produced no status.
     pub exit_code: Option<i32>,
+    /// Standard output the scripted runner returned.
+    pub stdout: String,
 }
 
 impl CommandInvocation {
@@ -190,6 +192,14 @@ impl crate::sync::CommandRunner for ScriptedRunner {
         args: &[std::ffi::OsString],
     ) -> Result<crate::sync::CommandOutput, crate::sync::SyncError> {
         self.record_event(program, args);
+        // Record the attempt before any early return, so a failure path still
+        // shows which command was tried.
+        self.invocations.borrow_mut().push(CommandInvocation {
+            program: program.to_owned(),
+            args: args.to_vec(),
+            exit_code: None,
+            stdout: String::new(),
+        });
 
         let error_to_return = {
             let mut pending = self.next_error.borrow_mut();
@@ -211,11 +221,10 @@ impl crate::sync::CommandRunner for ScriptedRunner {
                 message: String::from("no scripted response available"),
             }
         })?;
-        self.invocations.borrow_mut().push(CommandInvocation {
-            program: program.to_owned(),
-            args: args.to_vec(),
-            exit_code: response.code,
-        });
+        if let Some(recorded) = self.invocations.borrow_mut().last_mut() {
+            recorded.exit_code = response.code;
+            recorded.stdout.clone_from(&response.stdout);
+        }
         Ok(response)
     }
 }

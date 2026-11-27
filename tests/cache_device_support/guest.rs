@@ -136,7 +136,39 @@ pub(super) enum StateFile<'a> {
     ChownExit(&'a str),
 }
 
-impl StateFile<'_> {
+impl<'a> StateFile<'a> {
+    /// Maps an ordinary case-table key and value to a state file.
+    ///
+    /// The serial scenarios are handled by the caller because they build
+    /// records rather than plain values.
+    pub(super) fn from_case(name: &'a str, value: &'a str) -> Option<Self> {
+        Some(match name {
+            "root-source" => Self::RootSource(value),
+            "pkname-sda1" => Self::PknameSda1(value),
+            "pkname-vg-root" => Self::PknameVgRoot(value),
+            "pkname-dm-0" => Self::PknameDm0(value),
+            "scsi" => Self::Scsi(value),
+            "mkfs-exit" => Self::MkfsExit(value),
+            "umount-exit" => Self::UmountExit(value),
+            "mount-source" => Self::MountSource(value),
+            "findmnt-exit" => Self::FindmntExit(value),
+            "mountpoint-exit" => Self::MountpointExit(value),
+            "dd-exit" => Self::DdExit(value),
+            "lsblk-exit" => Self::LsblkExit(value),
+            "pkname-exit" => Self::PknameExit(value),
+            "wipefs-exit" => Self::WipefsExit(value),
+            "wipefs-output" => Self::WipefsOutput(value),
+            "blockdev-exit" => Self::BlockdevExit(value),
+            "blockdev-size" => Self::BlockdevSize(value),
+            "mount-source-override" => Self::MountSourceOverride(value),
+            "signature-TYPE" => Self::SignatureType(value),
+            "signature-PTTYPE" => Self::SignaturePartitionTable(value),
+            "signature-UUID" => Self::SignatureUuid(value),
+            "chown-exit" => Self::ChownExit(value),
+            _ => return None,
+        })
+    }
+
     /// Returns the state file name the fakes read.
     fn name(&self) -> &'static str {
         match self {

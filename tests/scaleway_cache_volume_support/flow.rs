@@ -282,11 +282,19 @@ async fn create_volume(harness: &CacheHarness) -> Result<VolumeHandle> {
         .create_volume(&request)
         .await
         .context("create cache volume")?;
-    harness
+    if let Err(error) = harness
         .backend
         .wait_for_volume_status(&volume.zone, &volume.id, VolumeStatus::Available)
         .await
-        .context("wait for volume availability")?;
+    {
+        return match harness.backend.delete_volume(&volume).await {
+            Ok(()) => Err(error).context("wait for volume availability"),
+            Err(cleanup) => Err(anyhow::anyhow!(
+                "waiting for volume {} failed: {error}; deleting it also failed: {cleanup}",
+                volume.id
+            )),
+        };
+    }
     Ok(volume)
 }
 

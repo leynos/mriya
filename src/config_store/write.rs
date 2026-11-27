@@ -8,6 +8,14 @@ use ortho_config::toml;
 
 use super::{ConfigStoreError, split_config_path};
 
+/// The target and temporary file names involved in one replacement.
+struct Names<'a> {
+    /// Existing configuration file name.
+    target: &'a str,
+    /// Temporary replacement file name.
+    replacement: &'a str,
+}
+
 /// Renders `value` and atomically replaces the file, creating parent
 /// directories.
 ///
@@ -30,8 +38,6 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
             message: err.to_string(),
         })?;
 
-    refuse_symlink(&dir, file_name, path)?;
-
     let rendered = toml::to_string_pretty(value).map_err(|err| ConfigStoreError::Parse {
         path: path.to_path_buf(),
         message: err.to_string(),
@@ -45,17 +51,23 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     );
-    write_private(&dir, &temp_name, rendered.as_bytes(), path)?;
-    ensure_owner(&dir, file_name, &temp_name, path)?;
-    inherit_permissions(&dir, file_name, &temp_name);
-    dir.rename(&temp_name, &dir, file_name).map_err(|err| {
-        // The temporary file is left behind only on this failure path.
-        drop(dir.remove_file(&temp_name));
-        ConfigStoreError::Io {
-            path: path.to_path_buf(),
-            message: err.to_string(),
-        }
-    })
+    let names = Names {
+        target: file_name,
+        replacement: &temp_name,
+    };
+    refuse_symlink(&dir, &names, path)?;
+    write_private(&dir, &names, rendered.as_bytes(), path)?;
+    ensure_owner(&dir, &names, path)?;
+    inherit_permissions(&dir, &names);
+    dir.rename(names.replacement, &dir, names.target)
+        .map_err(|err| {
+            // The temporary file is left behind only on this failure path.
+            drop(dir.remove_file(&temp_name));
+            ConfigStoreError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            }
+        })
 }
 
 /// Writes `contents` to a new file that only the owner can read.
@@ -65,7 +77,7 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
 /// before the rename.
 fn write_private(
     dir: &Dir,
-    name: &str,
+    names: &Names<'_>,
     contents: &[u8],
     path: &Utf8Path,
 ) -> Result<(), ConfigStoreError> {
@@ -76,16 +88,16 @@ fn write_private(
         use cap_std::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = dir
-        .open_with(name, &options)
-        .map_err(|err| ConfigStoreError::Io {
-            path: path.to_path_buf(),
-            message: err.to_string(),
-        })?;
+    let mut file =
+        dir.open_with(names.replacement, &options)
+            .map_err(|err| ConfigStoreError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            })?;
     if let Err(error) = file.write_all(contents) {
         drop(file);
         // A partial document can hold credentials; never leave it behind.
-        drop(dir.remove_file(name));
+        drop(dir.remove_file(names.replacement));
         return Err(ConfigStoreError::Io {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -98,8 +110,8 @@ fn write_private(
 ///
 /// A rename replaces the directory entry, so writing through the link would
 /// silently turn it into a regular file and stop updating its referent.
-fn refuse_symlink(dir: &Dir, file_name: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
-    match dir.symlink_metadata(file_name) {
+fn refuse_symlink(dir: &Dir, names: &Names<'_>, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+    match dir.symlink_metadata(names.target) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(ConfigStoreError::Symlinked {
             path: path.to_path_buf(),
         }),
@@ -117,35 +129,40 @@ fn refuse_symlink(dir: &Dir, file_name: &str, path: &Utf8Path) -> Result<(), Con
 /// A privileged update of a user-owned file would otherwise leave the new
 /// file owned by the writer, locking the original owner out.
 #[cfg(unix)]
-fn ensure_owner(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+fn ensure_owner(dir: &Dir, names: &Names<'_>, path: &Utf8Path) -> Result<(), ConfigStoreError> {
     use cap_std::fs::MetadataExt;
 
-    let target = match dir.metadata(from) {
+    let target = match dir.metadata(names.target) {
         Ok(target) => target,
         // Only an absent target is the new-file case.
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => {
-            drop(dir.remove_file(to));
+            drop(dir.remove_file(names.replacement));
             return Err(ConfigStoreError::Io {
                 path: path.to_path_buf(),
                 message: err.to_string(),
             });
         }
     };
-    let replacement = dir.metadata(to).map_err(|err| ConfigStoreError::Io {
-        path: path.to_path_buf(),
-        message: err.to_string(),
-    })?;
+    let replacement = dir
+        .metadata(names.replacement)
+        .map_err(|err| ConfigStoreError::Io {
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        })?;
     if target.uid() != replacement.uid() {
         // The replacement is discarded by the caller; never publish it.
-        drop(dir.remove_file(to));
+        drop(dir.remove_file(names.replacement));
         return Err(ConfigStoreError::OwnershipChanged {
             path: path.to_path_buf(),
         });
     }
-    // An ACL can grant access a mode cannot express (and deny group access a
-    // shared mode would grant), so the replacement must carry the same one.
-    copy_acl(dir, from, to, path)
+    // An ACL's group entries refer to the file's owning group, so it may only
+    // be copied when that group is unchanged.
+    if target.gid() == replacement.gid() {
+        copy_acl(dir, names, path)?;
+    }
+    Ok(())
 }
 
 /// Copies the target's access ACL onto the replacement.
@@ -155,8 +172,8 @@ fn ensure_owner(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), 
 /// without that ACL would widen access, so an unreadable or uncopyable ACL
 /// fails the update instead.
 #[cfg(unix)]
-fn copy_acl(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
-    use rustix::fs::{Mode, OFlags, XattrFlags, fgetxattr, fsetxattr};
+fn copy_acl(dir: &Dir, names: &Names<'_>, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+    use rustix::fs::{Mode, OFlags, XattrFlags, fgetxattr, fremovexattr, fsetxattr};
 
     let open = |name: &str| {
         rustix::fs::openat(dir, name, OFlags::RDONLY | OFlags::CLOEXEC, Mode::empty()).map_err(
@@ -166,15 +183,20 @@ fn copy_acl(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), Conf
             },
         )
     };
-    let target = open(from)?;
-    let replacement = open(to)?;
+    let target = open(names.target)?;
+    let replacement = open(names.replacement)?;
     let mut buffer = vec![0_u8; 4096];
     let size = match fgetxattr(&target, "system.posix_acl_access", &mut buffer) {
         Ok(size) => size,
-        // No ACL is set, so the mode already carries every access rule.
-        Err(rustix::io::Errno::NODATA | rustix::io::Errno::NOTSUP) => return Ok(()),
+        // No ACL is set. A default ACL on the directory may still have been
+        // inherited by the replacement, so remove it rather than leave it to
+        // be enabled by the target mode.
+        Err(err) if is_missing_attribute(err) => {
+            let _cleared = fremovexattr(&replacement, "system.posix_acl_access");
+            return Ok(());
+        }
         Err(err) => {
-            drop(dir.remove_file(to));
+            drop(dir.remove_file(names.replacement));
             return Err(ConfigStoreError::Io {
                 path: path.to_path_buf(),
                 message: err.to_string(),
@@ -192,7 +214,7 @@ fn copy_acl(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), Conf
         XattrFlags::empty(),
     )
     .map_err(|err| {
-        drop(dir.remove_file(to));
+        drop(dir.remove_file(names.replacement));
         ConfigStoreError::Io {
             path: path.to_path_buf(),
             message: err.to_string(),
@@ -200,14 +222,19 @@ fn copy_acl(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), Conf
     })
 }
 
+/// Reports whether `err` means the file has no access ACL.
+#[cfg(target_os = "macos")]
+const fn is_missing_attribute(err: rustix::io::Errno) -> bool { err == rustix::io::Errno::NOATTR }
+
+/// Reports whether `err` means the file or filesystem has no access ACL.
+#[cfg(not(target_os = "macos"))]
+const fn is_missing_attribute(err: rustix::io::Errno) -> bool {
+    matches!(err, rustix::io::Errno::NODATA | rustix::io::Errno::NOTSUP)
+}
+
 /// Leaves ownership unchanged on non-Unix platforms.
 #[cfg(not(unix))]
-fn ensure_owner(
-    _dir: &Dir,
-    _from: &str,
-    _to: &str,
-    _path: &Utf8Path,
-) -> Result<(), ConfigStoreError> {
+fn ensure_owner(_dir: &Dir, _names: &Names<'_>, _path: &Utf8Path) -> Result<(), ConfigStoreError> {
     Ok(())
 }
 
@@ -216,10 +243,12 @@ fn ensure_owner(
 /// A new file keeps the restricted mode `write_private` applied, because no
 /// target mode exists to inherit.
 #[cfg(unix)]
-fn inherit_permissions(dir: &Dir, from: &str, to: &str) {
+fn inherit_permissions(dir: &Dir, names: &Names<'_>) {
     use cap_std::fs::{MetadataExt, Permissions, PermissionsExt};
 
-    let (Ok(target), Ok(replacement)) = (dir.metadata(from), dir.metadata(to)) else {
+    let (Ok(target), Ok(replacement)) =
+        (dir.metadata(names.target), dir.metadata(names.replacement))
+    else {
         return;
     };
     // The ACL is copied first; a differing group would then widen the mode's
@@ -228,9 +257,9 @@ fn inherit_permissions(dir: &Dir, from: &str, to: &str) {
         return;
     }
     let mode = target.permissions().mode();
-    drop(dir.set_permissions(to, Permissions::from_mode(mode)));
+    drop(dir.set_permissions(names.replacement, Permissions::from_mode(mode)));
 }
 
 /// Leaves the replacement's default permissions on non-Unix platforms.
 #[cfg(not(unix))]
-fn inherit_permissions(_dir: &Dir, _from: &str, _to: &str) {}
+fn inherit_permissions(_dir: &Dir, _names: &Names<'_>) {}

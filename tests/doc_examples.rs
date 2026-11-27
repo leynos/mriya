@@ -321,13 +321,18 @@ fn the_recovery_example_matches_the_error_message() {
         message: String::from("detach rejected"),
     };
     let rendered = error.to_string();
-    // The documented command, with the placeholders filled in, must appear
-    // verbatim; a swapped or missing argument would not match.
-    let expected = concat!(
-        "scw instance server detach-volume server-id=srv-1 ",
-        "volume-id=vol-1 zone=fr-par-1"
+    // The documented command, with its placeholders filled in, must appear
+    // verbatim in the error; a swapped or missing argument would not match.
+    let joined = recovery.body.replace("\\\n", " ");
+    let normalized = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    let documented = normalized
+        .replace("<instance>", "srv-1")
+        .replace("<volume>", "vol-1")
+        .replace("<zone>", "fr-par-1");
+    assert!(
+        rendered.contains(&documented),
+        "documented command {documented:?} not found in {rendered}"
     );
-    assert!(rendered.contains(expected), "{rendered}");
 }
 
 /// Runs the published `mriya` commands through the real binary.
