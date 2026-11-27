@@ -168,10 +168,11 @@ The migration fixes this:
   existing configuration, so it refuses to replace one without `--force`.
   Previously only the file store was checked, and the environment value would
   have overridden the ID `init` wrote when `run` loaded configuration.
-- `ConfigStore` refuses a discovered file that is not TOML, naming its format,
-  instead of parsing it as TOML. The loader accepts YAML and JSON5 by
-  extension, so this makes the mismatch explicit rather than a misleading
-  syntax error.
+- `ConfigStore` refuses a discovered YAML or JSON5 file, naming its format,
+  instead of parsing it as TOML. The loader treats every other extension,
+  including none, as TOML, and the store now matches that classification. The
+  mismatch for the two structured formats is explicit rather than a misleading
+  syntax error; writing those formats is outside this migration.
 - The users' guide and the validation error messages now name root-level keys.
 - `tests/config_discovery.rs` proves the store writes a file that
   `ScalewayConfig` reads, and that sectioned files are ignored.
@@ -197,8 +198,9 @@ modules:
 - `src/config_store/tests.rs`: six store tests, including one table choosing
   the recorded volume ID across root, legacy, blank, and blank-with-legacy
   files, and one proving a non-TOML selection is refused with its format named.
-- `src/init/tests.rs`: two tests proving a volume ID supplied through the
-  environment requires `--force` before `init` will replace it.
+- `src/init/tests.rs`: tests proving a volume ID supplied through the
+  environment requires `--force`, that the request records the configured ID,
+  and that a blank value records nothing.
 - `src/main_request_tests.rs`: one test proving a real `mriya run` override
   equal to its documented default beats a different configured value.
 
@@ -221,7 +223,7 @@ $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [ 289.615s] 556 tests run: 556 passed (2 slow), 0 skipped
+Summary [  43.305s] 560 tests run: 560 passed, 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 

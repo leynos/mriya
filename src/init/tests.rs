@@ -50,18 +50,34 @@ fn from_config_rejects_a_configured_volume_id_without_force() {
     );
 }
 
-/// Forcing the overwrite lets the request through so the new ID is recorded.
+/// Forcing the overwrite lets the request through, and the request remembers
+/// which ID the resolved configuration supplied so the orchestrator can tell
+/// an environment value from a file value.
 #[test]
 fn from_config_accepts_a_configured_volume_id_with_force() {
     let scaleway = scaleway_with_volume(Some("env-volume"));
     let init_config = InitConfig { volume_size_gb: 20 };
 
-    let result = InitRequest::from_config(&scaleway, &init_config, "project", true);
+    let request = InitRequest::from_config(&scaleway, &init_config, "project", true)
+        .expect("force should permit the overwrite");
 
-    assert!(
-        result.is_ok(),
-        "force should permit the overwrite: {result:?}"
+    assert_eq!(
+        request.configured_volume_id.as_deref(),
+        Some("env-volume"),
+        "the request should carry the configured ID"
     );
+}
+
+/// A blank configured value records nothing, so it never blocks `init`.
+#[test]
+fn from_config_ignores_a_blank_configured_volume_id() {
+    let scaleway = scaleway_with_volume(Some("   "));
+    let init_config = InitConfig { volume_size_gb: 20 };
+
+    let request = InitRequest::from_config(&scaleway, &init_config, "project", false)
+        .expect("a blank ID should not block init");
+
+    assert_eq!(request.configured_volume_id, None);
 }
 
 /// Checks that zero-sized volumes return `InvalidVolumeSize`.

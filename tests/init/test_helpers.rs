@@ -86,6 +86,7 @@ fn build_init_context() -> Result<InitContext, InitTestError> {
             volume,
             instance_request,
             overwrite_existing_volume_id: false,
+            configured_volume_id: None,
         },
         config_store: MemoryConfigStore::new(),
         outcome: None,

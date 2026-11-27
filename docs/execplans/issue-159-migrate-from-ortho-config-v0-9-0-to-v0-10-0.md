@@ -157,7 +157,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
   0. Logs are under `/tmp/*-mriya-issue-159*.out`; the rebased candidate's gates
   are recorded under
   `/tmp/*-mriya-issue-159-migrate-from-ortho-config-v0-9-0-to-v0-10-0.out`,
-  where `make test` reports 556 passed across 23 binaries.
+  where `make test` reports 560 passed across 23 binaries.
 - [x] (2026-11-12) Inspect the final dependency graph.
       `cargo tree -i ortho_config` shows only `mriya`; all three `ortho_*`
       crates resolve together (0.11.0 after the rebase);

@@ -56,6 +56,8 @@ fn collected_env<'a>(
 ) -> Vec<(&'a str, &'a str)> {
     let mut vars = vec![
         ("HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_DIRS", workspace.home.as_str()),
         ("MRIYA_CONFIG_PATH", workspace.config.as_str()),
     ];
     vars.extend_from_slice(extra);

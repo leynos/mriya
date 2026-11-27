@@ -48,6 +48,16 @@ where
     /// Raised when configuration updates fail.
     #[error("configuration update failed: {0}")]
     Config(#[from] ConfigStoreError),
+    /// Raised when the environment supplies a volume ID that a file write
+    /// cannot replace.
+    #[error(
+        "volume ID {volume_id} is set by the environment; unset SCW_DEFAULT_VOLUME_ID \
+         before running init, because init can only update the configuration file"
+    )]
+    EnvironmentVolumeId {
+        /// Identifier the environment supplies.
+        volume_id: String,
+    },
     /// Raised when volume creation fails.
     #[error("failed to create volume: {0}")]
     Volume(#[source] BackendError),

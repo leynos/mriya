@@ -198,7 +198,10 @@ To enable the cache volume:
    `mriya init --force` to replace an existing configured volume ID. If any
    step after provisioning fails — including the instance read it performs
    before detaching the volume — the command destroys the formatter instance
-   before reporting the error, so a failed run does not leave a VM billing.
+   before reporting the error, so a failed run does not leave a VM billing. If
+   `SCW_DEFAULT_VOLUME_ID` is set, the environment value overrides the file on
+   every run, so `init` refuses even with `--force`; unset the variable and
+   rerun to replace the recorded volume.
 2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash

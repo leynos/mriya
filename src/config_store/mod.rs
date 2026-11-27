@@ -150,7 +150,12 @@ impl ConfigStore {
             }
         }
 
-        let Some(fallback) = candidates.iter().rev().find(|path| is_toml(path)).cloned() else {
+        let Some(fallback) = candidates
+            .iter()
+            .rev()
+            .find(|path| parses_as_toml(path))
+            .cloned()
+        else {
             return Err(ConfigStoreError::NoCandidates);
         };
         Ok(ConfigTarget {
@@ -162,7 +167,7 @@ impl ConfigStore {
 
 /// The target for a discovered file that exists, refusing a non-TOML format.
 fn existing_target(path: &Utf8Path) -> Result<ConfigTarget, ConfigStoreError> {
-    if is_toml(path) {
+    if parses_as_toml(path) {
         return Ok(ConfigTarget {
             path: path.to_path_buf(),
             exists: true,
@@ -174,10 +179,19 @@ fn existing_target(path: &Utf8Path) -> Result<ConfigTarget, ConfigStoreError> {
     })
 }
 
-/// Whether `path` names a TOML file, compared case-insensitively.
-fn is_toml(path: &Utf8Path) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
+/// Whether the loader parses `path` as TOML.
+///
+/// `ortho_config` selects YAML for `yaml`/`yml` and JSON5 for `json`/`json5`;
+/// every other extension, including none, is parsed as TOML. The store mirrors
+/// that classification so it refuses exactly the files it cannot edit.
+fn parses_as_toml(path: &Utf8Path) -> bool {
+    const NON_TOML: [&str; 4] = ["json", "json5", "yaml", "yml"];
+    let Some(extension) = path.extension() else {
+        return true;
+    };
+    !NON_TOML
+        .iter()
+        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
 }
 
 impl Default for ConfigStore {

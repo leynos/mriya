@@ -101,6 +101,16 @@ fn config_contains_volume_id(
     Ok(Ok(init_context))
 }
 
+#[given("the environment supplies volume id \"{volume_id}\"")]
+fn environment_supplies_volume_id(
+    init_context_result: InitContextResult,
+    volume_id: String,
+) -> Result<InitContextResult, StepError> {
+    let mut init_context = init_context_result?;
+    init_context.request.configured_volume_id = Some(volume_id);
+    Ok(Ok(init_context))
+}
+
 #[given("force overwrite is enabled")]
 fn force_overwrite_enabled(
     init_context_result: InitContextResult,
@@ -255,7 +265,7 @@ const fn map_failure_kind(
     err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
 ) -> InitFailureKind {
     match err {
-        InitError::Config(_) => InitFailureKind::Config,
+        InitError::Config(_) | InitError::EnvironmentVolumeId { .. } => InitFailureKind::Config,
         InitError::Volume(_) => InitFailureKind::Volume,
         InitError::Provision(_) => InitFailureKind::Provision,
         InitError::Wait { .. } => InitFailureKind::Wait,

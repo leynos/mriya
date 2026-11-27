@@ -156,20 +156,14 @@ fn read_volume_id_selects_the_recorded_volume(
     Ok(())
 }
 
-/// A discovered YAML file is refused with an error naming the format, rather
-/// than parsed as TOML.
-#[rstest]
-fn write_volume_id_rejects_a_non_toml_selection() -> anyhow::Result<()> {
-    let tmp = TempDir::new().context("failed to create tempdir")?;
-    let root = Utf8Path::from_path(tmp.path()).context("temp path should be UTF-8")?;
-    let yaml_path = root.join("mriya.yaml");
-    Dir::open_ambient_dir(root, ambient_authority())
-        .context("temp directory should open")?
-        .write("mriya.yaml", "default_volume_id: legacy\n")
-        .context("YAML fixture should be written")?;
+/// Builds a store whose discovery selects `name` inside `root`, with the
+/// fixture root as the only working directory and XDG location.
+fn store_selecting(root: &Utf8Path, name: &str) -> ConfigStore {
+    let selected = root.join(name);
     let env = Arc::new(
         MapEnv::new()
-            .with_var(CONFIG_ENV_VAR, yaml_path.as_str())
+            .with_var(CONFIG_ENV_VAR, selected.as_str())
+            .with_current_dir(root)
             .with_var("HOME", root.as_str())
             .with_var("XDG_CONFIG_HOME", root.as_str())
             .with_var("XDG_CONFIG_DIRS", root.as_str()),
@@ -183,20 +177,47 @@ fn write_volume_id_rejects_a_non_toml_selection() -> anyhow::Result<()> {
         .clear_project_roots()
         .add_project_root(root)
         .build();
-    let store = ConfigStore::with_discovery(discovery);
+    ConfigStore::with_discovery(discovery)
+}
 
-    let Err(err) = store.write_volume_id("vol-123", true) else {
-        bail!("a YAML file must not be edited as TOML");
-    };
+/// The loader parses only these extensions as something other than TOML, so a
+/// store that refused more than this would reject a file `run` accepts.
+#[rstest]
+#[case::yaml("mriya.yaml", "default_volume_id: legacy\n", Some("yaml"))]
+#[case::json5("mriya.json5", "{ default_volume_id: 'legacy' }\n", Some("json5"))]
+#[case::named_toml("config.conf", "default_volume_id = \"legacy\"\n", None)]
+#[case::extensionless("mriya-config", "default_volume_id = \"legacy\"\n", None)]
+fn write_volume_id_matches_the_loader_format_classification(
+    #[case] name: &str,
+    #[case] contents: &str,
+    #[case] refused_format: Option<&str>,
+) -> anyhow::Result<()> {
+    let tmp = TempDir::new().context("failed to create tempdir")?;
+    let root = Utf8Path::from_path(tmp.path()).context("temp path should be UTF-8")?;
+    Dir::open_ambient_dir(root, ambient_authority())
+        .context("temp directory should open")?
+        .write(name, contents)
+        .with_context(|| format!("write {name}"))?;
+    let store = store_selecting(root, name);
 
-    let ConfigStoreError::UnsupportedFormat { path, format } = err else {
-        bail!("expected UnsupportedFormat, got {err:?}");
-    };
-    ensure!(path == yaml_path, "error should cite the YAML file");
-    ensure!(
-        format == "yaml",
-        "error should name the format, got {format}"
-    );
+    let result = store.write_volume_id("vol-123", true);
+
+    if let Some(expected) = refused_format {
+        let Err(err) = result else {
+            bail!("{name} must not be edited as TOML");
+        };
+        let ConfigStoreError::UnsupportedFormat { path, format } = err else {
+            bail!("expected UnsupportedFormat, got {err:?}");
+        };
+        ensure!(path == root.join(name), "error should cite {name}");
+        ensure!(
+            format == expected,
+            "error should name {expected}, got {format}"
+        );
+    } else {
+        let written = result.with_context(|| format!("{name} is TOML and should be edited"))?;
+        ensure!(written == root.join(name), "store should write {name}");
+    }
     Ok(())
 }
 
