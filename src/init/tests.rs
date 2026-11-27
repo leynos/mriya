@@ -63,8 +63,8 @@ fn from_config_rejects_a_configured_volume_id_without_force() {
 }
 
 /// Forcing the overwrite lets the request through, and the request remembers
-/// which ID the resolved configuration supplied so the orchestrator can tell
-/// an environment value from a file value.
+/// which ID the resolved configuration supplied, separately from the
+/// environment provenance the composition root records.
 #[test]
 fn from_config_accepts_a_configured_volume_id_with_force() {
     let scaleway = scaleway_with_volume(Some("env-volume"));
@@ -80,7 +80,9 @@ fn from_config_accepts_a_configured_volume_id_with_force() {
     );
 }
 
-/// A blank configured value records nothing, so it never blocks `init`.
+/// A blank resolved value records nothing here, so request construction does
+/// not block; a blank environment value is caught separately by the
+/// orchestrator's provenance guard.
 #[test]
 fn from_config_ignores_a_blank_configured_volume_id() {
     let scaleway = scaleway_with_volume(Some("   "));
