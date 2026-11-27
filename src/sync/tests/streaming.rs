@@ -6,37 +6,35 @@ use rstest::rstest;
 
 use super::super::*;
 
-/// Run a shell script via `StreamingCommandRunner` and assert its output.
+/// Run `script` through `StreamingCommandRunner` as `sh -c script`.
 ///
-/// A macro rather than a function so a failure points at the calling test,
-/// and so running the command, which can fail, is unwrapped in the test body
-/// where a failure is the verdict.
-macro_rules! assert_streaming_runner_output {
-    ($script:expr, $expected_code:expr, $expected_stdout:expr, $expected_stderr:expr $(,)?) => {{
-        let runner = StreamingCommandRunner;
-        let output = runner
-            .run("sh", &[OsString::from("-c"), OsString::from($script)])
-            .expect("command should execute successfully");
-
-        assert_eq!(output.code, $expected_code);
-        assert_eq!(output.stdout, $expected_stdout);
-        assert_eq!(output.stderr, $expected_stderr);
-    }};
+/// Running the command can fail, so this reports the runner's error rather
+/// than raising it: the calling test body unwraps, where a failure is the
+/// verdict and carries the test's own line.
+fn run_streaming_script(script: &str) -> Result<CommandOutput, SyncError> {
+    StreamingCommandRunner.run("sh", &[OsString::from("-c"), OsString::from(script)])
 }
 
 #[rstest]
 fn streaming_runner_captures_output() {
-    assert_streaming_runner_output!("printf out && printf err 1>&2", Some(0), "out", "err");
+    let output = run_streaming_script("printf out && printf err 1>&2")
+        .expect("command should execute successfully");
+
+    assert_eq!(output.code, Some(0));
+    assert_eq!(output.stdout, "out");
+    assert_eq!(output.stderr, "err");
 }
 
 #[rstest]
 fn streaming_runner_captures_output_on_failure() {
-    assert_streaming_runner_output!(
-        "printf out && printf err 1>&2; exit 42",
-        Some(42),
-        "out",
-        "err",
-    );
+    // A non-zero exit status is the runner's report, not a runner error, so
+    // the call must succeed and hand the code back untouched.
+    let output = run_streaming_script("printf out && printf err 1>&2; exit 42")
+        .expect("command should execute successfully");
+
+    assert_eq!(output.code, Some(42));
+    assert_eq!(output.stdout, "out");
+    assert_eq!(output.stderr, "err");
 }
 
 #[rstest]
