@@ -31,16 +31,15 @@ code.
 ## What it does
 
 - **Git-aware sync** – Uses rsync with `.gitignore` filters, so paths matched
-  by a per-directory `.gitignore` rule are excluded from the transfer. The
-  filter is not a full implementation of Git's ignore rules: it skips
-  `.git/info/exclude` and `core.excludesFile`, ignores `!` re-inclusion, does
-  not match the zero-directory case of a `**/` pattern, and reads escaped
-  patterns differently, so some paths Git would ignore can still travel. An
-  ignored path on the remote survives only when the receiving directory already
-  holds the matching `.gitignore`; rsync's default delete mode can remove it
-  before that file arrives. Persistence *across* runs needs a cache volume: a
-  later run never reuses the previous VM's own disk. The root volume itself can
-  outlive the server and stay billable; see the
+  by a per-directory `.gitignore` rule are excluded from the transfer. Rsync
+  does not implement every Git ignore rule, so some paths Git would ignore can
+  still travel; the [user guide](docs/users-guide.md#file-sync-semantics) lists
+  the differences. An ignored path on the remote survives only when the
+  receiving directory already holds the matching `.gitignore`, because rsync's
+  default delete mode can remove it before that file arrives. Persistence
+  *across* runs needs a cache volume: a later run never reuses the previous
+  VM's own disk. The root volume itself can outlive the server and stay
+  billable; see the
   [cleanup notes](docs/users-guide.md#cleanup-what-is-and-is-not-verified).
 - **Live output streaming** – stdout and stderr stream back to your terminal in
   real time.
