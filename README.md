@@ -35,12 +35,12 @@ code.
   ignored path on the remote survives only when the receiving directory already
   holds the matching `.gitignore`; rsync's default delete mode can remove it
   before that file arrives. The filter reads `.gitignore` patterns rather than
-  Git's index, so an untracked but unignored file still travels; it does not
+  Git's index, so an untracked but unignored file still travels. It does not
   read `.git/info/exclude` or `core.excludesFile`, and it does not apply Git's
-  `!` re-inclusion, so a path ignored only there still transfers. Persistence
-  *across* runs needs a cache volume: a later run never reuses the previous
-  VM's own disk. The root volume itself can outlive the server and stay
-  billable; see the
+  `!` re-inclusion, so re-included files can be missing from the remote
+  workspace. Persistence *across* runs needs a cache volume: a later run never
+  reuses the previous VM's own disk. The root volume itself can outlive the
+  server and stay billable; see the
   [cleanup notes](docs/users-guide.md#cleanup-what-is-and-is-not-verified).
 - **Live output streaming** – stdout and stderr stream back to your terminal in
   real time.

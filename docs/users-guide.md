@@ -62,17 +62,20 @@ Required sync settings: `ssh_identity_file`.
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
 so only files not matched by `.gitignore` patterns are transferred. That filter
-reads per-directory `.gitignore` files only: it does not read
-`.git/info/exclude` or `core.excludesFile`, and it does not apply Git's `!`
-re-inclusion, so a path ignored only through those means still transfers.
+reads per-directory `.gitignore` files only, so `.git/info/exclude` and
+`core.excludesFile` have no effect and a path ignored only through them still
+transfers. It also does not apply Git's `!` re-inclusion: a file re-included
+after an ignore rule is still excluded by the transfer and can be missing from
+the remote workspace.
 
 An ignored path already present on the remote survives only when the receiving
 directory already holds the matching `.gitignore`. Rsync deletes during the
 transfer by default, before the per-directory filter file is updated, so a
 fresh remote that has no `.gitignore` yet can lose a pre-existing `target/`
 before the filter that protects it arrives. Once both sides hold the same
-`.gitignore`, ignored cache paths are preserved, which keeps build outputs
-available for incremental runs. The `.git` directory is excluded from transfer.
+`.gitignore`, ignored cache paths are preserved within that VM. Persisting
+build outputs *across* runs also needs the cache volume, because each run uses
+a fresh VM. The `.git` directory is excluded from transfer.
 
 Remote commands execute through the system `ssh` client, and Mriya mirrors the
 remote exit code when teardown succeeds. If `cargo test` fails remotely with
