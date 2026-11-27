@@ -33,6 +33,10 @@ pub enum InitRequestError {
     /// Raised when the volume size cannot be represented in bytes.
     #[error("volume size is too large to represent")]
     SizeOverflow,
+    /// Raised when a volume ID is already configured and overwriting was not
+    /// requested, including a value supplied through the environment.
+    #[error(transparent)]
+    Store(#[from] ConfigStoreError),
 }
 
 /// Errors raised while initializing a cache volume.

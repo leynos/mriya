@@ -7,6 +7,12 @@ use cap_std::{ambient_authority, fs_utf8::Dir};
 use ortho_config::{ConfigDiscovery, toml};
 use thiserror::Error;
 
+mod volume;
+
+#[cfg(test)]
+pub(crate) use volume::{LEGACY_SCALEWAY_SECTION, VOLUME_KEY};
+use volume::{read_volume_id, write_volume_id_value};
+
 /// Application name that seeds `OrthoConfig` discovery paths.
 const APP_NAME: &str = "mriya";
 
@@ -21,12 +27,6 @@ const DOTFILE_NAME: &str = ".mriya.toml";
 
 /// File name searched for in the project (working) directory.
 const PROJECT_FILE_NAME: &str = "mriya.toml";
-
-/// Root-level key read by `ortho_config`'s file layer.
-const VOLUME_KEY: &str = "default_volume_id";
-
-/// Section written by earlier releases; read only for compatibility.
-const LEGACY_SCALEWAY_SECTION: &str = "scaleway";
 
 /// Errors raised while updating the configuration file.
 #[derive(Debug, Error)]
@@ -65,6 +65,18 @@ pub enum ConfigStoreError {
     VolumeAlreadyConfigured {
         /// Volume identifier already present in configuration.
         volume_id: String,
+    },
+    /// Raised when the discovered configuration file is not TOML.
+    ///
+    /// The loader can read YAML and JSON5, but this store only edits TOML, so
+    /// it refuses rather than parsing another format as TOML and reporting a
+    /// misleading syntax error.
+    #[error("cannot update {path}: only TOML configuration files are supported (found {format})")]
+    UnsupportedFormat {
+        /// Configuration file that would have been edited.
+        path: Utf8PathBuf,
+        /// File extension the store found.
+        format: String,
     },
 }
 
@@ -116,25 +128,29 @@ impl ConfigStore {
     #[must_use]
     pub const fn with_discovery(discovery: ConfigDiscovery) -> Self { Self { discovery } }
 
-    /// Picks the first discovered candidate that exists, or the last candidate
-    /// (marked as not existing) when none do.
+    /// Picks the first discovered candidate that exists, or the last TOML
+    /// candidate (marked as not existing) when none do.
+    ///
+    /// The loader can read YAML and JSON5 as well as TOML, so an existing
+    /// non-TOML file may be the one a run reads. This store only edits TOML,
+    /// so it reports [`ConfigStoreError::UnsupportedFormat`] rather than
+    /// parsing that file as TOML or writing a second file the loader would
+    /// not select.
     ///
     /// # Errors
     ///
-    /// Returns `NoCandidates` when discovery yields nothing, or `Io` when an
-    /// existence check fails.
+    /// Returns `NoCandidates` when discovery yields no TOML candidate, `Io`
+    /// when an existence check fails, or `UnsupportedFormat` when a discovered
+    /// file is not TOML.
     fn resolve_target(&self) -> Result<ConfigTarget, ConfigStoreError> {
         let candidates = self.discovery.utf8_candidates();
         for candidate in &candidates {
             if path_exists(candidate)? {
-                return Ok(ConfigTarget {
-                    path: candidate.clone(),
-                    exists: true,
-                });
+                return existing_target(candidate);
             }
         }
 
-        let Some(fallback) = candidates.last().cloned() else {
+        let Some(fallback) = candidates.iter().rev().find(|path| is_toml(path)).cloned() else {
             return Err(ConfigStoreError::NoCandidates);
         };
         Ok(ConfigTarget {
@@ -142,6 +158,26 @@ impl ConfigStore {
             exists: false,
         })
     }
+}
+
+/// The target for a discovered file that exists, refusing a non-TOML format.
+fn existing_target(path: &Utf8Path) -> Result<ConfigTarget, ConfigStoreError> {
+    if is_toml(path) {
+        return Ok(ConfigTarget {
+            path: path.to_path_buf(),
+            exists: true,
+        });
+    }
+    Err(ConfigStoreError::UnsupportedFormat {
+        path: path.to_path_buf(),
+        format: path.extension().unwrap_or("unknown").to_owned(),
+    })
+}
+
+/// Whether `path` names a TOML file, compared case-insensitively.
+fn is_toml(path: &Utf8Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
 }
 
 impl Default for ConfigStore {
@@ -264,103 +300,6 @@ fn parse_toml(path: &Utf8Path, contents: &str) -> Result<toml::Value, ConfigStor
         path: path.to_path_buf(),
         message: err.to_string(),
     })
-}
-
-/// Extracts the root-level `default_volume_id`, trimmed, from the parsed
-/// document, and still detects a legacy `scaleway.default_volume_id`.
-///
-/// Returns `None` when neither key holds a value.
-///
-/// # Errors
-///
-/// Returns `InvalidStructure` when the root or legacy section is not a table,
-/// or a present key is not a string.
-fn read_volume_id(
-    path: &Utf8Path,
-    value: &toml::Value,
-) -> Result<Option<String>, ConfigStoreError> {
-    let table = value
-        .as_table()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration root is not a table"),
-        })?;
-
-    if let Some(raw) = table.get(VOLUME_KEY) {
-        let root = parse_volume_id(path, raw, VOLUME_KEY)?;
-        if root.is_some() {
-            return Ok(root);
-        }
-        // A blank root value records nothing, but the legacy section may still
-        // hold an ID an earlier release recorded, so keep guarding that one.
-    }
-
-    // Earlier releases wrote the key under `[scaleway]`, which `ortho_config`
-    // never read. Keep detecting it so `mriya init` still refuses to replace a
-    // volume ID that a previous run recorded.
-    let Some(section) = table.get(LEGACY_SCALEWAY_SECTION) else {
-        return Ok(None);
-    };
-
-    let section_table = section
-        .as_table()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: format!("[{LEGACY_SCALEWAY_SECTION}] must be a table"),
-        })?;
-
-    section_table.get(VOLUME_KEY).map_or(Ok(None), |raw| {
-        parse_volume_id(
-            path,
-            raw,
-            &format!("{LEGACY_SCALEWAY_SECTION}.{VOLUME_KEY}"),
-        )
-    })
-}
-
-fn parse_volume_id(
-    path: &Utf8Path,
-    raw: &toml::Value,
-    label: &str,
-) -> Result<Option<String>, ConfigStoreError> {
-    let text = raw
-        .as_str()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: format!("{label} must be a string"),
-        })?;
-    let trimmed = text.trim();
-    // An empty value records no usable volume, so `mriya init` may set one
-    // without `--force`.
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(trimmed.to_owned()))
-}
-
-/// Sets the root-level `default_volume_id` (trimmed) in `value`, leaving other
-/// keys alone.
-///
-/// # Errors
-///
-/// Returns `InvalidStructure` when the root is not a table.
-fn write_volume_id_value(
-    path: &Utf8Path,
-    value: &mut toml::Value,
-    volume_id: &str,
-) -> Result<(), ConfigStoreError> {
-    let table = value
-        .as_table_mut()
-        .ok_or_else(|| ConfigStoreError::InvalidStructure {
-            path: path.to_path_buf(),
-            message: String::from("configuration root is not a table"),
-        })?;
-
-    table.insert(
-        String::from(VOLUME_KEY),
-        toml::Value::String(volume_id.trim().to_owned()),
-    );
-    Ok(())
 }
 
 /// Renders `value` and writes it over the file, creating parent directories.

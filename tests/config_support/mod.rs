@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use ortho_config::{MapEnv, SharedEnvSource, SharedScanEnvSource};
 use tempfile::TempDir;
@@ -45,11 +45,18 @@ impl Workspace {
     }
 }
 
-pub fn path_text(path: &camino::Utf8Path) -> String { path.as_str().to_owned() }
+pub fn path_text(path: &Utf8Path) -> String { path.as_str().to_owned() }
 
 /// Builds one map, shared as both the discovery lookup and the merge scanner.
-pub fn shared_env(vars: &[(&str, &str)]) -> (SharedEnvSource, SharedScanEnvSource) {
-    let mut map = MapEnv::new();
+///
+/// The working directory is pinned to `current_dir`, so an absent
+/// environment-selected path cannot fall through to project discovery in the
+/// checkout the tests run from.
+pub fn shared_env(
+    vars: &[(&str, &str)],
+    current_dir: &Utf8Path,
+) -> (SharedEnvSource, SharedScanEnvSource) {
+    let mut map = MapEnv::new().with_current_dir(current_dir);
     for (key, value) in vars {
         map = map.with_var(*key, *value);
     }

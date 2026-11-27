@@ -5,11 +5,64 @@
 
 use rstest::rstest;
 
-use super::{InitConfig, InitConfigError, format_failure_message};
+use super::{InitConfig, InitConfigError, InitRequest, InitRequestError, format_failure_message};
 use crate::{
+    ScalewayConfig,
+    config_store::ConfigStoreError,
     sync::{RemoteCommandOutput, SyncError},
     teardown::append_teardown_note,
 };
+
+/// A valid Scaleway configuration that carries `volume_id`, if any.
+fn scaleway_with_volume(volume_id: Option<&str>) -> ScalewayConfig {
+    ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("dummy-secret"),
+        default_organization_id: None,
+        default_project_id: String::from("11111111-2222-3333-4444-555555555555"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from("DEV1-S"),
+        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
+        default_architecture: String::from("x86_64"),
+        default_volume_id: volume_id.map(str::to_owned),
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
+    }
+}
+
+/// A configured volume ID, including one from the environment, must refuse a
+/// replacement unless `--force` was supplied.
+#[test]
+fn from_config_rejects_a_configured_volume_id_without_force() {
+    let scaleway = scaleway_with_volume(Some("env-volume"));
+    let init_config = InitConfig { volume_size_gb: 20 };
+
+    let result = InitRequest::from_config(&scaleway, &init_config, "project", false);
+
+    assert!(
+        matches!(
+            result,
+            Err(InitRequestError::Store(
+                ConfigStoreError::VolumeAlreadyConfigured { ref volume_id }
+            )) if volume_id == "env-volume"
+        ),
+        "expected VolumeAlreadyConfigured for the configured ID, got {result:?}"
+    );
+}
+
+/// Forcing the overwrite lets the request through so the new ID is recorded.
+#[test]
+fn from_config_accepts_a_configured_volume_id_with_force() {
+    let scaleway = scaleway_with_volume(Some("env-volume"));
+    let init_config = InitConfig { volume_size_gb: 20 };
+
+    let result = InitRequest::from_config(&scaleway, &init_config, "project", true);
+
+    assert!(
+        result.is_ok(),
+        "force should permit the overwrite: {result:?}"
+    );
+}
 
 /// Checks that zero-sized volumes return `InvalidVolumeSize`.
 #[test]

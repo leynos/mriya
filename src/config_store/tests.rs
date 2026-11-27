@@ -156,6 +156,50 @@ fn read_volume_id_selects_the_recorded_volume(
     Ok(())
 }
 
+/// A discovered YAML file is refused with an error naming the format, rather
+/// than parsed as TOML.
+#[rstest]
+fn write_volume_id_rejects_a_non_toml_selection() -> anyhow::Result<()> {
+    let tmp = TempDir::new().context("failed to create tempdir")?;
+    let root = Utf8Path::from_path(tmp.path()).context("temp path should be UTF-8")?;
+    let yaml_path = root.join("mriya.yaml");
+    Dir::open_ambient_dir(root, ambient_authority())
+        .context("temp directory should open")?
+        .write("mriya.yaml", "default_volume_id: legacy\n")
+        .context("YAML fixture should be written")?;
+    let env = Arc::new(
+        MapEnv::new()
+            .with_var(CONFIG_ENV_VAR, yaml_path.as_str())
+            .with_var("HOME", root.as_str())
+            .with_var("XDG_CONFIG_HOME", root.as_str())
+            .with_var("XDG_CONFIG_DIRS", root.as_str()),
+    );
+    let discovery = ConfigDiscovery::builder(APP_NAME)
+        .env_var(CONFIG_ENV_VAR)
+        .config_file_name(CONFIG_FILE_NAME)
+        .dotfile_name(DOTFILE_NAME)
+        .project_file_name(PROJECT_FILE_NAME)
+        .env_source(env)
+        .clear_project_roots()
+        .add_project_root(root)
+        .build();
+    let store = ConfigStore::with_discovery(discovery);
+
+    let Err(err) = store.write_volume_id("vol-123", true) else {
+        bail!("a YAML file must not be edited as TOML");
+    };
+
+    let ConfigStoreError::UnsupportedFormat { path, format } = err else {
+        bail!("expected UnsupportedFormat, got {err:?}");
+    };
+    ensure!(path == yaml_path, "error should cite the YAML file");
+    ensure!(
+        format == "yaml",
+        "error should name the format, got {format}"
+    );
+    Ok(())
+}
+
 #[rstest]
 fn write_volume_id_rejects_existing_without_force(
     config_fixture: anyhow::Result<ConfigFixture>,

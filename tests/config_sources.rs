@@ -33,7 +33,9 @@ const SCW_ZONE_FILE: &str = concat!(
 #[derive(Clone, Copy)]
 enum Subject {
     Sync,
-    Scaleway,
+    ScalewayZone,
+    ScalewaySecret,
+    ScalewayProject,
 }
 
 impl Subject {
@@ -41,7 +43,9 @@ impl Subject {
     fn label(self) -> &'static str {
         match self {
             Self::Sync => "sync",
-            Self::Scaleway => "scaleway",
+            Self::ScalewayZone => "scaleway zone",
+            Self::ScalewaySecret => "scaleway secret",
+            Self::ScalewayProject => "scaleway project",
         }
     }
 }
@@ -70,7 +74,7 @@ where
     T: OrthoConfig,
 {
     let vars = collected_env(workspace, extra_env);
-    let (discovery, merge) = shared_env(&vars);
+    let (discovery, merge) = shared_env(&vars, &workspace.root);
     let mut args = vec!["mriya"];
     args.extend_from_slice(extra_args);
     T::load_from_iter_with_sources(args, discovery, merge)
@@ -88,8 +92,14 @@ fn layered_value(
         Subject::Sync => {
             load::<SyncConfig>(workspace, subject, extra_env, extra_args)?.volume_mount_path
         }
-        Subject::Scaleway => {
+        Subject::ScalewayZone => {
             load::<ScalewayConfig>(workspace, subject, extra_env, extra_args)?.default_zone
+        }
+        Subject::ScalewaySecret => {
+            load::<ScalewayConfig>(workspace, subject, extra_env, extra_args)?.secret_key
+        }
+        Subject::ScalewayProject => {
+            load::<ScalewayConfig>(workspace, subject, extra_env, extra_args)?.default_project_id
         }
     })
 }
@@ -129,7 +139,7 @@ fn load_probe(
         ("MRIYA_PROBE_CONFIG_PATH", missing.as_str()),
     ];
     vars.extend_from_slice(extra_env);
-    let (discovery, merge) = shared_env(&vars);
+    let (discovery, merge) = shared_env(&vars, &workspace.root);
     ProbeConfig::load_from_iter_with_sources(args, discovery, merge)
         .map_err(|err| anyhow::anyhow!("probe configuration failed: {err}"))
 }
@@ -191,32 +201,74 @@ struct Scenario {
     expected: "/from-cli",
 })]
 #[case::scaleway_default_zone(Scenario {
-    subject: Subject::Scaleway,
+    subject: Subject::ScalewayZone,
     file: Some(SCW_CREDENTIALS),
     env: &[],
     args: &[],
     expected: "fr-par-1",
 })]
 #[case::scaleway_file_zone(Scenario {
-    subject: Subject::Scaleway,
+    subject: Subject::ScalewayZone,
     file: Some(SCW_ZONE_FILE),
     env: &[],
     args: &[],
     expected: "nl-ams-1",
 })]
 #[case::scaleway_environment_overrides_file(Scenario {
-    subject: Subject::Scaleway,
+    subject: Subject::ScalewayZone,
     file: Some(SCW_ZONE_FILE),
     env: &[("SCW_DEFAULT_ZONE", "fr-par-2")],
     args: &[],
     expected: "fr-par-2",
 })]
 #[case::scaleway_command_line_overrides_environment(Scenario {
-    subject: Subject::Scaleway,
+    subject: Subject::ScalewayZone,
     file: Some(SCW_ZONE_FILE),
     env: &[("SCW_DEFAULT_ZONE", "fr-par-2")],
     args: &["--default-zone", "pl-waw-1"],
     expected: "pl-waw-1",
+})]
+#[case::scaleway_secret_from_file(Scenario {
+    subject: Subject::ScalewaySecret,
+    file: Some(SCW_CREDENTIALS),
+    env: &[],
+    args: &[],
+    expected: "secret",
+})]
+#[case::scaleway_secret_environment_overrides_file(Scenario {
+    subject: Subject::ScalewaySecret,
+    file: Some(SCW_CREDENTIALS),
+    env: &[("SCW_SECRET_KEY", "env-secret")],
+    args: &[],
+    expected: "env-secret",
+})]
+#[case::scaleway_secret_command_line_overrides_environment(Scenario {
+    subject: Subject::ScalewaySecret,
+    file: Some(SCW_CREDENTIALS),
+    env: &[("SCW_SECRET_KEY", "env-secret")],
+    args: &["--secret-key", "cli-secret"],
+    expected: "cli-secret",
+})]
+#[case::scaleway_project_from_file(Scenario {
+    subject: Subject::ScalewayProject,
+    file: Some(SCW_CREDENTIALS),
+    env: &[],
+    args: &[],
+    expected: "project",
+})]
+#[case::scaleway_project_environment_overrides_file(Scenario {
+    subject: Subject::ScalewayProject,
+    file: Some(SCW_CREDENTIALS),
+    env: &[("SCW_DEFAULT_PROJECT_ID", "env-project")],
+    args: &[],
+    expected: "env-project",
+})]
+#[case::scaleway_project_command_line_overrides_environment(Scenario {
+    subject: Subject::ScalewayProject,
+    file: Some(SCW_CREDENTIALS),
+    env: &[("SCW_DEFAULT_PROJECT_ID", "env-project")],
+    args: &["--default-project-id", "cli-project"],
+    expected: "cli-project",
 })]
 fn layered_configuration_precedence(#[case] scenario: Scenario) -> anyhow::Result<()> {
     let workspace = Workspace::new()?;
@@ -246,7 +298,7 @@ fn scaleway_config_reads_root_level_file_keys() -> anyhow::Result<()> {
         ),
     )?;
 
-    let config = load::<ScalewayConfig>(&workspace, Subject::Scaleway, &[], &[])?;
+    let config = load::<ScalewayConfig>(&workspace, Subject::ScalewayZone, &[], &[])?;
 
     ensure!(config.secret_key == "secret", "secret key should load");
     ensure!(
@@ -265,7 +317,7 @@ fn scaleway_config_ignores_sectioned_file_keys() -> anyhow::Result<()> {
         "[scaleway]\nsecret_key = \"secret\"\ndefault_project_id = \"project\"\n",
     )?;
 
-    let Err(err) = load::<ScalewayConfig>(&workspace, Subject::Scaleway, &[], &[]) else {
+    let Err(err) = load::<ScalewayConfig>(&workspace, Subject::ScalewayZone, &[], &[]) else {
         bail!("a sectioned file must not satisfy required credentials");
     };
     let message = err.to_string();

@@ -97,6 +97,13 @@ impl InitRequest {
             volume_size_bytes(init_config.volume_size_gb).ok_or(InitRequestError::SizeOverflow)?;
 
         scaleway.validate()?;
+        if let Some(volume_id) = protected_volume_id(scaleway, overwrite_existing_volume_id) {
+            return Err(InitRequestError::Store(
+                ConfigStoreError::VolumeAlreadyConfigured {
+                    volume_id: volume_id.to_owned(),
+                },
+            ));
+        }
         let instance_request = InstanceRequest::builder()
             .image_label(&scaleway.default_image)
             .instance_type(&scaleway.default_instance_type)
@@ -122,6 +129,26 @@ impl InitRequest {
             overwrite_existing_volume_id,
         })
     }
+}
+
+/// The configured volume ID that must not be replaced unless forced.
+///
+/// The effective configuration can carry a volume ID from an environment
+/// variable as well as from the file, and `run` prefers that value over
+/// anything `init` writes, so it counts as an existing configuration. A blank
+/// value records nothing and is ignored.
+fn protected_volume_id(
+    scaleway: &ScalewayConfig,
+    overwrite_existing_volume_id: bool,
+) -> Option<&str> {
+    if overwrite_existing_volume_id {
+        return None;
+    }
+    scaleway
+        .default_volume_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|volume_id| !volume_id.is_empty())
 }
 
 /// Outcome returned after successfully preparing a cache volume.

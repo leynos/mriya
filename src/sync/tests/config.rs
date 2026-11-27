@@ -81,11 +81,13 @@ fn volume_mount_path_uses_default_when_unset() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let home = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
         .expect("temp path should be utf8");
-    // Selecting an absent path suppresses project-file discovery, so a
-    // `mriya.toml` in the working directory cannot supply the value.
+    // The working directory is pinned to the temporary home, and the
+    // explicit path is absent, so project discovery cannot read a
+    // `mriya.toml` in the checkout or anywhere else.
     let missing = home.join("missing.toml");
     let environment = Arc::new(
         MapEnv::new()
+            .with_current_dir(&home)
             .with_var("HOME", home.as_str())
             .with_var("XDG_CONFIG_HOME", home.as_str())
             .with_var("XDG_CONFIG_DIRS", home.as_str())

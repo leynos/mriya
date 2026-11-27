@@ -23,8 +23,8 @@ fn env_map(vars: &[(&str, &str)]) -> MapEnv {
     })
 }
 
-fn load_sync_with_env(vars: &[(&str, &str)]) -> anyhow::Result<SyncConfig> {
-    let (discovery, merge) = shared_env(vars);
+fn load_sync_with_env(workspace: &Workspace, vars: &[(&str, &str)]) -> anyhow::Result<SyncConfig> {
+    let (discovery, merge) = shared_env(vars, &workspace.root);
     SyncConfig::load_from_iter_with_sources(["mriya"], discovery, merge)
         .map_err(|err| anyhow::anyhow!("sync configuration failed: {err}"))
 }
@@ -34,13 +34,16 @@ fn load_scaleway(workspace: &Workspace) -> anyhow::Result<ScalewayConfig> {
         ("HOME", workspace.home.as_str()),
         ("MRIYA_CONFIG_PATH", workspace.config.as_str()),
     ];
-    let (discovery, merge) = shared_env(&vars);
+    let (discovery, merge) = shared_env(&vars, &workspace.root);
     ScalewayConfig::load_from_iter_with_sources(["mriya"], discovery, merge)
         .map_err(|err| anyhow::anyhow!("scaleway configuration failed: {err}"))
 }
 
 fn store_for(workspace: &Workspace) -> ConfigStore {
-    let env = Arc::new(env_map(&[("MRIYA_CONFIG_PATH", workspace.config.as_str())]));
+    let env = Arc::new(
+        env_map(&[("MRIYA_CONFIG_PATH", workspace.config.as_str())])
+            .with_current_dir(&workspace.root),
+    );
     let discovery = ConfigDiscovery::builder("mriya")
         .env_var("MRIYA_CONFIG_PATH")
         .config_file_name("mriya.toml")
@@ -123,10 +126,35 @@ fn missing_selected_config_file_is_not_an_error() -> anyhow::Result<()> {
         ("MRIYA_CONFIG_PATH", missing.as_str()),
     ];
 
-    let config = load_sync_with_env(&vars)
+    let config = load_sync_with_env(&workspace, &vars)
         .context("an absent selected file should fall back to defaults")?;
 
     ensure!(config.volume_mount_path == mriya::sync::DEFAULT_VOLUME_MOUNT_PATH);
+    Ok(())
+}
+
+/// With no explicit file selected, discovery falls back to the pinned
+/// working directory. The decoy proves which directory that is: the fixture's,
+/// not the checkout the tests run from.
+#[test]
+fn absent_explicit_path_reads_the_pinned_project_file() -> anyhow::Result<()> {
+    let workspace = Workspace::new()?;
+    workspace.write("mriya.toml", "volume_mount_path = \"/decoy\"\n")?;
+    let missing = path_text(&workspace.root.join("missing.toml"));
+    let vars = [
+        ("HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_HOME", workspace.home.as_str()),
+        ("XDG_CONFIG_DIRS", workspace.home.as_str()),
+        ("MRIYA_CONFIG_PATH", missing.as_str()),
+    ];
+
+    let config = load_sync_with_env(&workspace, &vars)?;
+
+    ensure!(
+        config.volume_mount_path == "/decoy",
+        "the pinned project file should be read, got {}",
+        config.volume_mount_path
+    );
     Ok(())
 }
 
@@ -139,7 +167,7 @@ fn malformed_config_file_is_reported() -> anyhow::Result<()> {
         ("MRIYA_CONFIG_PATH", workspace.config.as_str()),
     ];
 
-    let Err(err) = load_sync_with_env(&vars) else {
+    let Err(err) = load_sync_with_env(&workspace, &vars) else {
         bail!("a malformed file must not be ignored");
     };
     let message = err.to_string();
@@ -162,7 +190,7 @@ fn directory_config_path_is_reported() -> anyhow::Result<()> {
         ("MRIYA_CONFIG_PATH", workspace.config.as_str()),
     ];
 
-    let Err(err) = load_sync_with_env(&vars) else {
+    let Err(err) = load_sync_with_env(&workspace, &vars) else {
         bail!("a directory in place of a file must not be ignored");
     };
     let message = err.to_string();

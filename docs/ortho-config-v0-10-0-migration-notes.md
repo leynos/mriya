@@ -104,7 +104,7 @@ same floor declared below.
 | `Cargo.toml` declared | `ortho_config = { version = "0.10.0", features = ["yaml", "json5"] }`    | `0.11.0`, same features                |
 | `Cargo.lock` resolved | `ortho_config` 0.10.0, `ortho_config_macros` 0.10.0, `ortho_l10n` 0.10.0 | `ortho_config` 0.11.0 and its siblings |
 | `Cargo.toml` compiler | no `rust-version`                                                        | `rust-version = "1.89.0"`              |
-| `rust-toolchain.toml` | `nightly-2026-11-10`                                                     | `nightly-2026-11-25` (from the target) |
+| `rust-toolchain.toml` | `nightly-2026-11-10`                                                     | `nightly-2026-11-26` (from the target) |
 
 `cargo tree -i ortho_config` shows `mriya` as the only dependent, and
 `Cargo.lock` contains no Git-sourced package. The YAML and JSON5 features and
@@ -164,6 +164,14 @@ The migration fixes this:
   `mriya init` keeps refusing to replace a volume ID recorded by an earlier
   release unless `--force` is supplied. That guard holds even when a blank
   root-level key is present, because a blank value records no volume of its own.
+- `mriya init` also treats a volume ID supplied by the environment as an
+  existing configuration, so it refuses to replace one without `--force`.
+  Previously only the file store was checked, and the environment value would
+  have overridden the ID `init` wrote when `run` loaded configuration.
+- `ConfigStore` refuses a discovered file that is not TOML, naming its format,
+  instead of parsing it as TOML. The loader accepts YAML and JSON5 by
+  extension, so this makes the mismatch explicit rather than a misleading
+  syntax error.
 - The users' guide and the validation error messages now name root-level keys.
 - `tests/config_discovery.rs` proves the store writes a file that
   `ScalewayConfig` reads, and that sectioned files are ignored.
@@ -175,18 +183,22 @@ tests across 18 binaries, all passing. The branch adds tests in two new
 binaries, `config_sources` and `config_discovery`, and to three existing test
 modules:
 
-- `tests/config_sources.rs`: one `rstest` precedence table with nine rows
+- `tests/config_sources.rs`: one `rstest` precedence table with fifteen rows
   covering `SyncConfig` and `ScalewayConfig` across default, file,
-  sectioned-file, environment, and command-line tiers, plus the file-shape,
+  sectioned-file, environment, and command-line tiers, including the required
+  `secret_key` and `default_project_id` fields, plus the file-shape,
   explicit-default, and boolean-spelling cases.
 - `tests/config_discovery.rs`: the discovery error cases, the store round
-  trip, the legacy-section read, and one compatibility case for each discovery
+  trip, the legacy-section read, one compatibility case for each discovery
   location (home dotfile, XDG directory, project file, and an absent explicit
-  path) proving the store writes a file the loader reads.
+  path) proving the store writes a file the loader reads, and a decoy case
+  proving project discovery uses the injected working directory.
 - `src/cli/mod.rs`: four parser tests for the `--` boundary and `init` flags.
-- `src/config_store/tests.rs`: five store tests, including one table choosing
+- `src/config_store/tests.rs`: six store tests, including one table choosing
   the recorded volume ID across root, legacy, blank, and blank-with-legacy
-  files.
+  files, and one proving a non-TOML selection is refused with its format named.
+- `src/init/tests.rs`: two tests proving a volume ID supplied through the
+  environment requires `--force` before `init` will replace it.
 - `src/main_request_tests.rs`: one test proving a real `mriya run` override
   equal to its documented default beats a different configured value.
 
@@ -209,7 +221,7 @@ $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [ 197.978s] 546 tests run: 546 passed (1 slow), 0 skipped
+Summary [ 289.615s] 556 tests run: 556 passed (2 slow), 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 
