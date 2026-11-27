@@ -19,6 +19,125 @@ const CI_WORKFLOW: &str = include_str!(concat!(
 /// The exit status the failing fake Whitaker returns, distinct from Make's own `2`.
 const WHITAKER_FAILURE: i32 = 7;
 
+/// A Make route that reaches the Whitaker gate.
+#[derive(Clone, Copy)]
+enum Route {
+    /// The composite `lint` target: Clippy first, Whitaker last.
+    Composite,
+    /// The standalone Whitaker half.
+    WhitakerOnly,
+}
+
+impl Route {
+    /// The target name to pass to `make`.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Composite => "lint",
+            Self::WhitakerOnly => "lint-whitaker",
+        }
+    }
+}
+
+/// One tool invocation the fakes record, in the order they ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Call {
+    /// The docstring gate.
+    Interrogate,
+    /// `cargo doc`.
+    Doc,
+    /// `cargo clippy`.
+    Clippy,
+    /// The Whitaker Dylint suite.
+    Whitaker,
+    /// A call the contract does not expect; it fails an order comparison.
+    Unexpected,
+}
+
+impl Call {
+    /// Classifies a logged call by its first word.
+    ///
+    /// A word the contract does not expect becomes `Unexpected`, so an extra tool call still fails
+    /// an order comparison instead of being filtered away.
+    fn of_line(line: &str) -> Self {
+        match line.split_whitespace().next() {
+            Some("interrogate") => Self::Interrogate,
+            Some("doc") => Self::Doc,
+            Some("clippy") => Self::Clippy,
+            Some("whitaker") => Self::Whitaker,
+            _ => Self::Unexpected,
+        }
+    }
+}
+
+/// A Make rule whose recipe the test reads.
+#[derive(Clone, Copy)]
+enum Rule {
+    /// The Clippy half of the lint gate.
+    LintClippy,
+    /// The Whitaker half of the lint gate.
+    LintWhitaker,
+}
+
+impl Rule {
+    /// The rule header, including the colon, as it appears in the Makefile.
+    fn header(self) -> &'static str {
+        match self {
+            Self::LintClippy => "lint-clippy:",
+            Self::LintWhitaker => "lint-whitaker:",
+        }
+    }
+}
+
+/// The gate command a recipe must name for the masking reader.
+#[derive(Clone, Copy)]
+enum Gate {
+    /// The Whitaker invocation.
+    Whitaker,
+    /// The Clippy invocation.
+    Clippy,
+}
+
+impl Gate {
+    /// The Make variable spelling the recipe must contain.
+    fn needle(self) -> &'static str {
+        match self {
+            Self::Whitaker => "$(WHITAKER)",
+            Self::Clippy => "$(CARGO) clippy",
+        }
+    }
+}
+
+/// A masking shape the recipe reader must name, for a planted recipe.
+#[derive(Clone, Copy)]
+enum Fault {
+    /// The recipe as written: no masking, so no problem is expected.
+    None,
+    /// Failure suppressed with `|| true`.
+    OrTrue,
+    /// Errors ignored with a `-` recipe prefix.
+    Ignored,
+    /// An existence guard before the gate.
+    Guarded,
+    /// A pipeline that hides the gate's status.
+    Piped,
+    /// The gate is not invoked at all.
+    NeverRuns,
+}
+
+impl Fault {
+    /// The fragment the reader must name, or `None` when no fault was planted.
+    fn expected(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::OrTrue => Some("||"),
+            Self::Ignored => Some("ignores errors"),
+            Self::Guarded => Some("command -v"),
+            Self::Piped => Some("|"),
+            Self::NeverRuns => Some("never runs"),
+        }
+    }
+}
+
 /// A sandbox with a slow docstring gate, so a gate that ran in parallel would log after Whitaker.
 fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
     let sandbox = sandbox_with(Toolset::COMPLETE)?;
@@ -42,7 +161,7 @@ fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
 fn run_lint_route(
     sandbox: &Sandbox,
     jobs: u8,
-    route: &str,
+    route: Route,
 ) -> Result<std::process::Output, String> {
     sandbox
         .command("make")?
@@ -52,17 +171,17 @@ fn run_lint_route(
             "CARGO=probe-cargo",
             "INTERROGATE=fake-interrogate",
             "WHITAKER=fake-whitaker",
-            route,
+            route.name(),
         ])
         .output()
-        .map_err(|error| format!("running make {route}: {error}"))
+        .map_err(|error| format!("running make {}: {error}", route.name()))
 }
 
-/// The first word of each logged tool call: `interrogate`, `doc`, `clippy`, `whitaker`.
-fn call_order(sandbox: &Sandbox) -> Result<Vec<String>, String> {
+/// The logged tool calls, in order: `interrogate`, `doc`, `clippy`, `whitaker`.
+fn call_order(sandbox: &Sandbox) -> Result<Vec<Call>, String> {
     Ok(cargo_calls(sandbox)?
         .iter()
-        .filter_map(|line| line.split_whitespace().next().map(str::to_owned))
+        .map(|line| Call::of_line(line))
         .collect())
 }
 
@@ -76,7 +195,7 @@ fn call_order(sandbox: &Sandbox) -> Result<Vec<String>, String> {
 #[case::wide(16)]
 fn lint_runs_whitaker_last_whatever_the_job_count(#[case] jobs: u8) -> Result<(), String> {
     let sandbox = lint_sandbox(0)?;
-    let output = run_lint_route(&sandbox, jobs, "lint")?;
+    let output = run_lint_route(&sandbox, jobs, Route::Composite)?;
     if !output.status.success() {
         return Err(format!(
             "`make -j{jobs} lint` failed: {}",
@@ -84,7 +203,7 @@ fn lint_runs_whitaker_last_whatever_the_job_count(#[case] jobs: u8) -> Result<()
         ));
     }
     let order = call_order(&sandbox)?;
-    if order == ["interrogate", "doc", "clippy", "whitaker"] {
+    if order == [Call::Interrogate, Call::Doc, Call::Clippy, Call::Whitaker] {
         Ok(())
     } else {
         Err(format!("`make -j{jobs} lint` ran {order:?}"))
@@ -96,26 +215,32 @@ fn lint_runs_whitaker_last_whatever_the_job_count(#[case] jobs: u8) -> Result<()
 /// Invariant: Make fails with a non-zero status and names the recipe's own status, so the gate
 /// binds; the standalone Whitaker route runs nothing before it.
 #[rstest]
-#[case::composite("lint", &["interrogate", "doc", "clippy", "whitaker"])]
-#[case::standalone("lint-whitaker", &["whitaker"])]
+#[case::composite(Route::Composite, &[Call::Interrogate, Call::Doc, Call::Clippy, Call::Whitaker])]
+#[case::standalone(Route::WhitakerOnly, &[Call::Whitaker])]
 fn a_failing_whitaker_fails_the_route(
-    #[case] route: &str,
-    #[case] expected_order: &[&str],
+    #[case] route: Route,
+    #[case] expected_order: &[Call],
 ) -> Result<(), String> {
     let sandbox = lint_sandbox(WHITAKER_FAILURE)?;
     let output = run_lint_route(&sandbox, 4, route)?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() {
-        return Err(format!("`make {route}` passed past a failing Whitaker"));
+        return Err(format!(
+            "`make {}` passed past a failing Whitaker",
+            route.name()
+        ));
     }
     if !stderr.contains(&format!("Error {WHITAKER_FAILURE}")) {
-        return Err(format!("`make {route}` hid Whitaker's status:\n{stderr}"));
+        return Err(format!(
+            "`make {}` hid Whitaker's status:\n{stderr}",
+            route.name()
+        ));
     }
     let order = call_order(&sandbox)?;
     if order == expected_order {
         Ok(())
     } else {
-        Err(format!("`make {route}` ran {order:?}"))
+        Err(format!("`make {}` ran {order:?}", route.name()))
     }
 }
 
@@ -156,12 +281,12 @@ fn whitaker_runs_with_the_warning_policy_alone() -> Result<(), String> {
 fn a_failing_clippy_stops_lint_before_whitaker() -> Result<(), String> {
     let sandbox = lint_sandbox(0)?;
     sandbox.write_tool("probe-cargo", "echo \"$*\" >> \"$CARGO_LOG\"; exit 1")?;
-    let output = run_lint_route(&sandbox, 4, "lint")?;
+    let output = run_lint_route(&sandbox, 4, Route::Composite)?;
     if output.status.success() {
         return Err("`make lint` passed with a failing Cargo".to_owned());
     }
     let order = call_order(&sandbox)?;
-    if order.contains(&"whitaker".to_owned()) {
+    if order.contains(&Call::Whitaker) {
         Err(format!("Whitaker ran after a failing step: {order:?}"))
     } else {
         Ok(())
@@ -169,11 +294,11 @@ fn a_failing_clippy_stops_lint_before_whitaker() -> Result<(), String> {
 }
 
 /// Returns the recipe lines of a Make rule, tab stripped, or `None` when the rule is absent.
-fn recipe_of<'a>(makefile: &'a str, target: &str) -> Option<Vec<&'a str>> {
-    let header = format!("{target}:");
+fn recipe_of<'a>(makefile: &'a str, rule: Rule) -> Option<Vec<&'a str>> {
+    let header = rule.header();
     let mut lines = makefile
         .lines()
-        .skip_while(|line| !line.starts_with(&header))
+        .skip_while(|line| !line.starts_with(header))
         .skip(1);
     let recipe: Vec<&str> = lines
         .by_ref()
@@ -184,11 +309,12 @@ fn recipe_of<'a>(makefile: &'a str, target: &str) -> Option<Vec<&'a str>> {
 }
 
 /// Returns why a gate recipe could be soft-failed, or an empty list when it cannot.
-fn masking_problems(recipe: &[&str], gate: &str) -> Vec<String> {
+fn masking_problems(recipe: &[&str], gate: Gate) -> Vec<String> {
     const MASKS: &[&str] = &["||", "|", ";", "command -v", "which ", "true", "exit 0"];
+    let needle = gate.needle();
     let mut problems = Vec::new();
-    if !recipe.iter().any(|line| line.contains(gate)) {
-        problems.push(format!("the recipe never runs `{gate}`"));
+    if !recipe.iter().any(|line| line.contains(needle)) {
+        problems.push(format!("the recipe never runs `{needle}`"));
     }
     for line in recipe {
         if line.starts_with('-') || line.starts_with("@-") {
@@ -206,20 +332,24 @@ fn masking_problems(recipe: &[&str], gate: &str) -> Vec<String> {
 /// Invariant: the real recipes carry no existence guard, `|| true`, ignored-error prefix or
 /// pipeline; each masking shape is named when it appears.
 #[rstest]
-#[case::as_written(&["unset CARGO_ENCODED_RUSTFLAGS && RUSTFLAGS=\"-D warnings\" $(WHITAKER) --all -- --workspace"], "")]
-#[case::soft_failed(&["$(WHITAKER) --all || true"], "||")]
-#[case::ignored(&["-$(WHITAKER) --all"], "ignores errors")]
-#[case::guarded(&["command -v $(WHITAKER) && $(WHITAKER) --all"], "command -v")]
-#[case::piped(&["$(WHITAKER) --all | tee log"], "|")]
-#[case::removed(&["echo skipped"], "never runs")]
+#[case::as_written(&["unset CARGO_ENCODED_RUSTFLAGS && RUSTFLAGS=\"-D warnings\" $(WHITAKER) --all -- --workspace"], Fault::None)]
+#[case::soft_failed(&["$(WHITAKER) --all || true"], Fault::OrTrue)]
+#[case::ignored(&["-$(WHITAKER) --all"], Fault::Ignored)]
+#[case::guarded(&["command -v $(WHITAKER) && $(WHITAKER) --all"], Fault::Guarded)]
+#[case::piped(&["$(WHITAKER) --all | tee log"], Fault::Piped)]
+#[case::removed(&["echo skipped"], Fault::NeverRuns)]
 fn the_gate_recipe_reader_refuses_masking(
     #[case] recipe: &[&str],
-    #[case] fault: &str,
+    #[case] fault: Fault,
 ) -> Result<(), String> {
-    let problems = masking_problems(recipe, "$(WHITAKER)");
-    let named = problems.iter().any(|problem| problem.contains(fault));
-    match (fault.is_empty(), problems.is_empty(), named) {
-        (true, true, _) | (false, false, true) => Ok(()),
+    let problems = masking_problems(recipe, Gate::Whitaker);
+    match fault.expected() {
+        None if problems.is_empty() => Ok(()),
+        Some(needle)
+            if !problems.is_empty() && problems.iter().any(|problem| problem.contains(needle)) =>
+        {
+            Ok(())
+        }
         _ => Err(format!("for {recipe:?} the reader said {problems:?}")),
     }
 }
@@ -243,10 +373,11 @@ fn the_makefile_binds_whitaker_into_a_serial_lint() -> Result<(), String> {
     if !MAKEFILE.lines().any(|line| line == ".NOTPARALLEL: lint") {
         return Err("`lint` is not marked `.NOTPARALLEL`".to_owned());
     }
-    let whitaker = recipe_of(MAKEFILE, "lint-whitaker").ok_or("`lint-whitaker` has no recipe")?;
-    let clippy = recipe_of(MAKEFILE, "lint-clippy").ok_or("`lint-clippy` has no recipe")?;
-    let mut problems = masking_problems(&whitaker, "$(WHITAKER)");
-    problems.extend(masking_problems(&clippy, "$(CARGO) clippy"));
+    let whitaker =
+        recipe_of(MAKEFILE, Rule::LintWhitaker).ok_or("`lint-whitaker` has no recipe")?;
+    let clippy = recipe_of(MAKEFILE, Rule::LintClippy).ok_or("`lint-clippy` has no recipe")?;
+    let mut problems = masking_problems(&whitaker, Gate::Whitaker);
+    problems.extend(masking_problems(&clippy, Gate::Clippy));
     if problems.is_empty() {
         Ok(())
     } else {
@@ -254,9 +385,9 @@ fn the_makefile_binds_whitaker_into_a_serial_lint() -> Result<(), String> {
     }
 }
 
-/// Returns the lines of the named workflow step, up to the next step.
-fn step_of<'a>(workflow: &'a str, name: &str) -> Option<Vec<&'a str>> {
-    let header = format!("- name: {name}");
+/// Returns the lines of the workflow's `Lint` step, up to the next step.
+fn lint_step_of(workflow: &str) -> Option<Vec<&str>> {
+    let header = "- name: Lint";
     let mut lines = workflow.lines().skip_while(|line| line.trim() != header);
     lines.next()?;
     Some(
@@ -272,7 +403,7 @@ fn step_of<'a>(workflow: &'a str, name: &str) -> Option<Vec<&'a str>> {
 /// whose shell exits non-zero.
 #[test]
 fn the_ci_lint_step_runs_make_lint_and_cannot_pass_on_failure() -> Result<(), String> {
-    let step = step_of(CI_WORKFLOW, "Lint").ok_or("ci.yml has no `Lint` step")?;
+    let step = lint_step_of(CI_WORKFLOW).ok_or("ci.yml has no `Lint` step")?;
     let runs: Vec<&str> = step
         .iter()
         .filter_map(|line| line.trim().strip_prefix("run:"))
