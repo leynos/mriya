@@ -201,3 +201,6 @@ impl CommandRunner for StreamingCommandRunner {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -284,12 +284,36 @@ scenario requested, carried on `RunContext::requested_command`, so its ordering
 assertions fail when the remote command is skipped instead of passing on any
 trailing SSH call.
 
-Mutation exclusions in `.cargo/mutants.toml` remain limited to the test-only
-fake-run functions and the equivalent instance-request builder mutant. Scoped
-mutation counts recorded before these lifecycle tests are historical results;
-rerun mutation testing against the current candidate before using counts as
-evidence. The loopback tests exercise the network-boundary survivors reported
-by the earlier run.
+Mutation exclusions in `.cargo/mutants.toml` remain limited to three recorded
+categories: the test-only fake-run functions, the equivalent instance-request
+builder mutant, and the hang-inducing `forward_stream` end-of-file boundary
+mutant. The first is noise because no production path reaches it, and the
+second cannot change behaviour because the builder is `Self::default()`. The
+third is a blocking boundary: flipping `read == 0` to `read != 0` stops the
+forwarder breaking at end of file, so a pipe that stays at end of file answers
+zero for ever and the spawned thread spins while holding the process stdout
+lock. Its join is unbounded, and the real-subprocess tests in
+`src/sync/tests/streaming.rs` legitimately reach end of file, so the run hangs
+until cargo-mutants records `TIMEOUT` rather than `CAUGHT`. A bounded wait
+cannot turn that into `CAUGHT`, because the spinning thread holds the lock the
+wait would need to report through. The intended behaviour is covered directly
+instead, by the controlled-reader tests in `src/sync/types/tests.rs`: their
+read after end of file fails, so the flipped operator returns a `Spawn` error
+and the assertion fails promptly. Production keeps the plain zero-byte break
+and adds no read guard, because a zero-byte read is legitimate end of file, not
+a fault to bound.
+
+An exclusion for a blocking boundary is accepted only with both halves: a hang
+that no bounded wait can convert into a catch, and direct non-hanging coverage
+of the same behaviour elsewhere. A single-mutant exclusion must also record a
+before-and-after `cargo mutants --list --json` comparison showing that the
+entry removes exactly the intended mutant and nothing else. The end-of-file
+entry is pinned in both directions by `tests/mutants_config_contract.rs`.
+
+Scoped mutation counts recorded before these lifecycle tests are historical
+results; rerun mutation testing against the current candidate before using
+counts as evidence. The loopback tests exercise the network-boundary survivors
+reported by the earlier run.
 
 ### The environment boundary
 
