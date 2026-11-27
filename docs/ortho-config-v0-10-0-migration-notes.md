@@ -223,7 +223,7 @@ $ make test   # baseline, worktree at 6445bbe
 Summary [ 161.466s] 460 tests run: 460 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [  43.305s] 560 tests run: 560 passed, 0 skipped
+Summary [  21.162s] 562 tests run: 562 passed, 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 

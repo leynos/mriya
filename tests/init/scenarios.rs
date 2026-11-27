@@ -34,6 +34,22 @@ fn scenario_existing_volume_forced(init_context_result: InitContextResult) {
 
 #[scenario(
     path = "tests/features/init.feature",
+    name = "Refuse to replace a volume ID the environment supplies"
+)]
+fn scenario_environment_volume_rejected(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}
+
+#[scenario(
+    path = "tests/features/init.feature",
+    name = "Refuse to replace a volume ID the environment and file both supply"
+)]
+fn scenario_environment_and_file_volume_rejected(init_context_result: InitContextResult) {
+    drop(init_context_result);
+}
+
+#[scenario(
+    path = "tests/features/init.feature",
     name = "Surface volume creation failures"
 )]
 fn scenario_volume_create_failure(init_context_result: InitContextResult) {

@@ -40,6 +40,15 @@ Feature: mriya init prepares a cache volume
     Then the init error kind is "config"
     And the volume is not created
 
+  Scenario: Refuse to replace a volume ID the environment and file both supply
+    Given a ready init workflow
+    And configuration already contains a volume id
+    And the environment supplies volume id "vol-existing"
+    And force overwrite is enabled
+    When I prepare the cache volume
+    Then the init error kind is "config"
+    And the volume is not created
+
   Scenario: Surface volume creation failures
     Given a ready init workflow
     And volume creation fails

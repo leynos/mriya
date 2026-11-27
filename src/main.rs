@@ -38,6 +38,7 @@ use mriya::{
     StreamingCommandRunner,
     SyncConfig,
     Syncer,
+    VOLUME_ID_ENV_VAR,
 };
 #[cfg(test)]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
@@ -226,9 +227,16 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
         .map_err(|path| CliError::Config(path.display().to_string()))?;
     let project_name = cwd_path.file_name().unwrap_or("mriya");
 
+    // The environment overrides any file value on every run, so record it
+    // separately; `init` refuses to replace it even with `--force`.
+    let environment_volume_id = std::env::var(VOLUME_ID_ENV_VAR)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     let request =
         InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
-            .map_err(|err| CliError::Config(err.to_string()))?;
+            .map_err(|err| CliError::Config(err.to_string()))?
+            .with_environment_volume_id(environment_volume_id);
 
     let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
     let outcome = orchestrator.execute(&request).await?;

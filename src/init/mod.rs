@@ -23,7 +23,7 @@ pub use error::{InitConfigError, InitError, InitRequestError};
 
 mod request;
 
-pub use request::InitRequest;
+pub use request::{InitRequest, VOLUME_ID_ENV_VAR};
 
 /// Init-specific configuration values layered via `OrthoConfig`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -169,6 +169,12 @@ where
     /// effective one. That case fails even with `--force`.
     fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
         let stored = self.config_writer.current_volume_id()?;
+
+        if let Some(environment) = request.environment_volume_id.as_deref() {
+            return Err(InitError::EnvironmentVolumeId {
+                volume_id: environment.to_owned(),
+            });
+        }
 
         if let Some(configured) = request.configured_volume_id.as_deref()
             && stored.as_deref() != Some(configured)

@@ -28,10 +28,19 @@ pub struct InitRequest {
     pub overwrite_existing_volume_id: bool,
     /// Volume ID the resolved configuration supplied, if any.
     ///
-    /// Used to tell a file-backed ID, which a forced run may replace, from one
-    /// supplied by the environment, which a file write cannot replace.
+    /// Used to refuse an unforced replacement, whichever source supplied it.
     pub configured_volume_id: Option<String>,
+    /// The volume ID the environment supplies, when the caller can tell.
+    ///
+    /// A file write cannot change what the environment provides, so `init`
+    /// refuses even a forced replacement while this is set. The comparison in
+    /// the orchestrator catches a differing value on its own; this field also
+    /// catches the case where the environment and the file hold the same ID.
+    pub environment_volume_id: Option<String>,
 }
+
+/// Environment variable that supplies the volume ID directly.
+pub const VOLUME_ID_ENV_VAR: &str = "SCW_DEFAULT_VOLUME_ID";
 
 impl InitRequest {
     /// Builds an init request from configuration and the project name.
@@ -90,7 +99,19 @@ impl InitRequest {
             instance_request,
             overwrite_existing_volume_id,
             configured_volume_id,
+            environment_volume_id: None,
         })
+    }
+
+    /// Records the volume ID the environment supplies, if the caller can tell.
+    ///
+    /// The composition root reads `SCW_DEFAULT_VOLUME_ID` because only it has
+    /// the process environment; the orchestrator then refuses a forced
+    /// replacement even when the file holds the same value.
+    #[must_use]
+    pub fn with_environment_volume_id(mut self, volume_id: Option<String>) -> Self {
+        self.environment_volume_id = volume_id;
+        self
     }
 }
 

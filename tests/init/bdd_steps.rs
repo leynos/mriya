@@ -107,7 +107,8 @@ fn environment_supplies_volume_id(
     volume_id: String,
 ) -> Result<InitContextResult, StepError> {
     let mut init_context = init_context_result?;
-    init_context.request.configured_volume_id = Some(volume_id);
+    init_context.request.configured_volume_id = Some(volume_id.clone());
+    init_context.request.environment_volume_id = Some(volume_id);
     Ok(Ok(init_context))
 }
 
