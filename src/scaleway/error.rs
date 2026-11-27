@@ -188,22 +188,36 @@ pub enum ScalewayBackendError {
         message: String,
     },
     /// Raised when a volume cannot be attached to an instance.
-    #[error("failed to attach volume {volume_id} to instance {instance_id}: {message}")]
+    ///
+    /// The status is kept because it decides whether the change can have
+    /// applied: a client error means the provider rejected the request, while
+    /// a server error or a transport failure does not.
+    #[error(
+        "failed to attach volume {volume_id} to instance {instance_id} \
+         (status {status}): {message}"
+    )]
     VolumeAttachmentFailed {
         /// Volume identifier that could not be attached.
         volume_id: String,
         /// Instance identifier.
         instance_id: String,
+        /// HTTP status the provider returned.
+        status: u16,
         /// Error message from the provider.
         message: String,
     },
     /// Raised when a volume cannot be detached from an instance.
-    #[error("failed to detach volume {volume_id} from instance {instance_id}: {message}")]
+    #[error(
+        "failed to detach volume {volume_id} from instance {instance_id} \
+         (status {status}): {message}"
+    )]
     VolumeDetachFailed {
         /// Volume identifier that could not be detached.
         volume_id: String,
         /// Instance identifier.
         instance_id: String,
+        /// HTTP status the provider returned.
+        status: u16,
         /// Error message from the provider.
         message: String,
     },

@@ -2,9 +2,29 @@
 
 use std::{cell::Cell, rc::Rc};
 
+use rstest::rstest;
 use scaleway_rs::ScalewayImage;
 
-use crate::scaleway::{ScalewayBackend, ScalewayBackendError};
+use crate::{
+    boot_volume::ImageStorage,
+    scaleway::{ScalewayBackend, ScalewayBackendError, lifecycle::image::ImageQuery},
+};
+
+/// The storage kinds an instance type offering both would publish.
+fn both_storages() -> ImageStorage { ImageStorage::new(true, true) }
+
+/// A query for an instance offering both storage kinds.
+fn query(request: &crate::backend::InstanceRequest) -> ImageQuery<'_> {
+    ImageQuery::new(request, both_storages())
+}
+
+/// A query for an instance offering `supported`.
+fn query_with(
+    request: &crate::backend::InstanceRequest,
+    supported: ImageStorage,
+) -> ImageQuery<'_> {
+    ImageQuery::new(request, supported)
+}
 
 #[test]
 fn select_image_id_returns_newest_creation_date() {
@@ -51,7 +71,7 @@ async fn resolve_image_id_prefers_project_results() {
 
     let result = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             {
                 let flag = Rc::clone(&project_called);
                 move || {
@@ -95,7 +115,7 @@ async fn resolve_image_id_falls_back_to_public() {
     let backend = super::backend_fixture();
     let result = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![super::image(super::ImageSpec {
@@ -118,7 +138,7 @@ async fn resolve_image_id_propagates_errors() {
     let backend = super::backend_fixture();
     let err = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async {
                 Err(ScalewayBackendError::Provider {
                     message: "boom".to_owned(),
@@ -163,7 +183,7 @@ async fn resolve_image_id_reports_the_root_facts() {
 
     let root = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![image_with_root(
@@ -193,7 +213,7 @@ async fn resolve_image_id_refuses_an_unmodelled_root_type() {
 
     let error = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![image_with_root(
@@ -230,7 +250,7 @@ async fn local_request_selects_the_newest_compatible_image() {
 
     let root = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![
@@ -267,7 +287,7 @@ async fn incompatible_candidates_report_the_observed_types() {
 
     let error = backend
         .resolve_image_id_with(
-            &request,
+            query(&request),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![
@@ -290,26 +310,35 @@ async fn incompatible_candidates_report_the_observed_types() {
     assert!(details.observed.contains("sbs_volume"), "{details:?}");
 }
 
-/// An unset storage type keeps every candidate, so the newest image wins even
-/// when the candidates differ in root type.
+/// Each unset-type row states the storage an instance offers and the image the
+/// lookup must select.
+///
+/// With no type named, the newest image wins when the instance can use it, and
+/// an image the instance cannot boot from is skipped even when newer.
+#[rstest]
+#[case::both_kinds_take_the_newest(both_storages(), "local-newest")]
+#[case::no_local_storage_skips_a_local_image(ImageStorage::new(false, true), "sbs-older")]
 #[tokio::test]
-async fn unset_type_keeps_every_candidate() {
+async fn unset_type_selects_an_image_the_instance_can_boot(
+    #[case] supported: ImageStorage,
+    #[case] expected: &str,
+) {
     let request = super::base_request();
     let backend = super::backend_fixture();
 
     let root = backend
         .resolve_image_id_with(
-            &request,
+            query_with(&request, supported),
             || async { Ok(Vec::new()) },
             || async {
                 Ok(vec![
-                    image_with_root("local-old", "2025-01-01T00:00:00Z", "l_ssd", 1),
-                    image_with_root("sbs-new", "2026-01-01T00:00:00Z", "sbs_snapshot", 1),
+                    image_with_root("local-newest", "2026-01-01T00:00:00Z", "l_ssd", 1),
+                    image_with_root("sbs-older", "2025-01-01T00:00:00Z", "sbs_snapshot", 1),
                 ])
             },
         )
         .await
-        .expect("the image should resolve");
+        .expect("an image the instance can boot should resolve");
 
-    assert_eq!(root.id, "sbs-new");
+    assert_eq!(root.id, expected);
 }

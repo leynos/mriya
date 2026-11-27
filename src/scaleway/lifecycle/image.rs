@@ -34,6 +34,25 @@ pub(in crate::scaleway) fn image_storage_from_type(
     }
 }
 
+/// The image-selection inputs that do not come from a fetcher.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::scaleway) struct ImageQuery<'a> {
+    /// The instance request being provisioned.
+    pub(in crate::scaleway) request: &'a InstanceRequest,
+    /// The storage kinds the instance type offers.
+    pub(in crate::scaleway) supported: ImageStorage,
+}
+
+impl<'a> ImageQuery<'a> {
+    /// Builds a query for `request` on an instance offering `supported`.
+    pub(in crate::scaleway) const fn new(
+        request: &'a InstanceRequest,
+        supported: ImageStorage,
+    ) -> Self {
+        Self { request, supported }
+    }
+}
+
 /// The image root facts a boot decision needs.
 ///
 /// # Examples
@@ -82,9 +101,10 @@ impl ScalewayBackend {
     pub(in crate::scaleway) async fn resolve_image_id(
         &self,
         request: &InstanceRequest,
+        supported: ImageStorage,
     ) -> Result<ImageRoot, ScalewayBackendError> {
         self.resolve_image_id_with(
-            request,
+            ImageQuery::new(request, supported),
             || async move {
                 if request.project_id.is_empty() {
                     Ok(Vec::new())
@@ -143,7 +163,7 @@ impl ScalewayBackend {
     /// ```
     pub(in crate::scaleway) async fn resolve_image_id_with<FutA, FutB, FetchA, FetchB>(
         &self,
-        request: &InstanceRequest,
+        query: ImageQuery<'_>,
         project_fetch: FetchA,
         public_fetch: FetchB,
     ) -> Result<ImageRoot, ScalewayBackendError>
@@ -161,7 +181,7 @@ impl ScalewayBackend {
             Vec::new()
         };
 
-        Self::select_image_from_sources(project_images, public_images, request)
+        Self::select_image_from_sources(project_images, public_images, query)
     }
 
     /// Picks the candidate with the latest `creation_date`.
@@ -265,8 +285,9 @@ impl ScalewayBackend {
     pub(in crate::scaleway) fn select_image_from_sources(
         project_images: Vec<ScalewayImage>,
         public_images: Vec<ScalewayImage>,
-        request: &InstanceRequest,
+        query: ImageQuery<'_>,
     ) -> Result<ImageRoot, ScalewayBackendError> {
+        let request = query.request;
         let primary = if project_images.is_empty() {
             public_images
         } else {
@@ -279,7 +300,8 @@ impl ScalewayBackend {
         // observed types are captured before the filter consumes the list.
         let usable = Self::filter_images(primary, request);
         let observed = Self::observed_root_types(&usable);
-        let compatible = Self::filter_by_storage(usable, request.boot_volume.volume_type);
+        let compatible =
+            Self::filter_by_storage(usable, request.boot_volume.volume_type, query.supported);
 
         if compatible.is_empty() && !observed.is_empty() {
             return Err(ImageStorageIncompatibleDetails {
@@ -322,24 +344,35 @@ impl ScalewayBackend {
             .collect()
     }
 
-    /// Keeps images whose own root volume can back `requested`, or any
-    /// modelled storage kind when `requested` is unset.
+    /// Keeps images whose own root volume can back the boot storage this
+    /// request could use.
+    ///
+    /// When the profile names a type, only images that back it are kept. When
+    /// it names none, an image must back at least one storage kind the
+    /// instance type offers, so the newest candidate is one the resolver can
+    /// actually choose rather than one it must refuse.
     ///
     /// An image whose root type is not modelled is dropped either way: the
     /// resolver cannot choose a storage kind it cannot name, so selecting such
     /// an image would fail after losing to a usable one.
     ///
     /// For example, asking for a local boot volume drops an SBS-only image
-    /// even when that image is the newest.
+    /// even when that image is the newest, and an instance with no local
+    /// storage drops a local-only image when the profile names no type.
     pub(in crate::scaleway) fn filter_by_storage(
         images: Vec<ScalewayImage>,
         requested: Option<BootVolumeType>,
+        supported: ImageStorage,
     ) -> Vec<ScalewayImage> {
         images
             .into_iter()
             .filter(|image| {
-                image_storage_from_type(&image.root_volume.volume_type)
-                    .is_ok_and(|storage| requested.is_none_or(|wanted| storage.supports(wanted)))
+                image_storage_from_type(&image.root_volume.volume_type).is_ok_and(|storage| {
+                    requested.map_or(
+                        (supported.local && storage.local) || (supported.sbs && storage.sbs),
+                        |wanted| storage.supports(wanted),
+                    )
+                })
             })
             .collect()
     }

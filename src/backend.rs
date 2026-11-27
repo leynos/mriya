@@ -258,8 +258,11 @@ pub trait Backend {
     /// Resolves and validates the boot-volume plan without creating anything.
     ///
     /// Callers use this to reject an impossible combination before a billable
-    /// resource exists. `create` performs the same resolution, so a preflight
-    /// that succeeds and a create that follows cannot disagree.
+    /// resource exists. A preflight is advisory: `create` applies the same
+    /// rules again on its own inputs, and a standalone `create` never depends
+    /// on a caller having preflighted first. If the catalogue or image list
+    /// changes between the two calls, the create's resolution is the one that
+    /// governs the server.
     ///
     /// For example, a 20 GB local plan succeeds where the instance type
     /// offers local storage and the image fits, while a size above the type's

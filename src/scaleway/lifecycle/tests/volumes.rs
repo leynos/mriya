@@ -198,11 +198,13 @@ impl Rejection {
             Self::Attach => ScalewayBackendError::VolumeAttachmentFailed {
                 volume_id: String::from("vol-cache"),
                 instance_id: String::from("id"),
+                status: 404,
                 message: rejected().body,
             },
             Self::Detach => ScalewayBackendError::VolumeDetachFailed {
                 volume_id: String::from("vol-cache"),
                 instance_id: String::from("id"),
+                status: 404,
                 message: rejected().body,
             },
             Self::Create => ScalewayBackendError::VolumeCreateFailed {

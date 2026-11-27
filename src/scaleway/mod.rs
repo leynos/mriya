@@ -177,6 +177,8 @@ impl ScalewayBackend {
             return Err(ScalewayBackendError::VolumeAttachmentFailed {
                 volume_id: cache_volume_id.trim().to_owned(),
                 instance_id: handle.id.clone(),
+                // No request was made: the identifier was refused locally.
+                status: 0,
                 message: String::from("refuse to attach root volume as cache volume"),
             });
         }

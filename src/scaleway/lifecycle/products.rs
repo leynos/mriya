@@ -80,8 +80,8 @@ pub(in crate::scaleway) struct ProductCapabilities {
     /// True when the type can attach Block Storage volumes.
     ///
     /// Absent in the catalogue for older types, which is why
-    /// [`ProductServerType::supports_block_storage`] treats absence as
-    /// "unknown" and does not refuse on it alone.
+    /// [`ProductServerType::supports_block_storage`] reads only an explicit
+    /// `false` as unsupported.
     #[serde(default)]
     pub(crate) block_storage: Option<bool>,
 }
@@ -107,13 +107,17 @@ impl ProductServerType {
         }
     }
 
-    /// Reports whether the type explicitly advertises Block Storage.
+    /// Reports whether the type can attach Block Storage.
     ///
-    /// For example, a type whose catalogue entry says
-    /// `"block_storage": true` returns `true`, while one that omits the
-    /// capability returns `false` rather than claiming support.
+    /// The provider documents that every instance type supports Block Storage,
+    /// and older catalogue entries omit the capability rather than stating it,
+    /// so only an explicit `false` means unsupported. Treating an omission as
+    /// a refusal would reject a working type.
+    ///
+    /// For example, a type whose entry omits `block_storage` returns `true`,
+    /// while one that says `"block_storage": false` returns `false`.
     pub(in crate::scaleway) const fn supports_block_storage(&self) -> bool {
-        matches!(self.capabilities.block_storage, Some(true))
+        !matches!(self.capabilities.block_storage, Some(false))
     }
 }
 

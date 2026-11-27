@@ -339,12 +339,17 @@ impl ScalewayBackend {
             })?;
 
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|err| ScalewayBackendError::Provider {
-                message: err.to_string(),
-            })?;
+        let body = response.bytes().await.map_err(|err| {
+            let message = if status.is_success() {
+                format!(
+                    "the provider reported {status} but its response body could not be read \
+                     ({err}); a server may exist and was not cleaned up"
+                )
+            } else {
+                err.to_string()
+            };
+            ScalewayBackendError::Provider { message }
+        })?;
 
         if status.is_success() {
             return self.decode_created_server(request, &body).await;
