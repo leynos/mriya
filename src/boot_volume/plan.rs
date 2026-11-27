@@ -81,7 +81,19 @@ pub struct BootVolumePlan {
 impl BootVolumePlan {
     /// Creates a plan from a validated type and byte size.
     ///
+    /// # Parameters
+    /// - `volume_type`: the storage type the create request will ask for.
+    /// - `size_bytes`: capacity in bytes. It must already be aligned to the provider's 512-byte
+    ///   increment; [`resolve_boot_volume`] guarantees that, and this constructor does not re-check
+    ///   it.
+    /// - `compatibility_default`: which settings came from the default.
+    ///
+    /// # Returns
+    /// The plan, unchanged.
+    ///
     /// For example, a 20 GB local plan reports `size_gb()` as 20.
+    ///
+    /// [`resolve_boot_volume`]: crate::scaleway::lifecycle::boot_plan::resolve_boot_volume
     #[must_use]
     pub const fn new(
         volume_type: BootVolumeType,

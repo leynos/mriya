@@ -242,6 +242,12 @@ provisioning) that will guide subsequent optimizations.
   original error, appending the teardown outcome as `src/run/mod.rs` does. Do
   not delete volumes explicitly: ownership-aware boot-volume cleanup is issue
   #154's scope.
+- The one exception is the cache. Because deleting a server through the API
+  deletes its attached volumes, a failure that leaves the cache attached — or
+  that cannot prove it is detached — records that the server must be kept, and
+  the cleanup step refuses to delete it. Every attachment failure is settled by
+  reading the instance back, because neither a transport error nor a 5xx status
+  proves the PATCH did not apply.
 - Include `volume_type: "sbs_volume"` on the root entry of attach and detach
   PATCH bodies, and only there. The provider requires it for Block Storage and
   rejects it for local volumes, so the root's own type decides.

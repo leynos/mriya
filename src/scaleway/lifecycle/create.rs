@@ -121,6 +121,8 @@ impl CreateBootVolume {
 
 /// Wrapper for the server object returned by a successful create call.
 ///
+/// Public within the crate so the decoder in `boot_capture` can name it.
+///
 /// # Examples
 ///
 /// ```ignore
@@ -132,9 +134,9 @@ impl CreateBootVolume {
 /// assert_eq!(response.server.id, "srv-1");
 /// ```
 #[derive(Deserialize)]
-struct CreateServerResponse {
+pub(in crate::scaleway) struct CreateServerResponse {
     /// The created instance as reported by the provider.
-    server: CreatedServer,
+    pub(in crate::scaleway) server: CreatedServer,
 }
 
 /// The subset of the created server that creation and root capture read.
@@ -150,9 +152,14 @@ pub(in crate::scaleway) struct CreatedServer {
     /// Public IPv4 address, if one was allocated.
     #[serde(default)]
     pub(in crate::scaleway) public_ip: Option<CreatedPublicIp>,
-    /// Attached volumes keyed by index.
+    /// Attached volumes keyed by index, absent when the provider sent no
+    /// `volumes` object.
+    ///
+    /// The distinction matters: an absent object is not evidence that nothing
+    /// is attached, and a caller that treated it as such could conclude a cache
+    /// volume was detached when it was not.
     #[serde(default)]
-    pub(in crate::scaleway) volumes: HashMap<String, CreatedVolume>,
+    pub(in crate::scaleway) volumes: Option<HashMap<String, CreatedVolume>>,
 }
 
 /// The public address object the provider nests under `public_ip`.
@@ -189,12 +196,13 @@ impl CreatedServer {
     /// For example, a server whose only volume is at `"0"` with `boot: false`
     /// still yields that volume.
     pub(in crate::scaleway) fn boot_volume(&self) -> Option<(&str, &CreatedVolume)> {
-        self.volumes
+        let volumes = self.volumes.as_ref()?;
+        volumes
             .iter()
             .find(|(_, volume)| volume.boot)
             .map(|(index, volume)| (index.as_str(), volume))
             .or_else(|| {
-                self.volumes
+                volumes
                     .get_key_value(CreateBootVolume::index())
                     .map(|(index, volume)| (index.as_str(), volume))
             })
@@ -339,11 +347,7 @@ impl ScalewayBackend {
             })?;
 
         if status.is_success() {
-            let parsed: CreateServerResponse =
-                serde_json::from_slice(&body).map_err(|err| ScalewayBackendError::Provider {
-                    message: err.to_string(),
-                })?;
-            return Ok(parsed.server);
+            return self.decode_created_server(request, &body).await;
         }
 
         let message = String::from_utf8_lossy(&body).into_owned();

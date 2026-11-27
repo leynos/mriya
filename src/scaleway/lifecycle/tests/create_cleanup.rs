@@ -189,37 +189,40 @@ async fn an_ambiguous_attachment_failure_is_settled_by_a_read(
     Ok(())
 }
 
-/// Scenario: the provider rejected the attachment outright.
+/// Scenario: the provider rejected the attachment and the instance confirms
+/// nothing was attached.
 ///
-/// Invariant: a rejected response cannot have applied, so the server may be
-/// deleted and no read is needed.
+/// Invariant: the read settles every attachment failure, whatever the error
+/// kind, and an instance without the cache allows the delete.
 #[rstest]
 #[tokio::test]
 async fn a_rejected_attachment_allows_cleanup(backend_fixture: ScalewayBackend) -> Result<()> {
     let handle = existing_handle();
-    let (result, requests) = with_stub(backend_fixture, vec![], async |backend| {
-        Ok::<_, crate::scaleway::ScalewayBackendError>(
-            backend
-                .classify_attachment_failure(
-                    &handle,
-                    "vol-cache",
-                    ScalewayBackendError::VolumeAttachmentFailed {
-                        volume_id: String::from("vol-cache"),
-                        instance_id: String::from("id"),
-                        message: String::from("conflict"),
-                    },
-                )
-                .await,
-        )
-    })
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![instance_without_cache()],
+        async |backend| {
+            Ok::<_, crate::scaleway::ScalewayBackendError>(
+                backend
+                    .classify_attachment_failure(
+                        &handle,
+                        "vol-cache",
+                        ScalewayBackendError::VolumeAttachmentFailed {
+                            volume_id: String::from("vol-cache"),
+                            instance_id: String::from("id"),
+                            message: String::from("conflict"),
+                        },
+                    )
+                    .await,
+            )
+        },
+    )
     .await?;
 
     let failure = result.expect("classification should be reported");
     assert!(!failure.keep_server, "{failure:?}");
-    assert!(
-        requests.is_empty(),
-        "a rejection needs no read: {requests:?}"
-    );
+    assert_eq!(requests.len(), 1, "the settlement read should run");
+    assert!(only_request(&requests)?.starts_with("GET "));
     Ok(())
 }
 

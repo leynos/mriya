@@ -145,6 +145,13 @@ pub struct BootVolumeRequest {
 
 impl BootVolumeRequest {
     /// Creates a request with both settings named.
+    ///
+    /// # Parameters
+    /// - `volume_type`: the storage type to ask for.
+    /// - `size_gb`: capacity in decimal gigabytes (10^9 bytes).
+    ///
+    /// # Returns
+    /// A request carrying both settings.
     #[must_use]
     pub const fn new(volume_type: BootVolumeType, size_gb: u32) -> Self {
         Self {
@@ -161,6 +168,9 @@ impl BootVolumeRequest {
     pub const fn is_unset(&self) -> bool { self.volume_type.is_none() && self.size_gb.is_none() }
 
     /// Validates that any supplied size is non-zero.
+    ///
+    /// # Returns
+    /// `Ok(())` when the request may be resolved.
     ///
     /// # Errors
     ///

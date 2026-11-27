@@ -49,7 +49,8 @@ impl ScalewayBackend {
 
         let root = instance
             .volumes
-            .get("0")
+            .as_ref()
+            .and_then(|volumes| volumes.get("0"))
             .map(|volume| {
                 let volume_type = volume
                     .volume_type

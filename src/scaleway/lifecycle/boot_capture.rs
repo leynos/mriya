@@ -217,13 +217,58 @@ impl ScalewayBackend {
         Ok(handle)
     }
 
+    /// Decodes a successful create response, cleaning up when it cannot.
+    ///
+    /// A 2xx response means the provider created a server, and a body this
+    /// client cannot read does not change that: without the identifier the
+    /// server would keep billing with nothing able to delete it. The body is
+    /// re-read only far enough to find `server.id`, and the server is deleted
+    /// best-effort before the decoding failure is reported.
+    pub(in crate::scaleway) async fn decode_created_server(
+        &self,
+        request: &InstanceRequest,
+        body: &[u8],
+    ) -> Result<CreatedServer, ScalewayBackendError> {
+        let decode_error = match serde_json::from_slice::<super::create::CreateServerResponse>(body)
+        {
+            Ok(parsed) => return Ok(parsed.server),
+            Err(error) => error,
+        };
+
+        let Some(id) = created_server_id(body) else {
+            return Err(ScalewayBackendError::Provider {
+                message: format!(
+                    "created server response could not be read ({decode_error}) and its id \
+                     could not be extracted, so the server was not cleaned up"
+                ),
+            });
+        };
+
+        let handle = InstanceHandle {
+            id: id.clone(),
+            zone: request.zone.clone(),
+            boot_volume: None,
+        };
+        let teardown = self.delete_instance(&handle).await.err();
+        let message = append_teardown_note(
+            format!("created server {id} response could not be read: {decode_error}"),
+            teardown.as_ref(),
+        );
+        Err(ScalewayBackendError::CreateCleanupFailed {
+            message,
+            source: Box::new(ScalewayBackendError::Provider {
+                message: decode_error.to_string(),
+            }),
+        })
+    }
+
     /// Decides whether the server may be destroyed after an attachment
     /// failure.
     ///
-    /// A rejected response means the PATCH did not apply, so deleting the
-    /// server is safe. A transport failure is ambiguous — the provider may have
-    /// applied the change before the error reached the client — so the instance
-    /// is read back to settle it. A read that also fails keeps the server,
+    /// Any attachment failure is settled by reading the instance back. Neither
+    /// a transport error nor a server-side status proves the PATCH did not
+    /// apply — a proxy can return 5xx after the provider acted — so the only
+    /// safe rule is to ask. An unreadable instance is treated as attached,
     /// because an unproven detachment must not be followed by a delete that
     /// would take the cache with it.
     pub(in crate::scaleway) async fn classify_attachment_failure(
@@ -232,14 +277,6 @@ impl ScalewayBackend {
         cache_volume_id: &str,
         attach_error: ScalewayBackendError,
     ) -> Box<CreateFailure> {
-        if !matches!(attach_error, ScalewayBackendError::Provider { .. }) {
-            return Box::new(CreateFailure {
-                error: attach_error,
-                handle: handle.clone(),
-                keep_server: false,
-            });
-        }
-
         match self.is_volume_attached(handle, cache_volume_id).await {
             Ok(false) => Box::new(CreateFailure {
                 error: attach_error,
@@ -284,7 +321,18 @@ impl ScalewayBackend {
         volume_id: &str,
     ) -> Result<bool, ScalewayBackendError> {
         let server = self.get_instance(handle).await?;
-        Ok(server.volumes.values().any(|volume| volume.id == volume_id))
+        let Some(volumes) = server.volumes else {
+            // An absent volumes object is not evidence that nothing is
+            // attached; reporting "detached" here could destroy the cache.
+            return Err(ScalewayBackendError::Provider {
+                message: format!(
+                    "instance {} reported no volumes object, so the cache attachment \
+                     cannot be verified",
+                    handle.id
+                ),
+            });
+        };
+        Ok(volumes.values().any(|volume| volume.id == volume_id))
     }
 
     /// Destroys the instance after a failed create and returns the original
@@ -308,8 +356,9 @@ impl ScalewayBackend {
         if keep_server {
             return ScalewayBackendError::CreateCleanupFailed {
                 message: format!(
-                    "{error} (the server was left running because the cache volume may \
-                     still be attached)"
+                    "{error} (instance {} in zone {} was left running because the cache \
+                     volume may still be attached)",
+                    handle.id, handle.zone
                 ),
                 source: Box::new(error),
             };
@@ -334,4 +383,17 @@ impl ScalewayBackend {
     ) -> Result<(), ScalewayBackendError> {
         self.delete_instance(handle).await
     }
+}
+
+/// Reads `server.id` from a create response body, even when the rest of it is
+/// not decodable.
+///
+/// For example, a body carrying every expected field except one yields the
+/// identifier, while a body that is not JSON at all yields `None`.
+fn created_server_id(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    value
+        .pointer("/server/id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
 }

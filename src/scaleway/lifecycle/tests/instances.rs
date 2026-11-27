@@ -257,3 +257,79 @@ async fn create_instance_stopped_decodes_an_sbs_create_response(
     assert_eq!(volume.size, None, "an SBS entry reports no size here");
     Ok(())
 }
+
+/// Scenario: the provider creates a server but answers with a body this client
+/// cannot decode.
+///
+/// Invariant: the identifier is read from the body and the server is deleted
+/// best-effort, because an unreadable response does not un-create a billing
+/// server.
+#[rstest]
+#[tokio::test]
+async fn an_unreadable_create_response_deletes_the_server(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let unreadable = Reply {
+        status: 201,
+        body: String::from(r#"{"server":{"id":"srv-orphan","state":42}}"#),
+    };
+    let deleted = Reply {
+        status: 204,
+        body: String::new(),
+    };
+
+    let (result, requests) = with_stub(
+        backend_fixture,
+        vec![unreadable, deleted],
+        async |backend| {
+            backend
+                .create_instance_stopped(&base_request, "img-test", &local_plan())
+                .await
+        },
+    )
+    .await?;
+
+    let error = result.expect_err("an unreadable response must fail the create");
+    assert!(
+        matches!(error, ScalewayBackendError::CreateCleanupFailed { .. }),
+        "{error:?}"
+    );
+    assert_eq!(requests.len(), 2, "the server should have been deleted");
+    let cleanup = requests.get(1).context("cleanup request missing")?;
+    assert!(cleanup.starts_with("DELETE "), "{cleanup}");
+    assert!(
+        cleanup.contains("srv-orphan"),
+        "the cleanup should target the parsed id: {cleanup}"
+    );
+    Ok(())
+}
+
+/// Scenario: the create response is not JSON at all.
+///
+/// Invariant: with no identifier the failure says the server was not cleaned
+/// up, so an operator knows to look for it, and no blind delete is attempted.
+#[rstest]
+#[tokio::test]
+async fn a_non_json_create_response_reports_the_unclean_server(
+    backend_fixture: ScalewayBackend,
+    base_request: InstanceRequest,
+) -> Result<()> {
+    let unreadable = Reply {
+        status: 201,
+        body: String::from("<html>proxy error</html>"),
+    };
+
+    let (result, requests) = with_stub(backend_fixture, vec![unreadable], async |backend| {
+        backend
+            .create_instance_stopped(&base_request, "img-test", &local_plan())
+            .await
+    })
+    .await?;
+
+    let error = result.expect_err("a non-JSON response must fail the create");
+    let message = error.to_string();
+    assert!(message.contains("not cleaned up"), "{message}");
+    assert_eq!(requests.len(), 1, "no delete can be aimed without an id");
+    Ok(())
+}

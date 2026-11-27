@@ -17,7 +17,8 @@ use super::{BootVolumePlan, BootVolumeType, format_size};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// # use mriya::{BootVolumeType, RootVolume};
 /// let root = RootVolume {
 ///     id: String::from("vol-root"),
 ///     volume_type: BootVolumeType::Local,
@@ -42,10 +43,23 @@ pub struct RootVolume {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// # use mriya::{
+/// #     BootVolumeAllocation, BootVolumePlan, BootVolumeType, CompatibilityDefault,
+/// #     RootVolume,
+/// # };
+/// let plan = BootVolumePlan::new(
+///     BootVolumeType::Local,
+///     20_000_000_000,
+///     CompatibilityDefault::default(),
+/// );
 /// let allocation = BootVolumeAllocation {
-///     plan: BootVolumePlan::new(BootVolumeType::Local, 20_000_000_000, Default::default()),
-///     root: RootVolume { id: String::from("vol-root"), ..root },
+///     plan,
+///     root: RootVolume {
+///         id: String::from("vol-root"),
+///         volume_type: BootVolumeType::Local,
+///         size_bytes: 20_000_000_000,
+///     },
 /// };
 /// assert_eq!(allocation.root.id, "vol-root");
 /// ```
