@@ -390,4 +390,11 @@ document-example loader the style guide describes.
 
 ## Revision note
 
-Initial draft, 26 November 2026.
+- Initial draft, 26 November 2026.
+- 27 November 2026: rebased from `200563a` onto `origin/main` `c903234` after
+  the branch was complete. The target's two commits only bumped the pinned
+  toolchain to `nightly-2026-11-26` and the shared workflow pins, so no source
+  file overlapped; `git range-diff` shows all 21 commits replaying as identical
+  patches. The toolchain bump changes the compiler, rustfmt, and Clippy, so
+  every gate was re-run against the rebased candidate rather than relying on
+  the pre-rebase evidence.
