@@ -136,13 +136,11 @@ pub(super) fn shared_prelude(volume_id: &str) -> String {
     format!("{}{}", resolver_prelude(volume_id), root_guard())
 }
 
-/// Builds the `blkid` and readability probes used by format and mount.
+/// Builds the `blkid` probe used by the mount script.
 ///
 /// `mriya_probe <tag>` leaves the value in `mriya_probe_value` and the exit
-/// status in `mriya_probe_code`. `blkid -p` returns 2 both when a signature is
-/// absent and when it cannot open or read the device, so a 2 alone proves
-/// nothing: `mriya_readable` must also succeed before the device may be
-/// treated as an empty disk.
+/// status in `mriya_probe_code`. Statuses 4 and 8 are ambiguous or failed
+/// results, never an absent signature.
 pub(super) fn probe_helpers() -> String {
     concat!(
         "mriya_probe() {\n",
@@ -155,23 +153,31 @@ pub(super) fn probe_helpers() -> String {
         "  esac\n",
         "  return 1\n",
         "}\n",
-        // Signatures live in the first and last mebibytes (superblocks, LVM
-        // labels, primary and backup GPT). Reading both proves the device can
-        // be read where a signature could be, so an empty `blkid` result is a
-        // clean negative rather than a probe that failed to read.
-        "mriya_readable() {\n",
-        "  mriya_device_size=$(sudo blockdev --getsize64 \"$mriya_device\" 2>/dev/null) || return 1\n",
-        "  case \"$mriya_device_size\" in\n",
-        "    ''|*[!0-9]*) return 1 ;;\n",
-        "  esac\n",
-        "  if [ \"$mriya_device_size\" -le 0 ]; then return 1; fi\n",
-        "  sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 count=1 >/dev/null 2>&1 || return 1\n",
-        "  mriya_last_mib=$((mriya_device_size / 1048576 - 1))\n",
-        "  if [ \"$mriya_last_mib\" -lt 0 ]; then mriya_last_mib=0; fi\n",
-        "  sudo dd if=\"$mriya_device\" of=/dev/null bs=1048576 skip=\"$mriya_last_mib\" count=1 >/dev/null 2>&1\n",
-        "}\n",
     )
     .to_owned()
+}
+
+/// Builds the `wipefs` signature probe used before formatting.
+///
+/// `wipefs --no-act` lists every signature and exits non-zero when the device
+/// cannot be probed, so the formatter can tell a clean, empty disk from a
+/// failed probe; `blkid -p` uses exit status 2 for both.
+pub(super) fn wipefs_probe() -> String {
+    format!(
+        concat!(
+            "mriya_signatures=$(sudo wipefs --no-act \"$mriya_device\" 2>/dev/null)\n",
+            "mriya_signatures_code=$?\n",
+            "if [ \"$mriya_signatures_code\" -ne 0 ]; then\n",
+            "  echo \"{prefix}probe-failed DEVICE=$mriya_device CODE=$mriya_signatures_code\"\n",
+            "  exit 0\n",
+            "fi\n",
+            "if [ -n \"$mriya_signatures\" ]; then\n",
+            "  echo \"{prefix}signature-present DEVICE=$mriya_device\"\n",
+            "  exit 0\n",
+            "fi\n",
+        ),
+        prefix = STATUS_PREFIX
+    )
 }
 
 /// Builds the mount-source query helpers shared by the mount and unmount

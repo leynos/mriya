@@ -84,7 +84,7 @@ async fn get_volume_maps_a_404_to_the_zone_error(backend_fixture: ScalewayBacken
 /// Invariant: the poller keeps reading until the expected status appears and
 /// returns that final state.
 #[rstest]
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wait_for_volume_status_returns_the_expected_state() -> Result<()> {
     let mut observations = VecDeque::from(vec![state("creating"), state("available")]);
     let result = poll_for_volume_status(
@@ -92,7 +92,7 @@ async fn wait_for_volume_status_returns_the_expected_state() -> Result<()> {
         &VolumeStatus::Available,
         VolumePollSettings {
             poll_interval: Duration::from_millis(1),
-            wait_timeout: Duration::from_millis(50),
+            wait_timeout: Duration::from_secs(60),
         },
         || {
             let next = observations

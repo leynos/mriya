@@ -120,16 +120,83 @@ fn refuse_symlink(dir: &Dir, file_name: &str, path: &Utf8Path) -> Result<(), Con
 fn ensure_owner(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
     use cap_std::fs::MetadataExt;
 
-    let (Ok(target), Ok(replacement)) = (dir.metadata(from), dir.metadata(to)) else {
-        return Ok(());
+    let target = match dir.metadata(from) {
+        Ok(target) => target,
+        // Only an absent target is the new-file case.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            drop(dir.remove_file(to));
+            return Err(ConfigStoreError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            });
+        }
     };
-    if target.uid() == replacement.uid() {
-        return Ok(());
-    }
-    // The replacement is discarded by the caller; never publish it.
-    drop(dir.remove_file(to));
-    Err(ConfigStoreError::OwnershipChanged {
+    let replacement = dir.metadata(to).map_err(|err| ConfigStoreError::Io {
         path: path.to_path_buf(),
+        message: err.to_string(),
+    })?;
+    if target.uid() != replacement.uid() {
+        // The replacement is discarded by the caller; never publish it.
+        drop(dir.remove_file(to));
+        return Err(ConfigStoreError::OwnershipChanged {
+            path: path.to_path_buf(),
+        });
+    }
+    // An ACL can grant access a mode cannot express (and deny group access a
+    // shared mode would grant), so the replacement must carry the same one.
+    copy_acl(dir, from, to, path)
+}
+
+/// Copies the target's access ACL onto the replacement.
+///
+/// A configuration holding a secret key may use an ACL to grant one named
+/// user access while denying the owning group. Publishing a replacement
+/// without that ACL would widen access, so an unreadable or uncopyable ACL
+/// fails the update instead.
+#[cfg(unix)]
+fn copy_acl(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+    use rustix::fs::{Mode, OFlags, XattrFlags, fgetxattr, fsetxattr};
+
+    let open = |name: &str| {
+        rustix::fs::openat(dir, name, OFlags::RDONLY | OFlags::CLOEXEC, Mode::empty()).map_err(
+            |err| ConfigStoreError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            },
+        )
+    };
+    let target = open(from)?;
+    let replacement = open(to)?;
+    let mut buffer = vec![0_u8; 4096];
+    let size = match fgetxattr(&target, "system.posix_acl_access", &mut buffer) {
+        Ok(size) => size,
+        // No ACL is set, so the mode already carries every access rule.
+        Err(rustix::io::Errno::NODATA | rustix::io::Errno::NOTSUP) => return Ok(()),
+        Err(err) => {
+            drop(dir.remove_file(to));
+            return Err(ConfigStoreError::Io {
+                path: path.to_path_buf(),
+                message: err.to_string(),
+            });
+        }
+    };
+    let acl = buffer.get(..size).ok_or_else(|| ConfigStoreError::Io {
+        path: path.to_path_buf(),
+        message: String::from("the ACL size exceeds the read buffer"),
+    })?;
+    fsetxattr(
+        &replacement,
+        "system.posix_acl_access",
+        acl,
+        XattrFlags::empty(),
+    )
+    .map_err(|err| {
+        drop(dir.remove_file(to));
+        ConfigStoreError::Io {
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        }
     })
 }
 
@@ -155,9 +222,8 @@ fn inherit_permissions(dir: &Dir, from: &str, to: &str) {
     let (Ok(target), Ok(replacement)) = (dir.metadata(from), dir.metadata(to)) else {
         return;
     };
-    // A new file takes its group from the process or the parent directory, not
-    // from the file it replaces. Granting the target's group access while the
-    // group differs would expose the secret key to the wrong group.
+    // The ACL is copied first; a differing group would then widen the mode's
+    // group access, so the restricted mode stays in place.
     if target.gid() != replacement.gid() {
         return;
     }

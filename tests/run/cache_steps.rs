@@ -5,6 +5,7 @@ use rstest_bdd_macros::{given, then};
 
 use super::{
     bdd_steps::{StepError, context, last_ssh_remote_command},
+    invocation_steps::{InvocationRole, classify_invocation},
     test_helpers::{RunContext, RunContextResult},
 };
 
@@ -95,15 +96,9 @@ fn remote_command_does_not_route_cargo_caches(
 /// The mount script and the directory creation are separate SSH calls now, so
 /// the step cannot assume the first SSH invocation is the one it inspects.
 fn cache_directories_command(run_context: &RunContext) -> Result<String, StepError> {
-    run_context
-        .runner
-        .invocations()
+    cache_directory_payloads(run_context)
         .into_iter()
-        .rev()
-        .filter(|invocation| invocation.program == run_context.sync_config.ssh_bin)
-        .filter_map(|invocation| invocation.args.last().cloned())
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .find(|payload| is_cache_directory_command(payload))
+        .next()
         .ok_or_else(|| {
             StepError::Assertion(String::from(
                 "missing cache-directory invocation with mkdir and a known subdirectory",
@@ -111,24 +106,31 @@ fn cache_directories_command(run_context: &RunContext) -> Result<String, StepErr
         })
 }
 
-/// Returns the first SSH payload that creates a known cache subdirectory.
-fn offending_cache_directory(run_context: &RunContext) -> Option<String> {
+/// Returns the payloads classified as automatic cache-directory calls.
+///
+/// The requested command is excluded by its role, so a user command such as
+/// `mkdir -p /mriya/target` is never mistaken for cache setup.
+fn cache_directory_payloads(run_context: &RunContext) -> Vec<String> {
+    let ssh_bin = run_context.sync_config.ssh_bin.as_str();
+    let Some(command) = run_context.requested_command.as_deref() else {
+        return Vec::new();
+    };
     run_context
         .runner
         .invocations()
         .into_iter()
-        .filter(|invocation| invocation.program == run_context.sync_config.ssh_bin)
+        .filter(|invocation| invocation.program == ssh_bin)
+        .filter(|invocation| {
+            classify_invocation(invocation, ssh_bin, command) == InvocationRole::CacheDirectories
+        })
         .filter_map(|invocation| invocation.args.last().cloned())
         .map(|arg| arg.to_string_lossy().into_owned())
-        .find(|payload| is_cache_directory_command(payload))
+        .collect()
 }
 
-/// Reports whether `payload` creates a known cache subdirectory.
-fn is_cache_directory_command(payload: &str) -> bool {
-    payload.contains("mkdir -p")
-        && CACHE_SUBDIRECTORIES
-            .iter()
-            .any(|subdir| payload.contains(&format!("/mriya/{subdir}")))
+/// Returns the first SSH payload that creates a known cache subdirectory.
+fn offending_cache_directory(run_context: &RunContext) -> Option<String> {
+    cache_directory_payloads(run_context).into_iter().next()
 }
 
 #[then("the mount command creates cache subdirectories")]

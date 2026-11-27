@@ -221,6 +221,24 @@ async fn run_lifetimes(
 /// Runs the full three-VM flow and returns the collected evidence.
 pub(super) async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
     let volume = create_volume(harness).await?;
+    match run_with_volume(harness, &volume).await {
+        Ok(evidence) => Ok(evidence),
+        Err(error) => {
+            // A failed run must not leave a billed volume behind. The volume
+            // is detached by the lifetime's teardown before this point.
+            match harness.backend.delete_volume(&volume).await {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(anyhow::anyhow!(
+                    "{error}; deleting the test volume {} after the failure also failed: {cleanup}",
+                    volume.id
+                )),
+            }
+        }
+    }
+}
+
+/// Runs the three lifetimes and deletion for an existing volume.
+async fn run_with_volume(harness: &CacheHarness, volume: &VolumeHandle) -> Result<CacheEvidence> {
     let syncer =
         Syncer::with_process_runner(harness.sync_config.clone()).context("build syncer")?;
     let mount_path = &harness.sync_config.volume_mount_path;
@@ -231,14 +249,14 @@ pub(super) async fn run_flow(harness: &CacheHarness) -> Result<CacheEvidence> {
         value_b: format!("sentinel-b-{}", uuid::Uuid::new_v4().simple()),
     };
 
-    let evidence = run_lifetimes(harness, &syncer, &volume, &sentinels).await?;
+    let evidence = run_lifetimes(harness, &syncer, volume, &sentinels).await?;
 
     harness
         .backend
-        .delete_volume(&volume)
+        .delete_volume(volume)
         .await
         .context("delete cache volume")?;
-    let volume_gone = wait_until_gone(harness, &volume).await?;
+    let volume_gone = wait_until_gone(harness, volume).await?;
 
     Ok(CacheEvidence {
         sentinel_a: sentinels.value_a,

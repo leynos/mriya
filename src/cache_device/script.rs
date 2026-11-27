@@ -24,7 +24,13 @@
 
 use shell_escape::unix::escape;
 
-use super::prelude::{mount_source_helpers, probe_helpers, resolver_prelude, shared_prelude};
+use super::prelude::{
+    mount_source_helpers,
+    probe_helpers,
+    resolver_prelude,
+    shared_prelude,
+    wipefs_probe,
+};
 
 /// Prefix of the single machine-readable status line.
 pub const STATUS_PREFIX: &str = "MRIYA_CACHE_STATUS=";
@@ -59,37 +65,14 @@ pub(super) fn quoted(value: &str) -> String { escape(value.into()).into_owned() 
 /// let script = format_script("11111111-1111-1111-1111-111111111111");
 /// assert!(script.contains("volume-11111111-1111-1111-1111-111111111111"));
 /// assert!(script.contains("mkfs.ext4 -F -L mriya-cache"));
-/// assert!(script.contains("PTTYPE"));
+/// assert!(script.contains("wipefs --no-act"));
 /// ```
 #[must_use]
 pub fn format_script(volume_id: &str) -> String {
-    let prelude = format!("{}{}", shared_prelude(volume_id), probe_helpers());
+    let prelude = format!("{}{}", shared_prelude(volume_id), wipefs_probe());
     format!(
         concat!(
             "{prelude}",
-            "mriya_probe TYPE\n",
-            "mriya_type=$mriya_probe_value\n",
-            "mriya_type_code=$mriya_probe_code\n",
-            "mriya_probe UUID\n",
-            "mriya_uuid=$mriya_probe_value\n",
-            "mriya_uuid_code=$mriya_probe_code\n",
-            "mriya_probe PTTYPE\n",
-            "mriya_pttype=$mriya_probe_value\n",
-            "mriya_pttype_code=$mriya_probe_code\n",
-            "if mriya_probe_failed \"$mriya_type_code\" || mriya_probe_failed \"$mriya_uuid_code\" || mriya_probe_failed \"$mriya_pttype_code\"; then\n",
-            "  echo \"{prefix}probe-failed DEVICE=$mriya_device TYPE_CODE=$mriya_type_code UUID_CODE=$mriya_uuid_code PTTYPE_CODE=$mriya_pttype_code\"\n",
-            "  exit 0\n",
-            "fi\n",
-            // An empty probe only proves the disk is empty when the disk can
-            // be read at all; `blkid` also returns 2 for an unreadable device.
-            "if ! mriya_readable; then\n",
-            "  echo \"{prefix}device-unreadable DEVICE=$mriya_device\"\n",
-            "  exit 0\n",
-            "fi\n",
-            "if [ \"$mriya_type_code\" -ne 2 ] || [ \"$mriya_uuid_code\" -ne 2 ] || [ \"$mriya_pttype_code\" -ne 2 ]; then\n",
-            "  echo \"{prefix}signature-present DEVICE=$mriya_device FSTYPE=$mriya_type PTTYPE=$mriya_pttype\"\n",
-            "  exit 0\n",
-            "fi\n",
             "if ! sudo mkfs.ext4 -F -L {label} \"$mriya_device\" >/dev/null 2>&1; then\n",
             "  echo \"{prefix}format-failed DEVICE=$mriya_device\"\n",
             "  exit 0\n",

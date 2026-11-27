@@ -21,11 +21,19 @@ fn scripted_exit(
     let run_context = run_context_result?;
     // A configured cache creates its subdirectories in a separate SSH call
     // between the verified mount and rsync, unless that step is disabled.
-    if run_context.request.volume_id.is_some() && run_context.sync_config.create_cache_directories {
+    let has_volume = run_context.request.volume_id.is_some();
+    if has_volume && run_context.sync_config.create_cache_directories {
         run_context.runner.push_success();
     }
     run_context.runner.push_success();
     run_context.runner.push_exit_code(code);
+    // The unmount follows the remote command when a cache is configured, and
+    // its report is asserted rather than being allowed to fail quietly.
+    if has_volume {
+        run_context
+            .runner
+            .push_output(Some(0), "MRIYA_CACHE_STATUS=unmounted PATH=/mriya\n", "");
+    }
     Ok(Ok(run_context))
 }
 

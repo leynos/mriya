@@ -71,6 +71,8 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
             "dd-exit" => guest.set(StateFile::DdExit(value))?,
             "lsblk-exit" => guest.set(StateFile::LsblkExit(value))?,
             "pkname-exit" => guest.set(StateFile::PknameExit(value))?,
+            "wipefs-exit" => guest.set(StateFile::WipefsExit(value))?,
+            "wipefs-output" => guest.set(StateFile::WipefsOutput(value))?,
             "blockdev-exit" => guest.set(StateFile::BlockdevExit(value))?,
             "blockdev-size" => guest.set(StateFile::BlockdevSize(value))?,
             "mkfs-exit" => guest.set(StateFile::MkfsExit(value))?,
@@ -88,7 +90,7 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
 
 #[rstest]
 fn format_refuses_unsafe_devices(
-    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)] index: usize,
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)] index: usize,
 ) -> Result<()> {
     let case = FORMAT_CASES
         .get(index)

@@ -72,7 +72,7 @@ fn init_refuses_an_environment_volume_id_without_force() -> Result<(), String> {
     Ok(())
 }
 
-/// Scenario: the file and the environment both configure a volume.
+/// Scenario: the file configures a volume.
 ///
 /// Invariant: the refusal names the file value, which must be replaced first,
 /// and does not touch the provider.
@@ -85,12 +85,34 @@ fn init_refuses_a_file_volume_id_without_force() -> Result<(), String> {
         &format!("[scaleway]\ndefault_volume_id = \"{FILE_VOLUME_ID}\"\n"),
     )?;
 
+    init_command(&config)
+        .assert()
+        .failure()
+        .stderr(contains(format!(
+            "default volume ID already configured as {FILE_VOLUME_ID}"
+        )));
+    Ok(())
+}
+
+/// Scenario: the file and the environment both configure a volume.
+///
+/// Invariant: the refusal names the environment override first, because
+/// `--force` would not make a new volume the one a run uses.
+#[test]
+fn init_reports_the_environment_override_before_the_file() -> Result<(), String> {
+    let dir = TempDir::new().map_err(|error| format!("tempdir: {error}"))?;
+    let config = dir.path().join("mriya.toml");
+    write_config(
+        &dir,
+        &format!("[scaleway]\ndefault_volume_id = \"{FILE_VOLUME_ID}\"\n"),
+    )?;
+
     let mut cmd = init_command(&config);
     cmd.env("SCW_DEFAULT_VOLUME_ID", ENV_VOLUME_ID)
         .assert()
         .failure()
         .stderr(contains(format!(
-            "default volume ID already configured as {FILE_VOLUME_ID}"
+            "SCW_DEFAULT_VOLUME_ID={ENV_VOLUME_ID} is already in effect"
         )));
     Ok(())
 }

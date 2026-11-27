@@ -37,6 +37,7 @@ impl Fakes<'_> {
             ("blkid", self.blkid()),
             ("mountpoint", self.mountpoint()),
             ("blockdev", self.blockdev()),
+            ("wipefs", self.wipefs()),
             ("dd", self.dd()),
             ("udevadm", self.logger("udevadm")),
             ("sleep", self.logger("sleep")),
@@ -144,23 +145,53 @@ impl Fakes<'_> {
         )
     }
 
+    /// Logs one call and exits with a configured status when one is set.
+    fn log_with_override(&self, tool: &str, state: &str) -> String {
+        format!(
+            concat!(
+                "printf '{tool} %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "if [ -f '{root}/{state}' ]; then ",
+                "read -r code < '{root}/{state}'; exit \"$code\"; fi\n",
+            ),
+            root = self.root,
+            tool = tool,
+            state = state,
+        )
+    }
+
     /// Builds the `mountpoint` fake, whose status comes from a state file.
     ///
     /// A fresh guest has no mount-point state, so the fake reports 32 ("not a
     /// mount point") rather than success, matching the real tool for a path
     /// that exists but is not mounted.
     fn mountpoint(&self) -> String {
-        let root = self.root;
         format!(
             concat!(
-                "printf 'mountpoint %s\\n' \"$*\" >> '{root}/tools.log'\n",
-                "if [ -f '{root}/mountpoint-exit' ]; then ",
-                "read -r code < '{root}/mountpoint-exit'; exit \"$code\"; fi\n",
+                "{logged}",
                 "if [ -f '{root}/mount-source' ] && [ -s '{root}/mount-source' ]; ",
                 "then exit 0; fi\n",
                 "exit 32"
             ),
-            root = root
+            logged = self.log_with_override("mountpoint", "mountpoint-exit"),
+            root = self.root,
+        )
+    }
+
+    /// Builds the `wipefs` fake, which lists the configured signatures.
+    ///
+    /// An empty listing is a clean, empty disk; a non-empty listing is a
+    /// signature; a `wipefs-exit` state models a failed probe.
+    fn wipefs(&self) -> String {
+        format!(
+            concat!(
+                "{logged}",
+                "if [ -f '{root}/wipefs-output' ]; then ",
+                "while IFS= read -r line; do printf '%s\\n' \"$line\"; done ",
+                "< '{root}/wipefs-output'; exit 0; fi\n",
+                "exit 0"
+            ),
+            logged = self.log_with_override("wipefs", "wipefs-exit"),
+            root = self.root,
         )
     }
 

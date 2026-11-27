@@ -330,12 +330,19 @@ fn init_error_names_retained_volume(
 
 #[then("the formatter is torn down")]
 fn formatter_torn_down(init_context_result: &InitContextResult) -> Result<(), StepError> {
-    assert_counter_condition(
-        init_context_result,
-        |ctx| ctx.backend.teardown_calls(),
-        |count| count > 0,
-        "the formatter should be torn down through the ordered teardown",
-    )
+    let init_context = init_context_result
+        .as_ref()
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let events = init_context.backend.events();
+    let attempted = init_context.backend.teardown_calls() > 0;
+    if attempted && events.contains(&LifecycleEvent::TeardownCompleted) {
+        Ok(())
+    } else {
+        Err(StepError::Assertion(format!(
+            "the ordered teardown should complete; calls: {}, events: {events:?}",
+            init_context.backend.teardown_calls()
+        )))
+    }
 }
 
 #[then("the new volume is waited for before attachment")]

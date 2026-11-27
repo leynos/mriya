@@ -134,6 +134,7 @@ impl ScriptedVolumeBackend {
                 source: ScriptedVolumeBackendError::Destroy,
             });
         }
+        state.events.push(LifecycleEvent::TeardownCompleted);
         Ok(())
     }
 

@@ -202,10 +202,14 @@ impl ConfigWriter for ConfigStore {
             }
         })?;
         let _lock = lock_config(&dir, &target.path)?;
-        let contents = if target.exists {
-            read_config(&target.path)?
-        } else {
-            String::new()
+        // Another writer may have published the file since discovery, so the
+        // decision is made from the state read under the lock.
+        let contents = match read_config(&target.path) {
+            Ok(contents) => contents,
+            Err(ConfigStoreError::Io { ref message, .. }) if message.contains("No such file") => {
+                String::new()
+            }
+            Err(error) => return Err(error),
         };
 
         let mut value = parse_toml(&target.path, &contents)?;

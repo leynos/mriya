@@ -315,17 +315,19 @@ fn the_recovery_example_matches_the_error_message() {
     );
 
     let error = ScalewayBackendError::VolumeDetachRetainsServer {
-        volume_id: String::from("vol"),
-        instance_id: String::from("srv"),
+        volume_id: String::from("vol-1"),
+        instance_id: String::from("srv-1"),
         zone: String::from("fr-par-1"),
         message: String::from("detach rejected"),
     };
-    assert!(
-        error
-            .to_string()
-            .contains("scw instance server detach-volume"),
-        "{error}"
+    let rendered = error.to_string();
+    // The documented command, with the placeholders filled in, must appear
+    // verbatim; a swapped or missing argument would not match.
+    let expected = concat!(
+        "scw instance server detach-volume server-id=srv-1 ",
+        "volume-id=vol-1 zone=fr-par-1"
     );
+    assert!(rendered.contains(expected), "{rendered}");
 }
 
 /// Runs the published `mriya` commands through the real binary.

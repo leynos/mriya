@@ -9,7 +9,7 @@ use rstest::rstest;
 use super::{
     backend_fixture,
     base_request,
-    http_stub::{request_url, with_stub},
+    http_stub::{request_body, request_url, with_stub},
     provision::{
         CACHE_ID,
         action_rejected,
@@ -114,13 +114,17 @@ async fn ambiguous_create_removes_the_server_it_may_have_created(
     );
     let listing = request_url(at(&requests, 1))?;
     assert_eq!(listing.path(), "/instance/v1/zones/zone/servers");
-    let name = listing
+    let looked_up = listing
         .query_pairs()
         .find(|(key, _)| key == "name")
         .map(|(_, value)| value.into_owned());
+    let created = request_body(at(&requests, 0))?
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
     assert!(
-        name.is_some_and(|value| value.starts_with("mriya-")),
-        "the lookup must filter by the generated name: {listing}"
+        created.is_some() && created == looked_up,
+        "the lookup must filter by the created name {created:?}: {listing}"
     );
     let second_page = request_url(at(&requests, 2))?;
     assert_eq!(

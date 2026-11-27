@@ -147,9 +147,9 @@ aws --endpoint-url https://s3.fr-par.scw.cloud s3 rm \
 
 ## What Mriya does with a legacy ID
 
-`mriya init` and `mriya run` look the configured volume up in its zone before
-creating any server. A volume whose type is `b_ssd`, or whose storage class is
-`bssd`, is refused with:
+`mriya run` looks the configured volume up in its zone before creating any
+server. A volume whose type is `b_ssd`, or whose storage class is `bssd`, is
+refused with:
 
 ```text
 volume <id> uses the legacy b_ssd storage class, which Mriya does not format,
@@ -158,6 +158,12 @@ docs/cache-volume-migration.md
 ```
 
 Nothing is created, formatted, or deleted by that refusal.
+
+`mriya init` refuses a legacy ID differently. Without `--force` it stops at the
+existing configured ID and never looks the volume up. With `--force` it
+creates, formats and records a new empty volume, then replaces the stored ID:
+it does not migrate the legacy data and does not raise the error above. Move
+the data with the steps in this guide before running `mriya init --force`.
 
 ## Compatibility and price are different questions
 

@@ -46,17 +46,17 @@ pub(super) const FORMAT_CASES: &[FormatCase] = &[
         formats: false,
     },
     FormatCase {
-        state: &[("signature-TYPE", "ext4\n")],
+        state: &[("wipefs-output", "disk ext4\n")],
         status: "signature-present",
         formats: false,
     },
     FormatCase {
-        state: &[("signature-PTTYPE", "gpt\n")],
+        state: &[("wipefs-output", "disk gpt\n")],
         status: "signature-present",
         formats: false,
     },
     FormatCase {
-        state: &[("signature-TYPE", "code=8\n")],
+        state: &[("wipefs-exit", "1\n")],
         status: "probe-failed",
         formats: false,
     },
@@ -80,11 +80,11 @@ pub(super) const FORMAT_CASES: &[FormatCase] = &[
         status: "format-failed",
         formats: true,
     },
-    // `blkid` returns 2 for an unreadable device as well as for an empty one,
-    // so a failed read must stop the format before `mkfs.ext4` runs.
+    // A failed signature probe must stop the format even when a later read
+    // would succeed: only a successful empty probe authorizes `mkfs.ext4`.
     FormatCase {
-        state: &[("dd-exit", "1\n")],
-        status: "device-unreadable",
+        state: &[("wipefs-exit", "2\n")],
+        status: "probe-failed",
         formats: false,
     },
     // A partition record carrying the serial is not the cache disk, so the
@@ -112,15 +112,12 @@ pub(super) const FORMAT_CASES: &[FormatCase] = &[
         status: "root-unknown",
         formats: false,
     },
-    // The device size is unknown, so readability cannot be proven.
+    // Any listed signature blocks formatting, including a surviving UUID.
     FormatCase {
-        state: &[("blockdev-exit", "1\n")],
-        status: "device-unreadable",
-        formats: false,
-    },
-    // A UUID surviving from a partially wiped filesystem is still a signature.
-    FormatCase {
-        state: &[("signature-UUID", "a23cd711-3a36-4fca-bfa9-fab507e19e6f\n")],
+        state: &[(
+            "wipefs-output",
+            "disk ext4 a23cd711-3a36-4fca-bfa9-fab507e19e6f\n",
+        )],
         status: "signature-present",
         formats: false,
     },

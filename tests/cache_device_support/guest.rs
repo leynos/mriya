@@ -116,6 +116,10 @@ pub(super) enum StateFile<'a> {
     LsblkExit(&'a str),
     /// The exit status the `lsblk` parent query returns.
     PknameExit(&'a str),
+    /// The exit status the `webkit` fake returns.
+    WipefsExit(&'a str),
+    /// The signature listing the `wipefs` fake prints.
+    WipefsOutput(&'a str),
     /// The exit status the `blockdev` fake returns.
     BlockdevExit(&'a str),
     /// The size the `blockdev` fake reports, in bytes.
@@ -149,6 +153,8 @@ impl StateFile<'_> {
             Self::DdExit(_) => "dd-exit",
             Self::LsblkExit(_) => "lsblk-exit",
             Self::PknameExit(_) => "pkname-exit",
+            Self::WipefsExit(_) => "wipefs-exit",
+            Self::WipefsOutput(_) => "wipefs-output",
             Self::BlockdevExit(_) => "blockdev-exit",
             Self::BlockdevSize(_) => "blockdev-size",
             Self::MountSourceOverride(_) => "mount-source-override",
@@ -175,6 +181,8 @@ impl StateFile<'_> {
             | Self::DdExit(value)
             | Self::LsblkExit(value)
             | Self::PknameExit(value)
+            | Self::WipefsExit(value)
+            | Self::WipefsOutput(value)
             | Self::BlockdevExit(value)
             | Self::BlockdevSize(value)
             | Self::MountSourceOverride(value)

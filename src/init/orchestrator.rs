@@ -92,20 +92,7 @@ where
             }
         };
 
-        let networking = match self.backend.wait_for_ready(&handle).await {
-            Ok(networking) => networking,
-            Err(source) => {
-                let message = source.to_string();
-                let error = InitError::Wait {
-                    message,
-                    source: Box::new(source),
-                };
-                return Err(self.rollback(&volume, Some(&handle), error).await);
-            }
-        };
-
-        if let Err(failure) = self.format_volume(&networking, &volume.id) {
-            let error = format_error(&volume.id, failure);
+        if let Err(error) = self.prepare_volume(&handle, &volume).await {
             return Err(self.rollback(&volume, Some(&handle), error).await);
         }
 
@@ -137,6 +124,27 @@ where
             config_path,
             warning,
         })
+    }
+
+    /// Waits for the formatter, then formats the new volume.
+    ///
+    /// Both steps share one rollback boundary in [`Self::execute`], so a new
+    /// preparation step cannot bypass cleanup by returning early.
+    async fn prepare_volume(
+        &self,
+        handle: &InstanceHandle,
+        volume: &VolumeHandle,
+    ) -> Result<(), InitError<B::Error>> {
+        let networking = self
+            .backend
+            .wait_for_ready(handle)
+            .await
+            .map_err(|source| InitError::Wait {
+                message: source.to_string(),
+                source: Box::new(source),
+            })?;
+        self.format_volume(&networking, &volume.id)
+            .map_err(|failure| format_error(&volume.id, failure))
     }
 
     /// Tears the formatter down and deletes the detached volume if needed.
@@ -274,22 +282,31 @@ where
             return Ok(());
         }
 
-        if let Some(existing) = file_volume_id {
+        // The environment wins over the file for `mriya run`, so report it
+        // first: rerunning with `--force` would not make the new volume the one
+        // a run uses.
+        let environment = request
+            .environment_volume_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                request
+                    .effective_volume_id
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+            });
+        if let Some(effective) = environment {
             return Err(InitError::Config(
-                ConfigStoreError::VolumeAlreadyConfigured {
-                    volume_id: existing.to_owned(),
+                ConfigStoreError::EffectiveVolumeConfigured {
+                    volume_id: effective.to_owned(),
                 },
             ));
         }
 
-        if let Some(effective) = request
-            .effective_volume_id
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(existing) = file_volume_id {
             return Err(InitError::Config(
-                ConfigStoreError::EffectiveVolumeConfigured {
-                    volume_id: effective.to_owned(),
+                ConfigStoreError::VolumeAlreadyConfigured {
+                    volume_id: existing.to_owned(),
                 },
             ));
         }
@@ -366,7 +383,10 @@ where
 
         let report = cache_device::parse_report(&output.stdout).map_err(|error| {
             FormatFailure::Protocol {
-                message: format!("format script produced no usable status: {error}"),
+                message: format!(
+                    "format script produced no usable status: {error}; stderr: {}",
+                    output.stderr.trim()
+                ),
             }
         })?;
 

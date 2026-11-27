@@ -43,8 +43,10 @@ pub(super) enum LifecycleEvent {
     VolumeReady,
     /// A formatter server was created, which attaches the cache.
     InstanceCreated,
-    /// The formatter was torn down through the ordered teardown.
+    /// The ordered teardown was attempted.
     Teardown,
+    /// The ordered teardown completed, so the formatter is gone.
+    TeardownCompleted,
     /// The owned volume was deleted.
     VolumeDeleted,
 }

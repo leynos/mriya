@@ -37,6 +37,9 @@ pub struct CommandInvocation {
     pub program: String,
     /// Arguments passed to the program.
     pub args: Vec<OsString>,
+    /// Exit code the scripted runner returned, or `None` when the fake
+    /// produced no status.
+    pub exit_code: Option<i32>,
 }
 
 impl CommandInvocation {
@@ -186,10 +189,6 @@ impl crate::sync::CommandRunner for ScriptedRunner {
         program: &str,
         args: &[std::ffi::OsString],
     ) -> Result<crate::sync::CommandOutput, crate::sync::SyncError> {
-        self.invocations.borrow_mut().push(CommandInvocation {
-            program: program.to_owned(),
-            args: args.to_vec(),
-        });
         self.record_event(program, args);
 
         let error_to_return = {
@@ -206,13 +205,18 @@ impl crate::sync::CommandRunner for ScriptedRunner {
             return Err(error);
         }
 
-        self.responses
-            .borrow_mut()
-            .pop_front()
-            .ok_or_else(|| crate::sync::SyncError::Spawn {
+        let response = self.responses.borrow_mut().pop_front().ok_or_else(|| {
+            crate::sync::SyncError::Spawn {
                 program: program.to_owned(),
                 message: String::from("no scripted response available"),
-            })
+            }
+        })?;
+        self.invocations.borrow_mut().push(CommandInvocation {
+            program: program.to_owned(),
+            args: args.to_vec(),
+            exit_code: response.code,
+        });
+        Ok(response)
     }
 }
 
