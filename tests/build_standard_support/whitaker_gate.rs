@@ -294,7 +294,7 @@ fn a_failing_clippy_stops_lint_before_whitaker() -> Result<(), String> {
 }
 
 /// Returns the recipe lines of a Make rule, tab stripped, or `None` when the rule is absent.
-fn recipe_of<'a>(makefile: &'a str, rule: Rule) -> Option<Vec<&'a str>> {
+fn recipe_of(makefile: &str, rule: Rule) -> Option<Vec<&str>> {
     let header = rule.header();
     let mut lines = makefile
         .lines()
