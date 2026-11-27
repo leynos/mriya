@@ -153,12 +153,22 @@ where
         match self.backend.teardown(handle, Some(&volume.id)).await {
             Ok(()) => Ok(()),
             Err(failure) if failure.stage == crate::volume::TeardownStage::Destroying => {
-                self.delete_detached_volume(volume, failure).await
+                self.delete_detached_volume(handle, volume, failure).await
             }
-            Err(failure) => Err(InitError::FormatterTeardown {
-                message: failure.to_string(),
-                source: Box::new(failure.source),
-            }),
+            Err(failure) => {
+                let recovery = Self::recovery_steps(failure.stage, handle, volume);
+                Err(InitError::FormatterTeardown {
+                    message: format!(
+                        "formatter {} ({}) failed: {}; cache volume {} in zone {}: {recovery}",
+                        handle.id,
+                        failure.stage.as_str(),
+                        failure.source,
+                        volume.id,
+                        volume.zone
+                    ),
+                    source: Box::new(failure.source),
+                })
+            }
         }
     }
 
@@ -169,6 +179,7 @@ where
     /// appears only when this deletion also fails.
     async fn delete_detached_volume(
         &self,
+        handle: &InstanceHandle,
         volume: &VolumeHandle,
         failure: crate::volume::TeardownFailure<B::Error>,
     ) -> Result<(), InitError<B::Error>> {
@@ -176,8 +187,8 @@ where
         Err(match self.backend.delete_volume(volume).await {
             Ok(()) => InitError::FormatterTeardown {
                 message: format!(
-                    "{destroy_message}; the detached cache volume {} was deleted",
-                    volume.id
+                    "{destroy_message}; the detached cache volume {} was deleted; remove formatter {} with `scw instance server delete {} zone={}`",
+                    volume.id, handle.id, handle.id, volume.zone
                 ),
                 source: Box::new(failure.source),
             },
@@ -185,12 +196,38 @@ where
                 volume_id: volume.id.clone(),
                 zone: volume.zone.clone(),
                 message: format!(
-                    "{destroy_message}; deleting the detached volume {} in zone {} failed: {error}",
-                    volume.id, volume.zone
+                    "{destroy_message}; deleting the detached volume {} in zone {} failed: {error}; remove formatter {} with `scw instance server delete {} zone={}`",
+                    volume.id, volume.zone, handle.id, handle.id, volume.zone
                 ),
                 source: Box::new(failure.source),
             },
         })
+    }
+
+    /// Returns the recovery steps for the teardown stage that failed.
+    ///
+    /// A stop or detach failure leaves the cache possibly attached, so the
+    /// volume must not be deleted before those steps succeed. A destroy
+    /// failure after detachment leaves only the formatter to remove.
+    fn recovery_steps(
+        stage: crate::volume::TeardownStage,
+        handle: &InstanceHandle,
+        volume: &VolumeHandle,
+    ) -> String {
+        match stage {
+            crate::volume::TeardownStage::Stopping => format!(
+                "stop server {} and detach volume {} in zone {} before deleting either",
+                handle.id, volume.id, volume.zone
+            ),
+            crate::volume::TeardownStage::Detaching => format!(
+                "detach volume {} from server {} with `scw instance server detach-volume server-id={} volume-id={} zone={}`",
+                volume.id, handle.id, handle.id, volume.id, volume.zone
+            ),
+            crate::volume::TeardownStage::Destroying => format!(
+                "the volume was detached; remove the formatter with `scw instance server delete {} zone={}`",
+                handle.id, volume.zone
+            ),
+        }
     }
 
     /// Creates the cache volume and waits for its documented ready state.
@@ -262,8 +299,10 @@ where
 
     /// Removes the owned volume and any formatter server after a failure.
     ///
-    /// Only the handle created by this call is touched. A cleanup failure
-    /// wraps the original error and names the volume for manual recovery.
+    /// Only the handle created by this call is touched. A teardown failure
+    /// before the destroy stage leaves the volume possibly attached, so the
+    /// volume is not deleted then: the cleanup text names both resources and
+    /// the stop-and-detach steps instead.
     async fn rollback(
         &self,
         volume: &VolumeHandle,
@@ -273,12 +312,22 @@ where
         let mut cleanup = Vec::new();
 
         if let Some(formatter) = handle
-            && let Err(error) = self.backend.teardown(formatter, Some(&volume.id)).await
+            && let Err(failure) = self.backend.teardown(formatter, Some(&volume.id)).await
         {
+            let stage = failure.stage;
             cleanup.push(format!(
-                "tearing down formatter {} failed: {error}",
-                formatter.id
+                "tearing down formatter {} failed ({}): {}",
+                formatter.id,
+                stage.as_str(),
+                failure.source
             ));
+            if stage != crate::volume::TeardownStage::Destroying {
+                cleanup.push(Self::recovery_steps(stage, formatter, volume));
+                return InitError::Rollback {
+                    original: Box::new(original),
+                    cleanup: cleanup.join("; "),
+                };
+            }
         }
 
         if let Err(error) = self.backend.delete_volume(volume).await {

@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, process::Command};
 
 use camino::Utf8Path;
 use cap_std::{ambient_authority, fs_utf8::Dir};
-use mriya::{InitConfig, ScalewayBackendError, volume::MIN_VOLUME_SIZE_GB};
+use mriya::{InitConfig, ScalewayBackendError, ScalewayConfig, volume::MIN_VOLUME_SIZE_GB};
 use tempfile::TempDir;
 
 /// The user-facing document whose examples are contracted by this suite.
@@ -232,6 +232,29 @@ fn check_scaleway_example(fence: &Fence, scaleway: &toml::value::Table) -> Resul
             return Err(format!("example {} documents unknown key {key}", fence.id));
         }
     }
+    // Deserialize through the production type so a mistyped value fails here.
+    // A partial example gets controlled values for the required fields it does
+    // not document.
+    let mut complete = scaleway.clone();
+    complete
+        .entry(String::from("secret_key"))
+        .or_insert_with(|| toml::Value::String(String::from("documented-placeholder")));
+    complete
+        .entry(String::from("default_project_id"))
+        .or_insert_with(|| {
+            toml::Value::String(String::from("00000000-0000-0000-0000-000000000000"))
+        });
+    let rendered = toml::to_string(&complete)
+        .map_err(|error| format!("example {} cannot render: {error}", fence.id))?;
+    let config: ScalewayConfig = toml::from_str(&rendered).map_err(|error| {
+        format!(
+            "example {} is not a valid [scaleway] table: {error}",
+            fence.id
+        )
+    })?;
+    config
+        .as_request()
+        .map_err(|error| format!("example {} is invalid: {error}", fence.id))?;
     Ok(true)
 }
 

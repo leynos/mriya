@@ -201,6 +201,9 @@ where
             break;
         }
         sleep(settings.poll_interval.min(remaining)).await;
+        if Instant::now() >= deadline {
+            break;
+        }
     }
 
     Err(ScalewayBackendError::VolumeStatusTimeout {

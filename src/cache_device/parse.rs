@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use super::script::STATUS_PREFIX;
+use super::script::{PATH_PREFIX, STATUS_PREFIX};
 
 /// Typed outcome reported by a cache-device script.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,18 +131,39 @@ pub struct CacheDeviceReport {
 
 impl CacheDeviceReport {
     /// Returns the typed status.
+    ///
+    /// # Returns
+    ///
+    /// The status parsed from the last status line.
     #[must_use]
     pub const fn status(&self) -> &CacheDeviceStatus { &self.status }
 
     /// Returns the resolved device, when the script reported one.
+    ///
+    /// # Returns
+    ///
+    /// The `DEVICE` value, or `None` when the status line omitted it.
     #[must_use]
     pub fn device(&self) -> Option<&str> { self.fields.get("DEVICE").map(String::as_str) }
 
     /// Returns the mount path, when the script reported one.
+    ///
+    /// # Returns
+    ///
+    /// The `MRIYA_CACHE_PATH` line's value, which preserves spaces, falling
+    /// back to the status line's `PATH` field when the path line is absent.
     #[must_use]
     pub fn path(&self) -> Option<&str> { self.fields.get("PATH").map(String::as_str) }
 
     /// Returns one field by name.
+    ///
+    /// # Parameters
+    ///
+    /// - `key`: field name, such as `DEVICE` or `PATH`.
+    ///
+    /// # Returns
+    ///
+    /// The field's value, or `None` when the status line omitted it.
     #[must_use]
     pub fn field(&self, key: &str) -> Option<&str> { self.fields.get(key).map(String::as_str) }
 
@@ -175,6 +196,15 @@ pub enum CacheDeviceParseError {
 }
 
 /// Parses the last status line in `stdout`.
+///
+/// # Parameters
+///
+/// - `stdout`: complete script output; earlier status lines are ignored and the mount path is taken
+///   from the last `MRIYA_CACHE_PATH=` line.
+///
+/// # Returns
+///
+/// The status and its fields.
 ///
 /// # Errors
 ///
@@ -210,6 +240,15 @@ pub fn parse_report(stdout: &str) -> Result<CacheDeviceReport, CacheDeviceParseE
         if let Some((key, value)) = part.split_once('=') {
             fields.insert(key.to_owned(), value.to_owned());
         }
+    }
+    // The dedicated path line wins: it is the only field that may contain
+    // spaces.
+    if let Some(path) = stdout
+        .lines()
+        .rev()
+        .find_map(|candidate| candidate.trim_start().strip_prefix(PATH_PREFIX))
+    {
+        fields.insert(String::from("PATH"), path.trim_end().to_owned());
     }
 
     Ok(CacheDeviceReport {
@@ -272,5 +311,28 @@ mod tests {
         let report = parse_report("MRIYA_CACHE_STATUS=wrong-source ACTUAL=/dev/sdb")
             .expect("status line parses");
         assert_eq!(report.describe(), "wrong-source ACTUAL=/dev/sdb");
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    //! Tests for the space-preserving path line.
+    use super::parse_report;
+
+    #[test]
+    fn the_path_line_preserves_spaces() {
+        let report = parse_report(concat!(
+            "MRIYA_CACHE_PATH=/srv/build cache\n",
+            "MRIYA_CACHE_STATUS=verified DEVICE=/dev/sdb PATH=/srv/build\n",
+        ))
+        .expect("status line parses");
+        assert_eq!(report.path(), Some("/srv/build cache"));
+    }
+
+    #[test]
+    fn the_status_line_path_is_used_when_the_path_line_is_absent() {
+        let report = parse_report("MRIYA_CACHE_STATUS=verified DEVICE=/dev/sdb PATH=/mriya\n")
+            .expect("status line parses");
+        assert_eq!(report.path(), Some("/mriya"));
     }
 }

@@ -75,7 +75,7 @@ pub(super) fn classify_invocation(
     // Generated scripts end with their own status line, never with the user's
     // command, so an exact suffix match identifies the command whatever words
     // it contains.
-    if payload.trim_end().ends_with(command) {
+    if payload.trim_end().ends_with(command.trim_end()) {
         return InvocationRole::RemoteCommand;
     }
     if payload.contains("mount -o defaults") {

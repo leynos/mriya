@@ -36,6 +36,7 @@ impl Fakes<'_> {
             ("findmnt", self.findmnt()),
             ("blkid", self.blkid()),
             ("mountpoint", self.mountpoint()),
+            ("blockdev", self.blockdev()),
             ("dd", self.dd()),
             ("udevadm", self.logger("udevadm")),
             ("sleep", self.logger("sleep")),
@@ -62,9 +63,15 @@ impl Fakes<'_> {
                 "    file=\"{root}/pkname-$name\"\n",
                 "    if [ -f \"$file\" ]; then while IFS= read -r line; do ",
                 "printf '%s\\n' \"$line\"; done < \"$file\"; fi\n",
+                "    if [ -f '{root}/pkname-exit' ]; then ",
+                "read -r code < '{root}/pkname-exit'; exit \"$code\"; fi\n",
+                "    exit 0\n",
                 "    ;;\n",
                 "  *)\n",
                 "    {scsi}\n",
+                "    if [ -f '{root}/lsblk-exit' ]; then ",
+                "read -r code < '{root}/lsblk-exit'; exit \"$code\"; fi\n",
+                "    exit 0\n",
                 "    ;;\n",
                 "esac"
             ),
@@ -152,6 +159,25 @@ impl Fakes<'_> {
                 "if [ -f '{root}/mount-source' ] && [ -s '{root}/mount-source' ]; ",
                 "then exit 0; fi\n",
                 "exit 32"
+            ),
+            root = root
+        )
+    }
+
+    /// Builds the `blockdev` fake, whose size and status come from state.
+    fn blockdev(&self) -> String {
+        let root = self.root;
+        format!(
+            concat!(
+                "printf 'blockdev %s\\n' \"$*\" >> '{root}/tools.log'\n",
+                "code=0\n",
+                "if [ -f '{root}/blockdev-exit' ]; then ",
+                "read -r code < '{root}/blockdev-exit'; fi\n",
+                "if [ \"${{code:-0}}\" -ne 0 ]; then exit \"$code\"; fi\n",
+                "size=10485760\n",
+                "if [ -f '{root}/blockdev-size' ]; then ",
+                "read -r size < '{root}/blockdev-size'; fi\n",
+                "printf '%s\\n' \"$size\""
             ),
             root = root
         )

@@ -9,6 +9,7 @@
 //! which refusal happened.
 
 mod parse;
+mod prelude;
 mod script;
 
 pub use parse::{CacheDeviceParseError, CacheDeviceReport, CacheDeviceStatus, parse_report};

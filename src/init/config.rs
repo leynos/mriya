@@ -32,6 +32,10 @@ pub struct InitConfig {
 impl InitConfig {
     /// Loads init configuration without parsing CLI arguments.
     ///
+    /// # Returns
+    ///
+    /// The merged configuration; call [`InitConfig::validate`] before use.
+    ///
     /// # Errors
     ///
     /// Returns [`InitConfigError::Parse`] when merging sources fails.
@@ -41,6 +45,11 @@ impl InitConfig {
     }
 
     /// Validates init configuration.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the size meets the provider minimum and the tier is
+    /// supported.
     ///
     /// # Errors
     ///
@@ -75,6 +84,10 @@ impl InitConfig {
     }
 
     /// Returns the parsed performance tier.
+    ///
+    /// # Returns
+    ///
+    /// The configured tier, ready for a volume request.
     ///
     /// # Errors
     ///

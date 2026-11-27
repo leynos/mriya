@@ -48,7 +48,7 @@ Record the snapshot ID that the command prints, and wait until
 
 ```bash
 scw block snapshot export-to-object-storage \
-  22222222-2222-2222-2222-222222222222 \
+  snapshot-id=22222222-2222-2222-2222-222222222222 \
   bucket=mriya-migration \
   key=mriya-legacy-cache.qcow2 \
   zone=fr-par-1

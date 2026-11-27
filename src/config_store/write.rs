@@ -30,19 +30,23 @@ pub(super) fn write_config(path: &Utf8Path, value: &toml::Value) -> Result<(), C
             message: err.to_string(),
         })?;
 
+    refuse_symlink(&dir, file_name, path)?;
+
     let rendered = toml::to_string_pretty(value).map_err(|err| ConfigStoreError::Parse {
         path: path.to_path_buf(),
         message: err.to_string(),
     })?;
 
-    // A unique name avoids reusing a stale or planted temporary file, whose
-    // mode `create_new` would otherwise inherit.
+    // A short fixed prefix keeps the name within a 255-byte component even
+    // when the configuration basename is long; the suffix keeps it unique so
+    // `create_new` never reuses a stale or planted temporary file.
     let temp_name = format!(
-        ".{file_name}.tmp-{}-{}",
+        ".mriya-toml-{}-{}.tmp",
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     );
     write_private(&dir, &temp_name, rendered.as_bytes(), path)?;
+    ensure_owner(&dir, file_name, &temp_name, path)?;
     inherit_permissions(&dir, file_name, &temp_name);
     dir.rename(&temp_name, &dir, file_name).map_err(|err| {
         // The temporary file is left behind only on this failure path.
@@ -87,6 +91,56 @@ fn write_private(
             message: error.to_string(),
         });
     }
+    Ok(())
+}
+
+/// Refuses to replace a symbolic-link configuration file.
+///
+/// A rename replaces the directory entry, so writing through the link would
+/// silently turn it into a regular file and stop updating its referent.
+fn refuse_symlink(dir: &Dir, file_name: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+    match dir.symlink_metadata(file_name) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(ConfigStoreError::Symlinked {
+            path: path.to_path_buf(),
+        }),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(ConfigStoreError::Io {
+            path: path.to_path_buf(),
+            message: err.to_string(),
+        }),
+    }
+}
+
+/// Refuses a replacement that would change the configuration file's owner.
+///
+/// A privileged update of a user-owned file would otherwise leave the new
+/// file owned by the writer, locking the original owner out.
+#[cfg(unix)]
+fn ensure_owner(dir: &Dir, from: &str, to: &str, path: &Utf8Path) -> Result<(), ConfigStoreError> {
+    use cap_std::fs::MetadataExt;
+
+    let (Ok(target), Ok(replacement)) = (dir.metadata(from), dir.metadata(to)) else {
+        return Ok(());
+    };
+    if target.uid() == replacement.uid() {
+        return Ok(());
+    }
+    // The replacement is discarded by the caller; never publish it.
+    drop(dir.remove_file(to));
+    Err(ConfigStoreError::OwnershipChanged {
+        path: path.to_path_buf(),
+    })
+}
+
+/// Leaves ownership unchanged on non-Unix platforms.
+#[cfg(not(unix))]
+fn ensure_owner(
+    _dir: &Dir,
+    _from: &str,
+    _to: &str,
+    _path: &Utf8Path,
+) -> Result<(), ConfigStoreError> {
     Ok(())
 }
 

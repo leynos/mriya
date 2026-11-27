@@ -20,8 +20,8 @@ fn scripted_exit(
 ) -> Result<RunContextResult, StepError> {
     let run_context = run_context_result?;
     // A configured cache creates its subdirectories in a separate SSH call
-    // between the verified mount and rsync.
-    if run_context.request.volume_id.is_some() {
+    // between the verified mount and rsync, unless that step is disabled.
+    if run_context.request.volume_id.is_some() && run_context.sync_config.create_cache_directories {
         run_context.runner.push_success();
     }
     run_context.runner.push_success();

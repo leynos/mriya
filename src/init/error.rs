@@ -154,7 +154,8 @@ where
     /// Raised when the formatter cannot be stopped or detached.
     #[error("failed to tear down formatter instance: {message}")]
     FormatterTeardown {
-        /// Human-readable description of the failure.
+        /// Failure description naming the formatter, cache volume and recovery
+        /// steps.
         message: String,
         /// Provider-specific error.
         #[source]
@@ -169,7 +170,8 @@ where
         volume_id: String,
         /// Zone that holds the volume.
         zone: String,
-        /// Human-readable description of the failure.
+        /// Human-readable description of the failure, including the formatter
+        /// removal command.
         message: String,
         /// Provider-specific error.
         #[source]

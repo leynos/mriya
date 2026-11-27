@@ -112,6 +112,14 @@ pub(super) enum StateFile<'a> {
     MountpointExit(&'a str),
     /// The exit status the `dd` fake returns.
     DdExit(&'a str),
+    /// The exit status the `lsblk` disk listing returns.
+    LsblkExit(&'a str),
+    /// The exit status the `lsblk` parent query returns.
+    PknameExit(&'a str),
+    /// The exit status the `blockdev` fake returns.
+    BlockdevExit(&'a str),
+    /// The size the `blockdev` fake reports, in bytes.
+    BlockdevSize(&'a str),
     /// The source the `mount` fake substitutes after mounting.
     MountSourceOverride(&'a str),
     /// The `blkid -s TYPE` result, with an optional `code=` line.
@@ -139,6 +147,10 @@ impl StateFile<'_> {
             Self::FindmntExit(_) => "findmnt-exit",
             Self::MountpointExit(_) => "mountpoint-exit",
             Self::DdExit(_) => "dd-exit",
+            Self::LsblkExit(_) => "lsblk-exit",
+            Self::PknameExit(_) => "pkname-exit",
+            Self::BlockdevExit(_) => "blockdev-exit",
+            Self::BlockdevSize(_) => "blockdev-size",
             Self::MountSourceOverride(_) => "mount-source-override",
             Self::SignatureType(_) => "signature-TYPE",
             Self::SignaturePartitionTable(_) => "signature-PTTYPE",
@@ -161,6 +173,10 @@ impl StateFile<'_> {
             | Self::FindmntExit(value)
             | Self::MountpointExit(value)
             | Self::DdExit(value)
+            | Self::LsblkExit(value)
+            | Self::PknameExit(value)
+            | Self::BlockdevExit(value)
+            | Self::BlockdevSize(value)
             | Self::MountSourceOverride(value)
             | Self::SignatureType(value)
             | Self::SignaturePartitionTable(value)

@@ -6,8 +6,6 @@
 //! lookup, readiness, attachment, detachment and deletion are all expressed as
 //! backend operations so tests can substitute a scripted implementation.
 
-use std::fmt;
-
 use crate::backend::{Backend, BackendFuture, InstanceHandle};
 
 /// Bytes in one decimal gigabyte (10^9), the granularity Scaleway uses for
@@ -19,9 +17,11 @@ pub const MIN_VOLUME_SIZE_GB: u64 = 5;
 pub const MAX_VOLUME_SIZE_GB: u64 = 15_000;
 
 mod state;
+mod teardown;
 mod tier;
 
 pub use state::{VolumeReference, VolumeState, VolumeStatus};
+pub use teardown::{TeardownFailure, TeardownStage};
 pub use tier::{VolumeTier, VolumeTierParseError};
 
 /// Parameters required to create a persistent volume.
@@ -45,7 +45,19 @@ impl VolumeRequest {
     /// Creates a new volume request, trimming string fields.
     ///
     /// The tier defaults to [`VolumeTier::Sbs5k`]; use
-    /// [`VolumeRequest::with_tier`] to request another.
+    /// [`VolumeRequest::with_tier`] to request another. Construction does not
+    /// validate the request.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: provider volume name.
+    /// - `size_bytes`: decimal size in bytes, validated by [`Self::validate`].
+    /// - `zone`: Availability Zone that will hold the volume.
+    /// - `project_id`: project that owns the volume.
+    ///
+    /// # Returns
+    ///
+    /// The request with the default tier.
     ///
     /// # Examples
     ///
@@ -73,6 +85,14 @@ impl VolumeRequest {
     }
 
     /// Sets the optional organization identifier.
+    ///
+    /// # Parameters
+    ///
+    /// - `value`: organization identifier, trimmed when present.
+    ///
+    /// # Returns
+    ///
+    /// The request with the identifier replaced.
     #[must_use]
     pub fn organisation_id(mut self, value: Option<String>) -> Self {
         self.organisation_id = value.map(|id| id.trim().to_owned());
@@ -80,6 +100,14 @@ impl VolumeRequest {
     }
 
     /// Sets the performance tier.
+    ///
+    /// # Parameters
+    ///
+    /// - `tier`: Block Storage performance tier.
+    ///
+    /// # Returns
+    ///
+    /// The request with the tier replaced.
     #[must_use]
     pub const fn with_tier(mut self, tier: VolumeTier) -> Self {
         self.tier = tier;
@@ -87,6 +115,11 @@ impl VolumeRequest {
     }
 
     /// Validates the provider-independent fields.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` when the name and location are present and the size is a whole
+    /// number of decimal gigabytes within the provider limits.
     ///
     /// # Errors
     ///
@@ -188,51 +221,6 @@ pub struct VolumeHandle {
     pub id: String,
     /// Zone where the volume was created.
     pub zone: String,
-}
-
-/// Stage at which ordered teardown failed.
-///
-/// The stage tells an orchestrator whether the cache is known to be detached
-/// (a destroy failure) or may still be attached (a stop or detach failure).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TeardownStage {
-    /// The instance could not be stopped.
-    Stopping,
-    /// The cache could not be detached.
-    Detaching,
-    /// The server could not be destroyed after detachment.
-    Destroying,
-}
-
-/// A failed ordered teardown, tagged with the stage that failed.
-#[derive(Debug)]
-pub struct TeardownFailure<E> {
-    /// Stage at which the failure occurred.
-    pub stage: TeardownStage,
-    /// Underlying backend error.
-    pub source: E,
-}
-
-impl<E: fmt::Display> fmt::Display for TeardownFailure<E> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.source)
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for TeardownFailure<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.source) }
-}
-
-impl TeardownStage {
-    /// Returns the stage as a short lower-case phrase.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Stopping => "stopping the server",
-            Self::Detaching => "detaching the cache",
-            Self::Destroying => "destroying the server",
-        }
-    }
 }
 
 /// Backend operations required for volume management.

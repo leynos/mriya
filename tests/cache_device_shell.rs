@@ -6,6 +6,8 @@
 //! `mkfs.ext4`, `sync` and `sleep` are fakes that log every call. The log is
 //! the evidence that a refusal never ran a destructive command.
 
+#[path = "cache_device_support/cases.rs"]
+mod cases;
 #[path = "cache_device_support/guest.rs"]
 mod guest;
 #[path = "cache_device_support/sandbox.rs"]
@@ -14,6 +16,7 @@ mod sandbox;
 mod shell;
 
 use anyhow::{Result, ensure};
+use cases::{FORMAT_CASES, FormatCase, MOUNT_CASES};
 use guest::{
     Guest,
     MOUNT_PATH,
@@ -28,105 +31,6 @@ use guest::{
 };
 use mriya::cache_device::unmount_script;
 use rstest::rstest;
-
-/// One format scenario, the state it sets, and the status it must report.
-struct FormatCase {
-    /// State files written before the script runs.
-    state: &'static [(&'static str, &'static str)],
-    /// Status the script must report.
-    status: &'static str,
-    /// Whether `mkfs.ext4` must appear in the call log.
-    formats: bool,
-}
-
-impl FormatCase {
-    /// Reports whether this case formats successfully.
-    fn succeeds(&self) -> bool { self.status == "formatted" }
-}
-
-/// Format scenarios covering every refusal and the formatting path.
-const FORMAT_CASES: &[FormatCase] = &[
-    FormatCase {
-        state: &[],
-        status: "formatted",
-        formats: true,
-    },
-    FormatCase {
-        state: &[("scsi", "")],
-        status: "not-found",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("scsi", "duplicate")],
-        status: "ambiguous",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("scsi", "root-disk")],
-        status: "root-disk",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("scsi", "root-partition")],
-        status: "root-disk",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("signature-TYPE", "ext4\n")],
-        status: "signature-present",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("signature-PTTYPE", "gpt\n")],
-        status: "signature-present",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("signature-TYPE", "code=8\n")],
-        status: "probe-failed",
-        formats: false,
-    },
-    FormatCase {
-        state: &[
-            ("root-source", "/dev/mapper/vg-root\n"),
-            ("pkname-vg-root", "dm-0\n"),
-            ("pkname-dm-0", "sda\n"),
-            ("scsi", "root-disk"),
-        ],
-        status: "root-disk",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("root-source", "/dev/mapper/vg-root\n")],
-        status: "root-unknown",
-        formats: false,
-    },
-    FormatCase {
-        state: &[("mkfs-exit", "1\n")],
-        status: "format-failed",
-        formats: true,
-    },
-    // `blkid` returns 2 for an unreadable device as well as for an empty one,
-    // so a failed read must stop the format before `mkfs.ext4` runs.
-    FormatCase {
-        state: &[("dd-exit", "1\n")],
-        status: "device-unreadable",
-        formats: false,
-    },
-    // A partition record carrying the serial is not the cache disk, so the
-    // resolver must ignore it.
-    FormatCase {
-        state: &[("scsi", "partition-record")],
-        status: "not-found",
-        formats: false,
-    },
-    // A UUID surviving from a partially wiped filesystem is still a signature.
-    FormatCase {
-        state: &[("signature-UUID", "a23cd711-3a36-4fca-bfa9-fab507e19e6f\n")],
-        status: "signature-present",
-        formats: false,
-    },
-];
 
 /// Applies one format case's state to a fresh guest.
 fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
@@ -156,6 +60,7 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
             }
             "scsi" => guest.set(StateFile::Scsi(value))?,
             "root-source" => guest.set(StateFile::RootSource(value))?,
+            "pkname-sda1" => guest.set(StateFile::PknameSda1(value))?,
             "pkname-vg-root" => guest.set(StateFile::PknameVgRoot(value))?,
             "pkname-dm-0" => guest.set(StateFile::PknameDm0(value))?,
             "signature-TYPE" => guest.set(StateFile::SignatureType(value))?,
@@ -164,6 +69,10 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
             "findmnt-exit" => guest.set(StateFile::FindmntExit(value))?,
             "mountpoint-exit" => guest.set(StateFile::MountpointExit(value))?,
             "dd-exit" => guest.set(StateFile::DdExit(value))?,
+            "lsblk-exit" => guest.set(StateFile::LsblkExit(value))?,
+            "pkname-exit" => guest.set(StateFile::PknameExit(value))?,
+            "blockdev-exit" => guest.set(StateFile::BlockdevExit(value))?,
+            "blockdev-size" => guest.set(StateFile::BlockdevSize(value))?,
             "mkfs-exit" => guest.set(StateFile::MkfsExit(value))?,
             "umount-exit" => guest.set(StateFile::UmountExit(value))?,
             "chown-exit" => guest.set(StateFile::ChownExit(value))?,
@@ -179,7 +88,7 @@ fn apply_format_state(guest: &Guest, case: &FormatCase) -> Result<()> {
 
 #[rstest]
 fn format_refuses_unsafe_devices(
-    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)] index: usize,
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)] index: usize,
 ) -> Result<()> {
     let case = FORMAT_CASES
         .get(index)
@@ -207,76 +116,6 @@ fn format_refuses_unsafe_devices(
     }
     Ok(())
 }
-
-/// One mount scenario, the state it sets, and the status it must report.
-struct MountCase {
-    /// State files written before the script runs.
-    state: &'static [(&'static str, &'static str)],
-    /// Status the script must report.
-    status: &'static str,
-    /// Whether the mount command must appear in the call log.
-    mounts: bool,
-}
-
-/// Mount scenarios covering every refusal and the verified path.
-const MOUNT_CASES: &[MountCase] = &[
-    MountCase {
-        state: &[("signature-TYPE", "ext4\n")],
-        status: "verified",
-        mounts: true,
-    },
-    MountCase {
-        state: &[("signature-TYPE", "xfs\n")],
-        status: "not-ext4",
-        mounts: false,
-    },
-    MountCase {
-        state: &[("signature-TYPE", "ext4\n"), ("signature-PTTYPE", "gpt\n")],
-        status: "not-ext4",
-        mounts: false,
-    },
-    MountCase {
-        state: &[("signature-TYPE", "code=8\n")],
-        status: "probe-failed",
-        mounts: false,
-    },
-    MountCase {
-        state: &[("signature-TYPE", "ext4\n"), ("mount-source", "/dev/sdc\n")],
-        status: "mount-occupied",
-        mounts: false,
-    },
-    MountCase {
-        state: &[
-            ("signature-TYPE", "ext4\n"),
-            ("mount-source-override", "/dev/sdc\n"),
-        ],
-        status: "wrong-source",
-        // This case mounts the device, then refuses because the mount source
-        // is not the resolved device.
-        mounts: true,
-    },
-    MountCase {
-        state: &[("scsi", "root-disk"), ("signature-TYPE", "ext4\n")],
-        status: "root-disk",
-        mounts: false,
-    },
-    MountCase {
-        state: &[("signature-TYPE", "ext4\n"), ("findmnt-exit", "3\n")],
-        status: "query-failed",
-        mounts: false,
-    },
-    MountCase {
-        // findmnt reports "nothing mounted" while mountpoint says the path is
-        // still a mount point: mounting over it would hide the filesystem.
-        state: &[
-            ("signature-TYPE", "ext4\n"),
-            ("findmnt-exit", "1\n"),
-            ("mountpoint-exit", "0\n"),
-        ],
-        status: "query-failed",
-        mounts: false,
-    },
-];
 
 #[rstest]
 fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6, 7, 8)] index: usize) -> Result<()> {
@@ -307,7 +146,7 @@ fn mount_refuses_unsafe_sources(#[values(0, 1, 2, 3, 4, 5, 6, 7, 8)] index: usiz
         ensure!(log.contains("mount -o defaults /dev/sdb /mriya"), "{log}");
     }
     if case.status == "verified" {
-        ensure!(log.contains("chown ubuntu:ubuntu /mriya"), "{log}");
+        ensure!(log.contains("chown ubuntu /mriya"), "{log}");
     }
     Ok(())
 }

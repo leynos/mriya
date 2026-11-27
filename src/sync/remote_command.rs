@@ -73,19 +73,34 @@ pub(crate) fn build_remote_command(
 /// Builds a shell prefix that exports build cache locations under the
 /// volume mount path.
 ///
-/// Returns an empty string when cache routing is disabled, so a run that opts
-/// out never touches the cache paths.
+/// Returns an empty string when cache routing is disabled and no cache is
+/// required, so a run that opts out never touches the cache paths. A required
+/// cache keeps its source check even when the exports are disabled.
 fn cache_routing_preamble(config: &SyncConfig, routing: &CacheRouting) -> String {
-    if !config.route_build_caches {
+    let Some(guard) = mount_guard(config, routing) else {
         return String::new();
+    };
+    let mut preamble = guard;
+    if config.route_build_caches {
+        preamble.push_str(&cache_exports(config));
     }
+    if matches!(routing, CacheRouting::Unconfigured) {
+        preamble.push_str("fi; ");
+    }
+    preamble
+}
 
+/// Returns the guard that opens the preamble, or `None` when none is needed.
+fn mount_guard(config: &SyncConfig, routing: &CacheRouting) -> Option<String> {
     let mount_path = &config.volume_mount_path;
     let escaped_mount = escape(mount_path.as_str().into());
-    let guard = match routing {
-        CacheRouting::Unconfigured => {
-            format!("if mountpoint -q {escaped_mount} 2>/dev/null; then ")
-        }
+    match routing {
+        // A run without a configured cache has nothing to guard when routing
+        // is disabled, but a required cache must still be verified.
+        CacheRouting::Unconfigured if !config.route_build_caches => None,
+        CacheRouting::Unconfigured => Some(format!(
+            "if mountpoint -q {escaped_mount} 2>/dev/null; then "
+        )),
         CacheRouting::Required { device } => {
             let escaped_device = escape(device.as_str().into());
             let message = escape(
@@ -94,7 +109,7 @@ fn cache_routing_preamble(config: &SyncConfig, routing: &CacheRouting) -> String
                 )
                 .into(),
             );
-            format!(
+            Some(format!(
                 concat!(
                     "if [ \"$(findmnt -no SOURCE --mountpoint {mount} 2>/dev/null)\" != {device} ]; then ",
                     "printf '%s\\n' {message} >&2; exit 1; fi; "
@@ -102,10 +117,14 @@ fn cache_routing_preamble(config: &SyncConfig, routing: &CacheRouting) -> String
                 mount = escaped_mount,
                 device = escaped_device,
                 message = message,
-            )
+            ))
         }
-    };
+    }
+}
 
+/// Returns the export statements for every cache variable.
+fn cache_exports(config: &SyncConfig) -> String {
+    let mount_path = &config.volume_mount_path;
     let exports = [
         ("CARGO_HOME", format!("{mount_path}/cargo")),
         ("RUSTUP_HOME", format!("{mount_path}/rustup")),
@@ -117,8 +136,7 @@ fn cache_routing_preamble(config: &SyncConfig, routing: &CacheRouting) -> String
         ("YARN_CACHE_FOLDER", format!("{mount_path}/yarn/cache")),
         ("PNPM_STORE_PATH", format!("{mount_path}/pnpm/store")),
     ];
-
-    let mut preamble = guard;
+    let mut preamble = String::new();
     for (key, value) in exports {
         let escaped_value = escape(value.into());
         preamble.push_str("export ");
@@ -126,10 +144,6 @@ fn cache_routing_preamble(config: &SyncConfig, routing: &CacheRouting) -> String
         preamble.push('=');
         preamble.push_str(escaped_value.as_ref());
         preamble.push_str("; ");
-    }
-    match routing {
-        CacheRouting::Unconfigured => preamble.push_str("fi; "),
-        CacheRouting::Required { .. } => {}
     }
     preamble
 }
