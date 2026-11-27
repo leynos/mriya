@@ -108,6 +108,7 @@ pub fn sheet_with(product: ProductRule, storage: StorageRule) -> PriceSheet {
             storage: provider_storage,
             plan: None,
             unpriced_extras: Vec::new(),
+            upper_bound_notes: Vec::new(),
         },
     );
     PriceSheet {

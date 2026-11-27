@@ -443,7 +443,8 @@ must be trustworthy are the parts which are easiest to test:
   cited observation, not a permanent fact. A sheet that cannot model a charge a
   provider bills names it in `unpriced_extras`, and the report prints it beside
   the totals so an incomplete figure is labelled rather than silently
-  understated.
+  understated. A component the rules can only overstate is named in
+  `upper_bound_notes`, and the totals are labelled accordingly.
 - `report.rs` enforces the comparison rules: equal work only, cache and storage
   capability differences stated rather than assumed away, and CPU results never
   ranked against GPU ones.

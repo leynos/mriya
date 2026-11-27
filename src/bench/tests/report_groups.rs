@@ -186,6 +186,79 @@ fn a_warm_up_running_a_different_command_does_not_make_timed_attempts_incomparab
 }
 
 #[test]
+fn a_warm_up_does_not_trigger_the_repetition_shortfall_warning() {
+    // A warm-up is not a repetition of the timed gate, so its zero completed
+    // count must not read as a campaign that fell short of five.
+    let warm_up = run_with(|run| {
+        run.role = super::super::record::RunRole::WarmUp;
+        run.repetition = 1;
+    });
+    let report = build_report(
+        &campaign_with(vec![warm_up]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    assert!(
+        !report
+            .capability_notes
+            .iter()
+            .any(|note| note.contains("fewer than the 5")),
+        "{:?}",
+        report.capability_notes
+    );
+}
+
+#[test]
+fn an_attempt_without_a_remote_execution_phase_reports_no_execution_statistic() {
+    // The whole-attempt lifetime includes setup and teardown, so it must not be
+    // presented as remote-execution time alongside a measured phase.
+    let report = build_report(
+        &campaign_with(vec![run_with(|_| {})]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    let result = report
+        .workloads
+        .get("cold-build")
+        .and_then(|results| results.first())
+        .expect("one result");
+    assert_eq!(result.minimum_execution_nanos(), None);
+    assert!(
+        !render(&report).contains("execution min"),
+        "{}",
+        render(&report)
+    );
+}
+
+#[test]
+fn a_rule_that_can_only_overstate_is_labelled_as_an_upper_bound() {
+    let boat = run_with(|run| {
+        run.provider.provider = String::from("boat");
+        run.provider.product = String::from("default");
+        run.cache.state = CacheState::Absent;
+        run.cache.mounted = false;
+    });
+    let report = build_report(
+        &campaign_with(vec![boat]).expect("a valid campaign"),
+        &example_sheet().expect("the example sheet parses"),
+    )
+    .expect("priced");
+    assert!(
+        report
+            .upper_bounds
+            .iter()
+            .any(|note| note.contains("boat") && note.contains("upper bound")),
+        "{:?}",
+        report.upper_bounds
+    );
+    assert!(
+        render(&report).contains("(upper bound)"),
+        "{}",
+        render(&report)
+    );
+}
+
+#[test]
 fn each_providers_subscription_is_attributed_only_to_that_provider() {
     // Boat has a plan; Scaleway does not. A group on Scaleway must not be
     // charged any of Boat's plan, and the shares must add back to the total.

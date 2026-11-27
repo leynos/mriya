@@ -92,6 +92,8 @@ struct GroupBuilder {
     product: String,
     /// Workload identifier.
     workload_id: String,
+    /// Whether the group's attempts were timed or only warmed the cache.
+    role: RunRole,
     /// Cache class the first attempt declared.
     cache_state: CacheState,
     /// Every cache class the group's attempts declared.
@@ -129,6 +131,7 @@ impl GroupBuilder {
             provider: run.provider.provider.clone(),
             product: run.provider.product.clone(),
             workload_id: run.workload_id.clone(),
+            role: run.role,
             cache_state: run.cache.state,
             cache_states: BTreeSet::from([run.cache.state]),
             cache_bytes: run.cache.size_bytes,
@@ -165,14 +168,13 @@ impl GroupBuilder {
         match run.outcome {
             RunOutcome::Completed { .. } => {
                 self.completed = self.completed.saturating_add(1);
-                // The summary is about the workload, so it uses the
-                // remote-execution phase when one was recorded and falls back
-                // to the whole attempt only when it was not.
-                self.executions_nanos.push(
-                    remote_execution
-                        .copied()
-                        .unwrap_or(run.lifetime.total_nanos),
-                );
+                // The summary is about the workload, so it uses the remote-execution
+                // phase only. An attempt without one has no measurement of the
+                // workload itself, and mixing its whole lifetime into the same
+                // series would make the statistic mean two different things.
+                if let Some(duration) = remote_execution {
+                    self.executions_nanos.push(*duration);
+                }
                 self.completed_marginal_micros = self
                     .completed_marginal_micros
                     .saturating_add(breakdown.marginal_micros);
@@ -198,6 +200,7 @@ impl GroupBuilder {
             provider: self.provider,
             product: self.product,
             workload_id: self.workload_id,
+            role: self.role,
             cache_state: self.cache_state,
             cache_states: self.cache_states,
             cache_bytes: self.cache_bytes,
@@ -300,22 +303,18 @@ pub fn build_report(
     let mut capability_notes = Vec::new();
     let mut incomplete_totals = Vec::new();
     note_unpriced_extras(campaign, sheet, &mut incomplete_totals);
+    let mut upper_bounds = Vec::new();
+    note_upper_bounds(campaign, sheet, &mut upper_bounds);
     let mut comparability_problems = Vec::new();
     for (workload_id, result) in flat {
         workloads.entry(workload_id).or_default().push(result);
     }
-    for (workload_id, results) in &workloads {
-        let attempts = by_workload
-            .get(workload_id.as_str())
-            .cloned()
-            .unwrap_or_default();
-        let mut notes = super::rules::DifferenceNotes {
-            capability: &mut capability_notes,
-            comparability: &mut comparability_problems,
-        };
-        super::rules::note_differences(workload_id, results, &attempts, &mut notes);
-        super::rules::note_repetition_shortfall(results, &mut capability_notes);
-    }
+    note_workload_differences(
+        &workloads,
+        &by_workload,
+        &mut capability_notes,
+        &mut comparability_problems,
+    );
 
     Ok(BenchmarkReport {
         campaign_id: campaign.id().to_owned(),
@@ -324,10 +323,32 @@ pub fn build_report(
         workloads,
         capability_notes,
         incomplete_totals,
+        upper_bounds,
         comparability_problems,
         totals,
         subscription_micros,
     })
+}
+
+/// Records each workload's capability differences and comparability problems.
+fn note_workload_differences(
+    workloads: &BTreeMap<String, Vec<WorkloadResult>>,
+    by_workload: &BTreeMap<&str, Vec<&RunRecord>>,
+    capability: &mut Vec<String>,
+    comparability: &mut Vec<String>,
+) {
+    for (workload_id, results) in workloads {
+        let attempts = by_workload
+            .get(workload_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let mut notes = super::rules::DifferenceNotes {
+            capability,
+            comparability,
+        };
+        super::rules::note_differences(workload_id, results, &attempts, &mut notes);
+        super::rules::note_repetition_shortfall(results, capability);
+    }
 }
 
 /// States every charge a used provider bills that the sheet does not price.
@@ -353,5 +374,23 @@ fn note_unpriced_extras(campaign: &Campaign, sheet: &PriceSheet, notes: &mut Vec
             "{provider}: every total below excludes {}, which the price sheet does not price",
             rules.unpriced_extras.join(", ")
         ));
+    }
+}
+
+/// States every used provider component whose price the sheet can only
+/// overstate.
+fn note_upper_bounds(campaign: &Campaign, sheet: &PriceSheet, notes: &mut Vec<String>) {
+    let providers: BTreeSet<&str> = campaign
+        .runs
+        .iter()
+        .map(|(_, run)| run.provider.provider.as_str())
+        .collect();
+    for provider in providers {
+        let Some(rules) = sheet.providers.get(provider) else {
+            continue;
+        };
+        for note in &rules.upper_bound_notes {
+            notes.push(format!("{provider}: {note}"));
+        }
     }
 }

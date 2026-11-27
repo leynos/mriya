@@ -33,9 +33,10 @@ month_seconds = 2592000
 # Source: Scaleway virtual instance pricing,
 #   https://www.scaleway.com/en/pricing/virtual-instances/
 #   DEV1-S is EUR 0.00898 per hour.
-# Source: Scaleway Block Storage pricing is quoted per GB-hour;
-#   https://www.scaleway.com/en/pricing/block-storage/ read 2026-11-27, rate
-#   EUR 0.000118 per GB-hour for Block SSD, converted with the sheet's month.
+# Source: Scaleway's 1 June 2026 price update,
+#   https://www.scaleway.com/en/blog/a-transparent-update-on-scaleway-pricing/
+#   read 2026-11-27, rate EUR 0.000130 per GB-hour for Block SSD, converted
+#   with the sheet's month.
 # ---------------------------------------------------------------------------
 [providers.scaleway]
 display_name = "Scaleway"
@@ -61,7 +62,8 @@ start_charge_micros = 0
 # Scaleway Block Storage SSD, quoted per GB-hour and converted with the sheet's
 # 30-day month: EUR 0.000130/GB-hour * 720 hours = EUR 0.09360/GB-month, the
 # price effective 1 June 2026.
-# Source: https://www.scaleway.com/en/pricing/block-storage/ read 2026-11-27.
+# Source: https://www.scaleway.com/en/blog/a-transparent-update-on-scaleway-pricing/
+# read 2026-11-27.
 price_per_gb_month_micros = 93600
 granularity_seconds = 3600
 minimum_seconds = 3600
@@ -126,6 +128,12 @@ minimum_seconds = 3600
 display_name = "Boat"
 source = "https://docs.boat.dev/pricing"
 currency = "USD"
+# The plan's start allowance is a rate limit (12 per minute, 60 per hour, 200
+# per day), which a single `included_starts` total cannot express, so every
+# start is charged and the report labels the resulting total an upper bound.
+upper_bound_notes = [
+  "the start charge is an upper bound: Boat's start allowance is a rate limit this sheet cannot model, so every start is charged",
+]
 
 [providers.boat.products.default]
 price_per_hour_micros = 36000

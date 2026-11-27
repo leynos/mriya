@@ -27,6 +27,7 @@ use crate::bench::billing::{NANOS_PER_SECOND, figures_agree, format_currency};
 ///     workloads: BTreeMap::new(),
 ///     capability_notes: Vec::new(),
 ///     incomplete_totals: Vec::new(),
+///     upper_bounds: Vec::new(),
 ///     comparability_problems: Vec::new(),
 ///     totals: Totals::default(),
 ///     subscription_micros: 0,
@@ -59,6 +60,7 @@ pub fn render(report: &BenchmarkReport) -> String {
         "totals are incomplete",
         &report.incomplete_totals,
     );
+    push_notes(&mut lines, "totals are upper bounds", &report.upper_bounds);
 
     if report.workloads.is_empty() {
         lines.push(String::from("no run records; nothing to report"));
@@ -71,17 +73,24 @@ pub fn render(report: &BenchmarkReport) -> String {
         lines.push(String::new());
     }
 
-    let incomplete = if report.incomplete_totals.is_empty() {
-        ""
+    let mut qualifiers = Vec::new();
+    if !report.incomplete_totals.is_empty() {
+        qualifiers.push("incomplete");
+    }
+    if !report.upper_bounds.is_empty() {
+        qualifiers.push("upper bound");
+    }
+    let qualifier = if qualifiers.is_empty() {
+        String::new()
     } else {
-        " (incomplete)"
+        format!(" ({})", qualifiers.join("; "))
     };
     lines.push(format!(
-        "campaign marginal cost {}{incomplete}",
+        "campaign marginal cost {}{qualifier}",
         format_currency(&report.currency, report.totals.marginal_micros)
     ));
     lines.push(format!(
-        "campaign total-account cost {}{incomplete} of which subscription {}",
+        "campaign total-account cost {}{qualifier} of which subscription {}",
         format_currency(&report.currency, report.totals.total_account_micros),
         format_currency(&report.currency, report.subscription_micros)
     ));

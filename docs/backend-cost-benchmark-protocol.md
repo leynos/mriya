@@ -184,6 +184,10 @@ A price sheet declares, per provider and product:
 - Any charge the sheet does not model, named in `unpriced_extras`, so a report
   never omits it silently. Every report that uses that provider prints those
   charges beside its totals, which are then labelled as incomplete.
+- Any component the sheet's rules can only overstate, named in
+  `upper_bound_notes`. A single per-period start allowance cannot express a
+  rate limit, for example, so the report must say its total is an upper bound
+  rather than present the figure as exact.
 
 Chargeable lifetime is computed with integer ceiling arithmetic: billable units
 are the ceiling of the measured lifetime over the granularity, and the charged

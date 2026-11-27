@@ -29,7 +29,7 @@ pub use rules::{campaign_subscription_micros, provider_subscriptions};
 
 use super::{
     billing::{PriceSheet, Totals},
-    record::CacheState,
+    record::{CacheState, RunRole},
     validate::Campaign,
 };
 
@@ -42,6 +42,11 @@ pub struct WorkloadResult {
     pub product: String,
     /// Workload identifier.
     pub workload_id: String,
+    /// Whether the group's attempts were timed or only warmed the cache.
+    ///
+    /// The repetition requirement applies to timed work; a warm-up is recorded
+    /// and costed but is not evidence of a completed gate.
+    pub role: RunRole,
     /// Cache class the group's first attempt started from.
     pub cache_state: CacheState,
     /// Every cache class the group's attempts declared.
@@ -89,12 +94,16 @@ impl WorkloadResult {
     /// # Examples
     ///
     /// ```
-    /// use mriya::bench::{record::CacheState, report::WorkloadResult};
+    /// use mriya::bench::{
+    ///     record::{CacheState, RunRole},
+    ///     report::WorkloadResult,
+    /// };
     ///
     /// let result = WorkloadResult {
     ///     provider: String::from("scaleway"),
     ///     product: String::from("DEV1-S"),
     ///     workload_id: String::from("cold-build"),
+    ///     role: RunRole::Timed,
     ///     cache_state: CacheState::Empty,
     ///     cache_states: std::collections::BTreeSet::from([CacheState::Empty]),
     ///     cache_bytes: 0,
@@ -138,12 +147,16 @@ impl WorkloadResult {
     /// # Examples
     ///
     /// ```
-    /// use mriya::bench::{record::CacheState, report::WorkloadResult};
+    /// use mriya::bench::{
+    ///     record::{CacheState, RunRole},
+    ///     report::WorkloadResult,
+    /// };
     ///
     /// let result = WorkloadResult {
     ///     provider: String::from("p"),
     ///     product: String::from("x"),
     ///     workload_id: String::from("w"),
+    ///     role: RunRole::Timed,
     ///     cache_state: CacheState::Empty,
     ///     cache_states: std::collections::BTreeSet::from([CacheState::Empty]),
     ///     cache_bytes: 0,
@@ -204,6 +217,9 @@ pub struct BenchmarkReport {
     /// Why the totals are incomplete, when a used provider bills a charge the
     /// price sheet does not price.
     pub incomplete_totals: Vec<String>,
+    /// Why the totals are upper bounds, when a used provider's rules can only
+    /// overstate a component.
+    pub upper_bounds: Vec<String>,
     /// Problems that prevent a comparison between providers.
     pub comparability_problems: Vec<String>,
     /// Campaign-wide totals in the sheet's currency.

@@ -149,6 +149,12 @@ pub struct ProviderRules {
     /// that uses this provider say the total excludes it, rather than leaving
     /// the omission silent.
     pub unpriced_extras: Vec<String>,
+    /// Components this provider's rules can only overstate.
+    ///
+    /// A rule that cannot express a windowed allowance charges more than the
+    /// provider will. Naming it here makes the report say its total is an
+    /// upper bound rather than presenting the figure as exact.
+    pub upper_bound_notes: Vec<String>,
 }
 
 /// Reasons a price sheet cannot be loaded or used.

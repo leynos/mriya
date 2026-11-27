@@ -85,6 +85,9 @@ struct RawProvider {
     /// Charges the provider bills that this sheet does not price.
     #[serde(default)]
     unpriced_extras: Vec<String>,
+    /// Components the rules can only overstate, and why.
+    #[serde(default)]
+    upper_bound_notes: Vec<String>,
 }
 
 /// The on-disk shape of one compute product.
@@ -298,6 +301,12 @@ impl RawProvider {
                 .into_iter()
                 .map(|extra| extra.trim().to_owned())
                 .filter(|extra| !extra.is_empty())
+                .collect(),
+            upper_bound_notes: self
+                .upper_bound_notes
+                .into_iter()
+                .map(|note| note.trim().to_owned())
+                .filter(|note| !note.is_empty())
                 .collect(),
         }
     }

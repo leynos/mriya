@@ -59,6 +59,11 @@ pub const MIN_COMPLETED_REPETITIONS: u32 = 5;
 /// says so, rather than letting a single sample read as evidence.
 pub(super) fn note_repetition_shortfall(results: &[WorkloadResult], notes: &mut Vec<String>) {
     for result in results {
+        // A warm-up is not a repetition of the measured gate, so its presence
+        // cannot count towards — or fall short of — the five timed repetitions.
+        if result.role != RunRole::Timed {
+            continue;
+        }
         if result.completed < MIN_COMPLETED_REPETITIONS {
             notes.push(format!(
                 "{}: {} completed repetitions, fewer than the {} the protocol requires before a \

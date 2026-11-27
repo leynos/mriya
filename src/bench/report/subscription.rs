@@ -117,12 +117,17 @@ pub(super) fn attribute_subscription(
 
 /// Tracks how much of each provider plan's included compute remains.
 ///
-/// The balance is money in the provider's own currency, not hours: a plan
-/// grants a value of machine time, and an hour of a product that costs twice
-/// the baseline consumes twice as much of it.
+/// The balance is a value of machine time, not hours: a plan grants money's
+/// worth of compute, and an hour of a product that costs twice the baseline
+/// consumes twice as much of it.
+///
+/// The balance is kept at the exact product of nanoseconds and the baseline
+/// hourly rate, rather than as rounded money. Rounding each attempt's debit
+/// separately would accumulate error across a campaign, slowly turning
+/// included compute into marginal cost.
 pub(super) struct PlanAllowances {
-    /// Remaining included value per provider, in its own currency's micros.
-    remaining_micros: BTreeMap<String, u64>,
+    /// Remaining included value per provider, in nanosecond-micro-units.
+    remaining_fine: BTreeMap<String, u128>,
     /// Starts already used per provider.
     starts_used: BTreeMap<String, u64>,
 }
@@ -145,19 +150,14 @@ impl PlanAllowances {
             let Some(rule) = provider.products.get(&plan.baseline_product) else {
                 continue;
             };
-            // Included hours times the baseline rate is the plan's allowance in
-            // the provider's currency.
+            // Included nanoseconds times the baseline hourly rate: the exact
+            // value the plan grants, with no division until it is spent.
             let credit = u128::from(plan.included_compute_nanos)
-                .saturating_mul(u128::from(rule.price_per_hour_micros))
-                .checked_div(u128::from(crate::bench::billing::NANOS_PER_HOUR))
-                .unwrap_or(0);
-            remaining.insert(
-                provider_name.clone(),
-                u64::try_from(credit).unwrap_or(u64::MAX),
-            );
+                .saturating_mul(u128::from(rule.price_per_hour_micros));
+            remaining.insert(provider_name.clone(), credit);
         }
         Self {
-            remaining_micros: remaining,
+            remaining_fine: remaining,
             starts_used: BTreeMap::new(),
         }
     }
@@ -168,12 +168,11 @@ impl PlanAllowances {
     /// A product that costs nothing has no meaningful allowance; the caller then
     /// passes zero, and the plan absorbs nothing.
     pub(super) fn allowance_nanos(&self, provider: &str, product: &ProductRule) -> u64 {
-        let credit = self.remaining_micros.get(provider).copied().unwrap_or(0);
+        let credit = self.remaining_fine.get(provider).copied().unwrap_or(0);
         if credit == 0 || product.price_per_hour_micros == 0 {
             return 0;
         }
-        let nanos = u128::from(credit)
-            .saturating_mul(u128::from(crate::bench::billing::NANOS_PER_HOUR))
+        let nanos = credit
             .checked_div(u128::from(product.price_per_hour_micros))
             .unwrap_or(0);
         u64::try_from(nanos).unwrap_or(u64::MAX)
@@ -184,12 +183,11 @@ impl PlanAllowances {
         self.starts_used.get(provider).copied().unwrap_or(0)
     }
 
-    /// Consumes the value of `nanos` of `product` from the provider's credit.
+    /// Consumes the exact value of `nanos` of `product` from the provider's
+    /// credit.
     pub(super) fn consume(&mut self, provider: &str, product: &ProductRule, nanos: u64) {
-        let Some(spent) = product.price_micros(nanos) else {
-            return;
-        };
-        if let Some(remaining) = self.remaining_micros.get_mut(provider) {
+        let spent = u128::from(nanos).saturating_mul(u128::from(product.price_per_hour_micros));
+        if let Some(remaining) = self.remaining_fine.get_mut(provider) {
             *remaining = remaining.saturating_sub(spent);
         }
         let starts = self.starts_used.entry(provider.to_owned()).or_insert(0);
