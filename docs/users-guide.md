@@ -62,7 +62,7 @@ Required sync settings: `ssh_identity_file`.
 
 Mriya syncs the working tree with `rsync -az --delete --filter=":- .gitignore"`
 so only files not matched by `.gitignore` patterns are transferred. The filter
-is not a full implementation of Git's ignore rules, and four differences matter:
+is not a full implementation of Git's ignore rules, and five differences matter:
 
 - It reads per-directory `.gitignore` files only, so `.git/info/exclude` and
   `core.excludesFile` have no effect and a path ignored only through them still
@@ -73,6 +73,10 @@ is not a full implementation of Git's ignore rules, and four differences matter:
 - It does not match the zero-directory case of a `**/` pattern. A rule such as
   `config/**/secrets.env` ignores `config/secrets.env` in Git, but rsync does
   not match it there, so the file can transfer.
+- It treats a backslash as an escape only when the pattern also contains a
+  wildcard. Git reads `\#secret` as the literal name `#secret` and ignores that
+  file, while rsync compares `\#secret` literally, finds no match, and
+  transfers the file.
 - Its patterns are applied as transfer filters rather than as an ignore index,
   so an untracked but unignored file still travels.
 
