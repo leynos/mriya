@@ -60,7 +60,7 @@ jobs:
       - id: release_modes
         name: Determine release modes
         uses: >-
-          leynos/shared-actions/.github/actions/determine-release-modes@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/determine-release-modes@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           dry-run: ${{ inputs.dry-run }}
           publish: ${{ inputs.publish }}
@@ -68,14 +68,14 @@ jobs:
       - id: ensure_version
         name: Read package version from Cargo.toml
         uses: >-
-          leynos/shared-actions/.github/actions/ensure-cargo-version@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/ensure-cargo-version@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           check-tag: ${{ fromJSON(steps.release_modes.outputs.should-publish) }}
 
       - id: bin_name
         name: Extract binary name from Cargo.toml
         uses: >-
-          leynos/shared-actions/.github/actions/export-cargo-metadata@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/export-cargo-metadata@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           fields: bin-name
           export-to-env: 'false'
@@ -126,7 +126,7 @@ jobs:
 
       - name: Build release binary
         uses: >-
-          leynos/shared-actions/.github/actions/rust-build-release@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/rust-build-release@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           target: ${{ matrix.target }}
           bin-name: ${{ needs.metadata.outputs.bin_name }}
@@ -217,7 +217,7 @@ jobs:
 
       - name: Package Linux artefacts
         uses: >-
-          leynos/shared-actions/.github/actions/linux-packages@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/linux-packages@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           project-dir: .
           package-name: ${{ needs.metadata.outputs.bin_name }}
@@ -267,7 +267,7 @@ jobs:
       - name: Build macOS installer package
         id: package_macos
         uses: >-
-          leynos/shared-actions/.github/actions/macos-package@ab6505246c6b043b742a225e428e00448c0a37af
+          leynos/shared-actions/.github/actions/macos-package@bd052c68a4792e92c3272fb1b6ea3b594f3ab7f3
         with:
           name: ${{ needs.metadata.outputs.bin_name }}
           identifier: net.df12.mriya
