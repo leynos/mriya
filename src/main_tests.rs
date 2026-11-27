@@ -258,28 +258,56 @@ fn write_error_writes_cli_error() {
     );
 }
 
+/// An environment source that answers only the volume-ID key.
+fn volume_env(result: Result<String, std::env::VarError>) -> mockable::MockEnv {
+    let mut env = mockable::MockEnv::new();
+    env.expect_raw().returning(move |key| {
+        assert_eq!(key, VOLUME_ID_ENV_VAR, "unexpected key");
+        result.clone()
+    });
+    env
+}
+
 #[test]
 fn environment_volume_id_is_absent_when_unset() {
-    let result = environment_volume_id(None).expect("an unset variable should be accepted");
+    let env = volume_env(Err(std::env::VarError::NotPresent));
+
+    let result = environment_volume_id(&env).expect("an unset variable should be accepted");
 
     assert_eq!(result, None);
 }
 
 #[test]
 fn environment_volume_id_is_trimmed_when_set() {
-    let result = environment_volume_id(Some(String::from("  volume-123 ")))
-        .expect("a set variable should be accepted");
+    let env = volume_env(Ok(String::from("  volume-123 ")));
+
+    let result = environment_volume_id(&env).expect("a set variable should be accepted");
 
     assert_eq!(result.as_deref(), Some("volume-123"));
 }
 
 #[test]
 fn environment_volume_id_rejects_a_present_blank_value() {
-    let err = environment_volume_id(Some(String::from("   ")))
-        .expect_err("a blank variable must be rejected");
+    let env = volume_env(Ok(String::from("   ")));
+
+    let err = environment_volume_id(&env).expect_err("a blank variable must be rejected");
 
     assert!(
         matches!(err, CliError::Config(ref message) if message.contains("set but blank")),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn environment_volume_id_rejects_a_non_utf8_value() {
+    let env = volume_env(Err(std::env::VarError::NotUnicode(
+        std::ffi::OsString::from("not utf8"),
+    )));
+
+    let err = environment_volume_id(&env).expect_err("a non-UTF-8 variable must be rejected");
+
+    assert!(
+        matches!(err, CliError::Config(ref message) if message.contains("not valid UTF-8")),
         "unexpected error: {err}"
     );
 }
