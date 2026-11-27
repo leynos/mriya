@@ -24,6 +24,11 @@ pub struct RunRecord {
     pub kind: RecordKind,
     /// Campaign this attempt belongs to.
     pub campaign_id: String,
+    /// Identifier unique within the campaign, naming this attempt.
+    ///
+    /// Phases carry the same identifier, so two attempts that share a workload
+    /// and repetition — for example on two providers — never share timings.
+    pub run_id: String,
     /// Workload identifier from the protocol's workload set.
     pub workload_id: String,
     /// The exact command vector, so two attempts can be compared honestly.
@@ -50,12 +55,31 @@ pub struct RunRecord {
     pub outcome: RunOutcome,
     /// GPU details, present exactly when `class` is [`WorkloadClass::Gpu`].
     pub gpu: Option<GpuSpec>,
-    /// Identifier of the repetition within the workload, starting at one.
+    /// Identifier of the repetition within the workload, starting from one.
     pub repetition: u32,
+    /// Storage this attempt holds beyond itself.
+    ///
+    /// A persistent cache volume is retained after the instance is destroyed,
+    /// so its cost is attributable to the attempt that kept it. An empty list
+    /// means the attempt retained nothing.
+    pub retained: Vec<RetainedStorageRecord>,
+}
+
+/// Storage a record declares as held beyond the attempt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RetainedStorageRecord {
+    /// Storage class name within the provider's price sheet.
+    pub class: String,
+    /// Bytes held.
+    pub bytes: u64,
+    /// How long the bytes were held, in nanoseconds.
+    pub held_nanos: u64,
 }
 
 /// Which part of the protocol a run serves.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunRole {
     /// A measured attempt, included in the timing summary.
@@ -151,7 +175,12 @@ pub enum PhaseKind {
 }
 
 impl PhaseKind {
-    /// The phases in protocol order, which is also execution order.
+    /// The phase kinds in protocol order.
+    ///
+    /// This is the order the protocol defines, not necessarily the order of a
+    /// run's observations: bootstrap can be observed again after sync when a
+    /// cloud-init wait extends it, and each observation carries its own
+    /// segment number.
     pub const ALL: [Self; 7] = [
         Self::Allocate,
         Self::Bootstrap,
@@ -200,6 +229,8 @@ pub struct PhaseRecord {
     pub kind: RecordKind,
     /// Campaign this phase belongs to.
     pub campaign_id: String,
+    /// Attempt this phase belongs to.
+    pub run_id: String,
     /// Workload this phase belongs to.
     pub workload_id: String,
     /// Repetition this phase belongs to.

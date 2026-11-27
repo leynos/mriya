@@ -111,6 +111,9 @@ where
 {
     require_opt_in(opt_in)?;
     plan.validate()?;
+    // Held for the whole campaign, so a second invocation cannot pass its own
+    // sweep while this one is allocating.
+    let _lock = super::CampaignLock::acquire(&plan.campaign_id)?;
 
     sink.append(&Record::Header(Box::new(plan.header())))
         .map_err(CampaignError::RecordWriteFailed)?;
@@ -265,5 +268,9 @@ fn record_residual<S: RecordSink>(
         reason: detail.reason,
     };
     sink.append(&Record::Residual(Box::new(record)))
-        .map_err(CampaignError::RecordWriteFailed)
+        .map_err(CampaignError::RecordWriteFailed)?;
+    // A residual record is the evidence an operator acts on after a failure, so
+    // it is flushed before the campaign returns, not left in a buffer that a
+    // dropped writer may never empty.
+    sink.flush().map_err(CampaignError::RecordWriteFailed)
 }

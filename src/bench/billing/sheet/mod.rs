@@ -52,7 +52,7 @@ pub struct PriceSheet {
 }
 
 impl PriceSheet {
-    /// Returns how many micro-units of the sheet currency one micro-unit of
+    /// Returns how many micro-units of the sheet currency one whole unit of
     /// `currency` is worth.
     ///
     /// The sheet's own currency is the identity. Any other currency must be
@@ -64,6 +64,14 @@ impl PriceSheet {
     ///
     /// Returns [`PriceSheetError::UnknownCurrency`] when the code is neither the
     /// sheet's currency nor a declared rate.
+    ///
+    /// # Parameters
+    ///
+    /// - `text`: a TOML document with `[sheet]`, `[providers.*]` and `[fx.*]`.
+    ///
+    /// # Returns
+    ///
+    /// The validated sheet, with every rate still in its provider's currency.
     ///
     /// # Examples
     ///
@@ -91,7 +99,11 @@ impl PriceSheet {
         self.fx
             .get(currency)
             .map(|rule| rule.micros_per_unit)
-            .ok_or_else(|| PriceSheetError::UnknownCurrency(currency.to_owned()))
+            .filter(|rate| *rate > 0)
+            .ok_or_else(|| match self.fx.get(currency) {
+                Some(_) => PriceSheetError::ZeroExchangeRate(currency.to_owned()),
+                None => PriceSheetError::UnknownCurrency(currency.to_owned()),
+            })
     }
 }
 
@@ -99,6 +111,9 @@ impl PriceSheet {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FxRule {
     /// Micro-units of the sheet currency per whole unit of this currency.
+    ///
+    /// For example, a rate of `920_000` converts one US dollar into 0.92 of a
+    /// euro, because `convert_micros` divides by `MICROS_PER_UNIT`.
     pub micros_per_unit: u64,
     /// Where the rate was read from, and ideally when.
     pub source: String,
@@ -150,6 +165,8 @@ pub enum PriceSheetError {
     MissingCurrency,
     /// A provider quotes in a currency the sheet cannot convert.
     UnknownCurrency(String),
+    /// A declared conversion rate is zero, which would make every charge free.
+    ZeroExchangeRate(String),
 }
 
 impl fmt::Display for PriceSheetError {
@@ -178,6 +195,11 @@ impl fmt::Display for PriceSheetError {
                 formatter,
                 "price sheet cannot convert {code:?}: declare it under [fx.{code}] with \
                  its rate and source"
+            ),
+            Self::ZeroExchangeRate(code) => write!(
+                formatter,
+                "price sheet declares a zero rate for {code:?}; every charge in that currency \
+                 would be free"
             ),
         }
     }

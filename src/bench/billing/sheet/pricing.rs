@@ -41,6 +41,15 @@ pub struct StorageRule {
 impl ProductRule {
     /// Returns the price of `chargeable_nanos` at this rule's hourly rate.
     ///
+    /// # Parameters
+    ///
+    /// - `chargeable_nanos`: a lifetime already at the provider's granularity.
+    ///
+    /// # Returns
+    ///
+    /// The price in the provider's currency, rounded up to the micro-unit, or
+    /// `None` on overflow.
+    ///
     /// The hourly rate is applied by exact integer proportion rather than by a
     /// per-second rate, so a long attempt cannot accumulate a rounding error.
     ///
@@ -74,6 +83,14 @@ impl ProductRule {
 
     /// Returns the price of one resource, capped when the provider caps it.
     ///
+    /// # Parameters
+    ///
+    /// - `chargeable_nanos`: a lifetime already at the provider's granularity.
+    ///
+    /// # Returns
+    ///
+    /// The capped price in the provider's currency, or `None` on overflow.
+    ///
     /// # Examples
     ///
     /// ```
@@ -97,6 +114,16 @@ impl ProductRule {
 
 impl StorageRule {
     /// Returns the price of holding `bytes` for `chargeable_nanos`.
+    ///
+    /// # Parameters
+    ///
+    /// - `bytes`: the storage held.
+    /// - `chargeable_nanos`: the hold time, already at the provider's granularity.
+    /// - `month_seconds`: the sheet's month length.
+    ///
+    /// # Returns
+    ///
+    /// The price in the provider's currency, rounded up, or `None` on overflow.
     ///
     /// # Examples
     ///

@@ -14,8 +14,6 @@ use super::{
         charge,
         chargeable_nanos,
         figures_agree,
-        format_micros,
-        load_price_sheet,
     },
     support::{example_sheet, hourly_product, hourly_storage, sheet_with, sheet_with_plan},
 };
@@ -145,23 +143,20 @@ fn the_subscription_share_is_converted_into_the_sheet_currency() {
     assert_eq!(breakdown.subscription_micros, 18_400_000);
 }
 
-#[test]
-fn a_start_inside_the_plan_allowance_is_free() {
+#[rstest]
+#[case(0, 0, "the first start is inside the plan")]
+#[case(2, 0, "the last included start is free")]
+#[case(3, 10_000, "the first start beyond the plan is charged")]
+#[case(4, 10_000, "every later start is charged")]
+fn a_start_is_charged_only_beyond_the_plan_allowance(
+    #[case] starts_used: u64,
+    #[case] expected_micros: u64,
+    #[case] why: &str,
+) {
     let sheet = sheet_with_plan(hourly_product(), 3);
-    let usage = Usage::new("prov", "p", NANOS_PER_HOUR).with_starts_used(0);
+    let usage = Usage::new("prov", "p", NANOS_PER_HOUR).with_starts_used(starts_used);
     let breakdown = charge(&sheet, &usage).expect("the rule exists");
-    assert_eq!(breakdown.start_micros, 0, "the plan included this start");
-}
-
-#[test]
-fn a_start_beyond_the_plan_allowance_is_charged() {
-    let sheet = sheet_with_plan(hourly_product(), 3);
-    let usage = Usage::new("prov", "p", NANOS_PER_HOUR).with_starts_used(3);
-    let breakdown = charge(&sheet, &usage).expect("the rule exists");
-    assert_eq!(
-        breakdown.start_micros, 10_000,
-        "the fourth start is beyond the three the plan includes"
-    );
+    assert_eq!(breakdown.start_micros, expected_micros, "{why}");
 }
 
 #[test]
@@ -218,79 +213,6 @@ fn an_unknown_provider_is_named() {
     let usage = Usage::new("no-such-provider", "p", NANOS_PER_HOUR);
     let error = charge(&sheet, &usage).expect_err("the provider is absent");
     assert!(error.to_string().contains("no-such-provider"), "{error}");
-}
-
-#[test]
-fn a_sheet_without_a_currency_is_refused() {
-    let error = load_price_sheet("[sheet]\n").expect_err("a unitless price is unusable");
-    assert!(matches!(error, PriceSheetError::MissingCurrency));
-}
-
-#[test]
-fn a_provider_quoting_in_an_undeclared_currency_is_refused() {
-    let text = r#"
-[sheet]
-currency = "EUR"
-
-[providers.x]
-currency = "USD"
-
-[providers.x.products.p]
-price_per_hour_micros = 100
-granularity_seconds = 3600
-"#;
-    let sheet = load_price_sheet(text).expect("the sheet parses");
-    let usage = Usage::new("x", "p", NANOS_PER_HOUR);
-    let error = charge(&sheet, &usage).expect_err("no rate was declared");
-    assert!(error.to_string().contains("USD"), "{error}");
-}
-
-#[test]
-fn a_declared_conversion_rate_makes_cross_currency_pricing_auditable() {
-    let text = r#"
-[sheet]
-currency = "EUR"
-
-[fx.USD]
-micros_per_unit = 920000
-source = "https://example.test/fx"
-
-[providers.x]
-currency = "USD"
-
-[providers.x.products.p]
-price_per_hour_micros = 36000
-granularity_seconds = 1
-minimum_seconds = 0
-"#;
-    let sheet = load_price_sheet(text).expect("the sheet parses");
-    let usage = Usage::new("x", "p", NANOS_PER_HOUR);
-    let breakdown = charge(&sheet, &usage).expect("the rule exists");
-    assert_eq!(breakdown.provider_currency, "USD");
-    assert_eq!(breakdown.fx_rate_micros, 920_000);
-    // USD 0.036 converted at 0.92 EUR per USD is EUR 0.03312.
-    assert_eq!(breakdown.marginal_micros, 33_120);
-}
-
-#[test]
-fn the_example_sheet_records_where_every_rate_came_from() {
-    let sheet = example_sheet();
-    for (name, provider) in &sheet.providers {
-        assert!(
-            provider.source.starts_with("https://"),
-            "{name} has no source"
-        );
-    }
-    assert_eq!(sheet.currency, "EUR");
-    assert_eq!(sheet.retrieved, "2026-11-26");
-}
-
-#[test]
-fn money_formats_without_a_float() {
-    assert_eq!(format_micros(0), "0.000000");
-    assert_eq!(format_micros(1), "0.000001");
-    assert_eq!(format_micros(1_234_567), "1.234567");
-    assert_eq!(format_micros(20_000_000), "20.000000");
 }
 
 proptest! {

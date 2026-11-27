@@ -7,10 +7,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{BenchmarkReport, ReportError, WorkloadResult};
+use super::{
+    BenchmarkReport,
+    ReportError,
+    WorkloadResult,
+    subscription::{attribute_subscription, remote_execution_phases},
+};
+
+/// The provider, product, cache class and role a group is keyed by.
+type GroupKey = (String, String, CacheState, RunRole);
 use crate::bench::{
-    billing::{CostBreakdown, PriceSheet, Totals, Usage, charge},
-    record::{CacheState, PhaseKind, RunOutcome, RunRecord, RunRole},
+    billing::{CostBreakdown, PriceSheet, RetainedStorage, Totals, Usage, charge},
+    record::{CacheState, RunOutcome, RunRecord, RunRole},
     validate::Campaign,
 };
 
@@ -79,17 +87,33 @@ fn price_run(
     // The subscription is attributed once, at campaign level, so a per-run
     // figure does not multiply the plan price by the number of attempts. The
     // campaign total adds it back exactly once.
-    // The record's chargeable lifetime is what the writer measured the
-    // provider to bill, and it is never shorter than the attempt. Pricing from
-    // it (and letting the sheet round again, which is idempotent) keeps a
-    // record that already applied a minimum from being re-rounded downwards.
-    let usage = Usage::new(
+    // A writer that already applied the provider's granularity and minimum
+    // records a billed lifetime longer than the attempt; that figure is priced
+    // directly. A record whose two lifetimes agree carries no billed figure, so
+    // the sheet's rules are applied to the measured lifetime instead.
+    let mut priced = Usage::new(
         run.provider.provider.clone(),
         run.provider.product.clone(),
-        run.lifetime.chargeable_nanos,
-    )
-    .with_plan_allowance(allowance.allowance(&run.provider.provider))
-    .with_starts_used(allowance.starts_used(&run.provider.provider));
+        run.lifetime.total_nanos,
+    );
+    if run.lifetime.chargeable_nanos > run.lifetime.total_nanos {
+        priced = priced.with_billed_lifetime(run.lifetime.chargeable_nanos);
+    }
+    if !run.retained.is_empty() {
+        priced = priced.with_retained(
+            run.retained
+                .iter()
+                .map(|item| RetainedStorage {
+                    class: item.class.clone(),
+                    bytes: item.bytes,
+                    held_nanos: item.held_nanos,
+                })
+                .collect(),
+        );
+    }
+    let usage = priced
+        .with_plan_allowance(allowance.allowance(&run.provider.provider))
+        .with_starts_used(allowance.starts_used(&run.provider.provider));
     let breakdown = charge(sheet, &usage).map_err(|err| ReportError::Billing(err.to_string()))?;
     allowance.consume(&run.provider.provider, breakdown.absorbed_nanos);
     Ok(breakdown)
@@ -237,19 +261,18 @@ impl GroupBuilder {
 ///
 /// # Examples
 ///
-/// A campaign whose runs name a provider the sheet does not describe is
-/// refused rather than priced at zero:
+/// An empty campaign is refused by the validator before a report is built, so
+/// this example checks the validation step that must precede it:
 ///
 /// ```
-/// use mriya::bench::{report::build_report, validate::validate_str};
+/// use mriya::bench::validate::validate_str;
 ///
-/// let campaign = validate_str(concat!(
-///     r#"{"schema":1,"kind":"campaign-header","campaign_id":"c","limits":null,"#,
-///     r#""price_sheet":null,"providers":["absent"]}"#,
-///     "\n",
-/// ))
-/// .unwrap_err();
-/// assert!(!campaign.is_empty());
+/// let error = validate_str("").unwrap_err();
+/// assert!(
+///     error
+///         .iter()
+///         .any(|c| c.to_string().contains("no campaign header"))
+/// );
 /// ```
 pub fn build_report(
     campaign: &Campaign,
@@ -257,7 +280,7 @@ pub fn build_report(
 ) -> Result<BenchmarkReport, ReportError> {
     let mut allowance = PlanAllowances::new(sheet, &campaign.runs);
     let mut totals = Totals::default();
-    let mut grouped: BTreeMap<String, BTreeMap<(String, String), GroupBuilder>> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, BTreeMap<GroupKey, GroupBuilder>> = BTreeMap::new();
 
     let execution_phases = remote_execution_phases(campaign);
     for (_, run) in &campaign.runs {
@@ -268,40 +291,47 @@ pub fn build_report(
         grouped
             .entry(run.workload_id.clone())
             .or_default()
-            .entry((run.provider.provider.clone(), run.provider.product.clone()))
+            .entry((
+                run.provider.provider.clone(),
+                run.provider.product.clone(),
+                run.cache.state,
+                run.role,
+            ))
             .or_insert_with(|| GroupBuilder::new(run))
-            .push(
-                run,
-                &breakdown,
-                execution_phases.get(&(run.workload_id.clone(), run.repetition)),
-            );
+            .push(run, &breakdown, execution_phases.get(&run.run_id));
     }
 
     // A plan is charged once for the campaign, not once per attempt. Adding it
     // after the per-run loop is what keeps the two figures distinct: the
     // marginal totals say what the gates cost, and the account total says what
     // the campaign adds to the bill.
-    let subscription_micros =
-        super::campaign_subscription_micros(campaign, sheet).map_err(ReportError::Billing)?;
+    let subscriptions =
+        super::provider_subscriptions(campaign, sheet).map_err(ReportError::Billing)?;
+    let subscription_micros: u64 = subscriptions.values().copied().sum();
     totals.subscription_micros = subscription_micros;
     totals.total_account_micros = totals
         .total_account_micros
         .saturating_add(subscription_micros);
 
+    let by_workload = super::rules::attempts_by_workload(campaign);
     let mut workloads = BTreeMap::new();
     let mut capability_notes = Vec::new();
     let mut comparability_problems = Vec::new();
     for (workload_id, groups) in grouped {
+        let attempts = by_workload
+            .get(workload_id.as_str())
+            .cloned()
+            .unwrap_or_default();
         let results: Vec<WorkloadResult> = groups
             .into_values()
             .map(GroupBuilder::finish)
             .collect::<Vec<_>>();
-        let attributed = attribute_subscription(results, subscription_micros);
+        let attributed = attribute_subscription(results, &subscriptions);
         let mut notes = super::rules::DifferenceNotes {
             capability: &mut capability_notes,
             comparability: &mut comparability_problems,
         };
-        super::rules::note_differences(&workload_id, &attributed, campaign, &mut notes);
+        super::rules::note_differences(&workload_id, &attributed, &attempts, &mut notes);
         super::rules::note_repetition_shortfall(&attributed, &mut capability_notes);
         workloads.insert(workload_id, attributed);
     }
@@ -316,64 +346,4 @@ pub fn build_report(
         totals,
         subscription_micros,
     })
-}
-
-/// Returns the remote-execution duration of each attempt, keyed by its record.
-///
-/// A phase may be observed more than once in one attempt, so the segments are
-/// summed. A run with no remote-execution phase is absent from the map, and the
-/// caller falls back to the attempt's whole lifetime.
-fn remote_execution_phases(campaign: &Campaign) -> BTreeMap<AttemptKey, u64> {
-    let mut by_attempt: BTreeMap<AttemptKey, u64> = BTreeMap::new();
-    for (_, phase) in &campaign.phases {
-        if phase.phase != PhaseKind::RemoteExecution {
-            continue;
-        }
-        let key = (phase.workload_id.clone(), phase.repetition);
-        let total = by_attempt.entry(key).or_insert(0);
-        *total = total.saturating_add(phase.duration_nanos);
-    }
-    by_attempt
-}
-
-/// The key a phase record shares with the run it belongs to.
-type AttemptKey = (String, u32);
-
-/// Attributes a share of the campaign's subscription to each group.
-///
-/// A plan is bought for the campaign, not for one workload, so the campaign
-/// total is the figure that must be paid. A reader comparing two workloads
-/// still needs to see what each contributed, so the subscription is divided
-/// across the groups in proportion to their timed attempts, with the remainder
-/// given to the first group so the shares always add back to the total.
-fn attribute_subscription(
-    mut results: Vec<WorkloadResult>,
-    subscription_micros: u64,
-) -> Vec<WorkloadResult> {
-    let timed: u64 = results
-        .iter()
-        .map(|result| u64::from(result.completed.saturating_add(result.failed)))
-        .sum();
-    if timed == 0 || subscription_micros == 0 {
-        return results;
-    }
-    let mut remaining = subscription_micros;
-    let last = results.len().saturating_sub(1);
-    for (index, result) in results.iter_mut().enumerate() {
-        let weight = u64::from(result.completed.saturating_add(result.failed));
-        let share = if index == last {
-            remaining
-        } else {
-            let proportional = u128::from(subscription_micros)
-                .saturating_mul(u128::from(weight))
-                .checked_div(u128::from(timed))
-                .unwrap_or(0);
-            let share = u64::try_from(proportional).unwrap_or(u64::MAX);
-            share.min(remaining)
-        };
-        remaining = remaining.saturating_sub(share);
-        result.subscription_micros = share;
-        result.total_account_micros = result.total_account_micros.saturating_add(share);
-    }
-    results
 }

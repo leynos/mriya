@@ -32,6 +32,7 @@ pub use run::{
     PhaseKind,
     PhaseRecord,
     PhaseStatus,
+    RetainedStorageRecord,
     RunOutcome,
     RunRecord,
     RunRole,
@@ -198,6 +199,20 @@ impl Record {
 /// would indicate a type whose `Serialize` implementation disagrees with its
 /// fields rather than a data problem.
 ///
+/// # Parameters
+///
+/// - `record`: the record to write.
+///
+/// # Returns
+///
+/// The JSON object as one line, without a trailing newline.
+///
+/// # Errors
+///
+/// Returns [`LineError::TagMismatch`] when the record's inner `kind` field
+/// disagrees with the variant holding it, and [`LineError::Malformed`] when the
+/// record cannot be represented.
+///
 /// # Examples
 ///
 /// ```
@@ -213,18 +228,47 @@ impl Record {
 /// };
 /// let line = to_line(&Record::Header(Box::new(header)))?;
 /// assert!(line.starts_with(r#"{"schema":1,"kind":"campaign-header""#));
-/// # Ok::<(), serde_json::Error>(())
+/// # Ok::<(), mriya::bench::record::LineError>(())
 /// ```
-pub fn to_line(record: &Record) -> Result<String, serde_json::Error> {
-    match record {
+pub fn to_line(record: &Record) -> Result<String, LineError> {
+    let expected = record.kind();
+    let inner = match record {
+        Record::Header(inner) => inner.kind,
+        Record::Run(inner) => inner.kind,
+        Record::Phase(inner) => inner.kind,
+        Record::Residual(inner) => inner.kind,
+    };
+    if inner != expected {
+        return Err(LineError::TagMismatch {
+            variant: expected,
+            tag: inner,
+        });
+    }
+    serialize(record)
+}
+
+/// Serializes a record whose tag has already been checked.
+fn serialize(record: &Record) -> Result<String, LineError> {
+    let serialized = match record {
         Record::Header(inner) => serde_json::to_string(inner),
         Record::Run(inner) => serde_json::to_string(inner),
         Record::Phase(inner) => serde_json::to_string(inner),
         Record::Residual(inner) => serde_json::to_string(inner),
-    }
+    };
+    serialized.map_err(|err| LineError::Malformed(err.to_string()))
 }
 
 /// Reads one line into a tagged [`Record`].
+///
+/// # Parameters
+///
+/// - `line`: one JSON object, as written by [`to_line`].
+///
+/// # Returns
+///
+/// The decoded record. Decoding does not validate the campaign and does not
+/// enforce the schema version: a successfully decoded record still has to pass
+/// [`crate::bench::validate::validate_str`].
 ///
 /// # Errors
 ///
@@ -248,10 +292,12 @@ pub fn to_line(record: &Record) -> Result<String, serde_json::Error> {
 pub fn parse_line(line: &str) -> Result<Record, LineError> {
     let value: serde_json::Value =
         serde_json::from_str(line).map_err(|err| LineError::Malformed(err.to_string()))?;
-    let kind_text = value
-        .get("kind")
-        .and_then(serde_json::Value::as_str)
-        .ok_or(LineError::MissingKind)?;
+    // A present tag that is not a string is a malformed record, not a missing
+    // one: telling an operator to add a field that is already there misleads.
+    let kind_value = value.get("kind").ok_or(LineError::MissingKind)?;
+    let kind_text = kind_value.as_str().ok_or_else(|| {
+        LineError::Malformed(format!("kind must be a string, found {kind_value}"))
+    })?;
     let kind: RecordKind = serde_json::from_value(serde_json::Value::String(kind_text.to_owned()))
         .map_err(|_| LineError::UnknownKind {
             kind: kind_text.to_owned(),
@@ -285,6 +331,13 @@ pub enum LineError {
         /// The unrecognized tag.
         kind: String,
     },
+    /// A record's inner tag disagrees with the variant holding it.
+    TagMismatch {
+        /// The tag the variant implies.
+        variant: RecordKind,
+        /// The tag the record's own field carries.
+        tag: RecordKind,
+    },
 }
 
 impl fmt::Display for LineError {
@@ -293,6 +346,10 @@ impl fmt::Display for LineError {
             Self::Malformed(message) => write!(formatter, "malformed record: {message}"),
             Self::MissingKind => formatter.write_str("record has no kind field"),
             Self::UnknownKind { kind } => write!(formatter, "unknown record kind: {kind}"),
+            Self::TagMismatch { variant, tag } => write!(
+                formatter,
+                "record is a {variant} but its kind field says {tag}"
+            ),
         }
     }
 }

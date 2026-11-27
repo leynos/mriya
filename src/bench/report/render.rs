@@ -43,17 +43,13 @@ pub fn render(report: &BenchmarkReport) -> String {
         String::new(),
     ];
 
-    if report.workloads.is_empty() {
-        lines.push(String::from("no run records; nothing to report"));
-    }
-    for (workload_id, results) in &report.workloads {
-        lines.push(format!("workload {workload_id}"));
-        for result in results {
-            lines.extend(render_result(report, result));
+    if !report.comparability_problems.is_empty() {
+        lines.push(String::from("comparability problems"));
+        for problem in &report.comparability_problems {
+            lines.push(format!("- {problem}"));
         }
         lines.push(String::new());
     }
-
     if !report.capability_notes.is_empty() {
         lines.push(String::from("capability differences"));
         for note in &report.capability_notes {
@@ -61,10 +57,14 @@ pub fn render(report: &BenchmarkReport) -> String {
         }
         lines.push(String::new());
     }
-    if !report.comparability_problems.is_empty() {
-        lines.push(String::from("comparability problems"));
-        for problem in &report.comparability_problems {
-            lines.push(format!("- {problem}"));
+
+    if report.workloads.is_empty() {
+        lines.push(String::from("no run records; nothing to report"));
+    }
+    for (workload_id, results) in &report.workloads {
+        lines.push(format!("workload {workload_id}"));
+        for result in results {
+            lines.extend(render_result(report, result));
         }
         lines.push(String::new());
     }

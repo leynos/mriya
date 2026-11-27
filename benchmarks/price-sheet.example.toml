@@ -48,7 +48,7 @@ minimum_seconds = 3600
 start_charge_micros = 0
 
 [providers.scaleway.products.DEV1-M]
-price_per_hour_micros = 17960
+price_per_hour_micros = 20200
 granularity_seconds = 3600
 minimum_seconds = 3600
 start_charge_micros = 0
@@ -134,19 +134,21 @@ granularity_seconds = 1
 minimum_seconds = 0
 start_charge_micros = 30000
 
-[providers.boat.storage.saved-snapshot]
-# USD 0.056 per snapshot per day, expressed per GB-month would need the
-# snapshot size; this rate is the per-GB-month equivalent at the 51 GB disk the
-# `default` size provides, so it is a conservative upper bound for a smaller
-# snapshot.
-price_per_gb_month_micros = 33000
-granularity_seconds = 86400
-minimum_seconds = 86400
+# Boat charges a fixed USD 0.056 per saved snapshot per day above the plan's
+# included count, regardless of size. This sheet prices storage per gibibyte
+# per month, which cannot express a per-snapshot charge, so Boat's saved
+# snapshots are deliberately absent: a campaign that retains one must extend
+# the sheet with a per-snapshot unit rather than approximate it here.
 
 [providers.boat.plan]
 name = "USD 20 plan"
 monthly_price_micros = 20000000
 included_compute_hours = 555
+# Boat's start allowance is a rate limit (12 per minute, 60 per hour, 200 per
+# day), not a single period total, so this sheet does not model it and charges
+# every start. That overstates Boat's cost, which is the safe direction for a
+# competitor's figure; a campaign that wants the allowance must add a
+# window-aware rule.
 included_starts = 0
 
 # ---------------------------------------------------------------------------

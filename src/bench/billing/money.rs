@@ -5,10 +5,7 @@
 //! prints. They live apart from the charging rules so that a module which only
 //! needs to display a total does not also depend on the loader.
 
-use super::{
-    MICROS_PER_UNIT,
-    charge::{ChargeError, CostBreakdown},
-};
+use super::{ChargeError, MICROS_PER_UNIT, charge::CostBreakdown};
 
 /// A running sum of [`CostBreakdown`] fields.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -33,6 +30,14 @@ pub struct Totals {
 
 impl CostBreakdown {
     /// Adds this breakdown's fields to `totals`.
+    ///
+    /// # Parameters
+    ///
+    /// - `totals`: the running sums to add to.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` once every field has been added.
     ///
     /// # Errors
     ///

@@ -307,11 +307,15 @@ subcommands, separated by what they can cost.
 `mriya-bench validate` reads a campaign file and reports every defect it finds.
 It never contacts a provider and needs no credentials.
 
+<!-- tested-example: bench-validate -->
+
 ```bash
 mriya-bench validate results.jsonl
 ```
 
 A clean file prints one summary line:
+
+<!-- tested-example: bench-validate-output -->
 
 ```plaintext
 example-2026-11-26: 1 runs, 7 phases, 1 campaign header
@@ -325,6 +329,8 @@ support any claim.
 
 `mriya-bench report` prices a validated campaign against a TOML price sheet and
 prints the comparison. It is equally offline.
+
+<!-- tested-example: bench-report -->
 
 ```bash
 mriya-bench report results.jsonl \
@@ -362,6 +368,8 @@ hold:
   is refused.
 - The campaign file declares `max_spend_micros`, `max_attempts`, and
   `max_attempt_nanos`, and its attempts fit inside them.
+
+<!-- tested-example: bench-run -->
 
 ```bash
 MRIYA_BENCH_ENABLE_PAID_RUNS=1 \

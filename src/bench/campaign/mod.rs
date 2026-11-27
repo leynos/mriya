@@ -15,12 +15,15 @@
 //! provider, a credential, or a spend. The production implementations live in
 //! the `mriya-bench` binary and in [`ScalewayDriver`].
 
+mod lock;
 mod plan;
 mod ports;
 mod runner;
 mod scaleway_driver;
+mod scaleway_facts;
 mod scaleway_measure;
 
+pub use lock::CampaignLock;
 pub use plan::{CampaignPlan, PlannedAttempt};
 pub use ports::{
     AttemptFailure,
@@ -36,4 +39,4 @@ pub use ports::{
 pub use runner::run_campaign;
 pub use scaleway_driver::ScalewayDriver;
 #[cfg(test)]
-pub(crate) use scaleway_measure::{redact_remote, shell_escape, tree_size};
+pub(crate) use scaleway_facts::{redact_remote, shell_escape, tree_size};

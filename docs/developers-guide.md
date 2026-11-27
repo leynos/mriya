@@ -428,8 +428,12 @@ without changing behaviour, and each publishes only what its parent needs:
 must be trustworthy are the parts which are easiest to test:
 
 - `record.rs` and `record/pins.rs` define the persisted JSON Lines records.
-  Every quantity is an integer, and there is no field a credential could hide
-  in, so a record cannot leak a secret by construction.
+  Every quantity is an integer. Record construction never copies a credential:
+  the only free-text fields are the failure summaries the harness writes from
+  fixed text and the repository URL, whose HTTP(S) userinfo is stripped before
+  it is stored. A field named `remote` is still free text in a hand-authored
+  file, so the validator treats unknown fields as malformed rather than
+  trusting them.
 - `validate.rs` reads a campaign and reports every defect by name. It never
   stops at the first, because an operator fixing a campaign should see the
   whole list once.

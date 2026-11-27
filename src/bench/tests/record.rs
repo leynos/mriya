@@ -30,6 +30,7 @@ fn a_phase_record_names_its_phase_with_the_protocol_spelling() {
         schema: SCHEMA_VERSION,
         kind: RecordKind::Phase,
         campaign_id: String::from("c"),
+        run_id: String::from("c/run-1"),
         workload_id: String::from("cold-build"),
         repetition: 1,
         phase: PhaseKind::CacheRestore,

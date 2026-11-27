@@ -278,8 +278,8 @@ pub fn cache_from(mount_output: &str, size_output: &str) -> Result<CacheObservat
 ///
 /// A cache that is not mounted is absent; a mounted empty one is `Empty` rather
 /// than `Warm`, so a cold build cannot be mistaken for a warm one.
-pub(super) const fn cache_state(mounted: bool, size_bytes: u64) -> CacheState {
-    match (mounted, size_bytes) {
+pub(super) const fn cache_state(mounted: bool, entries: u64) -> CacheState {
+    match (mounted, entries) {
         (false, _) => CacheState::Absent,
         (true, 0) => CacheState::Empty,
         (true, _) => CacheState::Warm,

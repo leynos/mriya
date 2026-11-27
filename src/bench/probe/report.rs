@@ -26,12 +26,14 @@ pub const PROBE_COMMAND: &str = concat!(
     "printf 'arch=%s\\n' \"$(uname -m)\"; ",
     "printf 'cpu=%s\\n' \"$(getconf _NPROCESSORS_ONLN)\"; ",
     "printf 'mem=%s\\n' \"$(awk '/^MemTotal:/ {print $2 * 1024}' /proc/meminfo)\"; ",
-    "printf 'disk=%s\\n' \"$(df -B1 --output=size \\\"$PWD\\\" | tail -n 1)\"; ",
-    "if mountpoint -q \\\"${MRIYA_SYNC_VOLUME_MOUNT_PATH:-/mriya}\\\" 2>/dev/null; then ",
+    "printf 'disk=%s\\n' \"$(df -B1 --output=size \"$PWD\" | tail -n 1)\"; ",
+    "cache=\"${MRIYA_SYNC_VOLUME_MOUNT_PATH:-/mriya}\"; ",
+    "if mountpoint -q \"$cache\" 2>/dev/null; then ",
     "printf 'cache_mounted=1\\n'; ",
-    "printf 'cache_bytes=%s\\n' \"$(df -B1 --output=used ",
-    "\\\"${MRIYA_SYNC_VOLUME_MOUNT_PATH:-/mriya}\\\" | tail -n 1)\"; ",
-    "else printf 'cache_mounted=0\\ncache_bytes=0\\n'; fi; ",
+    "printf 'cache_bytes=%s\\n' \"$(du -sb \"$cache\" | cut -f1)\"; ",
+    "printf 'cache_total_bytes=%s\\n' \"$(df -B1 --output=size \"$cache\" | tail -n 1)\"; ",
+    "printf 'cache_entries=%s\\n' \"$(find \"$cache\" -mindepth 1 -maxdepth 1 | wc -l)\"; ",
+    "else printf 'cache_mounted=0\\ncache_bytes=0\\ncache_total_bytes=0\\ncache_entries=0\\n'; fi; ",
     "printf 'rustc=%s\\n' \"$(rustc --version 2>/dev/null || echo unknown)\"; ",
     "printf 'cargo=%s\\n' \"$(cargo --version 2>/dev/null || echo unknown)\""
 );
@@ -51,6 +53,14 @@ pub struct ProbeReport {
     pub cache_mounted: bool,
     /// Bytes the cache held.
     pub cache_bytes: u64,
+    /// Total size of the cache filesystem, in bytes.
+    pub cache_total_bytes: u64,
+    /// Entries directly under the cache mount point.
+    ///
+    /// Used instead of the used-block count to decide whether the cache holds
+    /// a previous attempt's artefacts: a freshly formatted filesystem reports
+    /// positive usage without holding any.
+    pub cache_entries: u64,
     /// The compiler's version banner, or `unknown`.
     pub rustc: String,
     /// The package manager's version banner, or `unknown`.
@@ -75,7 +85,7 @@ impl ProbeReport {
     #[must_use]
     pub const fn cache(&self) -> CacheObservation {
         CacheObservation {
-            state: cache_state(self.cache_mounted, self.cache_bytes),
+            state: cache_state(self.cache_mounted, self.cache_entries),
             size_bytes: if self.cache_mounted {
                 self.cache_bytes
             } else {
@@ -99,10 +109,11 @@ impl ProbeReport {
 /// ```
 /// use mriya::bench::probe::parse_probe_report;
 ///
-/// let report = parse_probe_report(
-///     "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\ncache_mounted=0\ncache_bytes=0\n\
-///      rustc=rustc 1.93.0\ncargo=cargo 1.93.0\n",
-/// )?;
+/// let report = parse_probe_report(concat!(
+///     "arch=x86_64\ncpu=2\nmem=1024\ndisk=2048\n",
+///     "cache_mounted=0\ncache_bytes=0\ncache_total_bytes=0\ncache_entries=0\n",
+///     "rustc=rustc 1.93.0\ncargo=cargo 1.93.0\n",
+/// ))?;
 /// assert_eq!(report.cpu_count, 2);
 /// assert_eq!(report.rustc, "rustc 1.93.0");
 /// # Ok::<(), mriya::bench::probe::ProbeError>(())
@@ -116,6 +127,11 @@ pub fn parse_probe_report(output: &str) -> Result<ProbeReport, ProbeError> {
         disk_bytes: parse_unsigned("disk", facts.required("disk")?)?,
         cache_mounted: facts.required("cache_mounted")?.trim() == "1",
         cache_bytes: parse_unsigned("cache_bytes", facts.required("cache_bytes")?)?,
+        cache_total_bytes: parse_unsigned(
+            "cache_total_bytes",
+            facts.required("cache_total_bytes")?,
+        )?,
+        cache_entries: parse_unsigned("cache_entries", facts.required("cache_entries")?)?,
         rustc: facts.required("rustc")?.to_owned(),
         cargo: facts.required("cargo")?.to_owned(),
     })

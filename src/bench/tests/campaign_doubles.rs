@@ -75,16 +75,19 @@ impl CampaignDriver for ScriptedDriver {
 
     fn run_attempt(
         &self,
-        _campaign_id: &str,
+        campaign_id: &str,
         attempt: &PlannedAttempt,
     ) -> Result<AttemptRecords, AttemptFailure> {
         self.note(format!("run:{}", attempt.workload_id));
-        let run = self
+        let mut run = self
             .runs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pop_front()
             .unwrap_or_else(|| Err(AttemptFailure::without_resources("no scripted run left")))?;
+        // The scripted record belongs to whichever campaign asked for it.
+        run.campaign_id = campaign_id.to_owned();
+        run.run_id = format!("{campaign_id}/run");
         Ok(AttemptRecords {
             run,
             phases: Vec::new(),
@@ -130,9 +133,13 @@ impl RecordSink for FailingSink {
 }
 
 /// Builds a plan with `attempts` attempts and generous limits.
+///
+/// The campaign identifier includes the process id, so two tests running in
+/// parallel — nextest runs each in its own process — do not contend for the
+/// campaign lock.
 pub fn plan(attempts: usize) -> CampaignPlan {
     CampaignPlan {
-        campaign_id: String::from("example-2026-11-26"),
+        campaign_id: format!("test-campaign-{}", std::process::id()),
         limits: CampaignLimits {
             max_spend_micros: 1_000_000,
             max_attempts: 10,

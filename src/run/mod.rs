@@ -346,7 +346,26 @@ where
             return Ok(None);
         };
         match self.syncer.run_remote_raw(networking, command) {
-            Ok(output) => Ok(Some(output.stdout)),
+            // A hook that exits non-zero has not done its job: its output may
+            // be a partial probe or no probe at all, and a benchmark must not
+            // record a measurement the hook did not make.
+            Ok(output) if output.exit_code == Some(0) => Ok(Some(output.stdout)),
+            Ok(output) => {
+                let status = output
+                    .exit_code
+                    .map_or_else(|| String::from("unknown"), |code| code.to_string());
+                let err = SyncError::CommandFailure {
+                    program: self.syncer.config().ssh_bin.clone(),
+                    status: output.exit_code,
+                    status_text: status,
+                    stderr: output.stderr,
+                };
+                let message = self.destroy_with_note(handle, &err).await;
+                Err(RunError::Remote {
+                    message,
+                    source: err,
+                })
+            }
             Err(err) => {
                 let message = self.destroy_with_note(handle, &err).await;
                 Err(RunError::Remote {

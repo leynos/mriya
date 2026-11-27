@@ -7,6 +7,7 @@
 //! agreeing with itself.
 
 mod billing;
+mod billing_sheet;
 mod campaign;
 mod campaign_doubles;
 mod driver;

@@ -14,10 +14,12 @@
 //! of the same record cannot disagree about the price.
 
 mod charge;
+mod error;
 mod money;
 mod sheet;
 
-pub use charge::{ChargeError, CostBreakdown, RetainedStorage, Usage, charge};
+pub use charge::{CostBreakdown, RetainedStorage, Usage, charge};
+pub use error::ChargeError;
 pub use money::{Totals, figures_agree, format_currency, split_units};
 pub use sheet::{
     BYTES_PER_GB,

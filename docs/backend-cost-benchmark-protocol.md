@@ -29,7 +29,7 @@ inherit from the cache.
 | ------------------ | --------------------------------------------------------------- | ------------------------------------------------- |
 | `cold-build`       | Full dependency and workspace compile with an empty build cache | Workspace build with the target directory cleared |
 | `warm-incremental` | Recompile after one source file changes                         | The same build with one touched source            |
-| `link-heavy`       | Linking and final artefact production                           | A build whose output is dominated by linking      |
+| `link-heavy`       | Linking and final artefact production                           | A build forced to relink every test binary        |
 | `test-execution`   | Representative test run over an already warm build              | The repository's own test command                 |
 
 Every workload record names the exact command vector it ran. A campaign that
@@ -57,6 +57,7 @@ cargo build --workspace --all-targets --all-features
 ```sh
 # link-heavy
 export CARGO_BUILD_JOBS=8
+touch src/lib.rs
 cargo test --workspace --all-features --no-run
 ```
 
@@ -174,9 +175,15 @@ A price sheet declares, per provider and product:
 Chargeable lifetime is computed with integer ceiling arithmetic: billable units
 are the ceiling of the measured lifetime over the granularity, and the charged
 lifetime is that product floored at the minimum period. No floating-point value
-enters the computation. A record may carry the chargeable lifetime its writer
-already computed; the calculator re-rounds it, which is idempotent, so a record
-that applied a minimum cannot be rounded down again.
+enters the computation.
+
+The calculator applies that rule exactly once. A record carries the measured
+lifetime and, separately, the chargeable lifetime its writer computed. When the
+two agree the writer computed no chargeable figure, and the calculator applies
+the provider's rules to the measured lifetime. When the chargeable figure is
+longer, it is already billed and is priced as it stands: applying a granularity
+to it again could round a minimum that is not a multiple of the granularity
+(for example 17 seconds at a 4-second granularity) up to 20.
 
 ### 6.1 Published rules used by the example sheet
 

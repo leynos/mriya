@@ -121,12 +121,15 @@ fn report_incoherence(line: usize, run: &RunRecord, complaints: &mut Vec<Complai
         }),
         (WorkloadClass::Gpu, Some(gpu)) => {
             report_gpu_pins(line, gpu, complaints);
-            if !gpu.correctness_passed {
+            // A failed attempt must still be priced, so only a *completed* GPU
+            // attempt is held to the correctness check. Its failure is the
+            // record's outcome, not a defect in the record.
+            if matches!(run.outcome, RunOutcome::Completed { .. }) && !gpu.correctness_passed {
                 complaints.push(Complaint::Incoherent {
                     line,
                     message: String::from(
-                        "a GPU experiment without a passing correctness check is a failure, not \
-                         a ranking candidate",
+                        "a completed GPU experiment without a passing correctness check is a \
+                         failure, not a ranking candidate",
                     ),
                 });
             }

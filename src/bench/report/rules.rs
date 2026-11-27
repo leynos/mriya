@@ -5,7 +5,7 @@
 //! whether two numbers may be printed side by side, so they live together and
 //! are tested as policy rather than as formatting.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::WorkloadResult;
 use crate::bench::{
@@ -26,11 +26,26 @@ pub(super) struct DifferenceNotes<'a> {
 pub(super) fn note_differences(
     workload_id: &str,
     results: &[WorkloadResult],
-    campaign: &Campaign,
+    attempts: &[&RunRecord],
     notes: &mut DifferenceNotes<'_>,
 ) {
     note_cache_differences(workload_id, results, notes.capability);
-    note_comparability(campaign, workload_id, notes.comparability);
+    note_comparability(attempts, workload_id, notes.comparability);
+}
+
+/// Groups a campaign's run records by the workload they belong to.
+///
+/// Built once and passed to each workload's rule, so the report does not scan
+/// every run once per workload.
+pub(super) fn attempts_by_workload(campaign: &Campaign) -> BTreeMap<&str, Vec<&RunRecord>> {
+    let mut grouped: BTreeMap<&str, Vec<&RunRecord>> = BTreeMap::new();
+    for (_, run) in &campaign.runs {
+        grouped
+            .entry(run.workload_id.as_str())
+            .or_default()
+            .push(run);
+    }
+    grouped
 }
 
 /// The completed repetitions the protocol requires before a claim is made.
@@ -74,13 +89,7 @@ fn note_cache_differences(
 }
 
 /// Reports every way the group's attempts are not equal work.
-fn note_comparability(campaign: &Campaign, workload_id: &str, problems: &mut Vec<String>) {
-    let attempts: Vec<&RunRecord> = campaign
-        .runs
-        .iter()
-        .map(|(_, run)| run)
-        .filter(|run| run.workload_id == workload_id)
-        .collect();
+fn note_comparability(attempts: &[&RunRecord], workload_id: &str, problems: &mut Vec<String>) {
     let classes: BTreeSet<bool> = attempts
         .iter()
         .map(|run| run.class == WorkloadClass::Gpu)
@@ -189,12 +198,31 @@ pub fn campaign_subscription_micros(
     campaign: &Campaign,
     sheet: &PriceSheet,
 ) -> Result<u64, String> {
+    Ok(provider_subscriptions(campaign, sheet)?
+        .values()
+        .copied()
+        .sum())
+}
+
+/// Returns each provider's own subscription charge, in the sheet's currency.
+///
+/// One entry per provider that has a plan and at least one run, so a caller can
+/// attribute each plan to the provider that charges it.
+///
+/// # Errors
+///
+/// Returns a message when a provider quotes in a currency the sheet cannot
+/// convert.
+pub fn provider_subscriptions(
+    campaign: &Campaign,
+    sheet: &PriceSheet,
+) -> Result<BTreeMap<String, u64>, String> {
     let providers: BTreeSet<&str> = campaign
         .runs
         .iter()
         .map(|(_, run)| run.provider.provider.as_str())
         .collect();
-    let mut total = 0_u64;
+    let mut charges = BTreeMap::new();
     for provider in providers {
         let Some(rules) = sheet.providers.get(provider) else {
             continue;
@@ -205,7 +233,7 @@ pub fn campaign_subscription_micros(
         let rate = sheet.rate(&rules.currency).map_err(|err| err.to_string())?;
         let converted =
             convert_micros(plan.monthly_price_micros, rate).map_err(|err| err.to_string())?;
-        total = total.saturating_add(converted);
+        charges.insert(provider.to_owned(), converted);
     }
-    Ok(total)
+    Ok(charges)
 }

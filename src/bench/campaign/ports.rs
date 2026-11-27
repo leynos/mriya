@@ -164,7 +164,10 @@ impl<W: std::io::Write> JsonLinesSink<W> {
 impl<W: std::io::Write> RecordSink for JsonLinesSink<W> {
     fn append(&mut self, record: &Record) -> Result<(), String> {
         let line = to_line(record).map_err(|err| err.to_string())?;
-        writeln!(self.writer, "{line}").map_err(|err| err.to_string())
+        writeln!(self.writer, "{line}").map_err(|err| err.to_string())?;
+        // Flush every record: an interrupted campaign must leave a readable
+        // prefix, and a buffer that a dropped writer silently loses would not.
+        self.writer.flush().map_err(|err| err.to_string())
     }
 
     fn flush(&mut self) -> Result<(), String> { self.writer.flush().map_err(|err| err.to_string()) }
@@ -182,6 +185,11 @@ pub enum CampaignError {
     },
     /// The plan itself is not usable.
     InvalidPlan(String),
+    /// Another process is already running this campaign.
+    CampaignAlreadyRunning {
+        /// Path of the lock file that is held.
+        path: String,
+    },
     /// The pre-sweep could not be completed.
     SweepFailed(String),
     /// The pre-sweep found resources from an earlier campaign.
@@ -207,6 +215,11 @@ impl fmt::Display for CampaignError {
                 "paid benchmark runs are disabled; set {variable}={value} to enable them"
             ),
             Self::InvalidPlan(message) => write!(formatter, "campaign plan is invalid: {message}"),
+            Self::CampaignAlreadyRunning { path } => write!(
+                formatter,
+                "this campaign is already running; the lock {path} is held. If no other run is \
+                 active, move that file aside and retry"
+            ),
             Self::SweepFailed(message) => {
                 write!(formatter, "pre-sweep could not be completed: {message}")
             }

@@ -22,9 +22,10 @@ use std::{
 mod build;
 mod render;
 mod rules;
+mod subscription;
 
 pub use render::{format_duration, render};
-pub use rules::campaign_subscription_micros;
+pub use rules::{campaign_subscription_micros, provider_subscriptions};
 
 use super::{
     billing::{PriceSheet, Totals},
@@ -111,8 +112,18 @@ impl WorkloadResult {
             return None;
         }
         self.completed_marginal_micros
-            .checked_add(u64::from(self.completed).saturating_sub(1))
-            .map(|value| value.checked_div(u64::from(self.completed)).unwrap_or(0))
+            .checked_div(u64::from(self.completed))
+            .map(|quotient| {
+                let remainder = self
+                    .completed_marginal_micros
+                    .checked_rem(u64::from(self.completed))
+                    .unwrap_or(0);
+                if remainder == 0 {
+                    quotient
+                } else {
+                    quotient.saturating_add(1)
+                }
+            })
     }
 
     /// Returns the least remote-execution duration, or `None` when nothing

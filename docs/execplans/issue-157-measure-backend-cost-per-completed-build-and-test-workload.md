@@ -239,7 +239,13 @@ from `make test` or CI.
 - [x] 2026-11-27: `make check-fmt`, `make lint`, `make markdownlint` and
   `make spelling` pass.
 - [ ] `make test` passes on the final tree.
-- [ ] CodeRabbit review cleared and draft pull request opened.
+- [x] 2026-11-27: First CodeRabbit review produced 44 findings (17 major). All
+  were addressed: a campaign lock, a guest-side lifetime bound, per-attempt
+  record identity, retained-storage pricing, per-provider subscription
+  attribution, separate groups per cache class, a zero-exchange-rate refusal, a
+  single rounding of a billed lifetime, a bounded hook contract, and the
+  documentation and test corrections the review named.
+- [ ] CodeRabbit re-review cleared and draft pull request opened.
 
 ## Surprises & Discoveries
 
@@ -315,10 +321,38 @@ from `make test` or CI.
 
 ## Outcomes & Retrospective
 
-Not yet complete.
+Shipped: the protocol, the versioned JSON Lines records, the offline validator,
+the integer billing calculator with a source-cited example sheet, the
+observation seams, the probe parsers, the gated campaign harness, the offline
+equal-work report, the `mriya-bench` binary, the Make routes, and the user,
+developer, design, and roadmap documentation.
+
+Deferred: no live campaign was run, because it spends money and the operator's
+opt-in is deliberately not something an agent can give itself. The Scaleway
+adapter therefore satisfies the protocol in code, and its conformance claim
+stays unproven until an operator runs the example campaign with a real price
+sheet. The storage-dependent parts of the checklist also wait on #153–#155.
+
+Assumptions that survived: a provider states its granularity and minimum period
+independently; a plan's monthly price is a campaign-level cost; and a benchmark
+record can be validated and priced without a network. Assumptions corrected
+during the work: a failed attempt is a cleanup doubt even when the failure is
+not in the teardown; the campaign's sweep tag must be the tag its resources
+carry; and a record's chargeable lifetime, not its wall-clock lifetime, is what
+the provider bills.
+
+Residual risk: the paid driver is exercised only through doubles, because a
+real run needs credentials and money. Its safety policy is tested; its provider
+calls are the same ones `mriya run` already uses. The first review also showed
+that a plan's start allowance on Boat is a rate limit rather than a period
+total; the example sheet says so and charges every start, which overstates
+Boat's cost rather than understating it.
 
 ## Revision note
 
 Initial draft created 26 November 2026 from issue #157 and its Coding Plan,
 after verifying the Scaleway, Hetzner, Boat and Ubicloud billing and capability
 documentation.
+
+Revision 2 (27 November 2026) records the implemented milestones, the review
+findings and their remediation, the module splits, and the gate evidence.

@@ -10,56 +10,16 @@ use rstest::rstest;
 
 use super::{
     super::{
-        record::{CacheState, Record, RunOutcome, RunRecord, WorkloadClass, parse_line},
+        record::{CacheState, RunOutcome, WorkloadClass},
         report::{ReportError, build_report, render},
-        validate::{Campaign, validate_str},
+        validate::Campaign,
     },
-    fixture,
-    support::example_sheet,
+    support::{campaign_with, example_campaign_records, example_sheet, run_with},
 };
-
-/// Returns the fixture's header and run lines as a campaign.
-fn example_campaign() -> Campaign {
-    validate_str(&fixture("valid-campaign.jsonl")).expect("the fixture is valid")
-}
-
-/// Builds a campaign from a header and the runs given.
-fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
-    let header_line = fixture("valid-campaign.jsonl")
-        .lines()
-        .next()
-        .expect("the fixture has a header")
-        .to_owned();
-    let mut text = header_line;
-    text.push('\n');
-    for run in runs {
-        let record = Record::Run(Box::new(run));
-        text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
-        text.push('\n');
-    }
-    validate_str(&text).expect("the constructed campaign is valid")
-}
-
-/// Returns the fixture's run record, adjusted by `change`.
-fn run_with(change: impl FnOnce(&mut RunRecord)) -> RunRecord {
-    let mut run = match parse_line(
-        fixture("valid-campaign.jsonl")
-            .lines()
-            .nth(1)
-            .expect("the fixture has a run line"),
-    )
-    .expect("the fixture's run line parses")
-    {
-        Record::Run(run) => *run,
-        other => panic!("expected a run record, got {other:?}"),
-    };
-    change(&mut run);
-    run
-}
 
 #[test]
 fn the_fixture_is_priced_against_the_example_sheet() {
-    let report = build_report(&example_campaign(), &example_sheet())
+    let report = build_report(&example_campaign_records(), &example_sheet())
         .expect("the fixture should be priceable");
     assert_eq!(report.campaign_id, "example-2026-11-26");
     assert_eq!(report.currency, "EUR");
@@ -77,7 +37,7 @@ fn the_fixture_is_priced_against_the_example_sheet() {
 
 #[test]
 fn the_report_renders_the_cost_per_completed_gate() {
-    let report = build_report(&example_campaign(), &example_sheet()).expect("priced");
+    let report = build_report(&example_campaign_records(), &example_sheet()).expect("priced");
     let rendered = render(&report);
     assert!(
         rendered.contains("campaign example-2026-11-26"),
@@ -210,7 +170,7 @@ fn a_run_charged_less_than_its_measurement_is_refused() {
     // directly: the report must refuse it too, because a reader may price a
     // file that was produced by an older or a buggy writer.
     let campaign = Campaign {
-        header: example_campaign().header,
+        header: example_campaign_records().header,
         runs: vec![(2, run)],
         phases: Vec::new(),
     };
@@ -288,10 +248,10 @@ fn a_campaign_with_a_plan_reports_both_figures() {
 }
 
 #[test]
-fn a_group_whose_repetitions_used_different_caches_is_flagged() {
-    // Two attempts on the same provider and product, one cold and one warm:
-    // the group has a single provider, so a report that keyed the note only on
-    // the first attempt's class would hide the difference.
+fn attempts_with_different_cache_classes_are_reported_separately() {
+    // Cold and warm attempts on one provider are different experiments: they
+    // get their own groups, so neither the per-gate cost nor the timing summary
+    // averages a cache hit with a cold build.
     let cold = run_with(|run| {
         run.cache.state = CacheState::Empty;
         run.cache.mounted = true;
@@ -304,6 +264,8 @@ fn a_group_whose_repetitions_used_different_caches_is_flagged() {
         run.repetition = 2;
     });
     let report = build_report(&campaign_with(vec![cold, warm]), &example_sheet()).expect("priced");
+    let results = report.workloads.get("cold-build").expect("the workload");
+    assert_eq!(results.len(), 2, "each cache class is its own group");
     assert!(
         report
             .capability_notes
@@ -311,5 +273,123 @@ fn a_group_whose_repetitions_used_different_caches_is_flagged() {
             .any(|note| note.contains("empty") && note.contains("warm")),
         "the note names both classes in the protocol's spelling: {:?}",
         report.capability_notes
+    );
+}
+
+#[test]
+fn a_warm_up_is_costed_but_excluded_from_the_per_gate_figure() {
+    let mut warm_up = run_with(|run| {
+        run.role = super::super::record::RunRole::WarmUp;
+        run.repetition = 1;
+    });
+    warm_up.lifetime.total_nanos = 3_600_000_000_000;
+    warm_up.lifetime.chargeable_nanos = 3_600_000_000_000;
+    let timed = run_with(|run| {
+        run.repetition = 2;
+        run.lifetime.total_nanos = 60_000_000_000;
+        run.lifetime.chargeable_nanos = 3_600_000_000_000;
+    });
+    let report =
+        build_report(&campaign_with(vec![warm_up, timed]), &example_sheet()).expect("priced");
+    let results = report.workloads.get("cold-build").expect("the workload");
+    let total_warm_up: u64 = results.iter().map(|r| r.warm_up_marginal_micros).sum();
+    assert!(total_warm_up > 0, "the warm-up is costed");
+    assert!(
+        results.iter().all(|r| r.completed == 0 || r.completed == 1),
+        "the warm-up is not counted as a timed gate"
+    );
+    assert!(
+        render(&report).contains("warm-up cost"),
+        "{}",
+        render(&report)
+    );
+}
+
+#[test]
+fn the_execution_summary_uses_the_remote_execution_phase() {
+    let run = run_with(|_| {});
+    let run_id = run.run_id.clone();
+    let mut campaign = campaign_with(vec![run]);
+    campaign.phases.push((
+        3,
+        super::super::record::PhaseRecord {
+            schema: super::super::record::SCHEMA_VERSION,
+            kind: super::super::record::RecordKind::Phase,
+            campaign_id: campaign.header.campaign_id.clone(),
+            run_id: run_id.clone(),
+            workload_id: String::from("cold-build"),
+            repetition: 1,
+            phase: super::super::record::PhaseKind::RemoteExecution,
+            segment: 1,
+            duration_nanos: 30_000_000_000,
+            status: super::super::record::PhaseStatus::Ok,
+        },
+    ));
+    let report = build_report(&campaign, &example_sheet()).expect("priced");
+    let result = report
+        .workloads
+        .get("cold-build")
+        .and_then(|results| results.first())
+        .expect("one result");
+    assert_eq!(result.minimum_execution_nanos(), Some(30_000_000_000));
+}
+
+#[test]
+fn retained_storage_is_priced_into_the_campaign_total() {
+    let run = run_with(|run| {
+        run.retained = vec![super::super::record::RetainedStorageRecord {
+            class: String::from("standard-one-zone"),
+            bytes: 10 * 1_000_000_000,
+            held_nanos: 3_600_000_000_000,
+        }];
+    });
+    let without =
+        build_report(&campaign_with(vec![run_with(|_| {})]), &example_sheet()).expect("priced");
+    let with = build_report(&campaign_with(vec![run]), &example_sheet()).expect("priced");
+    assert!(
+        with.totals.storage_micros > without.totals.storage_micros,
+        "retained storage must reach the campaign total"
+    );
+}
+
+#[test]
+fn each_providers_subscription_is_attributed_only_to_that_provider() {
+    // Boat has a plan; Scaleway does not. A group on Scaleway must not be
+    // charged any of Boat's plan, and the shares must add back to the total.
+    let boat = run_with(|run| {
+        run.provider.provider = String::from("boat");
+        run.provider.product = String::from("default");
+        run.cache.state = CacheState::Absent;
+        run.cache.mounted = false;
+        run.workload_id = String::from("cold-build");
+        run.repetition = 1;
+    });
+    let scaleway = run_with(|run| {
+        run.provider.provider = String::from("scaleway");
+        run.provider.product = String::from("DEV1-S");
+        run.workload_id = String::from("warm-incremental");
+        run.command = vec![String::from("cargo"), String::from("build")];
+        run.repetition = 1;
+    });
+    let report =
+        build_report(&campaign_with(vec![boat, scaleway]), &example_sheet()).expect("priced");
+    let boat_share: u64 = report
+        .workloads
+        .values()
+        .flatten()
+        .filter(|r| r.provider == "boat")
+        .map(|r| r.subscription_micros)
+        .sum();
+    let scaleway_share: u64 = report
+        .workloads
+        .values()
+        .flatten()
+        .filter(|r| r.provider == "scaleway")
+        .map(|r| r.subscription_micros)
+        .sum();
+    assert_eq!(scaleway_share, 0, "Scaleway has no plan");
+    assert_eq!(
+        boat_share, report.subscription_micros,
+        "Boat's whole plan is attributed to Boat"
     );
 }

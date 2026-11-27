@@ -13,9 +13,8 @@
 //! single gate passes the whole price. That keeps the arithmetic local and
 //! auditable.
 
-use std::fmt;
-
 use super::{
+    ChargeError,
     PlanRule,
     PriceSheet,
     PriceSheetError,
@@ -38,6 +37,13 @@ pub struct Usage {
     pub product: String,
     /// Measured lifetime, before the provider's granularity and minimum apply.
     pub measured_nanos: u64,
+    /// Lifetime the writer already computed with the provider's rules.
+    ///
+    /// A record may carry the billed lifetime its writer computed. Passing it
+    /// here prices that figure directly instead of rounding it again: a
+    /// 17-second minimum at a 4-second granularity is 17 seconds, and rounding
+    /// 17 again would wrongly produce 20.
+    pub billed_nanos: Option<u64>,
     /// Compute time the plan's included allowance had left before this gate.
     ///
     /// Zero when the provider has no plan, or when the allowance is exhausted.
@@ -59,6 +65,17 @@ pub struct Usage {
 impl Usage {
     /// Starts a usage description for one product.
     ///
+    /// # Parameters
+    ///
+    /// - `provider`: the provider name the price sheet is keyed by.
+    /// - `product`: the product name within that provider.
+    /// - `measured_nanos`: the attempt's measured lifetime.
+    ///
+    /// # Returns
+    ///
+    /// A usage with no plan allowance, no starts used, no subscription share
+    /// and no retained storage.
+    ///
     /// # Examples
     ///
     /// ```
@@ -78,6 +95,7 @@ impl Usage {
             provider: provider.into(),
             product: product.into(),
             measured_nanos,
+            billed_nanos: None,
             plan_allowance_remaining_nanos: 0,
             plan_starts_used: 0,
             subscription_share_micros: 0,
@@ -85,7 +103,30 @@ impl Usage {
         }
     }
 
+    /// Declares the lifetime the writer already billed.
+    ///
+    /// # Parameters
+    ///
+    /// - `billed_nanos`: the provider's chargeable lifetime for this gate.
+    ///
+    /// # Returns
+    ///
+    /// The usage, with the billed lifetime set.
+    #[must_use]
+    pub const fn with_billed_lifetime(mut self, billed_nanos: u64) -> Self {
+        self.billed_nanos = Some(billed_nanos);
+        self
+    }
+
     /// Declares how much of the plan's included compute the gate may absorb.
+    ///
+    /// # Parameters
+    ///
+    /// - `remaining_nanos`: included compute still available this period.
+    ///
+    /// # Returns
+    ///
+    /// The usage, with the allowance set.
     #[must_use]
     pub const fn with_plan_allowance(mut self, remaining_nanos: u64) -> Self {
         self.plan_allowance_remaining_nanos = remaining_nanos;
@@ -107,6 +148,14 @@ impl Usage {
     }
 
     /// Declares a retained-storage charge held for this gate's window.
+    ///
+    /// # Parameters
+    ///
+    /// - `retained`: the storage classes, sizes and hold windows.
+    ///
+    /// # Returns
+    ///
+    /// The usage, with the retained storage set.
     #[must_use]
     pub fn with_retained(mut self, retained: Vec<RetainedStorage>) -> Self {
         self.retained = retained;
@@ -155,41 +204,18 @@ pub struct CostBreakdown {
     pub total_account_micros: u64,
 }
 
-/// Why a gate could not be priced.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ChargeError {
-    /// A provider, product or storage class named by the record is absent.
-    MissingRule(PriceSheetError),
-    /// A billing granularity is zero, so no billable unit exists.
-    ZeroGranularity,
-    /// Arithmetic exceeded a 64-bit count.
-    Overflow,
-}
-
-impl fmt::Display for ChargeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingRule(source) => write!(formatter, "{source}"),
-            Self::ZeroGranularity => {
-                formatter.write_str("a price rule declares a billing granularity of zero seconds")
-            }
-            Self::Overflow => formatter.write_str("price arithmetic exceeded 64-bit range"),
-        }
-    }
-}
-
-impl std::error::Error for ChargeError {}
-
-impl From<PriceSheetError> for ChargeError {
-    fn from(source: PriceSheetError) -> Self {
-        match source {
-            PriceSheetError::ZeroGranularity => Self::ZeroGranularity,
-            other => Self::MissingRule(other),
-        }
-    }
-}
-
 /// Prices one gate against a sheet.
+///
+/// # Parameters
+///
+/// - `sheet`: the dated rules and currency conversions to price with.
+/// - `usage`: what the gate consumed on one provider.
+///
+/// # Returns
+///
+/// The billed lifetime, the marginal cost of one more gate, and the
+/// total-account cost including the caller's subscription share, all in the
+/// sheet's currency.
 ///
 /// The gate's compute time is charged only for the part the plan does not
 /// absorb. A start charge applies only to a resource started beyond the plan's
@@ -233,11 +259,15 @@ pub fn charge(sheet: &PriceSheet, usage: &Usage) -> Result<CostBreakdown, Charge
     let provider = rules_for(sheet, &usage.provider)?;
     let product = product_for(provider, usage)?;
     let rate = sheet.rate(&provider.currency)?;
-    let chargeable = chargeable_nanos(
-        usage.measured_nanos,
-        product.granularity_seconds,
-        product.minimum_seconds,
-    )?;
+    let chargeable = match usage.billed_nanos {
+        Some(billed) if billed >= usage.measured_nanos => billed,
+        Some(_) => return Err(ChargeError::BilledBelowMeasured),
+        None => chargeable_nanos(
+            usage.measured_nanos,
+            product.granularity_seconds,
+            product.minimum_seconds,
+        )?,
+    };
     let absorbed_nanos = chargeable.min(usage.plan_allowance_remaining_nanos);
     let billable_nanos = chargeable.saturating_sub(absorbed_nanos);
 

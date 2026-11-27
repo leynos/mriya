@@ -21,7 +21,8 @@ use super::super::{
         StorageRule,
         load_price_sheet,
     },
-    record::{Record, RunRecord},
+    record::{Record, RunRecord, parse_line},
+    validate::{Campaign, validate_str},
 };
 
 /// Reads a fixture from the benchmark fixtures directory.
@@ -171,4 +172,43 @@ pub fn example_campaign() -> String {
     directory
         .read_to_string("benchmarks/campaign.example.toml")
         .expect("the example campaign should read")
+}
+
+/// Returns the fixture's header and run lines as a campaign.
+pub fn example_campaign_records() -> Campaign {
+    validate_str(&fixture("valid-campaign.jsonl")).expect("the fixture is valid")
+}
+
+/// Builds a campaign from a header and the runs given.
+pub fn campaign_with(runs: Vec<RunRecord>) -> Campaign {
+    let header_line = fixture("valid-campaign.jsonl")
+        .lines()
+        .next()
+        .expect("the fixture has a header")
+        .to_owned();
+    let mut text = header_line;
+    text.push('\n');
+    for run in runs {
+        let record = Record::Run(Box::new(run));
+        text.push_str(&super::super::record::to_line(&record).expect("the run serializes"));
+        text.push('\n');
+    }
+    validate_str(&text).expect("the constructed campaign is valid")
+}
+
+/// Returns the fixture's run record, adjusted by `change`.
+pub fn run_with(change: impl FnOnce(&mut RunRecord)) -> RunRecord {
+    let mut run = match parse_line(
+        fixture("valid-campaign.jsonl")
+            .lines()
+            .nth(1)
+            .expect("the fixture has a run line"),
+    )
+    .expect("the fixture's run line parses")
+    {
+        Record::Run(run) => *run,
+        other => panic!("expected a run record, got {other:?}"),
+    };
+    change(&mut run);
+    run
 }

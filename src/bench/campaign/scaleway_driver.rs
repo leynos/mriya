@@ -18,7 +18,7 @@ use super::{
     PlannedAttempt,
     SweepReport,
     TeardownReport,
-    scaleway_measure::{intended_workers, outcome_of, phase_records, toolchain_pin, tree_pin},
+    scaleway_facts::{intended_workers, outcome_of, phase_records, run_identifier, toolchain_pin},
 };
 use crate::{
     ScalewayConfig,
@@ -31,6 +31,7 @@ use crate::{
             Lifetime,
             ProviderProduct,
             RecordKind,
+            RetainedStorageRecord,
             RunRecord,
             SCHEMA_VERSION,
             WorkloadClass,
@@ -148,6 +149,7 @@ impl CampaignDriver for ScalewayDriver {
             .request(campaign_id, attempt)
             .map_err(super::ports::AttemptFailure::without_resources)?;
         let measured = self.measure(campaign_id, attempt, &request)?;
+        let run_id = run_identifier(campaign_id, attempt);
         // The run completed and its teardown was verified, so a probe that
         // cannot be read leaves nothing behind.
         let probe = parse_probe_report(&measured.probe_stdout).map_err(|err| {
@@ -160,12 +162,12 @@ impl CampaignDriver for ScalewayDriver {
                 schema: SCHEMA_VERSION,
                 kind: RecordKind::Run,
                 campaign_id: campaign_id.to_owned(),
+                run_id: run_id.clone(),
                 workload_id: attempt.workload_id.clone(),
                 command: measured.command.clone(),
                 role: attempt.role,
                 class: WorkloadClass::Cpu,
-                tree: tree_pin(&measured.source)
-                    .map_err(super::ports::AttemptFailure::without_resources)?,
+                tree: measured.tree.clone(),
                 toolchain: toolchain_pin(&probe),
                 provider: ProviderProduct {
                     provider: String::from("scaleway"),
@@ -190,8 +192,9 @@ impl CampaignDriver for ScalewayDriver {
                 outcome: outcome_of(&measured.output),
                 gpu: None,
                 repetition: attempt.repetition,
+                retained: retained_storage(&probe, measured.total_nanos),
             },
-            phases: phase_records(campaign_id, attempt, &measured.observations),
+            phases: phase_records(campaign_id, &run_id, attempt, &measured.observations),
             resource_ids: measured.resource_ids,
         })
     }
@@ -209,4 +212,24 @@ impl CampaignDriver for ScalewayDriver {
         // recorded as a residual by the harness instead.
         Ok(TeardownReport::verified())
     }
+}
+
+/// Returns the storage the attempt holds after it ends.
+///
+/// A mounted cache volume survives the instance, so its capacity is charged for
+/// the attempt's own lifetime. The class name must match the price sheet; a
+/// sheet that does not describe it fails the report rather than pricing it at
+/// zero, which is the safe direction.
+fn retained_storage(
+    probe: &crate::bench::probe::ProbeReport,
+    held_nanos: u64,
+) -> Vec<RetainedStorageRecord> {
+    if !probe.cache_mounted || probe.cache_total_bytes == 0 {
+        return Vec::new();
+    }
+    vec![RetainedStorageRecord {
+        class: String::from("standard-one-zone"),
+        bytes: probe.cache_total_bytes,
+        held_nanos,
+    }]
 }

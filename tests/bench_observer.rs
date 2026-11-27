@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use anyhow::{Context as _, Result};
 use camino::Utf8PathBuf;
 use cap_std::{ambient_authority, fs_utf8::Dir};
 use mriya::{
@@ -130,17 +131,17 @@ struct Fixture {
 
 /// Builds a workspace containing one file, with a sync configuration that
 /// reaches the scripted runner rather than a real host.
-fn fixture() -> Fixture {
-    let tmp = TempDir::new().expect("a temporary directory");
-    let temporary =
-        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("a UTF-8 temporary path");
+fn fixture() -> Result<Fixture> {
+    let tmp = TempDir::new().context("a temporary directory")?;
+    let temporary = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+        .map_err(|path| anyhow::anyhow!("not a UTF-8 path: {}", path.display()))?;
     let directory = Dir::open_ambient_dir(&temporary, ambient_authority())
-        .expect("the temporary directory should open");
+        .context("the temporary directory should open")?;
     directory
         .write("README.md", "hello\n")
-        .expect("the workspace file should write");
-    let source =
-        Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("a UTF-8 temporary path");
+        .context("the workspace file should write")?;
+    let source = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+        .map_err(|path| anyhow::anyhow!("not a UTF-8 path: {}", path.display()))?;
     let config = SyncConfig {
         rsync_bin: String::from("rsync-stub"),
         ssh_bin: String::from("ssh-stub"),
@@ -154,15 +155,15 @@ fn fixture() -> Fixture {
         route_build_caches: true,
         create_cache_directories: true,
     };
-    Fixture {
+    Ok(Fixture {
         source,
         _tmp: tmp,
         config,
-    }
+    })
 }
 
 /// Builds the instance request the scenarios use.
-fn request(volume_id: Option<&str>) -> InstanceRequest {
+fn request(volume_id: Option<&str>) -> Result<InstanceRequest> {
     InstanceRequestBuilder::new()
         .image_label("ubuntu")
         .instance_type("DEV1-S")
@@ -171,7 +172,7 @@ fn request(volume_id: Option<&str>) -> InstanceRequest {
         .architecture("x86_64")
         .volume_id(volume_id.map(str::to_owned))
         .build()
-        .expect("a valid instance request")
+        .context("a valid instance request")
 }
 
 /// Adapts an `Arc<RecordingObserver>` to the boxed observer the orchestrator
@@ -188,17 +189,26 @@ fn run_once(
     backend: ScriptedBackend,
     codes: impl IntoIterator<Item = i32>,
     volume_id: Option<&str>,
-) -> (Result<(), String>, Arc<RecordingObserver>) {
-    let syncer =
-        Syncer::new(fixture.config.clone(), ScriptedRunner::new(codes)).expect("a valid syncer");
+) -> (std::result::Result<(), String>, Arc<RecordingObserver>) {
+    let Ok(syncer) = Syncer::new(fixture.config.clone(), ScriptedRunner::new(codes)) else {
+        return (
+            Err(String::from("a valid syncer")),
+            Arc::new(RecordingObserver::default()),
+        );
+    };
     let observer = Arc::new(RecordingObserver::default());
     let orchestrator = RunOrchestrator::new(backend, syncer)
         .with_observer(Box::new(SharedObserver(observer.clone())));
 
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let Ok(runtime) = tokio::runtime::Runtime::new() else {
+        return (Err(String::from("a runtime")), observer);
+    };
+    let Ok(request) = request(volume_id) else {
+        return (Err(String::from("a valid instance request")), observer);
+    };
     let result = runtime.block_on(async {
         orchestrator
-            .execute(&request(volume_id), &fixture.source, "cargo test")
+            .execute(&request, &fixture.source, "cargo test")
             .await
     });
     let summary = result.map(|_| ()).map_err(|err| err.to_string());
@@ -207,7 +217,7 @@ fn run_once(
 
 #[test]
 fn a_complete_run_reports_every_phase_in_order() {
-    let fixture = fixture();
+    let fixture = fixture().expect("a fixture");
     // rsync and the remote command each consume a scripted status.
     let (result, observer) = run_once(&fixture, ScriptedBackend::default(), [0, 0], None);
     result.expect("the run should succeed");
@@ -227,7 +237,7 @@ fn a_complete_run_reports_every_phase_in_order() {
 
 #[test]
 fn a_mounted_cache_is_reported_as_the_cache_restore_phase() {
-    let fixture = fixture();
+    let fixture = fixture().expect("a fixture");
     // The mount call, rsync, and the remote command each consume a status.
     let (result, observer) = run_once(
         &fixture,
@@ -246,7 +256,7 @@ fn a_mounted_cache_is_reported_as_the_cache_restore_phase() {
 
 #[test]
 fn a_failed_teardown_is_reported_as_a_failed_phase() {
-    let fixture = fixture();
+    let fixture = fixture().expect("a fixture");
     let (result, observer) = run_once(
         &fixture,
         ScriptedBackend {
@@ -275,19 +285,43 @@ fn a_failed_teardown_is_reported_as_a_failed_phase() {
 
 #[test]
 fn the_default_observer_changes_nothing_about_the_result() {
-    let fixture = fixture();
+    let fixture = fixture().expect("a fixture");
     // The rsync call and the remote command each consume a scripted status.
     let syncer =
         Syncer::new(fixture.config.clone(), ScriptedRunner::new([0, 0])).expect("a syncer");
     let orchestrator = RunOrchestrator::new(ScriptedBackend::default(), syncer);
 
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let request = request(None).expect("a valid instance request");
     let result = runtime
         .block_on(async {
             orchestrator
-                .execute(&request(None), &fixture.source, "cargo test")
+                .execute(&request, &fixture.source, "cargo test")
                 .await
         })
         .expect("the run should succeed");
     assert_eq!(result.exit_code, Some(0));
+}
+
+#[test]
+fn a_hook_that_exits_non_zero_fails_the_run() {
+    let fixture = fixture().expect("a fixture");
+    // rsync succeeds, the pre-workload hook exits 1, and the workload would
+    // succeed if it ran.
+    let syncer =
+        Syncer::new(fixture.config.clone(), ScriptedRunner::new([0, 1, 0])).expect("a syncer");
+    let orchestrator =
+        RunOrchestrator::new(ScriptedBackend::default(), syncer).with_pre_workload_command("probe");
+
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let request = request(None).expect("a valid instance request");
+    let result = runtime.block_on(async {
+        orchestrator
+            .execute(&request, &fixture.source, "cargo test")
+            .await
+    });
+    assert!(
+        result.is_err(),
+        "a hook that exits non-zero must not be treated as a measurement"
+    );
 }

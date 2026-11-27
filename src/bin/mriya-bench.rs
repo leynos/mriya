@@ -186,6 +186,12 @@ fn exec_run(args: &RunArgs) -> i32 {
         report(&err.to_string());
         return 1;
     }
+    // Checking the destination before the driver means an operator with a
+    // stale output file is told so without needing provider credentials.
+    if let Err(message) = require_empty(&args.out) {
+        report(&message);
+        return 1;
+    }
     let driver = match ScalewayDriver::from_env() {
         Ok(driver) => driver,
         Err(message) => {
@@ -193,6 +199,9 @@ fn exec_run(args: &RunArgs) -> i32 {
             return 1;
         }
     };
+    // A campaign file begins with exactly one header, so appending a second
+    // campaign would produce a file the validator rejects. Never truncate an
+    // existing record set.
     let file = match open_append(&args.out) {
         Ok(file) => file,
         Err(err) => {
@@ -227,6 +236,27 @@ fn read_text(path: &str) -> Result<String, String> {
     directory
         .read_to_string(name)
         .map_err(|err| format!("cannot read {path}: {err}"))
+}
+
+/// Rejects an output path that already holds records.
+///
+/// An absent file is fine, and so is an empty one; anything else would mix two
+/// campaigns under two headers in one file.
+fn require_empty(path: &str) -> Result<(), String> {
+    // A missing parent is reported by the open, which has a better message.
+    let Ok((directory, name)) = parent_handle(path) else {
+        return Ok(());
+    };
+    let Ok(existing) = directory.read_to_string(&name) else {
+        return Ok(());
+    };
+    if existing.trim().is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{path} already holds records; pass a new path or move the existing file, because a \
+         campaign file must begin with exactly one header"
+    ))
 }
 
 /// Opens a file for appending, creating it when absent.

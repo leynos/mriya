@@ -49,11 +49,16 @@ fn only_the_documented_opt_in_value_enables_a_campaign() {
 
 #[test]
 fn a_plan_estimating_more_than_its_budget_is_refused_before_allocation() {
+    // The budget is positive, so only the estimate can make the plan invalid.
     let mut plan = plan(1);
-    plan.limits.max_spend_micros = 0;
+    plan.limits.max_spend_micros = 1;
+    if let Some(attempt) = plan.attempts.first_mut() {
+        attempt.estimated_micros = 2;
+    }
     let driver = ScriptedDriver::healthy(1);
     let mut sink = MemorySink::default();
-    let error = run_campaign(&plan, Some("1"), &driver, &mut sink).expect_err("budget is zero");
+    let error =
+        run_campaign(&plan, Some("1"), &driver, &mut sink).expect_err("the estimate exceeds it");
     assert!(matches!(error, CampaignError::InvalidPlan(_)), "{error}");
     assert_eq!(driver.calls(), Vec::<String>::new());
 }
@@ -246,13 +251,14 @@ fn an_aborted_run_is_recorded_as_a_failure_rather_than_dropped() {
 
 #[test]
 fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
-    let mut driver = ScriptedDriver::healthy(1);
+    // A second attempt is scripted to succeed; it must never run.
+    let mut driver = ScriptedDriver::healthy(2);
     driver.runs = Mutex::new(VecDeque::from(vec![Err(AttemptFailure {
         reason: String::from("the teardown did not confirm the instance is gone"),
         resource_ids: vec![String::from("srv-1")],
     })]));
     let mut sink = MemorySink::default();
-    let error = run_campaign(&plan(1), Some("1"), &driver, &mut sink)
+    let error = run_campaign(&plan(2), Some("1"), &driver, &mut sink)
         .expect_err("a failed attempt stops the campaign");
     assert!(matches!(error, CampaignError::AttemptFailed(_)), "{error}");
     let residual = sink
@@ -275,4 +281,18 @@ fn an_attempt_that_fails_writes_a_residual_record_before_stopping() {
         1,
         "no second attempt may start"
     );
+}
+
+#[test]
+fn two_runs_of_one_campaign_do_not_overlap() {
+    use super::super::campaign::CampaignLock;
+
+    let lock = CampaignLock::acquire("lock-test-campaign").expect("the first lock is free");
+    let second = CampaignLock::acquire("lock-test-campaign");
+    assert!(
+        matches!(second, Err(CampaignError::CampaignAlreadyRunning { .. })),
+        "a held campaign lock must refuse a second run"
+    );
+    drop(lock);
+    CampaignLock::acquire("lock-test-campaign").expect("the lock is released with the guard");
 }

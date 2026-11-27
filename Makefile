@@ -133,18 +133,22 @@ test-workflow-contracts: ## Validate the CV-005 coverage contracts and the mutat
 BENCH_RECORDS ?= src/bench/fixtures/valid-campaign.jsonl
 BENCH_PRICE_SHEET ?= benchmarks/price-sheet.example.toml
 BENCH_CAMPAIGN ?=
+BENCH_RESULTS ?= benchmarks/results.jsonl
 
-bench-validate: ## Check a benchmark campaign file without spending
-	$(CARGO) run --quiet --bin mriya-bench -- validate $(BENCH_RECORDS)
+bench-validate: check-build-tools ## Check a benchmark campaign file without spending
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
+		$(CARGO) run --quiet --bin mriya-bench -- validate $(BENCH_RECORDS)
 
-bench-report: ## Price a benchmark campaign against a dated price sheet
-	$(CARGO) run --quiet --bin mriya-bench -- report $(BENCH_RECORDS) \
+bench-report: check-build-tools ## Price a benchmark campaign against a dated price sheet
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
+		$(CARGO) run --quiet --bin mriya-bench -- report $(BENCH_RECORDS) \
 		--price-sheet $(BENCH_PRICE_SHEET)
 
-bench-campaign: ## Run a PAID benchmark campaign (requires explicit opt-in and limits)
+bench-campaign: check-build-tools ## Run a PAID benchmark campaign (requires explicit opt-in and limits)
 	@test -n "$(BENCH_CAMPAIGN)" || \
 		(echo "set BENCH_CAMPAIGN to a campaign file; see benchmarks/campaign.example.toml" && exit 1)
-	$(CARGO) run --quiet --bin mriya-bench -- run \
+	RUSTFLAGS="$${RUSTFLAGS:+$$RUSTFLAGS }$(RUST_FLAGS) $(STANDARD_RUSTFLAGS)" \
+		$(CARGO) run --quiet --bin mriya-bench -- run \
 		--campaign $(BENCH_CAMPAIGN) --out $(BENCH_RESULTS)
 
 scaleway-janitor: check-build-tools ## Delete test-run Scaleway resources (requires MRIYA_TEST_RUN_ID)
