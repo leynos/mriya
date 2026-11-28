@@ -28,7 +28,7 @@ use mriya::{
     InitConfig,
     InitError,
     InitOrchestrator,
-    InitRequest,
+    InitRequestInputs,
     InstanceRequest,
     RunError,
     RunOrchestrator,
@@ -38,6 +38,7 @@ use mriya::{
     StreamingCommandRunner,
     SyncConfig,
     Syncer,
+    request_from_loaded_config,
 };
 #[cfg(test)]
 use test_backdoors::{run_fake_outcome, select_fake_outcome};
@@ -226,9 +227,19 @@ async fn init_command(args: InitCommand) -> Result<i32, CliError> {
         .map_err(|path| CliError::Config(path.display().to_string()))?;
     let project_name = cwd_path.file_name().unwrap_or("mriya");
 
-    let request =
-        InitRequest::from_config(&scaleway_config, &init_config, project_name, args.force)
-            .map_err(|err| CliError::Config(err.to_string()))?;
+    // The environment overrides any file value on every run, so the request
+    // records it separately; `init` refuses to replace it even with `--force`.
+    let scan = ortho_config::process_scan_env_source();
+    let request = request_from_loaded_config(
+        InitRequestInputs {
+            scaleway: &scaleway_config,
+            init_config: &init_config,
+            project_name,
+            overwrite_existing_volume_id: args.force,
+        },
+        scan.as_ref(),
+    )
+    .map_err(|err| CliError::Config(err.to_string()))?;
 
     let orchestrator = InitOrchestrator::new(backend, syncer, ConfigStore::new());
     let outcome = orchestrator.execute(&request).await?;

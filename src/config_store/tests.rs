@@ -6,7 +6,10 @@
 //! invalid TOML and missing parent directories. Temporary directories and
 //! fixtures keep each case isolated from repo configuration.
 
+use std::sync::Arc;
+
 use anyhow::{Context as _, bail, ensure};
+use ortho_config::MapEnv;
 use rstest::{fixture, rstest};
 use tempfile::TempDir;
 
@@ -30,15 +33,32 @@ fn config_fixture() -> anyhow::Result<ConfigFixture> {
     })
 }
 
+/// Builds discovery that sees only the fixture directory.
+///
+/// The environment is injected rather than read from the process, so a
+/// developer's `MRIYA_CONFIG_PATH` or platform configuration directory cannot
+/// redirect a `write_volume_id` call onto a real file. Selecting the fixture
+/// path explicitly also keeps project-file discovery from walking upward.
 fn discovery_for_path(path: &Utf8Path) -> anyhow::Result<ConfigDiscovery> {
     let root = path
         .parent()
         .context("temp path should have a parent directory")?;
+    // No explicit-path variable is injected: leaving it unset lets the
+    // fixture's project root be the final candidate, which is where the store
+    // falls back when no file exists yet. HOME and the XDG directories point
+    // at the fixture so a developer's real configuration cannot be read.
+    let env = Arc::new(
+        MapEnv::new()
+            .with_var("HOME", root.as_str())
+            .with_var("XDG_CONFIG_HOME", root.as_str())
+            .with_var("XDG_CONFIG_DIRS", root.as_str()),
+    );
     Ok(ConfigDiscovery::builder(APP_NAME)
         .env_var(CONFIG_ENV_VAR)
         .config_file_name(CONFIG_FILE_NAME)
         .dotfile_name(DOTFILE_NAME)
         .project_file_name(PROJECT_FILE_NAME)
+        .env_source(env)
         .clear_project_roots()
         .add_project_root(root)
         .build())
@@ -53,7 +73,8 @@ fn temp_config_path(tmp: &TempDir) -> anyhow::Result<Utf8PathBuf> {
 fn write_volume_id_creates_config_file(
     config_fixture: anyhow::Result<ConfigFixture>,
 ) -> anyhow::Result<()> {
-    let ConfigFixture { path, store, .. } = config_fixture?;
+    // Bind the guard so the temporary directory outlives the writes below.
+    let ConfigFixture { _tmp, path, store } = config_fixture?;
 
     let written_path = store
         .write_volume_id("vol-123", true)
@@ -67,6 +88,103 @@ fn write_volume_id_creates_config_file(
         volume_id == Some(String::from("vol-123")),
         "volume id should round-trip"
     );
+    Ok(())
+}
+
+/// Confirms the store writes the root-level key that `ortho_config` reads,
+/// rather than the `[scaleway]` section earlier releases used.
+#[rstest]
+fn write_volume_id_uses_root_level_key(
+    config_fixture: anyhow::Result<ConfigFixture>,
+) -> anyhow::Result<()> {
+    // Bind the guard so the temporary directory outlives the writes below.
+    let ConfigFixture { _tmp, path, store } = config_fixture?;
+
+    store
+        .write_volume_id("vol-123", true)
+        .context("write volume id should succeed")?;
+
+    let contents = read_config(&path).context("read config should succeed")?;
+    let value = parse_toml(&path, &contents).context("parse config should succeed")?;
+    let table = value
+        .as_table()
+        .context("configuration root should be a table")?;
+    ensure!(
+        table.get(VOLUME_KEY).and_then(toml::Value::as_str) == Some("vol-123"),
+        "volume id should be a root-level key"
+    );
+    ensure!(
+        !table.contains_key(LEGACY_SCALEWAY_SECTION),
+        "the store must not write the legacy section"
+    );
+    Ok(())
+}
+
+/// Builds a store whose discovery selects `name` inside `root`, with the
+/// fixture root as the only working directory and XDG location.
+fn store_selecting(root: &Utf8Path, name: &str) -> ConfigStore {
+    let selected = root.join(name);
+    let env = Arc::new(
+        MapEnv::new()
+            .with_var(CONFIG_ENV_VAR, selected.as_str())
+            .with_current_dir(root)
+            .with_var("HOME", root.as_str())
+            .with_var("XDG_CONFIG_HOME", root.as_str())
+            .with_var("XDG_CONFIG_DIRS", root.as_str()),
+    );
+    let discovery = ConfigDiscovery::builder(APP_NAME)
+        .env_var(CONFIG_ENV_VAR)
+        .config_file_name(CONFIG_FILE_NAME)
+        .dotfile_name(DOTFILE_NAME)
+        .project_file_name(PROJECT_FILE_NAME)
+        .env_source(env)
+        .clear_project_roots()
+        .add_project_root(root)
+        .build();
+    ConfigStore::with_discovery(discovery)
+}
+
+/// The loader parses only these extensions as something other than TOML, so a
+/// store that refused more than this would reject a file `run` accepts.
+#[rstest]
+#[case::yaml("mriya.yaml", "default_volume_id: legacy\n", Some("yaml"))]
+#[case::json5("mriya.json5", "{ default_volume_id: 'legacy' }\n", Some("json5"))]
+#[case::named_toml("config.conf", "default_volume_id = \"legacy\"\n", None)]
+#[case::extensionless("mriya-config", "default_volume_id = \"legacy\"\n", None)]
+#[case::uppercase_yaml("MRIYA.YAML", "default_volume_id: legacy\n", Some("YAML"))]
+#[case::mixed_case_json5("mriya.Json5", "{ default_volume_id: 'legacy' }\n", Some("Json5"))]
+#[case::uppercase_conf("CONFIG.CONF", "default_volume_id = \"legacy\"\n", None)]
+fn write_volume_id_matches_the_loader_format_classification(
+    #[case] name: &str,
+    #[case] contents: &str,
+    #[case] refused_format: Option<&str>,
+) -> anyhow::Result<()> {
+    let tmp = TempDir::new().context("failed to create tempdir")?;
+    let root = Utf8Path::from_path(tmp.path()).context("temp path should be UTF-8")?;
+    Dir::open_ambient_dir(root, ambient_authority())
+        .context("temp directory should open")?
+        .write(name, contents)
+        .with_context(|| format!("write {name}"))?;
+    let store = store_selecting(root, name);
+
+    let result = store.write_volume_id("vol-123", true);
+
+    if let Some(expected) = refused_format {
+        let Err(err) = result else {
+            bail!("{name} must not be edited as TOML");
+        };
+        let ConfigStoreError::UnsupportedFormat { path, format } = err else {
+            bail!("expected UnsupportedFormat, got {err:?}");
+        };
+        ensure!(path == root.join(name), "error should cite {name}");
+        ensure!(
+            format == expected,
+            "error should name {expected}, got {format}"
+        );
+    } else {
+        let written = result.with_context(|| format!("{name} is TOML and should be edited"))?;
+        ensure!(written == root.join(name), "store should write {name}");
+    }
     Ok(())
 }
 
@@ -159,21 +277,6 @@ fn read_config_reports_missing_parent_dir(
         path == missing_parent.to_path_buf(),
         "error should cite the missing parent directory"
     );
-    Ok(())
-}
-
-#[rstest]
-fn read_volume_id_rejects_non_table_root(
-    config_fixture: anyhow::Result<ConfigFixture>,
-) -> anyhow::Result<()> {
-    let fixture = config_fixture?;
-    let Err(err) = read_volume_id(&fixture.path, &toml::Value::String("nope".into())) else {
-        bail!("read should fail");
-    };
-    let ConfigStoreError::InvalidStructure { path, .. } = err else {
-        bail!("expected invalid structure error");
-    };
-    ensure!(path == fixture.path, "error should cite the config path");
     Ok(())
 }
 

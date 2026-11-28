@@ -32,6 +32,52 @@ names the variable rather than assuming the default:
 export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 ```
 
+## Configuration files use root-level keys
+
+Mriya's configuration loader reads `mriya.toml` as a flat document. Section
+tables were never read, so a file written in the old shape silently supplied
+nothing. Write the keys at the root instead:
+
+```toml
+# Before: these tables were ignored
+[scaleway]
+secret_key = "scw-secret"
+default_project_id = "11111111-2222-3333-4444-555555555555"
+default_volume_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+[sync]
+ssh_identity_file = "~/.ssh/id_ed25519"
+
+[init]
+volume_size_gb = 20
+```
+
+```toml
+# After: root-level keys
+secret_key = "scw-secret"
+default_project_id = "11111111-2222-3333-4444-555555555555"
+default_volume_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ssh_identity_file = "~/.ssh/id_ed25519"
+volume_size_gb = 20
+```
+
+`mriya init` now writes `default_volume_id` at the root. To migrate a legacy
+`[scaleway] default_volume_id`, move the value to the root key, or rerun
+`mriya init --force` to replace it with a new volume in the selected TOML
+configuration file.
+
+The store edits TOML only. If discovery selects a YAML or JSON5 file,
+`mriya init` refuses it with an error naming the format rather than parsing it
+as TOML; supply a `mriya.toml` instead.
+
+`mriya init` refuses to replace a volume ID supplied by
+`SCW_DEFAULT_VOLUME_ID`, even with `--force`, because the environment overrides
+the file on every run. A variable that is set but blank is rejected too. To
+replace such a volume, unset `SCW_DEFAULT_VOLUME_ID` and rerun
+`mriya init --force`; the new ID is then recorded in the selected TOML
+configuration file, which discovery may place at an explicit path, a home
+dotfile, or `mriya.toml`.
+
 ## What did not change
 
 - macOS and Windows keep their platform linker; the preflight skips the linker
@@ -45,8 +91,13 @@ export PATH="${BUILD_TOOLS_PREFIX:-$HOME/.local}/bin:$PATH"
 Production code no longer reads environment variables through `std::env`: it
 reads them through `mockable::Env`, and `DefaultEnv` is injected at each entry
 point. Reads that are not environment variables are unaffected; `main.rs` still
-calls `std::env::current_dir`, which has no `Env` equivalent. Library users
-keep every existing entry point and gain injectable ones beside them:
+calls `std::env::current_dir`, which has no `Env` equivalent. `mriya init` also
+scans for any spelling of `SCW_DEFAULT_VOLUME_ID` through
+`ortho_config::process_scan_env_source`, the boundary the loader itself scans,
+because `mockable` cannot enumerate variables; tests inject an
+`ortho_config::MapEnv` for that check. Every named read stays on
+`mockable::Env`. Library users keep every existing entry point and gain
+injectable ones beside them:
 
 - `mriya::sync::expand_tilde(path)` is unchanged in name, signature and
   arity, and still returns the path unchanged when `HOME` is absent. Its one
@@ -69,8 +120,10 @@ downstream exhaustive `match` over either enum needs a new arm; code that only
 formats the error is unaffected, and the message names the file.
 
 `mockable` 3.0.0 with default features off is now a regular and build
-dependency, and `temp-env` 0.3.6 is a dev-dependency. The decision and its
-rationale are recorded in [ADR 002](adrs/adr-0002-environment-access.md).
+dependency. `temp-env` was removed: no test mutates the process environment.
+The decision and its rationale are recorded in
+[ADR 002](adrs/adr-0002-environment-access.md), including the later addendum
+that records the volume-ID scan exception.
 
 ### Behaviour changes
 
@@ -83,6 +136,7 @@ rationale are recorded in [ADR 002](adrs/adr-0002-environment-access.md).
   so for it the undecodable case returns the path unchanged, exactly as an
   absent `HOME` does.
 - The test-support `EnvGuard` and `ENV_LOCK` are gone from the public
-  `test_support` module. A test that needs the live environment should use
-  `temp_env::with_var` for the process, or `Command::env` for a spawned child;
-  a test of production logic should inject a `mockable::MockEnv`.
+  `test_support` module. A test of production logic injects a
+  `mockable::MockEnv`, a `Command::env` for a spawned child, or an
+  `ortho_config::MapEnv` where the loader's own boundary is being exercised. No
+  test mutates the process environment.

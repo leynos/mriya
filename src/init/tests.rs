@@ -5,13 +5,57 @@
 
 use rstest::rstest;
 
-use super::{InitConfig, InitConfigError, format_failure_message};
+use super::{InitConfig, InitConfigError, InitRequest, VolumeIdSource, format_failure_message};
 use crate::{
+    ScalewayConfig,
     sync::{RemoteCommandOutput, SyncError},
     teardown::append_teardown_note,
 };
 
-/// Checks that zero-sized volumes return `InvalidVolumeSize`.
+/// A valid Scaleway configuration that carries `volume_id`, if any.
+fn scaleway_with_volume(volume_id: Option<&str>) -> ScalewayConfig {
+    ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("dummy-secret"),
+        default_organization_id: None,
+        default_project_id: String::from("11111111-2222-3333-4444-555555555555"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from("DEV1-S"),
+        default_image: String::from("Ubuntu 24.04 Noble Numbat"),
+        default_architecture: String::from("x86_64"),
+        default_volume_id: volume_id.map(str::to_owned),
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
+    }
+}
+
+/// A configured ID is recorded with the file source that the orchestrator
+/// evaluates.
+#[test]
+fn from_config_records_a_file_volume_source() {
+    let scaleway = scaleway_with_volume(Some("file-volume"));
+    let init_config = InitConfig { volume_size_gb: 20 };
+
+    let request = InitRequest::from_config(&scaleway, &init_config, "project", true)
+        .expect("configuration should build a request");
+
+    assert_eq!(request.volume_id_source(), &VolumeIdSource::File);
+    assert_eq!(request.configured_volume_id(), Some("file-volume"));
+}
+
+/// A blank resolved value records nothing, so the request has no source.
+#[test]
+fn from_config_ignores_a_blank_configured_volume_id() {
+    let scaleway = scaleway_with_volume(Some("   "));
+    let init_config = InitConfig { volume_size_gb: 20 };
+
+    let request = InitRequest::from_config(&scaleway, &init_config, "project", false)
+        .expect("a blank ID should not block init");
+
+    assert_eq!(request.volume_id_source(), &VolumeIdSource::None);
+    assert_eq!(request.configured_volume_id(), None);
+}
+
 #[test]
 fn validate_rejects_zero_volume_size() {
     let config = InitConfig { volume_size_gb: 0 };

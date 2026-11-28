@@ -32,14 +32,16 @@ to override discovery.
 Example `mriya.toml`:
 
 ```toml
-[scaleway]
 secret_key = "scw-secret-key-here"
 default_project_id = "11111111-2222-3333-4444-555555555555"
-
-[sync]
 ssh_identity_file = "~/.ssh/id_ed25519"
 ssh_user = "ubuntu"
 ```
+
+Configuration file keys are root-level and use the Rust field names, matching
+`ortho-config`'s file layer. Do not wrap them in `[scaleway]`, `[sync]`, or
+`[init]` tables: those sections are not read, so their values are silently
+ignored.
 
 ## Configuration validation
 
@@ -47,7 +49,7 @@ Mriya validates all required fields at startup. If a required field is missing,
 the error message includes guidance on how to provide the value:
 
 ```text
-missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to [scaleway] in mriya.toml
+missing Scaleway API secret key: set SCW_SECRET_KEY or add secret_key to mriya.toml
 ```
 
 Required fields for Scaleway credentials: `secret_key`, `default_project_id`,
@@ -142,7 +144,7 @@ Cloud-init settings use `ortho-config` layering with the `SCW_` prefix:
 - `SCW_CLOUD_INIT_USER_DATA_FILE` — path to a file containing cloud-init
   user-data (optional).
 
-In `mriya.toml`, configure one of the following under `[scaleway]`:
+In `mriya.toml`, configure one of the following root-level keys:
 
 - `cloud_init_user_data = "..."` (inline)
 - `cloud_init_user_data_file = "./cloud-init.yml"` (file-based)
@@ -191,12 +193,20 @@ target directory) on this volume to persist compiled dependencies across runs.
 
 To enable the cache volume:
 
+`mriya init` edits only TOML configuration files. If discovery selects a YAML
+(`.yaml`, `.yml`) or JSON5 (`.json`, `.json5`) file, the command refuses it
+with an error naming the file and its format; supply a `mriya.toml` instead.
+
 1. Run `mriya init` to create and format a Block Storage volume in the
    configured zone. The command writes the new volume ID into `mriya.toml`. Use
    `mriya init --force` to replace an existing configured volume ID. If any
    step after provisioning fails — including the instance read it performs
    before detaching the volume — the command destroys the formatter instance
-   before reporting the error, so a failed run does not leave a VM billing.
+   before reporting the error, so a failed run does not leave a VM billing. If
+   `SCW_DEFAULT_VOLUME_ID` is set, the environment value overrides the file on
+   every run, so `init` refuses even with `--force`; unset the variable and
+   rerun to replace the recorded volume. A variable that is set but blank is
+   rejected rather than treated as unset.
 2. (Optional) override the volume ID explicitly via configuration:
 
    ```bash
@@ -206,7 +216,6 @@ To enable the cache volume:
    Or in `mriya.toml`:
 
    ```toml
-   [scaleway]
    default_volume_id = "11111111-2222-3333-4444-555555555555"
    ```
 
@@ -236,7 +245,6 @@ the new volume. Adjust the default size with `MRIYA_INIT_VOLUME_SIZE_GB` or in
 `mriya.toml`:
 
 ```toml
-[init]
 volume_size_gb = 50
 ```
 
@@ -301,7 +309,9 @@ Linux development build needs `mold` and a compiler that accepts
 `-fuse-ld=mold`: GCC 12.1 or newer, or clang. `make install-build-tools`
 installs the pinned `mold` and toolchain, and `make check-build-tools` reports
 what is missing; a development target stops with that report instead of falling
-back to another linker.
+back to another linker. The application builds on Rust 1.89.0; running the full
+test suite needs Rust 1.95. See
+[the developers' guide](developers-guide.md#compiler-floor).
 
 The preflight requires `mold` at exactly the version in `tools/mold/VERSION`
 (`2.41.0`) and fails on any other version, so an older distribution release
@@ -356,4 +366,5 @@ decoded, because its signature carries no error. Prefer `home_from_env` when
 you need to tell those two cases apart or report the cause; the error type
 implements `std::error::Error`, so `?` propagates it in a program whose error
 type accepts it. Everything to change when upgrading a dependent is listed in
-[Migrating to 0.2.0](migration-0.2.0.md).
+[Migrating to 0.2.0](migration-0.2.0.md), including the root-level
+configuration shape and the `mriya init` volume-ID rules.

@@ -1,6 +1,6 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::{InitError, InitOrchestrator, sync::Syncer};
+use mriya::{InitError, InitOrchestrator, VolumeIdSource, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
@@ -98,6 +98,18 @@ fn config_contains_volume_id(
 ) -> Result<InitContextResult, StepError> {
     let mut init_context = init_context_result?;
     init_context.config_store = MemoryConfigStore::with_existing("vol-existing");
+    Ok(Ok(init_context))
+}
+
+#[given("the environment supplies volume id \"{volume_id}\"")]
+fn environment_supplies_volume_id(
+    init_context_result: InitContextResult,
+    volume_id: String,
+) -> Result<InitContextResult, StepError> {
+    let mut init_context = init_context_result?;
+    init_context
+        .request
+        .set_volume_id_source(VolumeIdSource::Environment(volume_id));
     Ok(Ok(init_context))
 }
 
@@ -255,7 +267,10 @@ const fn map_failure_kind(
     err: &InitError<super::test_doubles::ScriptedVolumeBackendError>,
 ) -> InitFailureKind {
     match err {
-        InitError::Config(_) => InitFailureKind::Config,
+        InitError::Config(_)
+        | InitError::EnvironmentVolumeId { .. }
+        | InitError::BlankEnvironmentVolumeId { .. }
+        | InitError::FileVolumeAlreadyConfigured { .. } => InitFailureKind::Config,
         InitError::Volume(_) => InitFailureKind::Volume,
         InitError::Provision(_) => InitFailureKind::Provision,
         InitError::Wait { .. } => InitFailureKind::Wait,

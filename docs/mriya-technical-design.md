@@ -786,9 +786,10 @@ Mriya code path.
 
 - Accept cloud-init user-data either inline or file-based, using
   `ortho-config` layering under the `SCW_` prefix:
-  - `SCW_CLOUD_INIT_USER_DATA` / `cloud_init_user_data` in `[scaleway]`
-  - `SCW_CLOUD_INIT_USER_DATA_FILE` / `cloud_init_user_data_file` in
-    `[scaleway]`
+  - `SCW_CLOUD_INIT_USER_DATA` / the root-level `cloud_init_user_data` key in
+    `mriya.toml`
+  - `SCW_CLOUD_INIT_USER_DATA_FILE` / the root-level
+    `cloud_init_user_data_file` key in `mriya.toml`
   - CLI flags `mriya run --cloud-init` and `--cloud-init-file` override the
     configured defaults.
 - Pass the payload through the abstraction as
@@ -826,9 +827,10 @@ setup required for caching.
   cloud-init to run the format command automatically).
 
 - **Update `mriya.toml`:** Record the new volume’s ID in the config so that
-  subsequent `mriya run` (test runs) know to attach this volume. For example,
-  we might add `volume_id = "<uuid>"` under the profile or under a per-project
-  config section. This ties the volume to the project.
+  subsequent `mriya run` (test runs) know to attach this volume. The ID is
+  written as the root-level `default_volume_id = "<uuid>"` key, because the
+  loader reads root-level keys rather than section tables. This ties the volume
+  to the project.
 
 #### Volume init decisions (December 2025)
 
@@ -842,9 +844,14 @@ setup required for caching.
   cloud-init is not passed through to avoid unintended side effects during
   formatting.
 - Default the volume size to 20 GB, configurable via
-  `MRIYA_INIT_VOLUME_SIZE_GB` or `[init].volume_size_gb`.
+  `MRIYA_INIT_VOLUME_SIZE_GB` or the root-level `volume_size_gb` key in
+  `mriya.toml`.
 - If a volume ID is already configured, `mriya init` fails unless `--force` is
-  supplied to overwrite the existing value.
+  supplied to overwrite the existing file-backed value. An ID supplied by
+  `SCW_DEFAULT_VOLUME_ID` is refused even with `--force`, because the
+  environment overrides the file on every run; a blank variable is rejected.
+- The configuration file is TOML written with root-level keys. `mriya init`
+  refuses a discovered YAML or JSON5 file rather than editing it as TOML.
 
 **Mounting Convention:** We decide on a standard mount point (like `/mnt/mriya`
 or `/home`). For Scaleway, perhaps we mount at `/mnt/mriya` and then in

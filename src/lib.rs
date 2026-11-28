@@ -9,6 +9,8 @@ pub mod cloud_init;
 pub mod config;
 pub mod config_store;
 pub mod init;
+
+mod init_composition;
 pub mod janitor;
 pub mod run;
 pub mod scaleway;
@@ -28,7 +30,13 @@ pub use backend::{
 };
 pub use config::ScalewayConfig;
 pub use config_store::{ConfigStore, ConfigStoreError, ConfigWriter};
-pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest};
+pub use init::{InitConfig, InitError, InitOrchestrator, InitOutcome, InitRequest, VolumeIdSource};
+pub use init_composition::{
+    InitRequestInputs,
+    VOLUME_ID_ENV_VAR,
+    environment_volume_id,
+    request_from_loaded_config,
+};
 pub use janitor::{
     Janitor,
     JanitorConfig,

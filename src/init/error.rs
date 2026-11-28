@@ -33,6 +33,12 @@ pub enum InitRequestError {
     /// Raised when the volume size cannot be represented in bytes.
     #[error("volume size is too large to represent")]
     SizeOverflow,
+    /// Raised when the volume-ID variable cannot be decoded as UTF-8.
+    #[error("{variable} is not valid UTF-8; unset it or give it a UTF-8 volume ID")]
+    NonUtf8EnvironmentVolumeId {
+        /// Name of the environment variable.
+        variable: &'static str,
+    },
 }
 
 /// Errors raised while initializing a cache volume.
@@ -44,6 +50,35 @@ where
     /// Raised when configuration updates fail.
     #[error("configuration update failed: {0}")]
     Config(#[from] ConfigStoreError),
+    /// Raised when the environment supplies a volume ID that a file write
+    /// cannot replace.
+    #[error(
+        "volume ID {volume_id} is set by the environment; unset SCW_DEFAULT_VOLUME_ID \
+         before running init, because init can only update the configuration file"
+    )]
+    EnvironmentVolumeId {
+        /// Identifier the environment supplies.
+        volume_id: String,
+    },
+    /// Raised when the volume-ID variable is present but blank.
+    #[error("{variable} is set but blank; unset it or give it a volume ID")]
+    BlankEnvironmentVolumeId {
+        /// Name of the environment variable.
+        variable: &'static str,
+    },
+    /// Raised when a file-backed volume ID is configured and overwriting was
+    /// not requested.
+    ///
+    /// Environment-supplied values take the separate path above, where
+    /// `--force` cannot help because a file write cannot replace them.
+    #[error(
+        "default volume ID already configured as {volume_id} in the configuration file; \
+         rerun with --force to replace the file-backed value"
+    )]
+    FileVolumeAlreadyConfigured {
+        /// Identifier recorded in the configuration file.
+        volume_id: String,
+    },
     /// Raised when volume creation fails.
     #[error("failed to create volume: {0}")]
     Volume(#[source] BackendError),

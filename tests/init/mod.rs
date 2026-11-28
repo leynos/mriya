@@ -4,3 +4,4 @@ mod bdd_steps;
 mod scenarios;
 mod test_doubles;
 mod test_helpers;
+mod volume_guard_tests;

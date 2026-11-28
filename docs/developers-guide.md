@@ -297,7 +297,13 @@ Production code reads environment *variables* through `mockable::Env`, never
 through `std::env`: `DefaultEnv` is the real process environment, and `MockEnv`
 is what the tests use, available only under the dev-dependency's `mock`
 feature. The one exception is not a variable: `std::env::current_dir` has no
-`Env` equivalent and `main.rs` still calls it. Two accessors matter:
+`Env` equivalent and `main.rs` still calls it. A second exception is a scan
+rather than a named read: `mriya init` must detect any spelling of
+`SCW_DEFAULT_VOLUME_ID` that the loader would apply, and the loader matches
+keys case-insensitively. `mockable` offers no enumeration, so that check uses
+`ortho_config::process_scan_env_source`, the same boundary the loader scans,
+and tests inject an `ortho_config::MapEnv` instead. Every named variable read
+stays on `mockable::Env`. Two accessors matter:
 
 - `string` reports a variable as `None` when it is absent or not valid
   Unicode. Code that only wants a value when one is usable, such as the
@@ -394,6 +400,33 @@ without changing behaviour, and each publishes only what its parent needs:
   `Janitor`. The delete operations take their zone from the listed resource
   rather than from configuration, which is what lets one sweep remove a server
   and a volume that report different zones.
+- `src/init/request.rs` holds `InitRequest`, the value that describes a
+  volume preparation, and `VolumeIdSource`, the required statement of where the
+  volume ID comes from (`None`, `File`, or `Environment(value)`). The module
+  reads no environment: `from_config` records a file source, and a caller that
+  knows the environment supplies `Environment` through the public constructor
+  or setter. The orchestrator matches on the source and applies the overwrite
+  guard before `create_volume`.
+
+- `src/init_composition.rs` is the adapter between that domain type and
+  `ortho_config`. It scans through `ScanEnvSource`, translates the result into
+  `VolumeIdSource`, and builds the request the binary runs. Production passes
+  `process_scan_env_source`; tests pass `ortho_config::MapEnv`. The narrow
+  boundary is about environment scanning and volume-ID provenance: the `init`
+  module still derives and loads `InitConfig` through `ortho_config`, as it did
+  before this change, but it never scans the environment for the volume ID.
+
+- `src/config_store/volume.rs` owns the TOML document shape: reading the
+  root-level `default_volume_id` with its legacy `[scaleway]` fallback, and
+  writing the root-level key. It publishes those functions to its parent only,
+  plus the two key names for tests. It reads no environment.
+
+- `tests/config_support/mod.rs` holds the hermetic integration fixtures: a
+  temporary `Workspace` with a home directory and target config path, a
+  `shared_env` helper that pins a map's working directory and coerces one `Arc`
+  into both a discovery source and a merge scanner, and small path helpers.
+  Tests inject these instead of mutating the process environment.
+
 - `src/test_backdoors.rs` separates deciding from doing. `select_fake_outcome`
   reads the injected environment and returns a `FakeOutcome` value; it has no
   side effects, so the precedence rules and the `MRIYA_FAKE_RUN_ENABLE` gate
@@ -469,6 +502,25 @@ Fix findings at the source. The only sanctioned suppressions are
 `#[mriya_test_macros::allow_fixture_expansion_lints]` on fixtures and
 `#[expect(..., reason = "...")]` for a macro-expansion artefact or a documented
 reasoned exception. Never add a bare `#[allow]`.
+
+## Compiler floor
+
+`Cargo.toml` declares `rust-version = "1.89.0"`, the highest `rust-version` in
+the locked non-development graph (`ortho_config` 0.11.0, `ortho_config_macros`,
+`ortho_l10n`, and `uuid`). That covers the library, the `mriya` binary, and the
+build script: `RUSTFLAGS="" cargo +1.89.0 check --lib --bins` succeeds against
+the committed `Cargo.lock`.
+
+The full test suite has a higher floor. The exact-pinned
+`typos-cli = "=1.52.2"` dev-dependency requires Rust 1.95, so `cargo test` and
+`make test` need 1.95 or newer. The development build standard additionally
+uses the nightly pinned in `rust-toolchain.toml`, because `.cargo/config.toml`
+passes nightly-only flags (`-Zthreads=8` and `[unstable] embed-metadata`). The
+pin moves with the target branch and is not part of this repository's migration
+surface; when last validated it was `nightly-2026-11-26`
+(`rustc 1.102.0-nightly (6c709eb42 2026-11-25)`). A contributor building only
+the application with stable Rust must assign an empty `RUSTFLAGS` to leave the
+development flags, as the users' guide describes.
 
 ## The build standard
 

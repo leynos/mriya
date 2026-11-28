@@ -9,7 +9,6 @@ use serde::Deserialize;
 
 use crate::{
     backend::{Backend, InstanceHandle, InstanceNetworking, InstanceRequest},
-    config::ScalewayConfig,
     config_store::{ConfigStoreError, ConfigWriter},
     sync::{CommandRunner, RemoteCommandOutput, SyncError, Syncer},
     teardown::append_teardown_note,
@@ -21,6 +20,10 @@ mod error;
 mod helpers;
 
 pub use error::{InitConfigError, InitError, InitRequestError};
+
+mod request;
+
+pub use request::{InitRequest, VolumeIdSource};
 
 /// Init-specific configuration values layered via `OrthoConfig`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -65,65 +68,6 @@ impl InitConfig {
     }
 }
 
-/// Inputs required to prepare a cache volume.
-#[derive(Clone, Debug)]
-pub struct InitRequest {
-    /// Volume creation parameters.
-    pub volume: VolumeRequest,
-    /// Instance request used to format the volume.
-    pub instance_request: InstanceRequest,
-    /// Whether to overwrite any existing configured volume ID.
-    pub overwrite_existing_volume_id: bool,
-}
-
-impl InitRequest {
-    /// Builds an init request from configuration and the project name.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InitRequestError`] when configuration or validation fails.
-    pub fn from_config(
-        scaleway: &ScalewayConfig,
-        init_config: &InitConfig,
-        project_name: &str,
-        overwrite_existing_volume_id: bool,
-    ) -> Result<Self, InitRequestError> {
-        init_config.validate()?;
-        let volume_name = volume_name_for_project(project_name);
-        if volume_name.trim().is_empty() {
-            return Err(InitRequestError::InvalidVolumeName);
-        }
-        let size_bytes =
-            volume_size_bytes(init_config.volume_size_gb).ok_or(InitRequestError::SizeOverflow)?;
-
-        scaleway.validate()?;
-        let instance_request = InstanceRequest::builder()
-            .image_label(&scaleway.default_image)
-            .instance_type(&scaleway.default_instance_type)
-            .zone(&scaleway.default_zone)
-            .project_id(&scaleway.default_project_id)
-            .organisation_id(scaleway.default_organization_id.clone())
-            .architecture(&scaleway.default_architecture)
-            .cloud_init_user_data(None)
-            .build()
-            .map_err(|err| InitRequestError::RequestBuild(err.to_string()))?;
-
-        let volume = VolumeRequest::new(
-            volume_name,
-            size_bytes,
-            scaleway.default_zone.clone(),
-            scaleway.default_project_id.clone(),
-        )
-        .organisation_id(scaleway.default_organization_id.clone());
-
-        Ok(Self {
-            volume,
-            instance_request,
-            overwrite_existing_volume_id,
-        })
-    }
-}
-
 /// Outcome returned after successfully preparing a cache volume.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitOutcome {
@@ -150,6 +94,46 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     syncer: Syncer<R>,
     /// Records the new volume ID in the configuration file.
     config_writer: W,
+}
+
+/// Refuses any environment-supplied volume ID, even with `--force`.
+fn refuse_environment_source<BackendError>(
+    request: &InitRequest,
+) -> Result<(), InitError<BackendError>>
+where
+    BackendError: std::error::Error + 'static,
+{
+    let VolumeIdSource::Environment(volume_id) = request.volume_id_source() else {
+        return Ok(());
+    };
+    let trimmed = volume_id.trim();
+    if trimmed.is_empty() {
+        return Err(InitError::BlankEnvironmentVolumeId {
+            variable: crate::VOLUME_ID_ENV_VAR,
+        });
+    }
+    Err(InitError::EnvironmentVolumeId {
+        volume_id: trimmed.to_owned(),
+    })
+}
+
+/// Refuses a file-backed ID when overwriting was not requested.
+fn refuse_file_source<BackendError>(request: &InitRequest) -> Result<(), InitError<BackendError>>
+where
+    BackendError: std::error::Error + 'static,
+{
+    if request.overwrite_existing_volume_id {
+        return Ok(());
+    }
+    if request.volume_id_source() != &VolumeIdSource::File {
+        return Ok(());
+    }
+    let Some(volume_id) = request.configured_volume_id() else {
+        return Ok(());
+    };
+    Err(InitError::FileVolumeAlreadyConfigured {
+        volume_id: volume_id.to_owned(),
+    })
 }
 
 impl<B, R, W> InitOrchestrator<B, R, W>
@@ -218,8 +202,26 @@ where
 
     /// Fails before creating anything when a volume ID is already configured
     /// and overwriting was not requested.
+    ///
+    /// A forced run may replace an ID the file holds, because the write changes
+    /// what `run` selects. An ID the environment supplies is different: the
+    /// file write cannot change it, so the new volume would never be the
+    /// effective one. That case fails even with `--force`.
+    ///
+    /// Only the provenance recorded by the composition root distinguishes the
+    /// two. A resolved ID that merely differs from the selected file may be
+    /// inherited through `extends`, and forcing a child write does replace an
+    /// inherited value.
     fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
-        if let Some(existing) = self.config_writer.current_volume_id()?
+        refuse_environment_source(request)?;
+        refuse_file_source(request)?;
+        self.refuse_stored_id(request)
+    }
+
+    /// Refuses a stored ID when overwriting was not requested.
+    fn refuse_stored_id(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
+        let stored = self.config_writer.current_volume_id()?;
+        if let Some(existing) = stored
             && !request.overwrite_existing_volume_id
         {
             return Err(InitError::Config(
