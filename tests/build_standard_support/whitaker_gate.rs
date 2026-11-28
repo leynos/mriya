@@ -65,9 +65,13 @@ impl Call {
 }
 
 /// A sandbox with a slow docstring gate, so a gate that ran in parallel would log after Whitaker.
+///
+/// `lint-clippy` also reaches the `yamllint` and `actionlint` prerequisites, so the sandbox links
+/// the `git` and `xargs` the YAML recipe needs and supplies no-op fakes for both linters. Those
+/// fakes do not log, so the call-order assertions still see only the Rust gate tools.
 fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
     let sandbox = sandbox_with(Toolset::COMPLETE)?;
-    sandbox.link_tools(&["sleep"])?;
+    sandbox.link_tools(&["sleep", "git", "xargs"])?;
     sandbox.write_tool(
         "fake-interrogate",
         "sleep 0.4; echo interrogate >> \"$CARGO_LOG\"",
@@ -80,6 +84,8 @@ fn lint_sandbox(whitaker_status: i32) -> Result<Sandbox, String> {
              {whitaker_status}"
         ),
     )?;
+    sandbox.write_tool("fake-yamllint", "exit 0")?;
+    sandbox.write_tool("fake-actionlint", "exit 0")?;
     Ok(sandbox)
 }
 
@@ -97,6 +103,8 @@ fn run_lint_route(
             "CARGO=probe-cargo",
             "INTERROGATE=fake-interrogate",
             "WHITAKER=fake-whitaker",
+            "YAMLLINT=fake-yamllint",
+            "ACTIONLINT=fake-actionlint",
             route.name(),
         ])
         .output()
