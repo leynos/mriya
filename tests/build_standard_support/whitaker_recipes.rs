@@ -152,8 +152,9 @@ fn the_gate_recipe_reader_refuses_masking(
 
 /// Scenario: the Makefile as written.
 ///
-/// Invariant: `lint` lists Clippy then Whitaker, is built serially, and each half's recipe is a
-/// plain command that cannot be soft-failed.
+/// Invariant: `lint` lists Clippy then Whitaker, both levels are serialized so the preflight and
+/// the docstring gate keep their order, and each half's recipe is a plain command that cannot be
+/// soft-failed.
 #[test]
 fn the_makefile_binds_whitaker_into_a_serial_lint() -> Result<(), String> {
     let header = MAKEFILE
@@ -166,8 +167,11 @@ fn the_makefile_binds_whitaker_into_a_serial_lint() -> Result<(), String> {
     {
         return Err(format!("`lint` reaches `{before_hash}`"));
     }
-    if !MAKEFILE.lines().any(|line| line == ".NOTPARALLEL: lint") {
-        return Err("`lint` is not marked `.NOTPARALLEL`".to_owned());
+    for target in ["lint", "lint-clippy"] {
+        let directive = format!(".NOTPARALLEL: {target}");
+        if !MAKEFILE.lines().any(|line| line == directive) {
+            return Err(format!("`{target}` is not marked `.NOTPARALLEL`"));
+        }
     }
     let whitaker = Recipe::of(Rule::LintWhitaker).ok_or("`lint-whitaker` has no recipe")?;
     let clippy = Recipe::of(Rule::LintClippy).ok_or("`lint-clippy` has no recipe")?;

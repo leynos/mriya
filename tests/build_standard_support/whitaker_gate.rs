@@ -202,19 +202,25 @@ fn whitaker_runs_with_the_warning_policy_alone() -> Result<(), String> {
 
 /// Scenario: a failing Clippy step before Whitaker.
 ///
-/// Invariant: the composite stops there and never starts Whitaker.
+/// Invariant: `doc` succeeds, Clippy is the step that fails, and the composite
+/// stops there without starting Whitaker.
 #[test]
 fn a_failing_clippy_stops_lint_before_whitaker() -> Result<(), String> {
     let sandbox = lint_sandbox(0)?;
-    sandbox.write_tool("probe-cargo", "echo \"$*\" >> \"$CARGO_LOG\"; exit 1")?;
+    // Fail only Clippy. A fake that fails every Cargo call would fail at `doc`
+    // and never exercise the Clippy step this test names.
+    sandbox.write_tool(
+        "probe-cargo",
+        "echo \"$*\" >> \"$CARGO_LOG\"; case \"$1\" in clippy) exit 1;; *) exit 0;; esac",
+    )?;
     let output = run_lint_route(&sandbox, 4, Route::Composite)?;
     if output.status.success() {
-        return Err("`make lint` passed with a failing Cargo".to_owned());
+        return Err("`make lint` passed with a failing Clippy".to_owned());
     }
     let order = call_order(&sandbox)?;
-    if order.contains(&Call::Whitaker) {
-        Err(format!("Whitaker ran after a failing step: {order:?}"))
-    } else {
+    if order == [Call::Interrogate, Call::Doc, Call::Clippy] {
         Ok(())
+    } else {
+        Err(format!("failing Clippy route ran {order:?}"))
     }
 }

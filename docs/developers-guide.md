@@ -474,20 +474,23 @@ reasoned exception. Never add a bare `#[allow]`.
 
 `make lint` is `lint: lint-clippy lint-whitaker`, and each half runs alone:
 
-- `make lint-clippy` runs the preflight, then the docstring gate (the
-  `interrogate` prerequisite), `cargo doc` and Clippy.
+- `make lint-clippy` runs the preflight, then the YAML and workflow lint, the
+  docstring gate (the `interrogate` prerequisite), `cargo doc` and Clippy.
 - `make lint-whitaker` runs `whitaker --all -- $(CARGO_FLAGS)`, which covers
   every workspace package, every target and every feature. It needs the
   Whitaker installer-managed toolchain, which CI provisions through the
   `install-whitaker` action. Override the executable with `WHITAKER=<path>`.
 
 Whitaker stops at the first failing crate, so it runs last. A bare prerequisite
-list does not order a build under `make -j`, so the Makefile declares
-`.NOTPARALLEL: lint`. With GNU Make 4.4 or later, that makes everything `lint`
-reaches build serially, in the listed order. Do not replace it with a
-prerequisite that merely lists the order. The gate is binding: every recipe is
-a plain command with no `-` prefix, `|| true`, existence guard or pipeline, so
-a non-zero exit from Whitaker fails the route and the CI `Lint` step.
+list does not order a build under `make -j`. With GNU Make 4.4 or later,
+`.NOTPARALLEL` with a target adds an implicit `.WAIT` between that target's own
+prerequisites, in listed order; it does not reach their prerequisites. The
+Makefile therefore declares `.NOTPARALLEL: lint` to keep Clippy ahead of
+Whitaker, and `.NOTPARALLEL: lint-clippy` to keep the preflight, the YAML and
+workflow lint and the docstring gate in their listed order. Do not replace them
+with a prerequisite list that merely names the order. The gate is binding: every recipe is a plain command with no `-`
+prefix, `|| true`, existence guard or pipeline, so a non-zero exit from Whitaker
+fails the route and the CI `Lint` step.
 `tests/build_standard_support/whitaker_gate.rs` runs the real Make routes
 against fakes at several `-j` values, fails Whitaker on purpose, and reads the
 recipes and the CI step for masking.

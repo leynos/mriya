@@ -173,13 +173,17 @@ interrogate: ## Enforce complete Python docstring coverage
 
 # `lint` is the composite gate: preflight, YAML and workflow lint, docstring gate,
 # rustdoc and Clippy, then the Whitaker Dylint suite last. A bare prerequisite list
-# is no ordering guarantee under `make -j`, so `.NOTPARALLEL` with a prerequisite
-# makes GNU Make 4.4 or later build everything `lint` reaches serially, in listed
-# order. The leaf targets stay runnable alone: `make lint-clippy` and
+# is no ordering guarantee under `make -j`. With GNU Make 4.4 or later,
+# `.NOTPARALLEL` with a target adds an implicit `.WAIT` between that target's own
+# prerequisites, in listed order; it does not reach their prerequisites. `lint`
+# therefore orders Clippy before Whitaker, and `lint-clippy` orders the preflight,
+# the YAML and workflow lint and the docstring gate. The leaf targets stay runnable
+# alone: `make lint-clippy` and
 # `make lint-whitaker`. Every recipe is a plain command, so the gate's failure is
 # the recipe's exit status, with no guard, ignored-error prefix or masking
 # pipeline.
 .NOTPARALLEL: lint
+.NOTPARALLEL: lint-clippy
 .PHONY: lint-clippy lint-whitaker
 lint: lint-clippy lint-whitaker ## Run Clippy, the Whitaker Dylint suite and the docstring gate
 
