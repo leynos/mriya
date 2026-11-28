@@ -82,13 +82,7 @@ fn build_init_context() -> Result<InitContext, InitTestError> {
         backend: ScriptedVolumeBackend::new(),
         runner: ScriptedRunner::new(),
         sync_config,
-        request: InitRequest {
-            volume,
-            instance_request,
-            overwrite_existing_volume_id: false,
-            configured_volume_id: None,
-            environment_volume_id: None,
-        },
+        request: InitRequest::new(volume, instance_request, false),
         config_store: MemoryConfigStore::new(),
         outcome: None,
     })

@@ -23,13 +23,7 @@ pub use error::{InitConfigError, InitError, InitRequestError};
 
 mod request;
 
-pub use request::{
-    InitRequest,
-    InitRequestInputs,
-    VOLUME_ID_ENV_VAR,
-    environment_volume_id,
-    request_from_loaded_config,
-};
+pub use request::{InitRequest, VolumeIdSource};
 
 /// Init-specific configuration values layered via `OrthoConfig`.
 #[derive(Clone, Debug, Deserialize, OrthoConfig, PartialEq, Eq)]
@@ -100,6 +94,46 @@ pub struct InitOrchestrator<B, R: CommandRunner, W> {
     syncer: Syncer<R>,
     /// Records the new volume ID in the configuration file.
     config_writer: W,
+}
+
+/// Refuses any environment-supplied volume ID, even with `--force`.
+fn refuse_environment_source<BackendError>(
+    request: &InitRequest,
+) -> Result<(), InitError<BackendError>>
+where
+    BackendError: std::error::Error + 'static,
+{
+    let VolumeIdSource::Environment(volume_id) = request.volume_id_source() else {
+        return Ok(());
+    };
+    let trimmed = volume_id.trim();
+    if trimmed.is_empty() {
+        return Err(InitError::BlankEnvironmentVolumeId {
+            variable: crate::VOLUME_ID_ENV_VAR,
+        });
+    }
+    Err(InitError::EnvironmentVolumeId {
+        volume_id: trimmed.to_owned(),
+    })
+}
+
+/// Refuses a file-backed ID when overwriting was not requested.
+fn refuse_file_source<BackendError>(request: &InitRequest) -> Result<(), InitError<BackendError>>
+where
+    BackendError: std::error::Error + 'static,
+{
+    if request.overwrite_existing_volume_id {
+        return Ok(());
+    }
+    if request.volume_id_source() != &VolumeIdSource::File {
+        return Ok(());
+    }
+    let Some(volume_id) = request.configured_volume_id() else {
+        return Ok(());
+    };
+    Err(InitError::FileVolumeAlreadyConfigured {
+        volume_id: volume_id.to_owned(),
+    })
 }
 
 impl<B, R, W> InitOrchestrator<B, R, W>
@@ -179,20 +213,14 @@ where
     /// inherited through `extends`, and forcing a child write does replace an
     /// inherited value.
     fn ensure_configurable(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
+        refuse_environment_source(request)?;
+        refuse_file_source(request)?;
+        self.refuse_stored_id(request)
+    }
+
+    /// Refuses a stored ID when overwriting was not requested.
+    fn refuse_stored_id(&self, request: &InitRequest) -> Result<(), InitError<B::Error>> {
         let stored = self.config_writer.current_volume_id()?;
-
-        if let Some(environment) = request.environment_volume_id.as_deref() {
-            let trimmed = environment.trim();
-            if trimmed.is_empty() {
-                return Err(InitError::BlankEnvironmentVolumeId {
-                    variable: VOLUME_ID_ENV_VAR,
-                });
-            }
-            return Err(InitError::EnvironmentVolumeId {
-                volume_id: trimmed.to_owned(),
-            });
-        }
-
         if let Some(existing) = stored
             && !request.overwrite_existing_volume_id
         {

@@ -151,6 +151,9 @@ fn store_selecting(root: &Utf8Path, name: &str) -> ConfigStore {
 #[case::json5("mriya.json5", "{ default_volume_id: 'legacy' }\n", Some("json5"))]
 #[case::named_toml("config.conf", "default_volume_id = \"legacy\"\n", None)]
 #[case::extensionless("mriya-config", "default_volume_id = \"legacy\"\n", None)]
+#[case::uppercase_yaml("MRIYA.YAML", "default_volume_id: legacy\n", Some("YAML"))]
+#[case::mixed_case_json5("mriya.Json5", "{ default_volume_id: 'legacy' }\n", Some("Json5"))]
+#[case::uppercase_conf("CONFIG.CONF", "default_volume_id = \"legacy\"\n", None)]
 fn write_volume_id_matches_the_loader_format_classification(
     #[case] name: &str,
     #[case] contents: &str,

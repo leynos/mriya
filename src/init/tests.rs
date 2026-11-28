@@ -3,23 +3,9 @@
 //! Kills the init validation and mkfs failure-message survivors tracked in
 //! #56.
 
-use std::sync::Arc;
-
-use camino::Utf8Path;
-use ortho_config::{MapEnv, OrthoConfig as _};
 use rstest::rstest;
 
-use super::{
-    InitConfig,
-    InitConfigError,
-    InitRequest,
-    InitRequestError,
-    InitRequestInputs,
-    VOLUME_ID_ENV_VAR,
-    environment_volume_id,
-    format_failure_message,
-    request_from_loaded_config,
-};
+use super::{InitConfig, InitConfigError, InitRequest, VolumeIdSource, format_failure_message};
 use crate::{
     ScalewayConfig,
     sync::{RemoteCommandOutput, SyncError},
@@ -43,69 +29,21 @@ fn scaleway_with_volume(volume_id: Option<&str>) -> ScalewayConfig {
     }
 }
 
-/// A file-backed volume ID must refuse a replacement unless `--force` was
-/// supplied; the error tells the user to rerun with the flag.
+/// A configured ID is recorded with the file source that the orchestrator
+/// evaluates.
 #[test]
-fn request_builder_rejects_a_file_volume_id_without_force() {
+fn from_config_records_a_file_volume_source() {
     let scaleway = scaleway_with_volume(Some("file-volume"));
     let init_config = InitConfig { volume_size_gb: 20 };
-    let env = MapEnv::new();
 
-    let err = request_from_loaded_config(
-        InitRequestInputs {
-            scaleway: &scaleway,
-            init_config: &init_config,
-            project_name: "project",
-            overwrite_existing_volume_id: false,
-        },
-        &env,
-    )
-    .expect_err("a file-backed ID must be refused without force");
+    let request = InitRequest::from_config(&scaleway, &init_config, "project", true)
+        .expect("configuration should build a request");
 
-    assert!(
-        matches!(
-            err,
-            InitRequestError::FileVolumeAlreadyConfigured { ref volume_id }
-                if volume_id == "file-volume"
-        ),
-        "expected a file-backed refusal, got {err}"
-    );
-    assert!(
-        err.to_string().contains("--force"),
-        "a file-backed refusal should mention --force: {err}"
-    );
+    assert_eq!(request.volume_id_source(), &VolumeIdSource::File);
+    assert_eq!(request.configured_volume_id(), Some("file-volume"));
 }
 
-/// Forcing the overwrite lets a file-backed ID through, and the request
-/// records it separately from the environment provenance.
-#[test]
-fn request_builder_accepts_a_file_volume_id_with_force() {
-    let scaleway = scaleway_with_volume(Some("file-volume"));
-    let init_config = InitConfig { volume_size_gb: 20 };
-    let env = MapEnv::new();
-
-    let request = request_from_loaded_config(
-        InitRequestInputs {
-            scaleway: &scaleway,
-            init_config: &init_config,
-            project_name: "project",
-            overwrite_existing_volume_id: true,
-        },
-        &env,
-    )
-    .expect("force should permit the file-backed overwrite");
-
-    assert_eq!(
-        request.configured_volume_id.as_deref(),
-        Some("file-volume"),
-        "the request should carry the configured ID"
-    );
-    assert_eq!(request.environment_volume_id, None);
-}
-
-/// A blank resolved value records nothing here, so request construction does
-/// not block; a blank environment value is caught separately by the
-/// orchestrator's provenance guard.
+/// A blank resolved value records nothing, so the request has no source.
 #[test]
 fn from_config_ignores_a_blank_configured_volume_id() {
     let scaleway = scaleway_with_volume(Some("   "));
@@ -114,7 +52,8 @@ fn from_config_ignores_a_blank_configured_volume_id() {
     let request = InitRequest::from_config(&scaleway, &init_config, "project", false)
         .expect("a blank ID should not block init");
 
-    assert_eq!(request.configured_volume_id, None);
+    assert_eq!(request.volume_id_source(), &VolumeIdSource::None);
+    assert_eq!(request.configured_volume_id(), None);
 }
 
 #[test]
@@ -209,145 +148,4 @@ fn append_teardown_note_appends_teardown_failure() {
         note,
         format!("provision failed (teardown also failed: {teardown})")
     );
-}
-
-/// A scanning environment map with `vars` set.
-fn volume_env(vars: &[(&str, &std::ffi::OsStr)]) -> MapEnv {
-    vars.iter()
-        .fold(MapEnv::new(), |env, (key, value)| env.with_var(*key, value))
-}
-
-#[test]
-fn environment_volume_id_is_absent_when_unset() {
-    let env = volume_env(&[]);
-
-    let result = environment_volume_id(&env).expect("an unset variable should be accepted");
-
-    assert_eq!(result, None);
-}
-
-#[test]
-fn environment_volume_id_is_trimmed_when_set() {
-    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::new("  volume-123 "))]);
-
-    let result = environment_volume_id(&env).expect("a set variable should be accepted");
-
-    assert_eq!(result.as_deref(), Some("volume-123"));
-}
-
-/// The loader matches environment keys case-insensitively, so the guard must
-/// too.
-#[test]
-fn environment_volume_id_matches_a_case_variant_key() {
-    let env = volume_env(&[("scw_default_volume_id", std::ffi::OsStr::new("old-id"))]);
-
-    let result = environment_volume_id(&env).expect("a case variant should be accepted");
-
-    assert_eq!(result.as_deref(), Some("old-id"));
-}
-
-#[test]
-fn environment_volume_id_records_a_blank_value_for_the_orchestrator() {
-    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::new("   "))]);
-
-    let result = environment_volume_id(&env).expect("a blank value is recorded, not rejected");
-
-    assert_eq!(
-        result.as_deref(),
-        Some(""),
-        "the blank layer should be recorded so the guard sees it"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn environment_volume_id_rejects_a_non_utf8_value() {
-    use std::os::unix::ffi::OsStrExt as _;
-
-    let env = volume_env(&[(VOLUME_ID_ENV_VAR, std::ffi::OsStr::from_bytes(&[0xff]))]);
-
-    let err = environment_volume_id(&env).expect_err("a non-UTF-8 variable must be rejected");
-
-    assert!(
-        err.to_string().contains("not valid UTF-8"),
-        "unexpected error: {err}"
-    );
-}
-
-/// The loader keeps a blank environment layer over the file, which is why the
-/// provenance records it as empty and the orchestrator refuses it.
-#[test]
-fn a_blank_environment_volume_id_survives_loading_and_is_recorded() {
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let root = Utf8Path::from_path(tmp.path()).expect("temp path should be UTF-8");
-    let file = root.join("mriya.toml");
-    cap_std::fs_utf8::Dir::open_ambient_dir(root, cap_std::ambient_authority())
-        .expect("temp directory should open")
-        .write(
-            "mriya.toml",
-            concat!(
-                "secret_key = \"secret\"\n",
-                "default_project_id = \"project\"\n",
-                "default_volume_id = \"file-volume\"\n"
-            ),
-        )
-        .expect("config fixture should be written");
-    let env = MapEnv::new()
-        .with_current_dir(root)
-        .with_var("MRIYA_CONFIG_PATH", file.as_str())
-        .with_var(VOLUME_ID_ENV_VAR, "   ");
-    let shared = Arc::new(env);
-    let config =
-        ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared.clone())
-            .expect("configuration should load");
-
-    assert!(
-        config
-            .default_volume_id
-            .as_deref()
-            .is_some_and(|volume_id| volume_id.trim().is_empty()),
-        "the loader should retain a blank layer over the file, got {:?}",
-        config.default_volume_id
-    );
-
-    let recorded = environment_volume_id(shared.as_ref())
-        .expect("the blank layer should be recorded, not rejected");
-
-    assert_eq!(
-        recorded.as_deref(),
-        Some(""),
-        "the provenance should record the blank environment layer"
-    );
-}
-
-proptest::proptest! {
-    /// Any casing of the canonical spelling is found, and the value is trimmed.
-    #[test]
-    fn environment_volume_id_matches_any_key_casing(
-        bits in proptest::collection::vec(
-            proptest::prelude::any::<bool>(),
-            VOLUME_ID_ENV_VAR.len()..=VOLUME_ID_ENV_VAR.len(),
-        ),
-        id in "[A-Za-z0-9_-]{1,24}",
-        leading in "[ \\t]{0,4}",
-        trailing in "[ \\t]{0,4}",
-    ) {
-        let key: String = VOLUME_ID_ENV_VAR
-            .chars()
-            .zip(bits.iter())
-            .map(|(character, uppercase)| {
-                if *uppercase {
-                    character.to_ascii_uppercase()
-                } else {
-                    character.to_ascii_lowercase()
-                }
-            })
-            .collect();
-        let value = format!("{leading}{id}{trailing}");
-        let env = MapEnv::new().with_var(key.as_str(), value.as_str());
-
-        let found = environment_volume_id(&env).expect("a UTF-8 value should be accepted");
-
-        assert_eq!(found.as_deref(), Some(id.as_str()));
-    }
 }

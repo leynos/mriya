@@ -193,6 +193,10 @@ target directory) on this volume to persist compiled dependencies across runs.
 
 To enable the cache volume:
 
+`mriya init` edits only TOML configuration files. If discovery selects a YAML
+(`.yaml`, `.yml`) or JSON5 (`.json`, `.json5`) file, the command refuses it
+with an error naming the file and its format; supply a `mriya.toml` instead.
+
 1. Run `mriya init` to create and format a Block Storage volume in the
    configured zone. The command writes the new volume ID into `mriya.toml`. Use
    `mriya init --force` to replace an existing configured volume ID. If any
@@ -305,7 +309,9 @@ Linux development build needs `mold` and a compiler that accepts
 `-fuse-ld=mold`: GCC 12.1 or newer, or clang. `make install-build-tools`
 installs the pinned `mold` and toolchain, and `make check-build-tools` reports
 what is missing; a development target stops with that report instead of falling
-back to another linker.
+back to another linker. The application builds on Rust 1.89.0; running the full
+test suite needs Rust 1.95. See
+[the developers' guide](developers-guide.md#compiler-floor).
 
 The preflight requires `mold` at exactly the version in `tools/mold/VERSION`
 (`2.41.0`) and fails on any other version, so an older distribution release

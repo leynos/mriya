@@ -121,3 +121,132 @@ fn init_refuses_an_environment_volume_id(
     }
     Ok(())
 }
+
+/// Builds an orchestrator over the scripted backend and an empty store.
+fn orchestrator_with_empty_store() -> Result<
+    (
+        InitOrchestrator<
+            super::test_doubles::ScriptedVolumeBackend,
+            mriya::test_support::ScriptedRunner,
+            super::test_doubles::MemoryConfigStore,
+        >,
+        super::test_doubles::ScriptedVolumeBackend,
+    ),
+    StepError,
+> {
+    use super::{
+        test_doubles::{MemoryConfigStore, ScriptedVolumeBackend},
+        test_helpers::InitTestError,
+    };
+    use crate::sync_config::sync_config;
+
+    let backend = ScriptedVolumeBackend::new();
+    let runner = mriya::test_support::ScriptedRunner::new();
+    let syncer = Syncer::new(sync_config(), runner).map_err(InitTestError::from)?;
+    Ok((
+        InitOrchestrator::new(backend.clone(), syncer, MemoryConfigStore::new()),
+        backend,
+    ))
+}
+
+/// The public constructor records a file source; without `--force` the
+/// orchestrator refuses it even when the store holds no ID yet, as happens
+/// when the value is inherited through `extends`.
+#[test]
+fn file_source_refuses_without_force_when_the_store_is_empty() -> Result<(), StepError> {
+    use mriya::{InitConfig, InitRequest, ScalewayConfig, VolumeIdSource};
+
+    use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+
+    let scaleway = ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("secret"),
+        default_organization_id: None,
+        default_project_id: String::from("project"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from(DEFAULT_INSTANCE_TYPE),
+        default_image: String::from("ubuntu"),
+        default_architecture: String::from("x86_64"),
+        default_volume_id: Some(String::from("inherited-volume")),
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
+    };
+    let request = InitRequest::from_config(
+        &scaleway,
+        &InitConfig { volume_size_gb: 20 },
+        "project",
+        false,
+    )
+    .map_err(|err| StepError::Assertion(err.to_string()))?;
+    if request.volume_id_source() != &VolumeIdSource::File {
+        return Err(StepError::Assertion(String::from(
+            "a configured ID should produce a File source",
+        )));
+    }
+    let (orchestrator, backend) = orchestrator_with_empty_store()?;
+    let runtime = Runtime::new().map_err(|err| StepError::Assertion(err.to_string()))?;
+
+    let result = runtime.block_on(async { orchestrator.execute(&request).await });
+
+    if !matches!(
+        result,
+        Err(mriya::InitError::FileVolumeAlreadyConfigured { .. })
+    ) {
+        return Err(StepError::Assertion(format!(
+            "expected a file-backed refusal, got {result:?}"
+        )));
+    }
+    if backend.create_volume_calls() != 0 {
+        return Err(StepError::Assertion(String::from(
+            "the guard must refuse before creating a volume",
+        )));
+    }
+    Ok(())
+}
+
+/// The public constructor plus the source setter refuses an environment value
+/// even with `--force`, with no store entry to compare against.
+#[test]
+fn environment_source_refuses_with_force_through_the_public_constructor() -> Result<(), StepError> {
+    use mriya::{InitConfig, InitRequest, ScalewayConfig, VolumeIdSource};
+
+    use crate::test_constants::DEFAULT_INSTANCE_TYPE;
+
+    let scaleway = ScalewayConfig {
+        access_key: None,
+        secret_key: String::from("secret"),
+        default_organization_id: None,
+        default_project_id: String::from("project"),
+        default_zone: String::from("fr-par-1"),
+        default_instance_type: String::from(DEFAULT_INSTANCE_TYPE),
+        default_image: String::from("ubuntu"),
+        default_architecture: String::from("x86_64"),
+        default_volume_id: None,
+        cloud_init_user_data: None,
+        cloud_init_user_data_file: None,
+    };
+    let request = InitRequest::from_config(
+        &scaleway,
+        &InitConfig { volume_size_gb: 20 },
+        "project",
+        true,
+    )
+    .map_err(|err| StepError::Assertion(err.to_string()))?
+    .with_volume_id_source(VolumeIdSource::Environment(String::from("env-volume")));
+    let (orchestrator, backend) = orchestrator_with_empty_store()?;
+    let runtime = Runtime::new().map_err(|err| StepError::Assertion(err.to_string()))?;
+
+    let result = runtime.block_on(async { orchestrator.execute(&request).await });
+
+    if !matches!(result, Err(mriya::InitError::EnvironmentVolumeId { .. })) {
+        return Err(StepError::Assertion(format!(
+            "expected the environment guard, got {result:?}"
+        )));
+    }
+    if backend.create_volume_calls() != 0 {
+        return Err(StepError::Assertion(String::from(
+            "the guard must refuse before creating a volume",
+        )));
+    }
+    Ok(())
+}

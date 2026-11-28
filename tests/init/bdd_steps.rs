@@ -1,6 +1,6 @@
 //! BDD step definitions for the `mriya init` workflow.
 
-use mriya::{InitError, InitOrchestrator, sync::Syncer};
+use mriya::{InitError, InitOrchestrator, VolumeIdSource, sync::Syncer};
 use rstest_bdd_macros::{given, then, when};
 use tokio::runtime::Runtime;
 
@@ -107,8 +107,9 @@ fn environment_supplies_volume_id(
     volume_id: String,
 ) -> Result<InitContextResult, StepError> {
     let mut init_context = init_context_result?;
-    init_context.request.configured_volume_id = Some(volume_id.clone());
-    init_context.request.environment_volume_id = Some(volume_id);
+    init_context
+        .request
+        .set_volume_id_source(VolumeIdSource::Environment(volume_id));
     Ok(Ok(init_context))
 }
 
@@ -268,7 +269,8 @@ const fn map_failure_kind(
     match err {
         InitError::Config(_)
         | InitError::EnvironmentVolumeId { .. }
-        | InitError::BlankEnvironmentVolumeId { .. } => InitFailureKind::Config,
+        | InitError::BlankEnvironmentVolumeId { .. }
+        | InitError::FileVolumeAlreadyConfigured { .. } => InitFailureKind::Config,
         InitError::Volume(_) => InitFailureKind::Volume,
         InitError::Provision(_) => InitFailureKind::Provision,
         InitError::Wait { .. } => InitFailureKind::Wait,

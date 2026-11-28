@@ -63,7 +63,8 @@ volume_size_gb = 20
 
 `mriya init` now writes `default_volume_id` at the root. To migrate a legacy
 `[scaleway] default_volume_id`, move the value to the root key, or rerun
-`mriya init --force` to replace it with a new volume.
+`mriya init --force` to replace it with a new volume in the selected TOML
+configuration file.
 
 The store edits TOML only. If discovery selects a YAML or JSON5 file,
 `mriya init` refuses it with an error naming the format rather than parsing it
@@ -73,7 +74,9 @@ as TOML; supply a `mriya.toml` instead.
 `SCW_DEFAULT_VOLUME_ID`, even with `--force`, because the environment overrides
 the file on every run. A variable that is set but blank is rejected too. To
 replace such a volume, unset `SCW_DEFAULT_VOLUME_ID` and rerun
-`mriya init --force`; the new ID is then recorded in `mriya.toml`.
+`mriya init --force`; the new ID is then recorded in the selected TOML
+configuration file, which discovery may place at an explicit path, a home
+dotfile, or `mriya.toml`.
 
 ## What did not change
 

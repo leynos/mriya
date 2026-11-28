@@ -191,9 +191,11 @@ The migration fixes this:
 ## Test inventory
 
 Baseline (commit `6445bbe`, before this branch's behavioural changes) ran 460
-tests across 18 binaries, all passing. The branch adds tests in two new
-binaries, `config_sources` and `config_discovery`, and to three existing test
-modules:
+tests across 18 binaries, all passing. That figure is the baseline commit's own
+scope; the rebased target has since added tests of its own, which is why the
+current whole-workspace total is larger than the baseline plus this branch's
+additions. The branch adds tests in two new binaries, `config_sources` and
+`config_discovery`, and to three existing test modules:
 
 - `tests/config_sources.rs`: one `rstest` precedence table with fifteen rows
   covering `SyncConfig` and `ScalewayConfig` across default, file,
@@ -235,10 +237,10 @@ baseline plus this branch's additions.
 
 ```console
 $ make test   # baseline, worktree at 6445bbe
-Summary [ 422.474s] 576 tests run: 576 passed (2 slow), 0 skipped
+Summary [  88.822s] 579 tests run: 579 passed, 0 skipped
 
 $ make test   # rebased candidate
-Summary [  34.665s] 571 tests run: 571 passed, 0 skipped
+Summary [ 422.474s] 576 tests run: 576 passed (2 slow), 0 skipped
 test result: ok. 5 passed; 0 failed; 29 ignored
 ```
 
