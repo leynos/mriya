@@ -488,10 +488,10 @@ prerequisites, in listed order; it does not reach their prerequisites. The
 Makefile therefore declares `.NOTPARALLEL: lint` to keep Clippy ahead of
 Whitaker, and `.NOTPARALLEL: lint-clippy` to keep the preflight, the YAML and
 workflow lint and the docstring gate in their listed order. Do not replace them
-with a prerequisite list that merely names the order. The gate is binding: every recipe is a plain command with no `-`
-prefix, `|| true`, existence guard or pipeline, so a non-zero exit from Whitaker
-fails the route and the CI `Lint` step.
-`tests/build_standard_support/whitaker_gate.rs` runs the real Make routes
+with a prerequisite list that merely names the order. The gate is binding:
+every recipe is a plain command with no `-` prefix, `|| true`, existence guard
+or pipeline, so a non-zero exit from Whitaker fails the route and the CI `Lint`
+step. `tests/build_standard_support/whitaker_gate.rs` runs the real Make routes
 against fakes at several `-j` values, fails Whitaker on purpose, and reads the
 recipes and the CI step for masking.
 

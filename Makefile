@@ -178,10 +178,9 @@ interrogate: ## Enforce complete Python docstring coverage
 # prerequisites, in listed order; it does not reach their prerequisites. `lint`
 # therefore orders Clippy before Whitaker, and `lint-clippy` orders the preflight,
 # the YAML and workflow lint and the docstring gate. The leaf targets stay runnable
-# alone: `make lint-clippy` and
-# `make lint-whitaker`. Every recipe is a plain command, so the gate's failure is
-# the recipe's exit status, with no guard, ignored-error prefix or masking
-# pipeline.
+# alone: `make lint-clippy` and `make lint-whitaker`. Every recipe is a plain
+# command, so the gate's failure is the recipe's exit status, with no guard,
+# ignored-error prefix or masking pipeline.
 .NOTPARALLEL: lint
 .NOTPARALLEL: lint-clippy
 .PHONY: lint-clippy lint-whitaker
