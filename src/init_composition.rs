@@ -106,6 +106,11 @@ pub fn request_from_loaded_config(
         inputs.project_name,
         inputs.overwrite_existing_volume_id,
     )?;
+    // An absent environment variable must not erase the file provenance that
+    // `from_config` recorded, including an ID inherited through `extends`.
+    if source == VolumeIdSource::None {
+        return Ok(request);
+    }
     Ok(request.with_volume_id_source(source))
 }
 

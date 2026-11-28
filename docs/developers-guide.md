@@ -411,8 +411,10 @@ without changing behaviour, and each publishes only what its parent needs:
 - `src/init_composition.rs` is the adapter between that domain type and
   `ortho_config`. It scans through `ScanEnvSource`, translates the result into
   `VolumeIdSource`, and builds the request the binary runs. Production passes
-  `process_scan_env_source`; tests pass `ortho_config::MapEnv`, so the domain
-  never depends on `std::env`, `mockable`, or `ortho_config`.
+  `process_scan_env_source`; tests pass `ortho_config::MapEnv`. The narrow
+  boundary is about environment scanning and volume-ID provenance: the `init`
+  module still derives and loads `InitConfig` through `ortho_config`, as it did
+  before this change, but it never scans the environment for the volume ID.
 
 - `src/config_store/volume.rs` owns the TOML document shape: reading the
   root-level `default_volume_id` with its legacy `[scaleway]` fallback, and

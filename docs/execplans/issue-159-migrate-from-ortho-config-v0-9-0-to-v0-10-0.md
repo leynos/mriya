@@ -82,10 +82,10 @@ The migration is observable by running the repository gates (`make check-fmt`,
   `src/**/tests.rs`, `src/main_request_tests.rs`, `src/main_tests.rs`,
   `src/sync/tests/**`): these are verification demanded by the hosted
   completeness assessments and do not widen the production surface. On that
-  basis the change against the merged target is 19 files and 1,128 net lines,
+  basis the change against the merged target is 19 files and 1,135 net lines,
   inside both limits; the imports add 1,653 net lines of upstream text and the
-  test code adds 1,344 net lines. Counting tests too, the branch is 33 files
-  and 2,472 net lines, so both limits are exceeded by review-mandated tests; the
+  test code adds 1,418 net lines. Counting tests too, the branch is 33 files
+  and 2,553 net lines, so both limits are exceeded by review-mandated tests; the
   `Decision log` records that exception and its reasoning.
 - Interface: if a public API signature must change, stop and escalate. The
   `ConfigWriter` trait and the public configuration structs must keep their
@@ -157,7 +157,7 @@ The migration is observable by running the repository gates (`make check-fmt`,
   0. Logs are under `/tmp/*-mriya-issue-159*.out`; the rebased candidate's gates
   are recorded under
   `/tmp/*-mriya-issue-159-migrate-from-ortho-config-v0-9-0-to-v0-10-0.out`,
-  where `make test` reports 579 passed across 23 binaries.
+  where `make test` reports 580 passed across 23 binaries.
 - [x] (2026-11-12) Inspect the final dependency graph.
       `cargo tree -i ortho_config` shows only `mriya`; all three `ortho_*`
       crates resolve together (0.11.0 after the rebase);

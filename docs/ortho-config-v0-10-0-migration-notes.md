@@ -237,7 +237,7 @@ baseline plus this branch's additions.
 
 ```console
 $ make test   # baseline, worktree at 6445bbe
-Summary [  88.822s] 579 tests run: 579 passed, 0 skipped
+Summary [  15.101s] 580 tests run: 580 passed, 0 skipped
 
 $ make test   # rebased candidate
 Summary [ 422.474s] 576 tests run: 576 passed (2 slow), 0 skipped

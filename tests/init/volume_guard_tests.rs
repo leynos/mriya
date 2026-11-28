@@ -250,3 +250,77 @@ fn environment_source_refuses_with_force_through_the_public_constructor() -> Res
     }
     Ok(())
 }
+
+/// An inherited file ID is refused without `--force` when the selected child
+/// file holds no ID and the environment supplies none. The composition path
+/// must preserve the file provenance from `from_config`.
+#[test]
+fn inherited_file_id_is_refused_through_the_composition_path() -> Result<(), StepError> {
+    use std::sync::Arc;
+
+    use mriya::{
+        InitConfig,
+        InitError,
+        ScalewayConfig,
+        VolumeIdSource,
+        request_from_loaded_config,
+    };
+    use ortho_config::{MapEnv, OrthoConfig as _};
+
+    let tmp = tempfile::TempDir::new().map_err(|err| StepError::Assertion(err.to_string()))?;
+    let root = camino::Utf8Path::from_path(tmp.path())
+        .ok_or_else(|| StepError::Assertion(String::from("temp path should be UTF-8")))?;
+    let child = root.join("mriya.toml");
+    let dir = cap_std::fs_utf8::Dir::open_ambient_dir(root, cap_std::ambient_authority())
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    dir.write(
+        "parent.toml",
+        concat!(
+            "secret_key = \"secret\"\n",
+            "default_project_id = \"project\"\n",
+            "default_volume_id = \"inherited-volume\"\n"
+        ),
+    )
+    .map_err(|err| StepError::Assertion(err.to_string()))?;
+    dir.write("mriya.toml", "extends = \"parent.toml\"\n")
+        .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let env = MapEnv::new()
+        .with_current_dir(root)
+        .with_var("MRIYA_CONFIG_PATH", child.as_str());
+    let shared = Arc::new(env);
+    let scaleway =
+        ScalewayConfig::load_from_iter_with_sources(["mriya"], shared.clone(), shared.clone())
+            .map_err(|err| StepError::Assertion(err.to_string()))?;
+    let request = request_from_loaded_config(
+        mriya::InitRequestInputs {
+            scaleway: &scaleway,
+            init_config: &InitConfig { volume_size_gb: 20 },
+            project_name: "project",
+            overwrite_existing_volume_id: false,
+        },
+        shared.as_ref(),
+    )
+    .map_err(|err| StepError::Assertion(err.to_string()))?;
+    if request.volume_id_source() != &VolumeIdSource::File {
+        return Err(StepError::Assertion(format!(
+            "inherited ID should keep a File source, got {:?}",
+            request.volume_id_source()
+        )));
+    }
+    let (orchestrator, backend) = orchestrator_with_empty_store()?;
+    let runtime = Runtime::new().map_err(|err| StepError::Assertion(err.to_string()))?;
+
+    let result = runtime.block_on(async { orchestrator.execute(&request).await });
+
+    if !matches!(result, Err(InitError::FileVolumeAlreadyConfigured { .. })) {
+        return Err(StepError::Assertion(format!(
+            "expected a file-backed refusal, got {result:?}"
+        )));
+    }
+    if backend.create_volume_calls() != 0 {
+        return Err(StepError::Assertion(String::from(
+            "the guard must refuse before creating a volume",
+        )));
+    }
+    Ok(())
+}
